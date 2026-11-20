@@ -5,7 +5,7 @@ in TypeScript and designed to run entirely on serverless platforms (AWS Lambda, 
 Workers, Cloud Run, Vercel) while also running locally as one standalone Node process.
 Existing Sentry SDKs and `sentry-cli` point at an errtraq DSN unchanged.
 
-The canonical design is the root [ARCHITECTURE.md](../../ARCHITECTURE.md). This file is the
+The canonical design is the root [ARCHITECTURE.md](../ARCHITECTURE.md). This file is the
 short orientation; it is kept current by the `distill-memories` skill.
 
 ## What it does

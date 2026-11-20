@@ -12,7 +12,7 @@ Produce faithful, natural translations without changing the documentation's tech
 1. Read the repository instructions that govern the source and target files.
 2. Identify the source locale, target locale, source root, target root, and exact pages in scope.
 3. Find the matching source page for every translated page. Do not translate an already translated locale as a proxy for the source.
-4. Read any project glossary or style guide before editing. In errtraq, read `.agents/docs/QUALITY_GATE.md`; for Japanese, also read `.agents/docs/JA_TRANSLATION_GLOSSARY.md` if it exists (create it with the first settled terms otherwise).
+4. Read any project glossary or style guide before editing. In errtraq, read `docs/QUALITY_GATE.md`; for Japanese, also read `docs/JA_TRANSLATION_GLOSSARY.md` if it exists (create it with the first settled terms otherwise).
 5. Inspect the worktree and preserve unrelated or pre-existing edits.
 
 If the requested source or target locale cannot be determined from paths, configuration, or context, ask before editing.
@@ -24,7 +24,7 @@ If the requested source or target locale cannot be determined from paths, config
 - Translate complete sentences, predicates, and compound technical phrases in context. Do not perform word-by-word or frequency-based replacement.
 - Prefer natural target-language prose over source-language syntax. Re-read the result without looking at the source, then compare it with the source again for fidelity.
 - Translate reader-facing headings, table labels, captions, link text, and explanatory code comments when appropriate.
-- Keep terminology consistent across pages. Add a newly settled Japanese term to `.agents/docs/JA_TRANSLATION_GLOSSARY.md` in the same change; keep translation aids internal rather than publishing them under `docs/`.
+- Keep terminology consistent across pages. Add a newly settled Japanese term to `docs/JA_TRANSLATION_GLOSSARY.md` in the same change; keep translation aids internal rather than publishing them under `docs/`.
 
 ## Preserve literal and structured content
 
@@ -93,9 +93,9 @@ source root but are not source-language pages.
 
 1. Manually scan target prose for source-language fragments after excluding literal interfaces and code. Treat results as a review queue, not replacement candidates.
 2. Verify every changed page against its source for omissions, additions, mistranslations, and unnatural target-language syntax.
-3. Run the repository's documentation build and any localization checks required by its instructions. errtraq has no docs site build yet; skip this step until one is added and recorded in `.agents/docs/QUALITY_GATE.md`.
+3. Run the repository's documentation build and any localization checks required by its instructions. errtraq has no docs site build yet; skip this step until one is added and recorded in `docs/QUALITY_GATE.md`.
 
 4. Run `git diff --check` and inspect the final diff.
-5. Append durable translation-review findings to `.agents/docs/JOURNAL.md` when they will help future work. Never rewrite existing journal sections, and do not record routine progress as durable knowledge.
+5. Append durable translation-review findings to `docs/JOURNAL.md` when they will help future work. Never rewrite existing journal sections, and do not record routine progress as durable knowledge.
 
 Report which pages and locale were handled, which checks passed, and any remaining source-language candidates or unverified build step.

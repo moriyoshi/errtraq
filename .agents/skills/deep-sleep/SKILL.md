@@ -1,13 +1,13 @@
 ---
 name: deep-sleep
-description: "Consolidate related long-term memory documents under .agents/docs/LTM/ into broader synthesis documents and refresh the LTM index, keeping the source documents intact. Use when LTM has grown into overlapping topic files that should be merged into higher-level syntheses."
+description: "Consolidate related long-term memory documents under docs/LTM/ into broader synthesis documents and refresh the LTM index, keeping the source documents intact. Use when LTM has grown into overlapping topic files that should be merged into higher-level syntheses."
 user-invocable: true
 allowed-tools: Bash, Read, Write, Edit, Grep, Glob
 ---
 
 # Deep Sleep: Consolidate Long-Term Memory Documents
 
-This skill reads `.agents/docs/LTM/INDEX.md` and the relevant documents under `.agents/docs/LTM/`, groups overlapping topics into broader synthesis documents, and refreshes the index. Use it after `good-sleep` has already distilled chronological journal entries into topic-oriented LTM files and those files now need a second-stage consolidation.
+This skill reads `docs/LTM/INDEX.md` and the relevant documents under `docs/LTM/`, groups overlapping topics into broader synthesis documents, and refreshes the index. Use it after `good-sleep` has already distilled chronological journal entries into topic-oriented LTM files and those files now need a second-stage consolidation.
 
 ## Goal
 
@@ -15,7 +15,7 @@ Turn a set of narrow LTM notes into a smaller set of durable synthesis documents
 
 ## Step 1: Inspect the Existing LTM Set
 
-Read `.agents/docs/LTM/INDEX.md` first, then inspect only the LTM documents needed to understand the candidate clusters.
+Read `docs/LTM/INDEX.md` first, then inspect only the LTM documents needed to understand the candidate clusters.
 
 Look for:
 
@@ -37,7 +37,7 @@ Cluster by durable topic, not by date and not by arbitrary file-count balancing.
 
 ## Step 3: Write Synthesis Documents
 
-Create new synthesis documents under `.agents/docs/LTM/` using descriptive kebab-case filenames such as:
+Create new synthesis documents under `docs/LTM/` using descriptive kebab-case filenames such as:
 
 - `build-engine-synthesis.md`
 - `dependency-and-packaging-synthesis.md`
@@ -94,7 +94,7 @@ Prefer compact synthesis over exhaustive restatement. The new document should he
 
 ## Step 5: Refresh the Index
 
-Update `.agents/docs/LTM/INDEX.md` so it clearly distinguishes:
+Update `docs/LTM/INDEX.md` so it clearly distinguishes:
 
 - Source topic documents
 - Synthesis documents
@@ -103,7 +103,7 @@ A simple approach is to keep one table for synthesis docs and one table for sour
 
 ## Step 6: Record the Consolidation
 
-Append a short note to `.agents/docs/JOURNAL.md` describing:
+Append a short note to `docs/JOURNAL.md` describing:
 
 - Which synthesis documents were created
 - Which source LTM documents they consolidate
