@@ -28,7 +28,7 @@ So milestones M0–M2 below are the deliverable of the first implementation roun
 L4  Entrypoints      lambda handler | worker fetch/queue/scheduled | node server (standalone) | cloud run
 L3  Apps (Hono)      ingest app | api app | queue-consumer | cron jobs      (Web-standard Request/Response)
 L2  Core services    Ingest, Normalize, Grouping, Symbolication, IssueQuery, EventQuery(federated), Archival, Retention
-L1  Ports            ActiveStore, Queue, BlobStore, ArchiveStore, KV, Scheduler, Clock/Id/Logger
+L1  Ports            ActiveStore, Queue, BlobStore, ArchiveStore, KV, Clock/Id/Logger (+ a static cron job table)
 L0  Adapters         sqlite/pg/mysql/d1/libsql/dynamodb/firestore · memory/sqs/cf-queues/redis/nats/pubsub/... · fs/s3/r2/gcs/azure · iceberg-rest
 ```
 
@@ -65,32 +65,45 @@ docker/            compose for conformance deps: postgres, mysql, winterbaume (A
 SQL and DynamoDB/Firestore cannot share a query abstraction, so the port is a set of
 access-pattern-shaped repositories; each adapter implements them natively.
 
+The sketches below are abridged; `packages/core/src/ports.ts` and `domain.ts` are authoritative
+and carry the exact ordering, range and atomicity rules as JSDoc.
+
 ```ts
 interface ActiveStore {
-  projects: ProjectRepo;      // orgs, projects, DSN keys, API tokens
+  // The only write path for an event. Atomically inserts the event (keyed by projectId + eventId)
+  // and creates or bumps its issue; a duplicate eventId changes nothing. SQL: transaction; D1: batch;
+  // DynamoDB: TransactWriteItems with a condition on the event item; Firestore: transaction.
+  recordEvent(o: Occurrence, e: StoredEvent): Promise<{ inserted: boolean; issue: Issue; isNew: boolean; isRegression: boolean }>;
+  projects: ProjectRepo;      // orgs, projects, DSN keys, API tokens; lookups by id and by slug
   issues: IssueRepo;
   events: EventRepo;
-  releases: ReleaseRepo;      // releases, artifact bundles, debug-id index
-  meta: MetaRepo;             // archive watermarks, job leases
-  capabilities: { tagFilter: 'any' | 'indexed-only'; textSearch: boolean; transactions: boolean };
+  releases: ReleaseRepo;      // releases (by id and version), artifact bundles, debug-id index
+  meta: MetaRepo;             // ArchiveState and ErasureRequest records, compare-and-set on version
+  capabilities: { textSearch: boolean; lastSeenRangeOnOtherSort: boolean };
   migrate(): Promise<void>;
 }
 interface IssueRepo {
-  // single atomic op: create-or-bump (count, lastSeen, regression detection). SQL: upsert; DynamoDB: UpdateItem ADD
-  recordOccurrence(o: Occurrence): Promise<{ issue: Issue; isNew: boolean; isRegression: boolean }>;
   get(projectId, issueId): Promise<Issue | null>;
-  list(q: IssueQuery): Promise<Page<Issue>>;   // constrained: project, status, time range, sort ∈ {lastSeen, firstSeen, count}, cursor
+  list(q: IssueQuery): Promise<Page<Issue>>;   // project, status, [from, to) on lastSeen, sort ∈ {lastSeen, firstSeen, count} descending, cursor
   update(projectId, issueId, patch): Promise<Issue>;
+  repairAfterErasure(projectId, issueId, removedCount): Promise<Issue>;   // subtract count, repoint the latest-event pointer
 }
 interface EventRepo {
-  put(e: StoredEvent): Promise<void>;          // idempotent on (projectId, eventId)
+  capabilities: { deleteStrategy: 'explicit' | 'ttl' };
   get(projectId, eventId): Promise<StoredEvent | null>;
-  listByIssue(q: EventQuery): Promise<Page<StoredEvent>>;
-  scanOlderThan(projectId, cutoff, cursor): AsyncIterable<StoredEvent[]>;   // archival source
+  listByIssue(q: EventQuery): Promise<EventPage>;                          // keyset paging, see Federation
+  scanOlderThan(projectId, cutoff, { cursor?, limit? }): Promise<Page<StoredEvent>>;   // archival source, ascending, cutoff exclusive
   deleteBatch(projectId, ids): Promise<void>;
+  deleteBySubject(projectId, selector, before, limit): Promise<{ deleted; hasMore; issueCounts; payloadBlobKeys }>;   // erasure, bounded
 }
 ```
 
+- **Issue ids are minted by core**, deterministically from `(projectId, fingerprint)`, so the
+  id is known before any store call and `recordEvent` can be one conditional write on a
+  key-value store. Project ids are decimal-digit strings, because Sentry SDKs reject DSNs whose
+  project id is not numeric.
+- `Timestamp` is always the canonical UTC millisecond form produced by `Date.toISOString()`;
+  stores compare timestamps as strings.
 - `IssueQuery` is deliberately the intersection that key-value stores can serve via GSIs /
   composite indexes; richer filters are gated on `capabilities` and rejected with a clear
   error (API returns 400 "not supported by this store") rather than silently table-scanning.
@@ -105,20 +118,25 @@ interface EventRepo {
 
 ### Queue — unify push and pull delivery
 ```ts
-interface QueueProducer { send(topic: Topic, msgs: Msg[], opts?: { delaySec?: number }): Promise<void>; }
-type BatchHandler = (batch: Delivery[]) => Promise<BatchResult>;   // per-message ack | retry(delay)
-interface PushSource<E> { toBatch(platformEvent: E): Delivery[]; toResponse(r: BatchResult): unknown; }  // SQS event, CF MessageBatch, Pub/Sub push, Cloud Tasks HTTP
-interface PullSource { run(handler: BatchHandler, signal: AbortSignal): Promise<void>; }               // memory, Redis streams, NATS JetStream, Service Bus
-capabilities: { delivery: 'push' | 'pull' | 'both'; maxBytes: number; delay: boolean; dlq: boolean }
+interface Message  { key: string; body: unknown }                    // key = idempotency key (the eventId for event messages)
+interface Delivery { id: string; topic: Topic; message: Message; attempt: number }
+interface QueueProducer { send(topic: Topic, msgs: Message[], opts?: { delaySec?: number }): Promise<void>; }
+type BatchHandler = (batch: Delivery[]) => Promise<BatchResult>;   // per-delivery ack | retry(delaySec)
+interface PushSource<E, R> { handle(platformEvent: E, handler: BatchHandler): Promise<R>; }   // SQS event, CF MessageBatch, Pub/Sub push, Cloud Tasks HTTP
+interface PullSource { run(handler: BatchHandler, signal: AbortSignal): Promise<void>; }      // memory, Redis streams, NATS JetStream, Service Bus
+interface Queue { producer: QueueProducer; pull?: PullSource; push?: PushSource; capabilities: { delivery: 'push' | 'pull' | 'both'; maxBytes: number; delay: boolean; dlq: boolean } }
 ```
-- Semantics contract: at-least-once, unordered; handlers are idempotent on `eventId`.
+- A push source owns the whole platform round trip (`handle`), because acknowledging is
+  platform-specific and asynchronous: SQS retry delay is a `ChangeMessageVisibility` call,
+  Cloudflare Queues ack / retry are methods on the original batch.
+- Semantics contract: at-least-once, unordered; handlers are idempotent on the message key.
 - Push sources are driven by the platform entrypoint; pull sources need a long-lived process
   (standalone / container). Stack validation rejects pull-only queue + function-only compute.
 - **Claim-check**: ingest writes the raw envelope to BlobStore and enqueues a small reference,
   so every queue's size limit is irrelevant and ingest stays a fast, dumb path.
 
 ### BlobStore
-`put / get (stream) / head / list(prefix) / delete / presign?` — used for raw envelopes,
+`put / get (stream, optional byte range) / head / list(prefix, cursor, limit) / delete / presign?` — used for raw envelopes,
 event payload overflow, sourcemap artifact bundles, and Iceberg data files. One `blob-s3`
 adapter (aws4fetch-based, Workers-safe) covers S3, R2, winterbaume and GCS interop; native R2
 binding, GCS and Azure adapters are thin additions.
@@ -128,8 +146,9 @@ binding, GCS and Azure adapters are thin additions.
 interface ArchiveStore {
   append(batch: { batchId: string; stagedKey: string; dayRange: [Day, Day] }): Promise<{ snapshotId: string; rowCount: number }>;
   hasBatch(batchId: string, dayRange: [Day, Day]): Promise<boolean>;   // idempotency probe, partition-pruned
-  query(q: EventQuery): Promise<Page<StoredEvent>>;
+  query(q: EventQuery): Promise<EventPage>;                                // same keyset paging as EventRepo.listByIssue
   getEvent(projectId, eventId, hintTs?): Promise<StoredEvent | null>;
+  // erasure operations: see "End-user PII erasure"
 }
 ```
 - Table `events`, partitioned by `day(received_at)` only; every data file holds a single
@@ -147,14 +166,21 @@ interface ArchiveStore {
 - **Federation** (core `EventQueryService`): issues never leave the active store (small, mutable);
   only events are archived. `meta` holds a per-project `archivedThrough` watermark. The active
   store is **always** queried; the archive is queried additionally iff the range starts before
-  the watermark. Results merge-sort by (receivedAt, eventId) with a composite cursor and dedupe
-  on eventId. The watermark therefore only ever *skips the archive*, never the active store,
+  the watermark. Both sources page by the same exclusive keyset, `EventQuery.after =
+  { receivedAt, eventId }` with `order: 'asc' | 'desc'` (default newest first), and return
+  `{ items, hasMore }`. The service merge-sorts the two pages, dedupes on eventId, emits `limit`
+  rows, and resumes both sources from the last emitted key, so no row is skipped or repeated
+  (opaque per-source cursors could not guarantee that). The watermark therefore only ever *skips the archive*, never the active store,
   so late or not-yet-deleted rows can't be missed. Details in "Archival job" below.
 
 ### Small ports
-`KV` (rate limits, DSN-key cache; memory / Redis / DynamoDB / CF KV), `Scheduler` (cron →
-archival, retention; EventBridge / CF Cron Triggers / Cloud Scheduler / setInterval),
-`Clock`, `IdGen`, `Logger`.
+`KV` (rate limits via atomic `increment`, DSN-key cache, erasure suppression list; memory /
+Redis / DynamoDB / CF KV), `Clock`, `IdGen`, `Logger`.
+
+There is no scheduler port. On serverless platforms cron is declared in infrastructure and the
+platform delivers ticks, so core exports a static job table (`CronJob { name; schedule }`) and a
+`CronHandler (name, firedAt)`; the platform adapter turns the table into triggers (EventBridge,
+CF Cron Triggers, Cloud Scheduler) or an in-process timer on the standalone platform.
 
 ## Core pipeline (L2/L3)
 
@@ -164,7 +190,7 @@ archival, retention; EventBridge / CF Cron Triggers / Cloud Scheduler / setInter
 2. **Consumer** — parse envelope items; drop unsupported item types; normalize event;
    symbolicate JS frames (debug-ID lookup → artifact bundle in BlobStore → `@jridgewell/trace-mapping`);
    compute grouping hash (client `fingerprint` → exception type + in-app frames → message fallback);
-   `issues.recordOccurrence` + `events.put`; emit `issue.created` / `issue.regressed` to a notifications topic.
+   one atomic `store.recordEvent(occurrence, event)` (a redelivered event returns `inserted: false` and is dropped); emit `issue.created` / `issue.regressed` to a notifications topic.
 3. **API app** — Sentry-compatible subset under `/api/0/`: what sentry-cli needs (auth token
    check, chunk-upload, artifact bundle assemble, releases CRUD/finalize/deploys) plus
    issue/event list/get/update for a later UI.
@@ -185,7 +211,7 @@ and stores as different as Postgres and DynamoDB.
 
 **Shape: planner → per-project worker, both on existing ports**
 
-- `Scheduler` fires the **planner** (hourly/daily). It pages through projects and sends one
+- A cron job fires the **planner** (hourly/daily). It pages through projects and sends one
   `archive.project {projectId}` message per project on the `Queue` port. Cross-project
   parallelism = queue consumer concurrency, which is also the throttle on active-store load.
 - The **worker** handles one project per message, serially, under a lease. It loops over
@@ -211,7 +237,7 @@ interface ArchiveState {
 | Step | Action | If we crash right after |
 |---|---|---|
 | 1 SCAN | `events.scanOlderThan(project, cutoff, limit)` ordered by (receivedAt, eventId); because finished batches are deleted, the scan always starts at the oldest remaining row — no cursor to persist. Overflow payloads are re-inlined from BlobStore. | Nothing written; retry rescans. |
-| 2 STAGE | Write the rows to `BlobStore` at `archive-staging/<batchId>.parquet`, then CAS `batch = {state:'staged', …}`. The staged object is the write-ahead record: it is both the exact content to append and the exact id list to delete. | Orphan staged object without state → overwritten by the retry (same key). |
+| 2 STAGE | Write the rows to `BlobStore` at `archive-staging/<batchId>-<nonce>.parquet` (the nonce stops a stale lease holder overwriting a newer owner's staged object), then CAS `batch = {state:'staged', …}`. The staged object is the write-ahead record: it is both the exact content to append and the exact id list to delete. | Orphan staged object without state → overwritten by the retry (same key). |
 | 3 COMMIT | `archive.append({batchId, stagedKey, dayRange})` — one Iceberg snapshot, rows tagged `archive_batch = batchId`, split by day partition. Catalog 409s (concurrent commits from other projects) are retried inside the adapter. | State still `staged`: retry first calls `archive.hasBatch(batchId, dayRange)`; if true skip to step 4, else append again from the same staged object. This is what makes the commit exactly-once. |
 | 4 MARK | CAS `batch.state = 'committed'`, `archivedThrough = max(old, maxReceivedAt)`. | Covered by the `hasBatch` probe above. |
 | 5 DELETE | Read ids from the staged object; `events.deleteBatch` in store-sized chunks (DynamoDB 25, D1 ≤100 bound params, pg/mysql ~1000); delete overflow blobs. Idempotent. | State `committed`: retry redoes the deletes. Readers see duplicates meanwhile, removed by eventId dedupe. |
@@ -290,7 +316,11 @@ interface ArchiveStore {
   expireSnapshots(olderThan: Timestamp): Promise<void>;                                  // + orphan file removal
   capabilities: { rowDelete: 'deletion-vector' | 'position-delete' | 'copy-on-write' };
 }
-interface EventRepo { deleteBySubject(projectId, selector, before: Timestamp): Promise<{ deleted: number; issueIds: string[] }>; }
+interface EventRepo {   // bounded: repeat while hasMore
+  deleteBySubject(projectId, selector, before: Timestamp, limit: number):
+    Promise<{ deleted: number; hasMore: boolean; issueCounts: { issueId; count }[]; payloadBlobKeys: string[] }>;
+}
+interface IssueRepo { repairAfterErasure(projectId, issueId, removedCount): Promise<Issue>; }
 ```
 
 **Deletion vectors mask, they do not erase.** After the DV commit the rows are invisible to
@@ -302,8 +332,8 @@ has no equivalent):
 | State | Work | Timing |
 |---|---|---|
 | `received` | Persist request; publish selector to `KV` suppression list so the consumer drops still-queued events from that subject with `receivedAt ≤ requestedAt`. | Synchronous |
-| `active-purged` | Under the project's **archive lease** (serializes with the archival worker): first drive any in-flight archive batch to completion so nothing is sitting in staging, then `events.deleteBySubject`, delete overflow blobs and raw envelopes, and repair affected issues (repoint `lastEventId`, recount if needed). | Minutes |
-| `archive-masked` | `archive.deleteWhere` → one snapshot adding DVs; record `snapshotId` + touched files. From here no query returns the data. | Minutes |
+| `active-purged` | Under the project's **archive lease** (serializes with the archival worker): first drive any in-flight archive batch to completion so nothing is sitting in staging, then `events.deleteBySubject` in bounded pages until `hasMore` is false, delete the returned overflow blobs and raw envelopes, and repair affected issues with `issues.repairAfterErasure`. | Minutes |
+| `archive-masked` | `archive.deleteWhere` → one snapshot adding DVs; record `maskSnapshotId` and a blob key holding the touched file list (the list can exceed a key-value store's item size). From here no query returns the data. | Minutes |
 | `archive-erased` | `archive.hardErase(files)` rewrites just the touched data files without the deleted rows (cheap: files are one project-batch each), then `expireSnapshots` once the pre-rewrite snapshots age past the table's max snapshot age (set to 7 days) and orphan files are removed. | Cron, well inside the 30-day GDPR window |
 | `done` | Stamp completion time; replace the stored selector with a salted hash so the ledger is an audit trail that holds no PII. | — |
 

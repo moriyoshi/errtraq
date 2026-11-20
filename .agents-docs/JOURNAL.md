@@ -135,3 +135,27 @@ briefly placed in `docs/`; that name stays free for a user-facing docs site.) Sk
 - The in-memory active store also runs the shared contracts with the TTL strategy and a fake
   clock, so event expiry is exercised. Vitest excludes local agent workspaces and pnpm stores
   to avoid discovering temporary verification copies as additional test suites.
+
+## 2026-11-21 — M0 closed: final review, verification and research
+
+- M0 (slices M0a to M0d) was reviewed three ways: slice-by-slice by the orchestrator, by an
+  independent reviewer that walked the ports through the ingest pipeline, the archival and
+  erasure state machines, DynamoDB and SQL adapters and Terraform generation, and by re-review
+  of the resulting fixes (M0d). Findings that were not fixed are recorded in TODO.md (the M2a
+  infra-model redesign and the M4 staging overwrite).
+- Clean-clone verification, done by the orchestrator with registry access (the Codex sandbox
+  has none): a fresh copy of the tracked files, `pnpm install --frozen-lockfile`, then
+  `pnpm typecheck`, `pnpm lint` and `pnpm test` (93 tests) all pass with no `dist` present, and
+  `pnpm build` then emits `dist`. Workspace packages resolve from source in tests (the
+  `development` export condition) and in typecheck (`paths`), and from `dist` only after a build.
+- ARCHITECTURE.md was updated to the final M0 port shapes: atomic `recordEvent`, core-minted
+  issue ids, numeric project ids, canonical timestamps, keyset event paging for federation,
+  `PushSource.handle`, no scheduler port (a static cron job table instead), bounded
+  `deleteBySubject` with issue repair, and a nonce in the archive staging key.
+- Desk research for the M4 spike is in `.agents-docs/M4_ICEBERG_SPIKE_RESEARCH.md`. It is from
+  documentation and source reading only. Headlines: DuckDB 2.0 attaches REST catalogs and
+  writes v3 deletion vectors but cannot set snapshot summary properties (so append idempotency
+  stays with the `archive_batch` column and pre-check); Lakekeeper supports a custom S3
+  endpoint with path-style access and runs its own maintenance queues; S3 Tables supports v3
+  and its compaction applies deletes; Athena cannot read v3; Cloudflare's catalog is the weak
+  spot. Hands-on spikes (DuckDB on Lambda, deletion vectors on S3 Tables) are in progress.
