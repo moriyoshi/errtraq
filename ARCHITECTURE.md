@@ -366,20 +366,22 @@ Every step is idempotent (re-deleting matches nothing; DV snapshot carries
 
 ## Stack configuration + infra abstraction
 
-A stack selects adapters and a platform once for runtime wiring and future infrastructure
-generation. Descriptors declare typed module outputs, qualified output references, scoped
-bindings, abstract resource grants, queue topic routes and explicit runtime dependencies.
-References distinguish generation-time stack values and environment, Terraform variables and
-module expressions, and runtime environment lookups. Existing resources replace declared
-outputs without creating a module. Nested selections expose sub-adapters to validation and
-future builds.
+A stack selects a platform and adapters once for runtime wiring and future infrastructure
+provisioning. Adapter descriptors declare resources, capability policies, purpose-scoped
+bindings and typed module outputs, including keyed maps. Core owns the role requirements and
+topic routes; validation derives per-function grants and bindings from them. Platform manifests
+state their authorization style, binding kinds and runtime environment guarantees. Platform
+config defines role grouping, HTTP exposure and settings; the derived deployment view supplies
+functions, bindings, policies, triggers and build artifact references to descriptor inputs.
 
-Platform configuration describes deployed roles, function grouping and resource settings; core
-owns the logical topics and static cron table. Validation checks references, capability policies,
-queue producers and consumers, cron coverage, function scopes, provider metadata and cycles.
-Factories receive `{ config, bindings, dependencies, topics }` in dependency order. See
-[INFRA_MODEL.md](./.agents-docs/INFRA_MODEL.md) for resolution rules and the AWS worked example.
-Terraform generation, cloud modules and static entrypoint generation are M2b/M2c work.
+Symbol-tagged references distinguish module outputs, provider values, Terraform variables,
+runtime or generation-time environment values, and build artifacts. Existing resources supply
+only reachable outputs. Validation checks supported capabilities, reference types, queue timing,
+provider metadata, binding scopes and separate module / runtime dependency graphs. Resolved
+stack data is frozen and factories are constructed in dependency order, then closed in reverse
+order. The local platform runs in one process. See [INFRA_MODEL.md](./.agents-docs/INFRA_MODEL.md)
+for the exact types, resolution phases and validated shared and per-topic examples. M2b / M2c
+still own Terraform generation, cloud modules, runtime secret sources and deployable builds.
 
 ## Milestones
 

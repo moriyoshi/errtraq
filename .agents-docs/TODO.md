@@ -19,7 +19,7 @@ item should be resolved or removed once addressed. Milestone work itself is trac
 - [x] M2a: name cron jobs on triggers and define ownership of core schedules. — *source: M0d final review B*
 - [x] M2a: model binding type and per-function scope, including secrets and platform bindings. — *source: M0d final review B*
 - [x] M2a: define when environment references resolve (generation, Terraform or runtime). — *source: M0d final review B*
-- [x] M2a: include provider, region and module version configuration. — *source: M0d final review B*
+- [x] M2a: configure providers, regions and tags; remove unused module-version metadata. — *source: M0d final review B*
 - [x] M2a: derive deployed function roles from platform configuration rather than a static manifest list. — *source: M0d final review B*
 - [ ] M4: prevent stale lease holders overwriting staging batches, using a nonce in staged keys or conditional blob writes. — *source: M0d final review B*
 - [x] M1: `tsconfig.tests.json` type-checks every package with WebWorker libs and no Node types; Node-only adapter and platform packages (for example `store-sql` sqlite, `blob-fs`, `standalone`) need their own lib / types settings without loosening `core` and `http`. — *source: JOURNAL 2026-11-21 — M0 closed: final review, verification and research*
@@ -38,4 +38,11 @@ item should be resolved or removed once addressed. Milestone work itself is trac
 - [ ] CI: run the Python SDK end-to-end check required by ARCHITECTURE.md once a Python environment is available. — *source: M1g closing review section B*
 - [ ] M2: provide indexed token enumeration and revocation for tokens issued before M1g; their plaintext was not retained, so local token rotation can revoke only the file-backed token. — *source: M1g closing review*
 
-- [ ] M2a2: complete the infra model redesign and review items A1-A13, validation items B2-B6 and B8, and documentation item C before M2b. The prototype-property and stack-helper import validation fixes are in progress separately. — *source: `.agents-workspace/tmp/m2a-review-fixes.md`*
+- [x] M2a2: complete the infra model redesign and review items A1-A13, validation items B1-B8, and documentation item C before M2b. — *source: `.agents-workspace/tmp/m2a-review-fixes.md`*
+
+
+- [ ] M2b: render symbol-tagged references by phase, including keyed outputs and build artifacts; escape literal Terraform template introducers with `terraformLiteral` / `escapeTerraformLiteral`, and fail on missing backend generation environment values. — *source: M2a2 review A6 / A8 / A10 and B4*
+- [ ] M2b: emit JSON variables as Terraform `any` with object-or-array validation, matching the native `json` representation and CLI `TF_VAR_` parsing. — *source: M2a2 review B5*
+- [ ] M2b: render reachable `existing` substitutions and stack outputs; attach per-resource policy outputs and materialize scoped secret-read requirements. Provider policy contents and absence of raw IAM in module inputs are not statically enforced. — *source: M2a2 review A2 / A4 / A11 and C*
+- [ ] M2b: choose queue visibility and consumer timeout defaults that satisfy the six-times rule whenever the queue supports visibility; core checks explicit values only. — *source: M2a2 review A6*
+- [ ] M2c: satisfy each function's artifact reference with the actual build output, create role-scoped entrypoints and queue event-source mappings, and integrate runtime secret sources. — *source: M2a2 review A4 / A6 / A12*
