@@ -161,8 +161,8 @@ interface ArchiveStore {
   Glue REST on AWS; R2 Data Catalog on Cloudflare.
 - Read/write *engine* is a sub-port because no mature pure-JS Iceberg writer exists:
   - `duckdb` engine (default for local + Lambda/Cloud Run): DuckDB iceberg extension attached to the REST catalog for both append and query.
-  - `athena` engine (AWS alternative for query), `r2-sql` / Cloudflare Pipelines (Workers, where DuckDB can't run).
-  - **Spike in M4** before committing: confirm DuckDB REST-catalog writes against Lakekeeper and S3 Tables, and what Workers can actually do against R2 Data Catalog. Fallback is a minimal native append-only committer (Parquet via hyparquet-writer + Avro manifests + REST commit).
+  - No Athena engine: Athena cannot read format-v3 tables. On Cloudflare the catalog's SQL is read-only and no in-process write path is verified, so Workers stacks query over HTTP or delegate archive writes to a function that can run DuckDB.
+  - **Spike results** (2026-11, see `.agents-docs/M4_ICEBERG_SPIKE_RESEARCH.md`, `DUCKDB_LAMBDA_SPIKE.md`, `S3TABLES_DV_SPIKE.md`): DuckDB 2.0 on S3 Tables creates v3 tables, appends, prunes the batch-id probe, and writes merged deletion vectors that other readers honor. It runs on Lambda (Node 22) best as a container image with the extensions baked in (cold start 1.2 to 2.3 s at 1024 MB; `home_directory` must point at `/tmp`). It cannot set snapshot summary properties, so append idempotency stays with the `archive_batch` column and pre-check. The adapter must set `iceberg_use_metadata_log = false` (a session otherwise does not see its own commits) and retry commit conflicts. Still open: Lakekeeper + winterbaume locally, and the physical-erasure path below.
 - **Federation** (core `EventQueryService`): issues never leave the active store (small, mutable);
   only events are archived. `meta` holds a per-project `archivedThrough` watermark. The active
   store is **always** queried; the archive is queried additionally iff the range starts before
@@ -343,6 +343,15 @@ Every step is idempotent (re-deleting matches nothing; DV snapshot carries
 `errtraq.erasure-id` in its summary), so the same resume-from-state worker pattern as archival applies.
 
 **Engine support** (extends the M4 spike; this is the least-certain part of the plan)
+
+- **Open problem: `hardErase` on v3.** DuckDB 2.0 refuses `iceberg_rewrite_data_files` on
+  format-v3 tables ("does not yet support V3 tables"; it works on v2), and after a
+  deletion-vector-only delete the rows are still readable in the data files. S3 Tables
+  maintenance was not observed to remove them within the spike, and its retention minimums
+  (1 hour for snapshots, 1 day for unreferenced files) put a floor under any erasure deadline.
+  Candidates, to be decided in M4: rely on catalog maintenance once it is shown to apply
+  deletion vectors; copy-forward the affected partitions into new files and drop the old ones;
+  keep the archive at format v2 (position deletes, DuckDB rewrite works); or a native rewrite.
 
 - Verify which engines can *write* v3 DVs through a REST catalog and *honor* them on read:
   DuckDB's iceberg extension, Athena / S3 Tables, R2 Data Catalog. Lakekeeper is catalog-only

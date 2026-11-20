@@ -286,3 +286,23 @@ briefly placed in `docs/`; that name stays free for a user-facing docs site.) Sk
   steps and comma lists; unsupported expressions fail at startup. The real-SDK E2E disables the
   SDK deduplication integration to test repeated captures and separately replays an envelope.
   Its temporary data stays under the ignored agent workspace and is removed after the run.
+
+## 2026-11-21 — Hands-on spikes: DuckDB on Lambda, deletion vectors on S3 Tables
+
+Two spikes ran against real AWS; full reports are `.agents-docs/DUCKDB_LAMBDA_SPIKE.md` and
+`.agents-docs/S3TABLES_DV_SPIKE.md`. All spike resources were deleted afterwards.
+
+- `@duckdb/node-api` 2.0 works on the nodejs22.x Lambda runtime (arm64 and x86_64) and loads
+  `httpfs`, `avro` and `iceberg`. A ZIP with the extensions bundled is unreliable: half the cold
+  starts exceeded the 10 s init limit. A container image with the extensions baked in cold
+  starts in 1.2 to 2.3 s; installing extensions into `/tmp` at runtime takes 2.1 to 4.1 s.
+  `home_directory` must be set or DuckDB fails; an env-based S3 secret avoids loading the `aws`
+  extension.
+- DuckDB 2.0 against S3 Tables: v3 table creation, appends, a partition-pruned batch-id probe,
+  and `DELETE` writing one merged deletion vector per data file all work, and a fresh DuckDB
+  process and pyiceberg honor the deletes.
+- What does not work: `iceberg_rewrite_data_files` on a v3 table, so the design's `hardErase`
+  step has no working implementation on v3 yet; custom snapshot summary properties; and a
+  session reading its own commits unless `iceberg_use_metadata_log = false`.
+- Athena was not tested (it needs an account-level integration the spike was told not to
+  enable) and desk research says it cannot read v3, so it is dropped as a query engine.
