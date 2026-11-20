@@ -10,16 +10,26 @@ import {
 import { hostname, userInfo } from "node:os";
 import { join, resolve } from "node:path";
 import { gunzipSync } from "node:zlib";
-import { parseEnvelope, parseEventPayload } from "@errtraq/core";
+import {
+  containsLocalPath,
+  parseEnvelope,
+  parseEventPayload,
+} from "@errtraq/core";
 import { describe, expect, it } from "vitest";
 
 const directory = new URL("../fixtures/sentry/", import.meta.url);
 const script = new URL("../scripts/scrub-sentry-fixtures.mjs", import.meta.url);
 const repository = resolve(import.meta.dirname, "../../..");
-const forbidden = [hostname(), userInfo().username, repository].filter(Boolean);
+const forbidden = [hostname(), userInfo().username].filter(
+  (value) => value.length >= 5,
+);
 
 function expectClean(data: Uint8Array, name: string) {
   const content = Buffer.from(data);
+  expect(
+    containsLocalPath(content.toString("utf8"), repository),
+    `${name} contains a local path`,
+  ).toBe(false);
   for (const secret of forbidden)
     expect(
       content.includes(Buffer.from(secret)),

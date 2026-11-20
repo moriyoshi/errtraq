@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -6,6 +6,7 @@ import { assertSafeStackImports } from "./adapter-stack-check.js";
 
 describe("stack helper import restrictions", () => {
   it("allows core and zod, and rejects forbidden transitive package imports", async () => {
+    await mkdir(resolve(".agents-workspace/tmp"), { recursive: true });
     const dir = await mkdtemp(
       resolve(".agents-workspace/tmp/stack-import-test-"),
     );

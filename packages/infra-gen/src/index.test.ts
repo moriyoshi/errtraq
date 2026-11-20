@@ -1,5 +1,6 @@
 import {
   artifact,
+  containsLocalPath,
   env,
   generationEnv,
   out,
@@ -80,7 +81,7 @@ describe("Terraform generator", () => {
     for (const content of Object.values(files)) {
       const object = JSON.parse(content);
       expect(object["//"]).toContain(stack.name);
-      expect(content).not.toContain(process.cwd());
+      expect(containsLocalPath(content, process.cwd())).toBe(false);
     }
   });
   it("explains standalone has no Terraform", () => {

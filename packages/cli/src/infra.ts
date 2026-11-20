@@ -10,7 +10,11 @@ import {
 } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
-import { deriveDeployment, type ResolvedStack } from "@errtraq/core";
+import {
+  containsLocalPath,
+  deriveDeployment,
+  type ResolvedStack,
+} from "@errtraq/core";
 import { generate } from "@errtraq/infra-gen";
 import type { BuildManifest } from "./build.js";
 
@@ -69,6 +73,16 @@ const allowed = new Set([
   "terraform.tfvars.json",
   "backend.tf.json",
 ]);
+/** Terraform owns these working files; generation never reads, modifies or deletes them. */
+function terraformWorkingFile(name: string): boolean {
+  return (
+    name === ".terraform" ||
+    name === ".terraform.lock.hcl" ||
+    name.startsWith("terraform.tfstate") ||
+    name.endsWith(".tfplan") ||
+    /^crash(?:\..*)?\.log$/.test(name)
+  );
+}
 export async function generateInfra(
   stack: ResolvedStack,
   repo: string,
@@ -169,9 +183,7 @@ export async function generateInfra(
   if (result.kind !== "terraform") return result.reason;
   if (
     Object.values(result.files).some((content) =>
-      [repo, homedir()].some(
-        (path) => path.length > 1 && content.includes(path),
-      ),
+      [repo, homedir()].some((path) => containsLocalPath(content, path)),
     )
   )
     throw new Error("Generated Terraform contains an absolute repository path");
@@ -196,6 +208,8 @@ export async function generateInfra(
       typeof marker !== "object" ||
       !("generator" in marker) ||
       marker.generator !== "errtraq" ||
+      !("stack" in marker) ||
+      typeof marker.stack !== "string" ||
       !("files" in marker) ||
       !Array.isArray(marker.files) ||
       !marker.files.every(
@@ -203,8 +217,17 @@ export async function generateInfra(
       )
     )
       throw new Error("Invalid generator marker");
+    if (marker.stack !== stack.name)
+      throw new Error(`Output directory belongs to stack ${marker.stack}`);
     old = marker.files;
-    if (entries.some((entry) => entry !== markerName && !old.includes(entry)))
+    if (
+      entries.some(
+        (entry) =>
+          entry !== markerName &&
+          !old.includes(entry) &&
+          !terraformWorkingFile(entry),
+      )
+    )
       throw new Error(
         "Output directory contains files not owned by the generator",
       );

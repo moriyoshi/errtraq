@@ -1,8 +1,8 @@
 # Infrastructure model
 
 This document describes the implemented infrastructure model in `packages/core/src/stack-*.ts`,
-the deployed construction API and the local runtime. AWS descriptors and HCL modules exist;
-Terraform generation, deployable AWS runtime adapters and static entrypoints remain future work.
+the deployed construction API and the local runtime. AWS descriptors, HCL modules, Terraform
+generation and static entrypoints are implemented; AWS runtime adapters remain M3 work.
 The illustrative descriptors below are test fixtures.
 
 ## Selections and descriptors
@@ -30,11 +30,11 @@ specific capabilities; they do not list function roles. `module.outputs` support
 `string[]`, `json`, `json-document`, `secret-ref`, and recursive `{ map: OutputType }`. `out("queues", key,
 "arn")` selects a key path within the current selection; `output("queue", "queues", key,
 "arn")` names another selection. Output path keys match `[A-Za-z_][A-Za-z0-9_-]*`; they may
-contain uppercase letters and hyphens. The generator must render references
+contain uppercase letters and hyphens. The generator renders references
 rather than JSON-serialize them.
 
-The intended HCL source for a module is `infra/modules/<provider>/<component>`; the future
-generator must resolve it relative to its generated root. `module.version` was removed: provider
+The HCL source for a module is `infra/modules/<provider>/<component>`; the generator resolves
+it relative to its generated root. `module.version` was removed: provider
 version constraints live in stack provider entries, while module resources live in HCL.
 
 Manifests declare runtime compatibility and required environment features. Store capabilities
@@ -59,7 +59,7 @@ outputs at both pinned provider versions and compares them with the snapshot. Ou
 are informational; Terraform `validate` alone does not prove an output's type or keys. The model validates reference types
 and policy output placement, but it does **not** inspect a
 policy document or module input to prove that it contains no raw provider IAM or that its policy
-is least privilege. An adapter author and the future HCL module must provide that guarantee.
+is least privilege. The adapter author and HCL module must provide that guarantee.
 
 ## Reference phases and literals
 
@@ -100,8 +100,8 @@ at deployment. Core cannot prove the contents provide the claimed provider permi
 
 Literal strings may contain Terraform template introducers. `terraformLiteral(s)` returns
 `{ value: s, needsEscaping }` without changing the data; `escapeTerraformLiteral(s)` escapes
-both `${` and `%{`. M2b must apply this to every literal string it renders, including nested
-values and object keys, and must not escape expressions rendered from reference objects. Infra
+both `${` and `%{`. The generator applies this to literal strings, including nested values and
+object keys, without escaping expressions rendered from reference objects. Infra
 object keys and provider tag keys are restricted to ASCII letters, digits, underscore, dot,
 slash, colon, at sign, plus, space and hyphen; unsafe keys are rejected before generation. These helpers do not
 perform generation themselves.
@@ -258,9 +258,9 @@ Queue `topics.settings` is keyed by physical queue and carries `batchSize`, `max
 `visibilityTimeout` is true and either the consumer's `timeoutSec` or queue visibility is set,
 both must be set and visibility must be at least six times the derived physical function timeout.
 When the capability is false, specifying a visibility timeout is rejected. If neither timeout is
-specified, core cannot validate provider defaults: M2b must choose and check compatible defaults.
+specified, core cannot validate provider defaults. AWS uses compatible defaults of 180 and 30 seconds.
 A DLQ must be supported by the queue; disabled DLQs cannot specify a receive count. `outputs` on
-the stack maps names to validated output references; M2b must surface them.
+the stack maps names to validated output references which the generator surfaces.
 
 ## Graphs, existing resources and lifecycle
 
@@ -280,6 +280,12 @@ an opaque variable for the whole map cannot prove a required key is present. Ext
 documents remain the operator's responsibility. Existing queue visibility, DLQ and other trigger
 settings describe a promise about the external queue; core cannot inspect or enforce them. This saves unused values at the cost of less
 future-proof bring-your-own configuration than requiring every output.
+
+Regenerating a marked root preserves Terraform working files, including `.terraform`, lock
+files, state, plans and crash logs. A marker for another stack is rejected. Build metadata must
+not record absolute input paths. In free text, path hygiene checks complete repository or home
+path prefixes with at least two components; one-component roots such as `/app`, `/src` and
+`/root` are deliberately ignored because those strings commonly denote application paths.
 
 Factories receive config, role-scoped bindings and explicit dependencies. Only queues receive
 `topics` and `queueConsumers` (event source, physical queue, topics); platforms may receive named
@@ -380,8 +386,8 @@ The corresponding resource and policy mapping is also copied from that fixture:
 
 The validated view has three queue triggers. Ingest gets only
 `output("queue", "policies", "produce", "ingest")`; consumer gets the consume policy for
-each physical queue and the producer policies required by the core topic table. Actual policy
-contents and rendered Terraform remain M2b work.
+each physical queue and the producer policies required by the core topic table. The AWS modules
+provide policy documents, and the generator renders Terraform for selected stacks.
 
 ## Cloudflare fit (types only)
 

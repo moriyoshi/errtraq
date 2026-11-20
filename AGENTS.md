@@ -43,7 +43,7 @@ Shared agent skills live under `./.agents/skills/` (Codex reads them there; `./.
 
 ## Building
 
-* pnpm workspace, TypeScript strict, ESM only, Node >= 22 for tooling. Package names are `@errtraq/<name>`.
+* pnpm workspace, TypeScript strict, ESM only, Node `^22.18.0 || >=23.6.0` for tooling. Package names are `@errtraq/<name>`.
 * Validation: zod. HTTP: Hono. SQL: Kysely. Keep dependencies minimal and Workers-compatible in `core` / `http`; justify each new dependency in your report.
 * The standard local gate for any change you make (this applies to subagents too):
   ```

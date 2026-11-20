@@ -1,9 +1,10 @@
 import { createHash } from "node:crypto";
 import { lstat, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join, relative, sep } from "node:path";
+import { isAbsolute, join, relative, sep } from "node:path";
 import {
   type BuildArtifact,
+  containsLocalPath,
   deployedPlan,
   deriveDeployment,
   isEnvRef,
@@ -182,13 +183,14 @@ for(const signal of ["SIGTERM","SIGINT"]) process.on(signal,()=>{if(stopping){if
     });
     const file = result.outputFiles[0];
     if (!file) throw new Error("esbuild did not produce a bundle");
+    const meta = result.metafile;
+    const inputPaths = Object.entries(meta.inputs).flatMap(([path, input]) => [
+      path,
+      ...input.imports.flatMap((item) => [item.path, item.original ?? ""]),
+    ]);
     if (
-      [repo, homedir()].some(
-        (path) =>
-          path.length > 1 &&
-          (file.text.includes(path) ||
-            JSON.stringify(result.metafile).includes(path)),
-      )
+      inputPaths.some((path) => isAbsolute(path)) ||
+      [repo, homedir()].some((path) => containsLocalPath(file.text, path))
     )
       throw new Error("Build output contains an absolute repository path");
     const directory = join(output, fn.id);

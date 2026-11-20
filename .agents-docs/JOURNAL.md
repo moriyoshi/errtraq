@@ -549,3 +549,20 @@ client configuration and the legacy builder; ordinary Docker configuration remai
 CLI output and build metadata now use repository-relative paths, with regression checks over
 Terraform, manifests, bundle contents and ZIP entries. AWS runtime adapters, deployed secret
 sources and real AWS deployment remain M3 work.
+
+## 2026-11-21 — M2d review fixes, part 1
+
+Free-text path hygiene now detects complete multi-component repository and home prefixes rather
+than arbitrary substrings; single-component roots such as `/app` and `/root` are intentionally
+ignored, while esbuild metadata is separately checked for absolute input paths. A copied
+`src/app` checkout exercises the standalone build and Sentry fixture checks. Generated roots
+preserve Terraform-owned working files and reject markers for another stack. Temporary-directory
+creation was fixed in tests and the mutation script. Node 22.18.0 is now the declared tooling
+minimum, checked by the CLI before loading a stack. The first clean export passed typecheck,
+lint and all tests before any build; M2d items 5-8 and the full final gate remain next.
+
+## 2026-11-21 — M2d Node release range clarification
+
+The supported tooling range is `^22.18.0 || >=23.6.0`: Node 23.0 through 23.5 predate default
+TypeScript stripping even though they are newer than 22.18. Package engines, documentation and
+the CLI's preflight use the same range.

@@ -6,6 +6,7 @@ import { physicalFunctions, resolveStack, selections } from "@errtraq/core";
 import { buildStack } from "./build.js";
 import { constructStack } from "./construction.js";
 import { generateInfra, repositoryRoot, safeDirectory } from "./infra.js";
+import { assertNodeVersion } from "./node-version.js";
 import { devToken } from "./token.js";
 import { formatValidation } from "./validation.js";
 
@@ -27,6 +28,7 @@ function isDevPlatform(value: unknown): value is DevPlatform {
   );
 }
 export async function main(args: string[]): Promise<void> {
+  assertNodeVersion(process.versions.node);
   const [command, ...initial] = args;
   const rotate = command === "token" && initial[0] === "rotate";
   const infra = command === "infra" && initial[0] === "generate";

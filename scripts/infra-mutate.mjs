@@ -14,6 +14,7 @@ import { capturedShape, checkShape, shapeFixture } from "./infra-shapes.mjs";
 const root = resolve("infra/modules/aws");
 const scratch = resolve(".agents-workspace/tmp");
 const cache = resolve(scratch, "terraform-plugin-cache");
+mkdirSync(scratch, { recursive: true });
 const temp = mkdtempSync(resolve(scratch, "terraform-mutations-"));
 const version = "6.73.0";
 const platform = `${process.platform === "win32" ? "windows" : process.platform}_${process.arch === "x64" ? "amd64" : process.arch}`;

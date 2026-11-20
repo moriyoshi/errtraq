@@ -1,7 +1,11 @@
+import { spawnSync } from "node:child_process";
 import {
+  cp,
+  mkdir,
   mkdtemp,
   readdir,
   readFile,
+  realpath,
   rm,
   symlink,
   writeFile,
@@ -11,6 +15,7 @@ import { join, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import {
   constructDeployedStack,
+  containsLocalPath,
   deployedPlan,
   deriveDeployment,
 } from "@errtraq/core";
@@ -33,25 +38,85 @@ async function assertNoLocalPaths(directory: string): Promise<void> {
     else {
       const bytes = await readFile(path);
       for (const localPath of [repo, homedir()])
-        if (localPath.length > 1)
-          expect(bytes.includes(Buffer.from(localPath))).toBe(false);
+        expect(containsLocalPath(bytes.toString("utf8"), localPath)).toBe(
+          false,
+        );
       if (entry.name.endsWith(".zip"))
         for (const contents of Object.values(unzipSync(bytes)))
           for (const localPath of [repo, homedir()])
-            if (localPath.length > 1)
-              expect(
-                Buffer.from(contents).includes(Buffer.from(localPath)),
-              ).toBe(false);
+            expect(
+              containsLocalPath(
+                Buffer.from(contents).toString("utf8"),
+                localPath,
+              ),
+            ).toBe(false);
     }
   }
 }
 beforeAll(async () => {
+  await import("node:fs/promises").then((fs) =>
+    fs.mkdir(resolve(repo, ".agents-workspace/tmp"), { recursive: true }),
+  );
   temp = await mkdtemp(resolve(repo, ".agents-workspace/tmp/m2c-test-"));
 }, 30000);
 afterAll(async () => {
   if (temp) await rm(temp, { recursive: true, force: true });
 });
 describe("built stacks", () => {
+  it("builds and checks Sentry fixtures from a copied src/app checkout", async () => {
+    const scratch = await mkdtemp(join(await realpath("/tmp"), "errtraq-m2d-"));
+    const copy = join(scratch, "src", "app");
+    try {
+      await mkdir(copy, { recursive: true });
+      for (const name of [
+        "packages",
+        "stacks",
+        "scripts",
+        "infra",
+        "package.json",
+        "pnpm-workspace.yaml",
+        "tsconfig.base.json",
+        "tsconfig.tests.json",
+        "tsconfig.node-tests.json",
+        "vitest.config.ts",
+        "README.md",
+      ])
+        await cp(join(repo, name), join(copy, name), {
+          recursive: true,
+          filter: (path) =>
+            !path
+              .split(/[\\/]/)
+              .some((part) =>
+                ["node_modules", "dist", "generated"].includes(part),
+              ),
+        });
+      await symlink(
+        join(repo, "node_modules"),
+        join(copy, "node_modules"),
+        "dir",
+      );
+      const output = join(copy, ".agents-workspace/tmp/build");
+      await buildStack(local, copy, output, join(copy, "stacks/local.ts"));
+      const fixture = spawnSync(
+        process.execPath,
+        [
+          join(repo, "node_modules/vitest/vitest.mjs"),
+          "run",
+          "packages/testing/src/sentry-fixtures.test.ts",
+          "--reporter=dot",
+        ],
+        {
+          cwd: copy,
+          encoding: "utf8",
+          env: { ...process.env, FORCE_COLOR: "0" },
+          timeout: 30000,
+        },
+      );
+      expect(fixture.status, `${fixture.stdout}\n${fixture.stderr}`).toBe(0);
+    } finally {
+      await rm(scratch, { recursive: true, force: true });
+    }
+  }, 60000);
   it("reports roles, topics, binding and capability names without their values", () => {
     const report = formatValidation(shared);
     expect(report).toContain("Selection store: store-dynamodb");
@@ -200,6 +265,40 @@ describe("built stacks", () => {
       await writeFile(markerPath, JSON.stringify(marker));
       await generateInfra(stack, repo, target, output, false);
       expect(await readdir(target)).not.toContain("backend.tf.json");
+      await mkdir(join(target, ".terraform"));
+      for (const file of [
+        ".terraform.lock.hcl",
+        "terraform.tfstate",
+        "terraform.tfstate.backup",
+        "pending.tfplan",
+        "crash.log",
+        "crash.123.log",
+        ".terraform/sentinel",
+      ])
+        await writeFile(join(target, file), `preserve:${file}`);
+      await generateInfra(stack, repo, target, output, false);
+      for (const file of [
+        ".terraform.lock.hcl",
+        "terraform.tfstate",
+        "terraform.tfstate.backup",
+        "pending.tfplan",
+        "crash.log",
+        "crash.123.log",
+        ".terraform/sentinel",
+      ])
+        expect(await readFile(join(target, file), "utf8")).toBe(
+          `preserve:${file}`,
+        );
+      const other = name === "shared" ? perTopic : shared;
+      await expect(
+        generateInfra(
+          other,
+          repo,
+          target,
+          join(temp, `build-${name === "shared" ? "per-topic" : "shared"}`),
+          true,
+        ),
+      ).rejects.toThrow(`belongs to stack ${stack.name}`);
     },
     30000,
   );
