@@ -1,0 +1,418 @@
+# errtraq — Sentry-compatible, serverless-first issue tracker: architecture plan
+
+## Context
+
+Greenfield project (`/Users/moriyoshi/Source/errtraq` is empty, not yet a git repo). Goal: a
+Sentry-SDK-compatible error tracker (like GlitchTip / Bugsink) whose whole stack runs on
+serverless platforms (Lambda, Cloud Run, Cloudflare, Vercel) and also as a local standalone
+process. Storage, queue, archive and compute are all pluggable, and the same stack
+description that selects the runtime adapters also generates the Terraform that provisions them.
+
+Decisions already made with the user:
+
+- **Language:** TypeScript (only option that runs natively on every listed target).
+- **Iceberg catalog:** talk the **Iceberg REST Catalog** protocol so Lakekeeper works, as do
+  S3 Tables / Glue REST / R2 Data Catalog / Polaris.
+- **First cloud targets:** AWS first, then Cloudflare. Local standalone before both.
+- **IaC:** an abstraction layer that *generates* a Terraform root (module composition + tfvars)
+  from the stack configuration; hand-written HCL modules underneath.
+- **Sentry scope:** error events + releases/sourcemaps (sentry-cli compatible). Transactions,
+  replays, profiles, sessions are accepted and dropped.
+
+What the user wants to see first: the layered service abstractions and the infra abstraction.
+So milestones M0–M2 below are the deliverable of the first implementation round; M3+ is the roadmap.
+
+## Layering
+
+```
+L4  Entrypoints      lambda handler | worker fetch/queue/scheduled | node server (standalone) | cloud run
+L3  Apps (Hono)      ingest app | api app | queue-consumer | cron jobs      (Web-standard Request/Response)
+L2  Core services    Ingest, Normalize, Grouping, Symbolication, IssueQuery, EventQuery(federated), Archival, Retention
+L1  Ports            ActiveStore, Queue, BlobStore, ArchiveStore, KV, Scheduler, Clock/Id/Logger
+L0  Adapters         sqlite/pg/mysql/d1/libsql/dynamodb/firestore · memory/sqs/cf-queues/redis/nats/pubsub/... · fs/s3/r2/gcs/azure · iceberg-rest
+```
+
+Rules: `core` depends only on ports and Web-standard APIs (fetch, WebCrypto, streams) — no
+`node:*` imports — so it bundles for Workers. Adapters depend on core, never on each other.
+Entrypoints are generated per stack and statically import only the selected adapters
+(bundle size on Workers/Lambda, no dynamic `require`).
+
+## Repository layout (pnpm workspace)
+
+```
+packages/
+  core/            domain types, ports, services, stack-config schema (zod)
+  http/            Hono apps: ingest, api (Sentry-compatible subset), consumer + cron handlers
+  testing/         port contract test suites + fakes (vitest)
+  cli/             `errtraq` CLI: dev, build, infra generate, migrate
+  infra-gen/       stack config -> Terraform root (main.tf.json + tfvars.json)
+  adapters/
+    store-sql/     Kysely-based shared impl; dialects: sqlite, postgres(+supabase), mysql, d1, libsql(turso)
+    store-dynamodb/  store-firestore/
+    queue-memory/ queue-sqs/ queue-cf/ queue-redis/ queue-nats/ queue-pubsub/ queue-cloudtasks/ queue-servicebus/
+    blob-fs/ blob-s3/ (S3, R2, winterbaume, GCS-interop) blob-r2-binding/ blob-gcs/ blob-azure/
+    archive-iceberg/   REST catalog client + writer/query engines
+  platforms/
+    standalone/ aws-lambda/ cloudflare/ cloud-run/ vercel/     entrypoint templates + compute infra descriptor
+infra/modules/<provider>/<component>/     hand-written HCL modules (aws/sqs, aws/dynamodb, aws/lambda-app, cloudflare/d1, ...)
+stacks/            example stack configs: local.ts, aws-dynamodb.ts, aws-postgres.ts, cloudflare.ts
+docker/            compose for conformance deps: postgres, mysql, winterbaume (AWS emulator: S3 — see note below), lakekeeper, dynamodb-local, elasticmq, redis, nats
+```
+
+## Ports (L1) — the key design choices
+
+### ActiveStore — repository-level, not SQL-level
+SQL and DynamoDB/Firestore cannot share a query abstraction, so the port is a set of
+access-pattern-shaped repositories; each adapter implements them natively.
+
+```ts
+interface ActiveStore {
+  projects: ProjectRepo;      // orgs, projects, DSN keys, API tokens
+  issues: IssueRepo;
+  events: EventRepo;
+  releases: ReleaseRepo;      // releases, artifact bundles, debug-id index
+  meta: MetaRepo;             // archive watermarks, job leases
+  capabilities: { tagFilter: 'any' | 'indexed-only'; textSearch: boolean; transactions: boolean };
+  migrate(): Promise<void>;
+}
+interface IssueRepo {
+  // single atomic op: create-or-bump (count, lastSeen, regression detection). SQL: upsert; DynamoDB: UpdateItem ADD
+  recordOccurrence(o: Occurrence): Promise<{ issue: Issue; isNew: boolean; isRegression: boolean }>;
+  get(projectId, issueId): Promise<Issue | null>;
+  list(q: IssueQuery): Promise<Page<Issue>>;   // constrained: project, status, time range, sort ∈ {lastSeen, firstSeen, count}, cursor
+  update(projectId, issueId, patch): Promise<Issue>;
+}
+interface EventRepo {
+  put(e: StoredEvent): Promise<void>;          // idempotent on (projectId, eventId)
+  get(projectId, eventId): Promise<StoredEvent | null>;
+  listByIssue(q: EventQuery): Promise<Page<StoredEvent>>;
+  scanOlderThan(projectId, cutoff, cursor): AsyncIterable<StoredEvent[]>;   // archival source
+  deleteBatch(projectId, ids): Promise<void>;
+}
+```
+
+- `IssueQuery` is deliberately the intersection that key-value stores can serve via GSIs /
+  composite indexes; richer filters are gated on `capabilities` and rejected with a clear
+  error (API returns 400 "not supported by this store") rather than silently table-scanning.
+- All SQL engines share one implementation on **Kysely** (dialects exist for pg, mysql,
+  sqlite, D1, libsql); only driver wiring + a few dialect quirks (upsert syntax, JSON columns)
+  differ. Migrations written with Kysely's schema builder, run via `errtraq migrate` or on
+  cold start for D1/SQLite.
+- DynamoDB: single-table design (PK `P#<project>`, SKs for issue/event, GSIs for
+  lastSeen/fingerprint). Firestore: per-project subcollections + composite indexes.
+- Event payloads above a size threshold (DynamoDB 400 KB, D1 row limits) overflow to BlobStore
+  by reference — handled in core, not per adapter.
+
+### Queue — unify push and pull delivery
+```ts
+interface QueueProducer { send(topic: Topic, msgs: Msg[], opts?: { delaySec?: number }): Promise<void>; }
+type BatchHandler = (batch: Delivery[]) => Promise<BatchResult>;   // per-message ack | retry(delay)
+interface PushSource<E> { toBatch(platformEvent: E): Delivery[]; toResponse(r: BatchResult): unknown; }  // SQS event, CF MessageBatch, Pub/Sub push, Cloud Tasks HTTP
+interface PullSource { run(handler: BatchHandler, signal: AbortSignal): Promise<void>; }               // memory, Redis streams, NATS JetStream, Service Bus
+capabilities: { delivery: 'push' | 'pull' | 'both'; maxBytes: number; delay: boolean; dlq: boolean }
+```
+- Semantics contract: at-least-once, unordered; handlers are idempotent on `eventId`.
+- Push sources are driven by the platform entrypoint; pull sources need a long-lived process
+  (standalone / container). Stack validation rejects pull-only queue + function-only compute.
+- **Claim-check**: ingest writes the raw envelope to BlobStore and enqueues a small reference,
+  so every queue's size limit is irrelevant and ingest stays a fast, dumb path.
+
+### BlobStore
+`put / get (stream) / head / list(prefix) / delete / presign?` — used for raw envelopes,
+event payload overflow, sourcemap artifact bundles, and Iceberg data files. One `blob-s3`
+adapter (aws4fetch-based, Workers-safe) covers S3, R2, winterbaume and GCS interop; native R2
+binding, GCS and Azure adapters are thin additions.
+
+### ArchiveStore — Iceberg over REST catalog
+```ts
+interface ArchiveStore {
+  append(batch: { batchId: string; stagedKey: string; dayRange: [Day, Day] }): Promise<{ snapshotId: string; rowCount: number }>;
+  hasBatch(batchId: string, dayRange: [Day, Day]): Promise<boolean>;   // idempotency probe, partition-pruned
+  query(q: EventQuery): Promise<Page<StoredEvent>>;
+  getEvent(projectId, eventId, hintTs?): Promise<StoredEvent | null>;
+}
+```
+- Table `events`, partitioned by `day(received_at)` only; every data file holds a single
+  project (see archival job), so manifest column bounds on `project_id` prune per project
+  without a projects×days partition explosion. Sorted by `issue_id, received_at`. Full event
+  JSON in one column plus promoted columns (issue_id, level, release, environment, tags map,
+  `archive_batch`).
+- Catalog access is always the **Iceberg REST spec** (`IcebergRestCatalog` client: config,
+  load table, commit, vended credentials) → Lakekeeper locally and self-hosted; S3 Tables /
+  Glue REST on AWS; R2 Data Catalog on Cloudflare.
+- Read/write *engine* is a sub-port because no mature pure-JS Iceberg writer exists:
+  - `duckdb` engine (default for local + Lambda/Cloud Run): DuckDB iceberg extension attached to the REST catalog for both append and query.
+  - `athena` engine (AWS alternative for query), `r2-sql` / Cloudflare Pipelines (Workers, where DuckDB can't run).
+  - **Spike in M4** before committing: confirm DuckDB REST-catalog writes against Lakekeeper and S3 Tables, and what Workers can actually do against R2 Data Catalog. Fallback is a minimal native append-only committer (Parquet via hyparquet-writer + Avro manifests + REST commit).
+- **Federation** (core `EventQueryService`): issues never leave the active store (small, mutable);
+  only events are archived. `meta` holds a per-project `archivedThrough` watermark. The active
+  store is **always** queried; the archive is queried additionally iff the range starts before
+  the watermark. Results merge-sort by (receivedAt, eventId) with a composite cursor and dedupe
+  on eventId. The watermark therefore only ever *skips the archive*, never the active store,
+  so late or not-yet-deleted rows can't be missed. Details in "Archival job" below.
+
+### Small ports
+`KV` (rate limits, DSN-key cache; memory / Redis / DynamoDB / CF KV), `Scheduler` (cron →
+archival, retention; EventBridge / CF Cron Triggers / Cloud Scheduler / setInterval),
+`Clock`, `IdGen`, `Logger`.
+
+## Core pipeline (L2/L3)
+
+1. **Ingest app** — `POST /api/:projectId/envelope/` and legacy `/store/`; DSN key auth
+   (`X-Sentry-Auth` / `sentry_key` query), CORS, rate limit via KV, size limits,
+   gzip/deflate/br decoding; write raw envelope to BlobStore; enqueue `{projectId, blobKey, receivedAt}`; return `{id}`.
+2. **Consumer** — parse envelope items; drop unsupported item types; normalize event;
+   symbolicate JS frames (debug-ID lookup → artifact bundle in BlobStore → `@jridgewell/trace-mapping`);
+   compute grouping hash (client `fingerprint` → exception type + in-app frames → message fallback);
+   `issues.recordOccurrence` + `events.put`; emit `issue.created` / `issue.regressed` to a notifications topic.
+3. **API app** — Sentry-compatible subset under `/api/0/`: what sentry-cli needs (auth token
+   check, chunk-upload, artifact bundle assemble, releases CRUD/finalize/deploys) plus
+   issue/event list/get/update for a later UI.
+4. **Cron** — archival, retention of raw envelopes, release-artifact GC.
+
+## Archival job (moving events from the active store to Iceberg)
+
+Constraints it is designed for: bounded invocation time (Lambda 15 min, Workers far less),
+at-least-once triggers, no cross-system transaction between the active store and Iceberg,
+and stores as different as Postgres and DynamoDB.
+
+**Invariants**
+
+1. An event is deleted from the active store only after the Iceberg snapshot containing it is committed.
+2. Each batch is committed to Iceberg at most once (idempotent retry).
+3. Only rows that were actually archived are deleted — never a range delete.
+4. Time basis is server-side `receivedAt`, not the client `timestamp` (client clocks are arbitrary).
+
+**Shape: planner → per-project worker, both on existing ports**
+
+- `Scheduler` fires the **planner** (hourly/daily). It pages through projects and sends one
+  `archive.project {projectId}` message per project on the `Queue` port. Cross-project
+  parallelism = queue consumer concurrency, which is also the throttle on active-store load.
+- The **worker** handles one project per message, serially, under a lease. It loops over
+  batches until nothing older than `cutoff = now − project.retention` remains or ~60% of the
+  invocation time budget is used, then re-enqueues the same message as a continuation.
+
+**Per-project state** (one record in `MetaRepo`, every transition a compare-and-set on `version`;
+SQL `UPDATE … WHERE version = ?`, DynamoDB `ConditionExpression`):
+
+```ts
+interface ArchiveState {
+  projectId: string; version: number;
+  archivedThrough: Timestamp;                 // monotonic watermark (max receivedAt committed)
+  seq: number;                                // batch counter -> batchId = `${projectId}/${seq}`
+  batch?: { id: string; state: 'staged' | 'committed'; stagedKey: string;
+            rowCount: number; dayRange: [Day, Day]; maxReceivedAt: Timestamp };
+  lease?: { owner: string; until: Timestamp };  // expiry ≈ 2× invocation timeout; CAS doubles as fencing
+}
+```
+
+**Batch state machine** (a batch = up to N rows / M bytes, e.g. 50k rows or 128 MB)
+
+| Step | Action | If we crash right after |
+|---|---|---|
+| 1 SCAN | `events.scanOlderThan(project, cutoff, limit)` ordered by (receivedAt, eventId); because finished batches are deleted, the scan always starts at the oldest remaining row — no cursor to persist. Overflow payloads are re-inlined from BlobStore. | Nothing written; retry rescans. |
+| 2 STAGE | Write the rows to `BlobStore` at `archive-staging/<batchId>.parquet`, then CAS `batch = {state:'staged', …}`. The staged object is the write-ahead record: it is both the exact content to append and the exact id list to delete. | Orphan staged object without state → overwritten by the retry (same key). |
+| 3 COMMIT | `archive.append({batchId, stagedKey, dayRange})` — one Iceberg snapshot, rows tagged `archive_batch = batchId`, split by day partition. Catalog 409s (concurrent commits from other projects) are retried inside the adapter. | State still `staged`: retry first calls `archive.hasBatch(batchId, dayRange)`; if true skip to step 4, else append again from the same staged object. This is what makes the commit exactly-once. |
+| 4 MARK | CAS `batch.state = 'committed'`, `archivedThrough = max(old, maxReceivedAt)`. | Covered by the `hasBatch` probe above. |
+| 5 DELETE | Read ids from the staged object; `events.deleteBatch` in store-sized chunks (DynamoDB 25, D1 ≤100 bound params, pg/mysql ~1000); delete overflow blobs. Idempotent. | State `committed`: retry redoes the deletes. Readers see duplicates meanwhile, removed by eventId dedupe. |
+| 6 CLEAR | CAS `batch = undefined`, `seq += 1`; delete the staged object. Next batch. | Staged object leaks → bucket lifecycle rule on `archive-staging/` (7 days). |
+
+On entry the worker resumes from whatever `batch.state` it finds, so a timed-out invocation,
+a redelivered message, or a lease takeover all converge on the same path.
+
+**Why this stays correct**
+
+- *Late events* (queue retries, DLQ redrive) land in the active store with an old `receivedAt`;
+  the next run's scan picks them up naturally since it is "everything older than cutoff", not
+  "between watermark and cutoff". Readers never miss them because the active store is always queried.
+- *Rows inserted into an already-scanned range between scan and delete* survive, because step 5
+  deletes by id list, not by range.
+- *Two workers on one project*: lease prevents it; if a lease expires mid-flight, the stale
+  worker's next CAS fails and it stops. A stale append is still caught by `hasBatch`.
+- *Issues are untouched*: counters and first/last-seen live on the issue row. The issue keeps
+  `lastEventId + lastEventReceivedAt` so "latest event" can be fetched from the archive with a
+  day hint instead of a table scan.
+
+**How the commit is done per engine** (the only engine-specific step)
+
+- DuckDB (local, Lambda, Cloud Run): `INSERT INTO cat.events SELECT *, '<batchId>' FROM read_parquet('<staged>')` against the REST catalog (Lakekeeper / S3 Tables).
+- Native committer (fallback, and the likely answer for Workers): the staged Parquet is written
+  straight into the table's data location, so COMMIT is just manifest + REST `commit` adding that
+  file — and `hasBatch` can read the snapshot summary property instead of querying.
+- Cloudflare Pipelines / Athena variants are evaluated in the M4/M6 spikes; the state machine does not change.
+
+**Store-specific delete strategies** (declared as an `EventRepo` capability)
+
+- `explicit` (default, all stores): step 5 as above.
+- `ttl` (opt-in, DynamoDB / Firestore): events get a TTL of `retention + grace` at insert and
+  the store expires them for free; step 5 becomes a no-op and the worker keeps a scan cursor in
+  `ArchiveState` instead. Cheaper at volume, but archival falling behind by more than `grace`
+  loses data — so the planner alarms on lag.
+- Later optimization for Postgres/MySQL: day-partitioned event table and `DROP PARTITION`.
+
+**Archive-side housekeeping** (separate cron job, catalog-dependent)
+
+- Hard retention: `DELETE WHERE received_at < now − archiveRetention` → whole-partition, metadata-only.
+- Project deletion: `DELETE WHERE project_id = ?` drops whole files (single-project files).
+- End-user erasure requests: row-level, via deletion vectors — see next section.
+- Small-file compaction (must keep one project per file or sort by `project_id`), snapshot
+  expiry and orphan-file cleanup: automatic on S3 Tables and R2 Data Catalog; run via the engine for Lakekeeper.
+
+**Observability**: per run emit rows archived, batches, and *archival lag* = `cutoff − oldest
+active receivedAt` per project; lag is the single health signal to alert on.
+
+## End-user PII erasure (deletion vectors)
+
+Requirement: an end user of a monitored app asks for their data to be erased; every event
+carrying their identity must disappear from both tiers, without rewriting the archive on the
+request path.
+
+**Table format**: the `events` table is created as **Iceberg format v3** with
+`write.delete.mode = merge-on-read`, so row deletes are **deletion vectors** (one Puffin
+`deletion-vector-v1` blob per affected data file) instead of file rewrites.
+
+**Finding the subject's rows**: `user.id`, `user.email`, `user.username`, `user.ip_address`
+are promoted to columns in both tiers (`user_id`, `user_email`, `user_name`, `user_ip`).
+Active store: secondary index per (project, selector) — SQL index / DynamoDB sparse GSI /
+Firestore composite index. Archive: column bounds + Parquet bloom filters on those columns,
+and single-project files already limit the scan to one project. Supported selectors: those
+four fields, plus explicit event ids. PII buried in free text (message, breadcrumbs, extras)
+is not found by this; that is the job of ingest-time scrubbing rules (later milestone).
+
+**Port additions**
+
+```ts
+interface ArchiveStore {
+  // ...
+  deleteWhere(req: { erasureId: string; projectId: string; selector: SubjectSelector }):
+    Promise<{ snapshotId: string | null; rowsDeleted: number; files: string[] }>;      // logical: commits DVs
+  hardErase(req: { erasureId: string; files: string[] }): Promise<{ snapshotId: string }>; // physical: rewrite files applying DVs
+  expireSnapshots(olderThan: Timestamp): Promise<void>;                                  // + orphan file removal
+  capabilities: { rowDelete: 'deletion-vector' | 'position-delete' | 'copy-on-write' };
+}
+interface EventRepo { deleteBySubject(projectId, selector, before: Timestamp): Promise<{ deleted: number; issueIds: string[] }>; }
+```
+
+**Deletion vectors mask, they do not erase.** After the DV commit the rows are invisible to
+every reader, but the bytes remain in the Parquet file and in older snapshots. So an erasure
+request is a two-phase ledger entry (`ErasureRequest` in `MetaRepo`, CAS transitions, exposed
+at `POST/GET /api/0/projects/{org}/{project}/erasure-requests/` — an errtraq extension, Sentry
+has no equivalent):
+
+| State | Work | Timing |
+|---|---|---|
+| `received` | Persist request; publish selector to `KV` suppression list so the consumer drops still-queued events from that subject with `receivedAt ≤ requestedAt`. | Synchronous |
+| `active-purged` | Under the project's **archive lease** (serializes with the archival worker): first drive any in-flight archive batch to completion so nothing is sitting in staging, then `events.deleteBySubject`, delete overflow blobs and raw envelopes, and repair affected issues (repoint `lastEventId`, recount if needed). | Minutes |
+| `archive-masked` | `archive.deleteWhere` → one snapshot adding DVs; record `snapshotId` + touched files. From here no query returns the data. | Minutes |
+| `archive-erased` | `archive.hardErase(files)` rewrites just the touched data files without the deleted rows (cheap: files are one project-batch each), then `expireSnapshots` once the pre-rewrite snapshots age past the table's max snapshot age (set to 7 days) and orphan files are removed. | Cron, well inside the 30-day GDPR window |
+| `done` | Stamp completion time; replace the stored selector with a salted hash so the ledger is an audit trail that holds no PII. | — |
+
+Taking the archive lease in `active-purged` is what closes the race where a staged batch
+containing the subject's rows would otherwise be committed *after* the archive was masked.
+Every step is idempotent (re-deleting matches nothing; DV snapshot carries
+`errtraq.erasure-id` in its summary), so the same resume-from-state worker pattern as archival applies.
+
+**Engine support** (extends the M4 spike; this is the least-certain part of the plan)
+
+- Verify which engines can *write* v3 DVs through a REST catalog and *honor* them on read:
+  DuckDB's iceberg extension, Athena / S3 Tables, R2 Data Catalog. Lakekeeper is catalog-only
+  and format-agnostic, so it is not the constraint.
+- If the chosen engine cannot write DVs, the native committer does it: query matching
+  `(file_path, row_position)` pairs via the engine, build a roaring bitmap per file — merging
+  with the file's existing DV, since v3 allows at most one per data file — write the Puffin
+  file, and commit a delete manifest through the REST catalog.
+- `capabilities.rowDelete` lets a stack degrade to v2 position deletes or copy-on-write where
+  v3 is unavailable; the ledger and API are identical, only `archive-masked` gets slower.
+- Compaction must apply DVs (it then counts as hard erase for those files).
+
+## Stack configuration + infra abstraction
+
+One typed file is the single source of truth for runtime wiring *and* provisioning:
+
+```ts
+// stacks/aws-dynamodb.ts
+export default defineStack({
+  name: 'prod',
+  platform: awsLambda({ region: 'ap-northeast-1', split: ['ingest', 'api', 'consumer', 'cron'] }),
+  store:    dynamodb({ billing: 'on-demand' }),
+  queue:    sqs({ visibilityTimeoutSec: 120, dlq: true }),
+  blob:     s3({}),
+  archive:  iceberg({ catalog: lakekeeper({ url: env('LAKEKEEPER_URL') }), engine: duckdb(), after: '30d' }),
+  kv:       dynamodbKv(),
+});
+```
+
+Every adapter package exports three things:
+
+- `manifest` — id, port kind, zod config schema, capabilities, supported runtimes.
+- `create(config, bindings)` — runtime factory; `bindings` are env vars / platform bindings.
+- `infra` — a declarative descriptor, no Terraform logic in TS:
+  ```ts
+  infra: {
+    module: 'aws/sqs',                                   // -> infra/modules/aws/sqs
+    inputs: (cfg) => ({ visibility_timeout: cfg.visibilityTimeoutSec, dlq: cfg.dlq }),
+    bindings: { QUEUE_URL: out('queue_url') },           // module outputs -> runtime env/bindings
+    grants: [{ role: 'producer', to: ['ingest'] }, { role: 'consumer', to: ['consumer'] }],
+    triggers: [{ fn: 'consumer', source: out('queue_arn'), kind: 'queue' }],
+  }
+  ```
+  `existing: { ... }` on any adapter skips the module and supplies bindings directly (bring-your-own DB / Lakekeeper).
+
+The **platform** adapter is the composer: it owns the compute module (`aws/lambda-app`,
+`cloudflare/worker`, …), and translates other adapters' abstract `grants` / `triggers` /
+`bindings` into its provider's terms (IAM policies + event source mappings on AWS; wrangler-style
+bindings + queue consumers + cron triggers on Cloudflare).
+
+CLI flow:
+
+- `errtraq validate --stack X` — schema + cross-adapter compatibility (runtime support, push/pull vs compute, capabilities).
+- `errtraq build --stack X` — generates the entrypoint importing only selected adapters; esbuild → Lambda zips / Worker bundle / Node server.
+- `errtraq infra generate --stack X` → `infra/generated/X/{main.tf.json, terraform.tfvars.json, backend.tf.json}` composing the versioned HCL modules. Deterministic output, committed or CI-generated; users run plain `terraform plan/apply` (OpenTofu works). Terraform itself sets function env from module outputs, so app and infra cannot drift.
+- `errtraq dev --stack local` — standalone Node server: all apps mounted on one port, pull-queue loop and scheduler in-process.
+
+## Milestones
+
+| | Scope | Proves |
+|---|---|---|
+| **M0** | Workspace scaffold, `core` ports + domain types, stack-config schema, `testing` contract suites, memory fakes | The abstractions |
+| **M1** | Local standalone: `store-sql` (sqlite), `queue-memory`, `blob-fs`, ingest → consumer → issues, minimal API | End-to-end with real Sentry SDKs |
+| **M2** | `infra-gen` + adapter infra descriptors + `validate/build/infra generate`; `platforms/standalone` (Docker) and `platforms/aws-lambda` descriptors | The infra abstraction |
+| **M3** | AWS: `store-dynamodb`, postgres dialect, `queue-sqs`, `blob-s3`, HCL modules, real deploy | First cloud target |
+| **M4** | Archive: REST catalog client, DuckDB engine, archival job, federated query, erasure requests with v3 deletion vectors; Lakekeeper+winterbaume in compose; engine spike | Hot/cold tiering |
+| **M5** | Releases, chunk upload, artifact bundles, JS symbolication | sentry-cli compatibility |
+| **M6** | Cloudflare: Workers platform, d1 dialect, `queue-cf`, R2, R2 Data Catalog | Most constrained runtime |
+| **M7+** | Remaining adapters (mysql, turso, supabase, firestore, redis, nats, pubsub, cloud tasks, service bus, gcs, azure), Cloud Run/Vercel platforms, web UI, alerts | Breadth |
+
+First implementation round = **M0–M2** (plus `git init`).
+
+## Verification
+
+- **Contract tests** (`packages/testing`): one vitest suite per port (`activeStoreContract`,
+  `queueContract`, `blobStoreContract`, `archiveStoreContract`) run against every adapter;
+  cloud adapters run against `docker/compose` emulators (DynamoDB Local, ElasticMQ, winterbaume,
+  Lakekeeper) and Miniflare for Cloudflare. An adapter is "done" when its contract suite passes.
+- **winterbaume as the local S3** (replaces MinIO; `winterbaume-server`, docs at
+  winterbaume.pages.dev): it only supports **path-style** addressing on a custom endpoint, so
+  `blob-s3` takes a `forcePathStyle` option, and Lakekeeper's warehouse, DuckDB
+  (`s3_url_style='path'`) and the Terraform AWS provider (`s3_use_path_style`) are configured
+  the same way. During M3, check whether its DynamoDB / SQS coverage is good enough to also
+  replace DynamoDB Local and ElasticMQ, leaving one AWS emulator in compose.
+- **E2E (M1)**: `errtraq dev --stack local`, then a script using real `@sentry/node` and
+  `sentry-sdk` (Python) with the local DSN: send exceptions, assert via API that issues group
+  correctly, counts bump, and duplicate eventIds are idempotent.
+- **Infra-gen (M2)**: snapshot tests of generated `main.tf.json` per example stack;
+  `terraform validate` on each generated root in CI; `errtraq validate` negative tests
+  (e.g. NATS pull queue + Lambda-only compute is rejected).
+- **AWS (M3)**: `terraform apply` of `stacks/aws-dynamodb.ts` into a sandbox account, run the same E2E script against the function URL, `terraform destroy`.
+- **Archival crash-safety (M4)**: a fault-injection test kills the worker after each of the six
+  steps in turn, reruns it, and asserts no event is lost, none is duplicated in Iceberg, and
+  the active store ends up empty below the cutoff; plus a late-event test (insert below the
+  watermark, query before and after the next run).
+- **Erasure (M4)**: seed events for two users across both tiers, submit an erasure request for
+  one; assert (a) federated queries return nothing for that user right after `archive-masked`,
+  (b) the snapshot contains Puffin DVs and no rewritten data files, (c) after `hardErase` +
+  snapshot expiry, a raw byte scan of every object under the table location finds no occurrence
+  of the user's email, (d) the other user's events are intact, (e) an erasure racing a staged
+  archive batch still ends clean.
+- **Archive (M4)**: seed events, run archival with a short cutoff, assert rows in Iceberg (query via DuckDB against Lakekeeper), assert a cross-watermark `listByIssue` returns a gapless, duplicate-free, correctly ordered page sequence.
+- **Sourcemaps (M5)**: `sentry-cli sourcemaps inject/upload` against the local server, send a minified-stack error, assert symbolicated frames.
