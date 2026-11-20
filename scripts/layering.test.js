@@ -44,6 +44,16 @@ describe("layering checker", () => {
   ])("rejects %s", (input) => {
     expect(check(input).length).toBeGreaterThan(0);
   });
+  it("allows platform internal imports but rejects other platform packages", () => {
+    const source = ts.createSourceFile(
+      "packages/platforms/a/src/index.ts",
+      'import "./stack.js"; import "../../b/src/index.js"',
+      ts.ScriptTarget.Latest,
+      true,
+    );
+    const program = ts.createProgram([], { noLib: true });
+    expect(findLayeringViolations(program, source)).toHaveLength(1);
+  });
   it("rejects adapter and platform imports", () => {
     const source = ts.createSourceFile(
       "packages/adapters/a/src/a.ts",

@@ -23,6 +23,7 @@ export function findLayeringViolations(program, source, packageNames = {}) {
   const restricted =
     /(?:^|\/)packages\/(?:core|http)\//.test(path) || path === "fixture.ts";
   const adapter = path.match(/(?:^|\/)packages\/adapters\/([^/]+)\//)?.[1];
+  const platform = path.match(/(?:^|\/)packages\/platforms\/([^/]+)\//)?.[1];
   const aliases = new Set();
   function report(node) {
     const { line, character } = source.getLineAndCharacterOfPosition(
@@ -57,8 +58,10 @@ export function findLayeringViolations(program, source, packageNames = {}) {
           ([name]) => specifier === name || specifier.startsWith(`${name}/`),
         )?.[1]
       : resolve(dirname(source.fileName), specifier).split(sep).join("/");
-    if (target && /(?:^|\/)packages\/platforms(?:\/|$)/.test(target))
-      report(node);
+    const platformTarget = target?.match(
+      /(?:^|\/)packages\/platforms\/([^/]+)(?:\/|$)/,
+    )?.[1];
+    if (platformTarget && platformTarget !== platform) report(node);
     if (adapter && target) {
       const dest = target.match(/(?:^|\/)packages\/adapters\/([^/]+)/)?.[1];
       if (dest && dest !== adapter) report(node);

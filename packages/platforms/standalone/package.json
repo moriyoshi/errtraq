@@ -8,6 +8,11 @@
       "development": "./src/index.ts",
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./stack": {
+      "development": "./src/stack.ts",
+      "types": "./dist/stack.d.ts",
+      "import": "./dist/stack.js"
     }
   },
   "files": [
@@ -20,6 +25,10 @@
     "@errtraq/core": "workspace:*",
     "@errtraq/http": "workspace:*",
     "@hono/node-server": "^2.1.9",
-    "hono": "^4.13.19"
+    "hono": "^4.13.19",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@errtraq/testing": "workspace:*"
   }
 }

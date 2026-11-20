@@ -214,6 +214,8 @@ export class MemoryActiveStore implements ActiveStore {
   };
 
   issues: ActiveStore["issues"] = {
+    getById: async (id) =>
+      copy([...this.issueRows.values()].filter((issue) => issue.id === id)),
     get: async (projectId, id) =>
       copy(
         [...this.issueRows.values()].find(

@@ -48,7 +48,7 @@ describe("SQLite migrations and indexes", () => {
     await migrate(db, sqliteStoreDialect);
     await migrate(db, sqliteStoreDialect);
     const rows = await db.selectFrom("schema_version").selectAll().execute();
-    expect(rows.map((r) => r.version)).toEqual([1, 2]);
+    expect(rows.map((r) => r.version)).toEqual([1, 2, 3]);
   });
   it("upgrades version one and rejects newer schemas", async () => {
     const db = database(":memory:");
@@ -67,7 +67,7 @@ describe("SQLite migrations and indexes", () => {
           .orderBy("version")
           .execute()
       ).map((r) => r.version),
-    ).toEqual([1, 2]);
+    ).toEqual([1, 2, 3]);
     await db.insertInto("schema_version").values({ version: 7 }).execute();
     await expect(migrate(db, sqliteStoreDialect)).rejects.toMatchObject({
       name: "UnsupportedSchemaVersionError",
@@ -76,7 +76,7 @@ describe("SQLite migrations and indexes", () => {
   it("uses indexes for issue and event access patterns", async () => {
     const db = database(":memory:");
     await migrate(db, sqliteStoreDialect);
-    const queries: string[] = [];
+    const queries: string[] = ["select * from issues where issue_id = 'i'"];
     for (const sort of ["first_seen", "last_seen", "count"])
       for (const status of [false, true])
         queries.push(

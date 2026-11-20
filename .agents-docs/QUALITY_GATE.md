@@ -40,9 +40,26 @@ are opt-in. TODO(M3): record the exact commands here when the compose file lands
 
 ## 3. End-to-end (when you touch ingest, the consumer, grouping, or the API)
 
-TODO(M1): record the commands here when `errtraq dev --stack local` and the SDK-driven E2E
-script land. The check is: real Sentry SDKs send errors to the local DSN, and the API shows
-correctly grouped issues, bumped counts, and idempotent handling of duplicate event ids.
+Run the opt-in real SDK check on loopback:
+
+```sh
+pnpm e2e
+```
+
+The script builds the workspace, starts the local CLI on a free loopback port using a temporary
+ignored data directory, sends real `@sentry/node` envelopes, checks grouping, API retrieval,
+regression and duplicate replay, and shuts the server down. It does not require a cloud account.
+For manual use:
+
+```sh
+pnpm build
+pnpm exec errtraq validate --stack stacks/local.ts
+pnpm exec errtraq dev --stack stacks/local.ts
+```
+
+Node versions before 22.18 need `NODE_OPTIONS=--experimental-strip-types` to load the TypeScript
+stack file. Local data defaults to the ignored `.errtraq/` directory; set `ERRTRAQ_DATA_DIR` and
+`ERRTRAQ_PORT` to override the data directory and port. The API token is printed at startup.
 
 ## 4. Infra generation (when you touch `infra-gen`, an `infra` descriptor, or `infra/modules`)
 

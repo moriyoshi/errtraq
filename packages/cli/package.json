@@ -16,6 +16,14 @@
     "node": ">=22"
   },
   "dependencies": {
-    "@errtraq/core": "workspace:*"
+    "@errtraq/core": "workspace:*",
+    "@errtraq/store-sql": "workspace:*",
+    "@errtraq/queue-memory": "workspace:*",
+    "@errtraq/blob-fs": "workspace:*",
+    "@errtraq/kv-memory": "workspace:*",
+    "@errtraq/platform-standalone": "workspace:*"
+  },
+  "bin": {
+    "errtraq": "./dist/bin.js"
   }
 }

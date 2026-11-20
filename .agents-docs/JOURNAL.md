@@ -267,3 +267,22 @@ briefly placed in `docs/`; that name stays free for a user-facing docs site.) Sk
   machine contexts and local identifiers, rebuilds item byte lengths, and derives the gzip fixture
   from the scrubbed raw envelope. Binary item framing and field types are preserved. A fixture
   test checks current host, user, and repository identifiers as well as the scrubber's output.
+
+## 2026-11-21 — M1d local stack
+
+- The minimal API scopes bearer tokens to their organization and requires `event:read` or
+  `event:write`. It supports forward keyset paging, status and sort filters, and reads overflow
+  payloads. Non-snapshot cursors remain subject to concurrent sort-key movement. The API rejects
+  unsupported filters. When a repeated issue ID is ambiguous within one organization it returns
+  409 rather than guessing; the store port now provides an indexed cross-project lookup, and
+  SQLite schema version 3 adds the supporting non-unique index.
+- The local CLI creates a fresh API token on startup and persists only its hash; it prints the
+  token once for that process. Tokens from earlier starts remain valid until token management is
+  added. The data directory defaults to ignored `.errtraq/`, the server to `127.0.0.1:8787`,
+  and `ERRTRAQ_DATA_DIR` / `ERRTRAQ_PORT` override the local stack. The memory queue and KV are
+  process-local and do not survive a restart.
+- The standalone runner gives ingest and consumer the same envelope limit and runs optional UTC
+  five-field cron jobs. Its deliberately small cron parser supports integers, wildcards, wildcard
+  steps and comma lists; unsupported expressions fail at startup. The real-SDK E2E disables the
+  SDK deduplication integration to test repeated captures and separately replays an envelope.
+  Its temporary data stays under the ignored agent workspace and is removed after the run.

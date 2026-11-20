@@ -21,13 +21,23 @@ export async function migrate(
     .select("version")
     .orderBy("version", "desc")
     .executeTakeFirst();
-  if (Number(latest?.version ?? 0) > 2)
+  if (Number(latest?.version ?? 0) > 3)
     throw new UnsupportedSchemaVersionError(
       `Unsupported schema version ${String(latest?.version)}`,
     );
   const steps = [
     { version: 1, run: createInitialSchema },
     { version: 2, run: upgradeIndexes },
+    {
+      version: 3,
+      run: async (db: SqlDatabase) => {
+        await db.schema
+          .createIndex("issues_global_id")
+          .on("issues")
+          .column("issue_id")
+          .execute();
+      },
+    },
   ];
   for (const step of steps)
     await db.transaction().execute(async (trx) => {
@@ -37,7 +47,7 @@ export async function migrate(
         .orderBy("version", "desc")
         .executeTakeFirst();
       const version = Number(current?.version ?? 0);
-      if (version > 2)
+      if (version > 3)
         throw new UnsupportedSchemaVersionError(
           `Unsupported schema version ${version}`,
         );

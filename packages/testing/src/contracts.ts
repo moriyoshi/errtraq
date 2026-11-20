@@ -837,6 +837,32 @@ export function activeStoreContract(
       await s.projects.putOrg({ ...org, name: "updated" });
       expect((await s.projects.getOrg(org.id))?.name).toBe("updated");
     });
+    it("looks up matching issue IDs across projects", async () => {
+      const s = await factory();
+      const item = event("global", 1, { issueId: "global-issue" as IssueId });
+      await s.recordEvent(
+        { ...occurrence("global", 1), issueId: item.issueId },
+        item,
+      );
+      expect(
+        (await s.issues.getById(item.issueId)).map((issue) => issue.id),
+      ).toEqual([item.issueId]);
+      const another = { ...item, projectId: otherProject };
+      await s.recordEvent(
+        {
+          ...occurrence("global", 1),
+          projectId: otherProject,
+          issueId: item.issueId,
+        },
+        another,
+      );
+      expect(
+        (await s.issues.getById(item.issueId))
+          .map((issue) => issue.projectId)
+          .sort(),
+      ).toEqual([project, otherProject].sort());
+      expect(await s.issues.getById("missing" as IssueId)).toEqual([]);
+    });
     it("atomically creates one initial active project key", async () => {
       const s = await factory();
       const candidates: ProjectKey[] = Array.from({ length: 8 }, (_, i) => ({

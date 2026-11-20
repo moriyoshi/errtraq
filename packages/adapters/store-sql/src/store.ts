@@ -330,6 +330,14 @@ export function createSqlStore({ db, dialect }: SqlStoreOptions): ActiveStore {
         }),
     },
     issues: {
+      getById: async (id) => {
+        const row = await db
+          .selectFrom("issues")
+          .select("data")
+          .where("issue_id", "=", id)
+          .execute();
+        return row.map((item) => decode<Issue>(item.data));
+      },
       get: (projectId, id) => byKey("issues", pk(projectId, id)),
       list: async (q) => {
         if (q.text || ((q.from || q.to) && q.sort !== "lastSeen"))

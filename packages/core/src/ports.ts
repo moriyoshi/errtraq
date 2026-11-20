@@ -70,6 +70,8 @@ export interface ProjectRepo {
 }
 
 export interface IssueRepo {
+  /** Look up issue IDs across projects using an index; callers must apply organization access checks. */
+  getById(issueId: IssueId): Promise<Issue[]>;
   get(projectId: ProjectId, issueId: IssueId): Promise<Issue | null>;
   /** Descending sort key, ascending issue ID tie-break; lastSeen uses [from, to).
    * Range with a non-lastSeen sort throws UnsupportedQueryError unless supported by capability.

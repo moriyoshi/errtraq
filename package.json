@@ -10,13 +10,21 @@
     "typecheck": "tsc -p tsconfig.tests.json --noEmit && tsc -p tsconfig.node-tests.json --noEmit",
     "lint": "biome check . && node scripts/check-layering.mjs",
     "test": "vitest run",
-    "build": "tsc -b"
+    "build": "tsc -b",
+    "e2e": "pnpm build && node scripts/e2e.mjs"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.15",
     "@sentry/node": "^11.15.0",
     "@types/node": "^26.6.6",
     "typescript": "~5.9.3",
-    "vitest": "5.0.5"
+    "vitest": "5.0.5",
+    "@errtraq/store-sql": "workspace:*",
+    "@errtraq/queue-memory": "workspace:*",
+    "@errtraq/blob-fs": "workspace:*",
+    "@errtraq/kv-memory": "workspace:*",
+    "@errtraq/platform-standalone": "workspace:*",
+    "@errtraq/core": "workspace:*",
+    "@errtraq/cli": "workspace:*"
   }
 }

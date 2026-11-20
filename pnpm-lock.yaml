@@ -169,6 +169,27 @@ importers:
       '@biomejs/biome':
         specifier: 2.5.15
         version: 2.5.15
+      '@errtraq/blob-fs':
+        specifier: workspace:*
+        version: link:packages/adapters/blob-fs
+      '@errtraq/cli':
+        specifier: workspace:*
+        version: link:packages/cli
+      '@errtraq/core':
+        specifier: workspace:*
+        version: link:packages/core
+      '@errtraq/kv-memory':
+        specifier: workspace:*
+        version: link:packages/adapters/kv-memory
+      '@errtraq/platform-standalone':
+        specifier: workspace:*
+        version: link:packages/platforms/standalone
+      '@errtraq/queue-memory':
+        specifier: workspace:*
+        version: link:packages/adapters/queue-memory
+      '@errtraq/store-sql':
+        specifier: workspace:*
+        version: link:packages/adapters/store-sql
       '@sentry/node':
         specifier: ^11.15.0
         version: 11.15.0
@@ -239,9 +260,24 @@ importers:
 
   packages/cli:
     dependencies:
+      '@errtraq/blob-fs':
+        specifier: workspace:*
+        version: link:../adapters/blob-fs
       '@errtraq/core':
         specifier: workspace:*
         version: link:../core
+      '@errtraq/kv-memory':
+        specifier: workspace:*
+        version: link:../adapters/kv-memory
+      '@errtraq/platform-standalone':
+        specifier: workspace:*
+        version: link:../platforms/standalone
+      '@errtraq/queue-memory':
+        specifier: workspace:*
+        version: link:../adapters/queue-memory
+      '@errtraq/store-sql':
+        specifier: workspace:*
+        version: link:../adapters/store-sql
 
   packages/core:
     dependencies:
@@ -274,6 +310,13 @@ importers:
       hono:
         specifier: ^4.13.19
         version: 4.13.19
+      zod:
+        specifier: 4.6.7
+        version: 4.6.7
+    devDependencies:
+      '@errtraq/testing':
+        specifier: workspace:*
+        version: link:../../testing
 
   packages/testing:
     dependencies:
