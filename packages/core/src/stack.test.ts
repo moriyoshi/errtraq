@@ -11,6 +11,7 @@ import {
   deriveDeployment,
   deriveTriggers,
   env,
+  escapeTerraformLiteral,
   generationEnv,
   isArtifactRef,
   isEnvRef,
@@ -27,6 +28,8 @@ import {
   type StackConfig,
   selections,
   stackValue,
+  terraformLiteral,
+  terraformVariableType,
   validateStack,
   variable,
 } from "./index.js";
@@ -48,7 +51,13 @@ const selection = (kind: PortKind): AdapterSelection => ({
             deleteStrategy: "explicit",
           }
         : kind === "queue"
-          ? { delivery: "push", maxBytes: 100, delay: true, dlq: false }
+          ? {
+              delivery: "push",
+              maxBytes: 100,
+              delay: true,
+              dlq: false,
+              visibilityTimeout: true,
+            }
           : {},
   },
   config: {},
@@ -215,6 +224,103 @@ function keyedQueue(mode: "shared" | "per-topic"): StackConfig {
   return v;
 }
 describe("infrastructure model", () => {
+  it("checks declared child kinds and detects colliding Terraform module names", () => {
+    const v = stack();
+    v.kv.manifest.childKinds = { wrong: "kv", a_b: "kv", a: "kv" };
+    const wrong = selection("kv");
+    wrong.manifest = v.platform.manifest;
+    const a = selection("kv");
+    a.manifest.childKinds = { b: "kv" };
+    a.children = { b: selection("kv") };
+    v.kv.children = { wrong, a_b: selection("kv"), a };
+    const issues = validateStack(v);
+    expect(
+      issues.some((issue) =>
+        issue.message.includes("Expected kv child adapter, got platform"),
+      ),
+    ).toBe(true);
+    expect(
+      issues.some((issue) =>
+        issue.message.includes("Module name kv_a_b collides"),
+      ),
+    ).toBe(true);
+    delete v.kv.manifest.childKinds.wrong;
+    expect(
+      validateStack(v).some((issue) =>
+        issue.message.includes("Child kind is not declared"),
+      ),
+    ).toBe(true);
+  });
+  it("retains literal Terraform template syntax and identifies the required escaping", () => {
+    const literal = ["prefix $", "{var.value} and %{if condition}"].join("");
+    expect(terraformLiteral(literal)).toEqual({
+      value: literal,
+      needsEscaping: true,
+    });
+    expect(escapeTerraformLiteral(literal)).toBe(
+      "prefix $${var.value} and %%{if condition}",
+    );
+    expect(terraformLiteral("plain")).toEqual({
+      value: "plain",
+      needsEscaping: false,
+    });
+    const v = stack();
+    v.store.infra.inputs = () => ({ literal });
+    expect(validateStack(v)).toEqual([]);
+  });
+  it("requires native JSON objects or arrays for existing JSON outputs", () => {
+    expect(terraformVariableType("json")).toBe("any");
+    expect(terraformVariableType("string[]")).toBe("list(string)");
+    const v = stack();
+    v.blob.existing = { arn: "bucket", policy: { Statement: [] } };
+    expect(validateStack(v)).toEqual([]);
+    v.blob.existing.policy = '{"Statement":[]}';
+    expect(
+      validateStack(v).some((issue) =>
+        issue.message.includes("Expected json output value"),
+      ),
+    ).toBe(true);
+    v.variables = {
+      DOCUMENT: { type: "json", sensitive: false },
+      TEXT: { type: "string", sensitive: false },
+    };
+    v.blob.existing.policy = variable("DOCUMENT");
+    expect(validateStack(v)).toEqual([]);
+    v.blob.existing.policy = variable("TEXT");
+    expect(
+      validateStack(v).some((issue) =>
+        issue.message.includes("Expected json output value"),
+      ),
+    ).toBe(true);
+  });
+  it("reports excessive nesting in config, selections, and computed inputs", () => {
+    let deep: unknown = "leaf";
+    for (let i = 0; i < 50000; i++) deep = [deep];
+    const config = stack();
+    config.store.config = deep;
+    expect(
+      validateStack(config).some((issue) =>
+        issue.message.includes("maximum nesting depth"),
+      ),
+    ).toBe(true);
+    const computed = stack();
+    computed.store.infra.inputs = () => ({ deep: deep as never });
+    expect(
+      validateStack(computed).some((issue) =>
+        issue.message.includes("maximum nesting depth"),
+      ),
+    ).toBe(true);
+    let child = selection("kv");
+    for (let i = 0; i < 5000; i++)
+      child = { ...selection("kv"), children: { nested: child } };
+    const nested = stack();
+    nested.kv.children = { nested: child };
+    expect(
+      validateStack(nested).some((issue) =>
+        issue.message.includes("maximum nesting depth"),
+      ),
+    ).toBe(true);
+  });
   it("passes the derived deployment view to platform inputs", () => {
     const v = keyedQueue("shared");
     v.platform.config = {
@@ -410,6 +516,22 @@ describe("infrastructure model", () => {
       ),
     ).toBe(true);
   });
+  it("requires visibility timing only for queues that support it", () => {
+    const v = stack();
+    v.platform.config = {
+      roles: [...roles],
+      split: [...roles],
+      settings: { consumer: { timeoutSec: 30 } },
+    };
+    v.queue.manifest.capabilities.visibilityTimeout = false;
+    expect(validateStack(v)).toEqual([]);
+    topics(v).settings = { shared: { visibilityTimeoutSec: 180 } };
+    expect(
+      validateStack(v).some((issue) =>
+        issue.message.includes("does not support visibility timeouts"),
+      ),
+    ).toBe(true);
+  });
   it("preserves platform-owned per-function settings accepted by a Workers schema", () => {
     const v = stack();
     for (const selection of selections(v).values())
@@ -515,8 +637,8 @@ describe("infrastructure model", () => {
         notifications: { arn: "c", url: "c" },
       },
       policies: {
-        produce: { events: "{}", archive: "{}", notifications: "{}" },
-        consume: { events: "{}", archive: "{}", notifications: "{}" },
+        produce: { events: {}, archive: {}, notifications: {} },
+        consume: { events: {}, archive: {}, notifications: {} },
       },
     };
     expect(validateStack(v)).toEqual([]);
@@ -535,8 +657,8 @@ describe("infrastructure model", () => {
     ).toBe(true);
     v.queue.existing.queues = completeQueues;
     v.queue.existing.policies = {
-      produce: { archive: "{}", notifications: "{}" },
-      consume: { events: "{}", archive: "{}", notifications: "{}" },
+      produce: { archive: {}, notifications: {} },
+      consume: { events: {}, archive: {}, notifications: {} },
     };
     expect(
       validateStack(v).some(
@@ -746,7 +868,7 @@ describe("infrastructure model", () => {
         x.message.includes("Missing existing output blob.policy"),
       ),
     ).toBe(true);
-    v.blob.existing.policy = "{}";
+    v.blob.existing.policy = {};
     expect(validateStack(v)).toEqual([]);
     v.blob.existing.arn = out("arn");
     expect(validateStack(v).some((x) => x.message.includes("own output"))).toBe(
@@ -755,14 +877,14 @@ describe("infrastructure model", () => {
   });
   it("rejects unknown existing output names", () => {
     const v = stack();
-    v.blob.existing = { arn: "a", policy: "p", typo: "x" };
+    v.blob.existing = { arn: "a", policy: {}, typo: "x" };
     expect(validateStack(v).some((x) => x.path === "blob.existing.typo")).toBe(
       true,
     );
   });
   it("checks existing replacement types and typed variable references", () => {
     const v = stack();
-    v.blob.existing = { arn: 42, policy: "{}" };
+    v.blob.existing = { arn: 42, policy: {} };
     expect(
       validateStack(v).some((issue) =>
         issue.message.includes("Expected string output"),
@@ -1396,6 +1518,7 @@ describe("infrastructure model", () => {
     const v = stack();
     v.archive = selection("archive");
     v.archive.manifest.capabilities = { rowDelete: "copy-on-write" };
+    v.archive.manifest.childKinds = { catalog: "catalog", engine: "engine" };
     v.archive.children = {
       catalog: selection("catalog"),
       engine: selection("engine"),
@@ -1449,6 +1572,7 @@ describe("infrastructure model", () => {
     child.infra.bindings = [
       { name: "CHILD", kind: "env", purpose: "primary", value: out("arn") },
     ];
+    v.kv.manifest.childKinds = { existing: "kv" };
     v.kv.children = { existing: child };
     expect(validateStack(v)).toEqual([]);
   });

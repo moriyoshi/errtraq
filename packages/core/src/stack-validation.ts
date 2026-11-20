@@ -57,6 +57,42 @@ function outputTypeAt(
   }
   return type;
 }
+/** Limit nested user data before recursive Zod or infrastructure-value validation. */
+export const MAX_STACK_DEPTH = 128;
+function excessiveDepth(value: unknown, base: string): string | undefined {
+  const work: { value: unknown; depth: number; path: string }[] = [
+    { value, depth: 0, path: base },
+  ];
+  const visited = new WeakMap<object, number>();
+  while (work.length) {
+    const item = work.pop();
+    if (!item?.value || typeof item.value !== "object") continue;
+    const prototype = Object.getPrototypeOf(item.value);
+    if (
+      !Array.isArray(item.value) &&
+      prototype !== Object.prototype &&
+      prototype !== null
+    )
+      continue;
+    if (item.depth > MAX_STACK_DEPTH) return item.path;
+    if ((visited.get(item.value) ?? -1) >= item.depth) continue;
+    visited.set(item.value, item.depth);
+    for (const key of Object.keys(item.value)) {
+      const descriptor = Object.getOwnPropertyDescriptor(item.value, key);
+      if (descriptor && "value" in descriptor)
+        work.push({
+          value: descriptor.value,
+          depth: item.depth + 1,
+          path: item.path ? `${item.path}.${key}` : key,
+        });
+    }
+  }
+  return undefined;
+}
+/** Terraform's module address derived from a qualified selection path. */
+export function moduleName(path: string): string {
+  return path.replaceAll(".", "_");
+}
 
 interface AccessRequirement {
   selection: string;
@@ -413,6 +449,16 @@ function inspect(input: unknown): {
   resolved?: StackConfig;
   order?: string[];
 } {
+  const tooDeep = excessiveDepth(input, "");
+  if (tooDeep !== undefined)
+    return {
+      issues: [
+        {
+          path: tooDeep,
+          message: `Stack exceeds maximum nesting depth ${MAX_STACK_DEPTH}`,
+        },
+      ],
+    };
   const parsed = rootSchema.safeParse(input);
   if (!parsed.success)
     return {
@@ -437,6 +483,13 @@ function inspect(input: unknown): {
   )
     fail("providers.aws.region", "Region is required for the AWS provider");
   const all = selections(stack);
+  const moduleNames = new Map<string, string>();
+  for (const path of all.keys()) {
+    const name = moduleName(path);
+    const previous = moduleNames.get(name);
+    if (previous) fail(path, `Module name ${name} collides with ${previous}`);
+    else moduleNames.set(name, path);
+  }
   const rawConfigs = new Map<string, unknown>();
   const graph = new Map<string, Set<string>>();
   const moduleGraph = new Map<string, Set<string>>();
@@ -448,6 +501,21 @@ function inspect(input: unknown): {
     rawConfigs.set(path, sel.config);
     if (!path.includes(".") && sel.manifest.kind !== path)
       fail(path, `Expected ${path} adapter`);
+    for (const [key, child] of Object.entries(sel.children ?? {})) {
+      const expected = ownValue(sel.manifest.childKinds, key);
+      if (!expected)
+        fail(
+          `${path}.children.${key}`,
+          "Child kind is not declared by the parent manifest",
+        );
+      else if (expected !== child.manifest.kind)
+        fail(
+          `${path}.children.${key}`,
+          `Expected ${expected} child adapter, got ${child.manifest.kind}`,
+        );
+      if (child.manifest.kind === "platform")
+        fail(`${path}.children.${key}`, "Platform adapters cannot be nested");
+    }
     if (!sel.manifest.runtimes.includes(platform.runtime))
       fail(
         path,
@@ -466,7 +534,15 @@ function inspect(input: unknown): {
       if (!config.success)
         for (const i of config.error.issues)
           fail([path, "config", ...i.path].join("."), i.message);
-      else sel.config = config.data;
+      else {
+        const tooDeep = excessiveDepth(config.data, `${path}.config`);
+        if (tooDeep !== undefined)
+          fail(
+            tooDeep,
+            `Stack exceeds maximum nesting depth ${MAX_STACK_DEPTH}`,
+          );
+        else sel.config = config.data;
+      }
     } catch (error) {
       fail(`${path}.config`, `Config validation failed: ${String(error)}`);
     }
@@ -833,13 +909,9 @@ function inspect(input: unknown): {
     if (isStackRef(value))
       return value.name === "tags"
         ? expected === "json"
-        : expected === "string" || expected === "json";
+        : expected === "string";
     if (isEnvRef(value))
-      return (
-        expected === "string" ||
-        expected === "json" ||
-        expected === "secret-ref"
-      );
+      return expected === "string" || expected === "secret-ref";
     if (isVariableRef(value)) {
       const type = ownValue(stack.variables, value.name)?.type;
       return (
@@ -847,7 +919,7 @@ function inspect(input: unknown): {
         (expected === "string" && type === "string") ||
         (expected === "string[]" && type === "string[]") ||
         (expected === "secret-ref" && type === "string") ||
-        (expected === "json" && (type === "json" || type === "string"))
+        (expected === "json" && type === "json")
       );
     }
     if (expected === "string" || expected === "secret-ref")
@@ -856,10 +928,8 @@ function inspect(input: unknown): {
       return (
         Array.isArray(value) && value.every((item) => typeof item === "string")
       );
-    return (
-      typeof value === "string" ||
-      (!!value && typeof value === "object" && !Array.isArray(value))
-    );
+    // JSON outputs use native object/array values, not encoded JSON strings.
+    return !!value && typeof value === "object";
   }
   let groups: PhysicalFunction[] = [];
   try {
@@ -897,12 +967,23 @@ function inspect(input: unknown): {
     const timeout = deployment.functions.find(
       (fn) => fn.id === trigger.functionId,
     )?.settings.timeoutSec;
-    if (timeout !== undefined && setting.visibilityTimeoutSec === undefined)
+    const supportsVisibility =
+      stack.queue.manifest.capabilities.visibilityTimeout === true;
+    if (!supportsVisibility && setting.visibilityTimeoutSec !== undefined)
+      fail(
+        `queue.infra.topics.settings.${trigger.physical}.visibilityTimeoutSec`,
+        "Queue does not support visibility timeouts",
+      );
+    if (
+      supportsVisibility &&
+      timeout !== undefined &&
+      setting.visibilityTimeoutSec === undefined
+    )
       fail(
         `queue.infra.topics.settings.${trigger.physical}.visibilityTimeoutSec`,
         "Queue visibility is required when the consumer timeout is configured",
       );
-    if (setting.visibilityTimeoutSec !== undefined) {
+    if (supportsVisibility && setting.visibilityTimeoutSec !== undefined) {
       if (timeout === undefined)
         fail(
           `queue.infra.topics.settings.${trigger.physical}.visibilityTimeoutSec`,
@@ -957,6 +1038,11 @@ function inspect(input: unknown): {
         : sel.infra.inputs(sel.config, deployment);
       if (!inputs || typeof inputs !== "object" || Array.isArray(inputs))
         fail(`${path}.infra.inputs`, "Expected an input record");
+      else if (excessiveDepth(inputs, `${path}.infra.inputs`) !== undefined)
+        fail(
+          `${path}.infra.inputs`,
+          `Stack exceeds maximum nesting depth ${MAX_STACK_DEPTH}`,
+        );
       else
         for (const [key, value] of Object.entries(inputs))
           checkValue(

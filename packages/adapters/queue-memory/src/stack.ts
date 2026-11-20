@@ -21,6 +21,7 @@ export const manifest: AdapterManifest = {
     maxBytes: QUEUE_MAX_BYTES,
     delay: true,
     dlq: false,
+    visibilityTimeout: false,
   },
 };
 // TODO(M2b): provide local module generation semantics.

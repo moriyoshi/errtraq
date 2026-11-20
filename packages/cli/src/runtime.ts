@@ -81,6 +81,8 @@ export function resolveRuntimeValue(
       }
       if (type === "string[]" || type === "json") {
         const parsed: unknown = JSON.parse(raw);
+        if (type === "json" && (!parsed || typeof parsed !== "object"))
+          throw new Error();
         if (
           type === "string[]" &&
           (!Array.isArray(parsed) ||

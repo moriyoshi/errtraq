@@ -44,6 +44,30 @@ it("resolves existing outputs, scoped environments and typed Terraform variables
   ).toThrow("Invalid stack variable LIST");
 });
 
+it("parses JSON TF_VAR values into native objects or arrays and rejects scalars", () => {
+  const stack = {
+    ...local,
+    variables: { DOCUMENT: { type: "json" as const, sensitive: false } },
+  };
+  expect(
+    resolveRuntimeValue(variable("DOCUMENT"), "store", stack, {
+      TF_VAR_DOCUMENT: '{"a":[1]}',
+    }),
+  ).toEqual({ a: [1] });
+  expect(
+    resolveRuntimeValue(variable("DOCUMENT"), "store", stack, {
+      TF_VAR_DOCUMENT: "[1,2]",
+    }),
+  ).toEqual([1, 2]);
+  for (const value of ['"text"', "null", "3", "not-json"]) {
+    expect(() =>
+      resolveRuntimeValue(variable("DOCUMENT"), "store", stack, {
+        TF_VAR_DOCUMENT: value,
+      }),
+    ).toThrow("Invalid stack variable DOCUMENT");
+  }
+});
+
 it("resolves only the requested key of an existing output map", () => {
   const stack = {
     ...local,

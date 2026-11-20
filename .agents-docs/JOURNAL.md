@@ -409,3 +409,7 @@ The CLI constructs adapters in dependency order and closes every returned closea
 ## 2026-11-21 — M2a2 A6 deployment view
 
 Platform inputs receive the derived functions, scoped bindings and policies, triggers, HTTP roles, and symbol-tagged build artifact references. References inside the view are qualified to their originating selections. Queue trigger settings are keyed by physical queue; when either the consumer timeout or visibility timeout is configured, both are required and visibility must be at least six times the derived consumer timeout. This is a conservative portable model until a future platform declares that its queue has no visibility-timeout concept. Standalone mounts only the HTTP apps selected by its config.
+
+## 2026-11-21 — M2a2 step 6 validation
+
+Nested selection aliases now need a parent manifest childKinds declaration; moduleName exposes the dot-to-underscore address mapping and validation rejects collisions. Terraform literal helpers preserve input data and identify and escape interpolation and directive introducers. JSON-typed values are native objects or arrays; TF_VAR_ is parsed once at runtime, while M2b must use Terraform type any and validate the same container constraint. Iterative preflight bounds nested stack data before Zod recursion. The six-times queue visibility rule now applies only when the queue manifest declares visibilityTimeout support. Step 6 documentation and executable examples remain open.

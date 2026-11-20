@@ -52,6 +52,21 @@ const manifestSchema = z.strictObject({
   ),
   runtimes: z.array(z.string().min(1)).min(1),
   requires: z.array(z.enum(ENVIRONMENT_FEATURES)),
+  childKinds: z
+    .record(
+      name,
+      z.enum([
+        "platform",
+        "store",
+        "queue",
+        "blob",
+        "archive",
+        "kv",
+        "catalog",
+        "engine",
+      ]),
+    )
+    .optional(),
 });
 export const platformSchema = manifestSchema.extend({
   kind: z.literal("platform"),
@@ -200,6 +215,7 @@ export const requiredCapabilities: Partial<
     maxBytes: z.number().positive(),
     delay: z.boolean(),
     dlq: z.boolean(),
+    visibilityTimeout: z.boolean(),
   },
   archive: {
     rowDelete: z.enum(["deletion-vector", "position-delete", "copy-on-write"]),

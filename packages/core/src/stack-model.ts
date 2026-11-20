@@ -45,6 +45,8 @@ export interface AdapterManifest<C = unknown> {
   capabilities: Record<string, CapabilityValue>;
   runtimes: string[];
   requires: EnvironmentFeature[];
+  /** Expected port kind for each named nested selection. */
+  childKinds?: Record<string, PortKind>;
 }
 export interface PlatformManifest<C = unknown> extends AdapterManifest<C> {
   kind: "platform";
@@ -190,6 +192,27 @@ export const variable = (name: string): VariableRef => ({
   [REF]: "variable",
   name,
 });
+/** Retain a literal verbatim while telling a Terraform renderer whether it needs escaping. */
+export function terraformLiteral(value: string): {
+  value: string;
+  needsEscaping: boolean;
+} {
+  return { value, needsEscaping: /[$%]\{/.test(value) };
+}
+/** Escape Terraform interpolation and directive introducers in a literal string. */
+export function escapeTerraformLiteral(value: string): string {
+  return value.replace(/[$%]\{/g, (match) => `${match[0]}${match}`);
+}
+export type StackVariableType =
+  | "string"
+  | "number"
+  | "bool"
+  | "string[]"
+  | "json";
+/** JSON uses Terraform's `any` constraint plus an object/array validation in M2b. */
+export function terraformVariableType(type: StackVariableType): string {
+  return type === "json" ? "any" : type === "string[]" ? "list(string)" : type;
+}
 export type InfraValue =
   | string
   | number
@@ -350,7 +373,7 @@ export interface StackConfig {
   variables?: Record<
     string,
     {
-      type: "string" | "number" | "bool" | "string[]" | "json";
+      type: StackVariableType;
       sensitive: boolean;
     }
   >;

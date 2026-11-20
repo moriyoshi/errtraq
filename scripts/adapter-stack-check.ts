@@ -70,7 +70,13 @@ export async function assertStackHelper(
               deleteStrategy: "explicit",
             }
           : kind === "queue"
-            ? { delivery: "pull", maxBytes: 100, delay: true, dlq: false }
+            ? {
+                delivery: "pull",
+                maxBytes: 100,
+                delay: true,
+                dlq: false,
+                visibilityTimeout: false,
+              }
             : {},
     },
     config: selection.config,
