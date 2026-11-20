@@ -306,3 +306,24 @@ Two spikes ran against real AWS; full reports are `.agents-docs/DUCKDB_LAMBDA_SP
   session reading its own commits unless `iceberg_use_metadata_log = false`.
 - Athena was not tested (it needs an account-level integration the spike was told not to
   enable) and desk research says it cannot read v3, so it is dropped as a query engine.
+
+## 2026-11-21 — M1g closing review
+
+- Typecheck now maps every workspace export, including adapter and platform subpaths, to source;
+  lint checks both the development export and matching source path. A fresh HEAD export with
+  the changes overlaid passed install, typecheck, lint and tests before any build.
+- Staged envelope keys now retain receipt time and the message idempotency key. Startup requeues
+  staged blobs, while shutdown stops acceptance and waits up to five seconds for queues that expose
+  idle observation (required by this standalone runner);
+  lingering connections are closed and a second signal terminates immediately. Legacy staged keys
+  recover with a deterministic fallback ID and a new receipt time if no original time is stored.
+- Local tokens live in a mode-0600 file in the ignored data directory, with only hashes in the
+  store; restarts reuse the token and `token rotate` revokes it. Tokens issued before the file
+  existed cannot be enumerated or revoked through the current port. The local rate limit is 10,000
+  event items per minute, configurable or disabled in the standalone configuration.
+- API responses expose the available Sentry fields and event interfaces. Unsupported result-set
+  filters fail explicitly; pagination remains forward-only and non-snapshot. Request failures log
+  a correlation ID and sanitized error details; update conflicts retry three times before 409.
+- The opt-in SDK check now uses the SDK's default transport and integrations via a loopback relay.
+  It verifies gzip replay, sessions, overflow, paging, authentication, token rotation, persistence,
+  accepted-burst drain, staged-blob recovery and bounded shutdown without committing captured data.

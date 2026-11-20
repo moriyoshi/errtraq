@@ -48,18 +48,22 @@ pnpm e2e
 
 The script builds the workspace, starts the local CLI on a free loopback port using a temporary
 ignored data directory, sends real `@sentry/node` envelopes, checks grouping, API retrieval,
-regression and duplicate replay, and shuts the server down. It does not require a cloud account.
+regression, gzip replay, overflow, paging, token rotation, restart recovery and shutdown. It uses
+the SDK default transport and integrations and does not require a cloud account.
 For manual use:
 
 ```sh
 pnpm build
 pnpm exec errtraq validate --stack stacks/local.ts
 pnpm exec errtraq dev --stack stacks/local.ts
+pnpm exec errtraq token rotate --stack stacks/local.ts
 ```
 
 Node versions before 22.18 need `NODE_OPTIONS=--experimental-strip-types` to load the TypeScript
 stack file. Local data defaults to the ignored `.errtraq/` directory; set `ERRTRAQ_DATA_DIR` and
-`ERRTRAQ_PORT` to override the data directory and port. The API token is printed at startup.
+`ERRTRAQ_PORT` to override the data directory and port. The API token is printed at startup and
+persisted in `api-token` under the local data directory with mode 0600. The local stack permits
+10,000 event items per minute; the standalone configuration can set or disable this limit.
 
 ## 4. Infra generation (when you touch `infra-gen`, an `infra` descriptor, or `infra/modules`)
 

@@ -1,0 +1,34 @@
+{
+  "id": "event",
+  "eventID": "event",
+  "groupID": "issue",
+  "projectID": "1",
+  "title": "TypeError: sample",
+  "message": "sample message",
+  "culprit": "app.js",
+  "metadata": {},
+  "type": "TypeError",
+  "platform": "javascript",
+  "dateCreated": "2024-01-01T00:00:00.000Z",
+  "dateReceived": "2024-01-01T00:00:00.000Z",
+  "entries": [
+    { "type": "exception", "data": { "values": [] } },
+    {
+      "type": "message",
+      "data": { "message": "sample message", "formatted": "sample message" }
+    },
+    { "type": "breadcrumbs", "data": { "values": [] } },
+    { "type": "request", "data": { "url": "https://example.invalid/" } }
+  ],
+  "tags": [{ "key": "region", "value": "test" }],
+  "user": {
+    "id": "1",
+    "email": "sample@example.invalid",
+    "username": "sample",
+    "ip_address": "192.0.2.1"
+  },
+  "release": "v1",
+  "environment": "test",
+  "contexts": {},
+  "sdk": { "name": "sdk" }
+}

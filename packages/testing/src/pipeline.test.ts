@@ -16,6 +16,7 @@ import {
   normalizeEvent,
   parseEnvelope,
   parseEventPayload,
+  recoverStagedEnvelopes,
   WebCryptoIdGen,
 } from "@errtraq/core";
 import { createIngestApp } from "@errtraq/http";
@@ -33,7 +34,7 @@ const body = (
 const id = (value: number) => value.toString(16).padStart(32, "0");
 async function setup(
   options: {
-    rateLimit?: number;
+    rateLimit?: number | null;
     maxBytes?: number;
     overflowBytes?: number;
   } = {},
@@ -790,5 +791,64 @@ describe("in-process ingest pipeline", () => {
         ).toEqual([1, 2]),
       );
     });
+  });
+  it("recovers staged envelopes into a new queue without duplicating events", async () => {
+    const c = await setup();
+    expect((await c.send(body(id(77), "recover"))).status).toBe(200);
+    const replacement = new MemoryQueue(c.clock);
+    expect(await recoverStagedEnvelopes(c.blobs, replacement.producer)).toBe(1);
+    await withConsumer(replacement, c.consumer.handle, async () => {
+      await vi.waitFor(async () =>
+        expect(
+          await c.store.events.get(c.project.project.id, id(77) as EventId),
+        ).not.toBeNull(),
+      );
+    });
+    expect(await recoverStagedEnvelopes(c.blobs, replacement.producer)).toBe(0);
+    const issue = (
+      await c.store.issues.list({
+        projectId: c.project.project.id,
+        sort: "count",
+      })
+    ).items[0];
+    expect(issue?.count).toBe(1);
+  });
+  it("counts each event item in the configured limit and permits disabling it", async () => {
+    const c = await setup({ rateLimit: 2 });
+    const payload = `{}\n{"type":"event"}\n{"message":"one"}\n{"type":"event"}\n{"message":"two"}\n`;
+    expect((await c.send(payload)).status).toBe(200);
+    expect((await c.send(body(id(88), "third"))).status).toBe(429);
+    const unlimited = await setup({ rateLimit: null });
+    for (let i = 0; i < 65; i++)
+      expect((await unlimited.send(body(id(i), "x"))).status).toBe(200);
+  });
+  it("logs unexpected ingest errors with correlation without credentials", async () => {
+    const c = await setup();
+    vi.spyOn(c.blobs, "put").mockRejectedValueOnce(
+      new Error(`storage failed for ${c.project.key.publicKey}`),
+    );
+    const app = createIngestApp(c.service, c.logger);
+    const result = await app.request(
+      `/api/${c.project.project.id}/envelope?sentry_key=${c.project.key.publicKey}`,
+      { method: "POST", body: body(id(99), "private") },
+    );
+    expect(result.status).toBe(500);
+    const json = (await result.json()) as { requestId: string };
+    expect(c.logger.error).toHaveBeenCalledWith(
+      "HTTP request failed",
+      expect.objectContaining({
+        requestId: json.requestId,
+        message: "storage failed for [redacted]",
+        stack: expect.any(String),
+      }),
+    );
+  });
+  it("logs session-only envelopes at debug level", async () => {
+    const c = await setup();
+    expect((await c.send('{}\n{"type":"session"}\n{}\n')).status).toBe(200);
+    expect(c.logger.debug).toHaveBeenCalledWith(
+      "Dropped unsupported envelope items",
+      { types: { session: 1 } },
+    );
   });
 });

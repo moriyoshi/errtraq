@@ -8,4 +8,5 @@ export * from "./ids.js";
 export * from "./ingest.js";
 export * from "./normalize.js";
 export * from "./ports.js";
+export * from "./recover-ingest.js";
 export * from "./stack.js";

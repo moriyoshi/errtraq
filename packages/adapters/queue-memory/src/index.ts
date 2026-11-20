@@ -46,6 +46,9 @@ export class MemoryQueue implements Queue {
   get inFlight(): readonly Delivery[] {
     return structuredClone([...this.running.values()]);
   }
+  async idle(): Promise<boolean> {
+    return this.pending.length === 0 && this.running.size === 0;
+  }
   producer: Queue["producer"] = {
     send: async (topic, messages, options) => {
       const delay = options?.delaySec ?? 0;

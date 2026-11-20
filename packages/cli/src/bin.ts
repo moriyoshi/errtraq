@@ -5,16 +5,14 @@ import { pathToFileURL } from "node:url";
 import {
   type ActiveStore,
   type AdapterSelection,
-  type ApiTokenId,
   type BlobStore,
   bootstrapProject,
-  generateApiToken,
-  hashApiToken,
   type KV,
   type Queue,
   resolveStack,
   WebCryptoIdGen,
 } from "@errtraq/core";
+import { devToken } from "./token.js";
 
 async function load(selection: AdapterSelection): Promise<unknown> {
   const module: unknown = await import(selection.runtimeModule);
@@ -28,15 +26,19 @@ async function load(selection: AdapterSelection): Promise<unknown> {
   return module.create(selection.config, selection.existing ?? {});
 }
 export async function main(args: string[]): Promise<void> {
-  const [command, ...rest] = args;
+  const [command, ...initial] = args;
+  const rotate = command === "token" && initial[0] === "rotate";
+  const rest = rotate ? initial.slice(1) : initial;
   const at = rest.indexOf("--stack");
   if (
-    !["dev", "validate"].includes(command ?? "") ||
+    (!["dev", "validate"].includes(command ?? "") && !rotate) ||
     at < 0 ||
     !rest[at + 1] ||
     rest.length !== 2
   )
-    throw new Error("Usage: errtraq <dev|validate> --stack <file>");
+    throw new Error(
+      "Usage: errtraq <dev|validate|token rotate> --stack <file>",
+    );
   const file = resolve(rest[at + 1]);
   const imported: unknown = await import(pathToFileURL(file).href);
   if (!imported || typeof imported !== "object" || !("default" in imported))
@@ -65,13 +67,19 @@ export async function main(args: string[]): Promise<void> {
       orgSlug: "default",
       projectSlug: "default",
     });
-    const token = generateApiToken();
-    await store.projects.putToken({
-      id: ids.next() as ApiTokenId,
-      orgId: project.org.id,
-      tokenHash: await hashApiToken(token),
-      scopes: ["event:read", "event:write"],
-    });
+    if (typeof storeConfig.path !== "string" || storeConfig.path === ":memory:")
+      throw new Error("Local token storage requires a file-backed store");
+    const token = await devToken(
+      store,
+      ids,
+      project.org.id,
+      dirname(storeConfig.path),
+      rotate,
+    );
+    if (rotate) {
+      console.log(`API token: ${token}`);
+      return;
+    }
     const platformModule: unknown = await import(stack.platform.runtimeModule);
     if (
       !platformModule ||
@@ -93,11 +101,14 @@ export async function main(args: string[]): Promise<void> {
       }>;
     };
     const server = await platform.start();
+    const urlHost = server.host.includes(":")
+      ? `[${server.host}]`
+      : server.host;
     console.log(
-      `DSN: http://${project.key.publicKey}@${server.host}:${server.port}/${project.project.id}`,
+      `DSN: http://${project.key.publicKey}@${urlHost}:${server.port}/${project.project.id}`,
     );
     console.log(`API token: ${token}`);
-    console.log(`Listening: http://${server.host}:${server.port}`);
+    console.log(`Listening: http://${urlHost}:${server.port}`);
     await new Promise<void>((done) => {
       let stopping = false;
       const stop = () => {

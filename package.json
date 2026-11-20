@@ -8,7 +8,7 @@
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.tests.json --noEmit && tsc -p tsconfig.node-tests.json --noEmit",
-    "lint": "biome check . && node scripts/check-layering.mjs",
+    "lint": "biome check . && node scripts/check-layering.mjs && node scripts/check-exports.mjs",
     "test": "vitest run",
     "build": "tsc -b",
     "e2e": "pnpm build && node scripts/e2e.mjs"

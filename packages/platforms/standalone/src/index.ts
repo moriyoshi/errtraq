@@ -9,6 +9,7 @@ import {
   type KV,
   type Logger,
   type Queue,
+  recoverStagedEnvelopes,
   toTimestamp,
 } from "@errtraq/core";
 import { createApiApp, createIngestApp } from "@errtraq/http";
@@ -82,7 +83,7 @@ export function cronMatches(schedule: string, date: Date): boolean {
           (/^\d+$/.test(part) && Number(part) === values[i]),
       ),
   );
-  if (fields[2] !== "*" && fields[4] !== "*")
+  if (!fields[2]?.startsWith("*") && !fields[4]?.startsWith("*"))
     return !!(
       matches[0] &&
       matches[1] &&
@@ -103,6 +104,10 @@ export function create(config: StandaloneConfig, bindings: Bindings) {
         cronMatches(job.schedule, new Date());
       if (bindings.jobs?.length && !bindings.cronHandler)
         throw new Error("Cron handler required");
+      if (!bindings.queue.idle)
+        throw new Error(
+          "Standalone requires queue idle observation for graceful shutdown",
+        );
       const limit = bindings.maxEnvelopeBytes ?? 1024 * 1024;
       const ingest = new IngestService({
         store: bindings.store,
@@ -112,6 +117,8 @@ export function create(config: StandaloneConfig, bindings: Bindings) {
         clock,
         logger,
         maxBytes: limit,
+        rateLimit: cfg.rateLimit,
+        rateWindowSec: cfg.rateWindowSec,
       });
       const consumer = new ConsumerService({
         store: bindings.store,
@@ -120,11 +127,21 @@ export function create(config: StandaloneConfig, bindings: Bindings) {
         logger,
         maxEnvelopeBytes: limit,
       });
-      const app = new Hono();
-      app.route("/", createIngestApp(ingest));
+      await recoverStagedEnvelopes(
+        bindings.blobs,
+        bindings.queue.producer,
+        logger,
+      );
+      const app = new Hono({ strict: false });
+      app.route("/", createIngestApp(ingest, logger));
       app.route(
         "/",
-        createApiApp({ store: bindings.store, clock, blobs: bindings.blobs }),
+        createApiApp({
+          store: bindings.store,
+          clock,
+          blobs: bindings.blobs,
+          logger,
+        }),
       );
       const server = serve({
         fetch: app.fetch,
@@ -156,17 +173,41 @@ export function create(config: StandaloneConfig, bindings: Bindings) {
         throw new Error("Unexpected server address");
       let closed = false;
       return {
-        host: cfg.host,
+        host: address.address,
         port: address.port,
         async close() {
           if (closed) return;
           closed = true;
           clearInterval(timer);
-          abort.abort();
+          const deadline = Date.now() + 5000;
+          const force = setTimeout(() => {
+            if ("closeAllConnections" in server) server.closeAllConnections();
+          }, 5000);
           await new Promise<void>((resolve, reject) =>
             server.close((error) => (error ? reject(error) : resolve())),
           );
-          await running;
+          clearTimeout(force);
+          while (
+            bindings.queue.idle &&
+            !(await bindings.queue.idle()) &&
+            Date.now() < deadline
+          )
+            await new Promise<void>((resolve) => setTimeout(resolve, 10));
+          abort.abort();
+          let drainTimer: ReturnType<typeof setTimeout> | undefined;
+          try {
+            await Promise.race([
+              running,
+              new Promise<void>((resolve) => {
+                drainTimer = setTimeout(
+                  resolve,
+                  Math.max(0, deadline - Date.now()),
+                );
+              }),
+            ]);
+          } finally {
+            if (drainTimer) clearTimeout(drainTimer);
+          }
         },
       };
     },

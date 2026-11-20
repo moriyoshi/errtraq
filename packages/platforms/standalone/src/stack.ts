@@ -7,6 +7,8 @@ import { z } from "zod";
 export const configSchema = z.strictObject({
   host: z.string().min(1).default("127.0.0.1"),
   port: z.number().int().min(0).max(65535).default(8787),
+  rateLimit: z.number().int().positive().nullable().default(60),
+  rateWindowSec: z.number().int().positive().default(60),
 });
 export type StandaloneConfig = z.input<typeof configSchema>;
 export const manifest: PlatformManifest = {

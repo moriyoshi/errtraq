@@ -1,5 +1,7 @@
+import type { Logger } from "@errtraq/core";
 import { IngestError, type IngestService, parseDsnKey } from "@errtraq/core";
 import { Hono } from "hono";
+import { logUnexpected } from "./errors.js";
 
 async function readBounded(
   stream: ReadableStream<Uint8Array> | null,
@@ -134,8 +136,15 @@ async function headerAndBody(
   }
 }
 /** Hono ingest app accepting Sentry envelope and legacy store endpoints. */
-export function createIngestApp(service: IngestService): Hono {
+export function createIngestApp(
+  service: IngestService,
+  logger?: Pick<Logger, "error">,
+): Hono {
   const app = new Hono();
+  app.onError((error, c) => {
+    const requestId = logUnexpected(logger, error, c.req.raw);
+    return c.json({ detail: "Internal server error", requestId }, 500);
+  });
   app.use("*", async (c, next) => {
     await next();
     c.header("Access-Control-Allow-Origin", "*");
@@ -194,8 +203,12 @@ export function createIngestApp(service: IngestService): Hono {
         if (failure.status === 429)
           c.header("X-Sentry-Rate-Limits", `${failure.retryAfter}::project`);
       }
+      const requestId =
+        failure.status === 500
+          ? logUnexpected(logger, error, c.req.raw)
+          : undefined;
       return c.json(
-        { detail: failure.message },
+        { detail: failure.message, ...(requestId ? { requestId } : {}) },
         failure.status as 400 | 401 | 403 | 413 | 415 | 429 | 500 | 503,
       );
     }

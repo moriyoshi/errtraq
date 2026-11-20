@@ -27,7 +27,7 @@ export interface IngestOptions {
   kv: KV;
   clock: Clock;
   maxBytes?: number;
-  rateLimit?: number;
+  rateLimit?: number | null;
   rateWindowSec?: number;
   logger?: Logger;
 }
@@ -55,17 +55,17 @@ export class IngestError extends Error {
 /** Authenticate and stage a bounded raw envelope before publishing its claim check. Error events use a fixed-window rate limit; unsupported-only envelopes do not consume it. */
 export class IngestService {
   readonly maxBytes: number;
-  private readonly rateLimit: number;
+  private readonly rateLimit: number | null;
   private readonly rateWindowSec: number;
   constructor(private readonly options: IngestOptions) {
     this.maxBytes = options.maxBytes ?? 1024 * 1024;
-    this.rateLimit = options.rateLimit ?? 60;
+    this.rateLimit = options.rateLimit === undefined ? 60 : options.rateLimit;
     this.rateWindowSec = options.rateWindowSec ?? 60;
     if (
       !Number.isSafeInteger(this.maxBytes) ||
       this.maxBytes < 1 ||
-      !Number.isSafeInteger(this.rateLimit) ||
-      this.rateLimit < 1 ||
+      (this.rateLimit !== null &&
+        (!Number.isSafeInteger(this.rateLimit) || this.rateLimit < 1)) ||
       !Number.isSafeInteger(this.rateWindowSec) ||
       this.rateWindowSec < 1
     )
@@ -113,37 +113,47 @@ export class IngestService {
       throw error;
     }
     id ??= crypto.randomUUID().replaceAll("-", "") as EventId;
-    if (Object.keys(discarded).length)
+    if (Object.keys(discarded).length) {
+      const sessionOnly =
+        !eventCount &&
+        Object.keys(discarded).every(
+          (type) => type === "session" || type === "sessions",
+        );
       if (this.options.logger)
-        this.options.logger.info("Dropped unsupported envelope items", {
-          types: discarded,
-        });
-      else
+        this.options.logger[sessionOnly ? "debug" : "info"](
+          "Dropped unsupported envelope items",
+          { types: discarded },
+        );
+      else if (!sessionOnly)
         console.info("Dropped unsupported envelope items", {
           types: discarded,
         });
+    }
     if (!eventCount) return { id };
-    const bucket = Math.floor(
-      Date.parse(receivedAt) / (this.rateWindowSec * 1000),
-    );
-    const count = await this.options.kv.increment(
-      `ingest-rate:${key.id}:${bucket}`,
-      1,
-      { ttlSec: this.rateWindowSec * 2 },
-    );
-    if (count > this.rateLimit) {
-      const seconds = Math.max(
-        1,
-        Math.ceil(
-          ((bucket + 1) * this.rateWindowSec * 1000 - Date.parse(receivedAt)) /
-            1000,
-        ),
+    if (this.rateLimit !== null) {
+      const bucket = Math.floor(
+        Date.parse(receivedAt) / (this.rateWindowSec * 1000),
       );
-      throw new IngestError(429, "Rate limit exceeded", seconds);
+      const count = await this.options.kv.increment(
+        `ingest-rate:${key.id}:${bucket}`,
+        eventCount,
+        { ttlSec: this.rateWindowSec * 2 },
+      );
+      if (count > this.rateLimit) {
+        const seconds = Math.max(
+          1,
+          Math.ceil(
+            ((bucket + 1) * this.rateWindowSec * 1000 -
+              Date.parse(receivedAt)) /
+              1000,
+          ),
+        );
+        throw new IngestError(429, "Rate limit exceeded", seconds);
+      }
     }
 
     if (request.legacy) raw = wrapStorePayload(raw, id);
-    const blobKey = `envelopes/${request.projectId}/${crypto.randomUUID()}`;
+    const blobKey = `envelopes/${request.projectId}/${encodeURIComponent(receivedAt)}/${id}/${crypto.randomUUID()}`;
     await this.options.blobs.put(blobKey, raw, {
       size: raw.byteLength,
       contentType: "application/x-sentry-envelope",

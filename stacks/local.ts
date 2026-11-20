@@ -13,7 +13,7 @@ const port =
     : Number(process.env.ERRTRAQ_PORT);
 export default defineStack({
   name: "local",
-  platform: standalone({ port }),
+  platform: standalone({ port, rateLimit: 10000 }),
   store: sqlite({ path: join(data, "events.sqlite") }),
   queue: memoryQueue(),
   blob: fsBlob({ root: join(data, "blobs") }),

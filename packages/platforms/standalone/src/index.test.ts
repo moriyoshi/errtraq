@@ -29,6 +29,16 @@ describe("standalone platform", () => {
     await expect(platform.start()).rejects.toThrow(
       "Unsupported cron expression",
     );
+    const missingIdle = create(
+      { port: 0 },
+      {
+        store: new MemoryActiveStore(),
+        blobs: new MemoryBlobStore(),
+        kv: new MemoryKV(),
+        queue: new MemoryQueue(),
+      },
+    );
+    await expect(missingIdle.start()).rejects.toThrow("queue idle observation");
   });
   it("matches the supported cron expressions in UTC", () => {
     const at = new Date("2024-01-01T12:10:00Z");
@@ -36,6 +46,8 @@ describe("standalone platform", () => {
     expect(cronMatches("11 12 * * 1", at)).toBe(false);
     expect(cronMatches("10 12 */2 * *", at)).toBe(true);
     expect(cronMatches("10 12 2 * 1", at)).toBe(true);
+    expect(cronMatches("10 12 */2 * 2", at)).toBe(false);
+    expect(cronMatches("10 12 2 * */2", at)).toBe(false);
     expect(() => cronMatches("invalid", at)).toThrow();
   });
 });

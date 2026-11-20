@@ -6,10 +6,11 @@ import {
   type IssueId,
   type ProjectId,
   toTimestamp,
+  VersionConflictError,
   WebCryptoIdGen,
 } from "@errtraq/core";
 import { createApiApp } from "@errtraq/http";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { MemoryActiveStore } from "./memory-active.js";
 import { MemoryBlobStore, MemoryKV } from "./memory-other.js";
 import { DeterministicIdGen, FakeClock } from "./shared.js";
@@ -38,7 +39,8 @@ async function setup() {
     scopes: ["event:read"],
   });
   const blobs = new MemoryBlobStore();
-  const app = createApiApp({ store, clock, blobs });
+  const logger = { error: vi.fn() };
+  const app = createApiApp({ store, clock, blobs, logger });
   const auth = { authorization: "Bearer secret" };
   async function seed(n: number) {
     const eventId = `event-${n}` as EventId;
@@ -70,7 +72,7 @@ async function setup() {
       },
     );
   }
-  return { store, clock, boot, app, auth, seed, blobs };
+  return { store, clock, boot, app, auth, seed, blobs, logger };
 }
 describe("minimal API", () => {
   it("checks hashed bearer tokens, scopes and organization ownership", async () => {
@@ -247,5 +249,83 @@ describe("minimal API", () => {
         })
       ).status,
     ).toBe(404);
+  });
+  it("logs internal syntax and range failures with a request ID and retries version conflicts", async () => {
+    const c = await setup();
+    await c.seed(1);
+    vi.spyOn(c.store.issues, "getById").mockRejectedValueOnce(
+      new SyntaxError("corrupt storage"),
+    );
+    const failure = await c.app.request("/api/0/issues/issue-1/", {
+      headers: c.auth,
+    });
+    expect(failure.status).toBe(500);
+    const body = (await failure.json()) as {
+      detail: string;
+      requestId: string;
+    };
+    expect(body.detail).toBe("Internal server error");
+    expect(body.requestId).toBeTruthy();
+    expect(c.logger.error).toHaveBeenCalledWith(
+      "HTTP request failed",
+      expect.objectContaining({
+        requestId: body.requestId,
+        message: "corrupt storage",
+        stack: expect.any(String),
+      }),
+    );
+    vi.spyOn(c.store.issues, "getById").mockRejectedValueOnce(
+      new RangeError("internal range"),
+    );
+    expect(
+      (await c.app.request("/api/0/issues/issue-1/", { headers: c.auth }))
+        .status,
+    ).toBe(500);
+    const update = vi
+      .spyOn(c.store.issues, "update")
+      .mockRejectedValue(new VersionConflictError());
+    const result = await c.app.request("/api/0/issues/issue-1/", {
+      method: "PUT",
+      headers: { ...c.auth, "content-type": "application/json" },
+      body: '{"status":"resolved"}',
+    });
+    expect(result.status).toBe(409);
+    expect(update).toHaveBeenCalledTimes(3);
+  });
+  it("accepts Sentry list query options and organization route", async () => {
+    const c = await setup();
+    await c.seed(1);
+    const path = `/api/0/organizations/org/issues?project=${c.boot.project.id}&query=is:unresolved&per_page=1&statsPeriod=24h&cursor=`;
+    expect((await c.app.request(path, { headers: c.auth })).status).toBe(200);
+    expect(
+      (
+        await c.app.request("/api/0/organizations/org/issues", {
+          headers: c.auth,
+        })
+      ).status,
+    ).toBe(400);
+    expect(
+      (
+        await c.app.request(
+          `/api/0/organizations/org/issues?project=${c.boot.project.id}&project=${c.boot.project.id}`,
+          { headers: c.auth },
+        )
+      ).status,
+    ).toBe(400);
+    expect(
+      (
+        await c.app.request("/api/0/projects/org/project/issues?query=hello", {
+          headers: c.auth,
+        })
+      ).status,
+    ).toBe(400);
+    expect(
+      (
+        await c.app.request(
+          "/api/0/projects/org/project/issues?environment=prod",
+          { headers: c.auth },
+        )
+      ).status,
+    ).toBe(400);
   });
 });

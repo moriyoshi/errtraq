@@ -258,6 +258,8 @@ export interface QueueCapabilities {
 
 /** Sources must match capabilities.delivery: push, pull, or both. */
 export interface Queue<E = unknown, R = unknown> {
+  /** Optional local observation for bounded graceful shutdown; true only when no messages are pending or in flight. */
+  idle?(): Promise<boolean>;
   producer: QueueProducer;
   capabilities: QueueCapabilities;
   pull?: PullSource;
