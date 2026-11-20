@@ -1,0 +1,28 @@
+{
+  "name": "@errtraq/kv-dynamodb",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "development": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./stack": {
+      "development": "./src/stack.ts",
+      "types": "./dist/stack.d.ts",
+      "import": "./dist/stack.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=22.13"
+  },
+  "dependencies": {
+    "@errtraq/core": "workspace:*",
+    "zod": "4.6.7"
+  }
+}

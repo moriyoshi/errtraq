@@ -29,6 +29,26 @@
       ],
       "@errtraq/platform-standalone/stack": [
         "packages/platforms/standalone/src/stack.ts"
+      ],
+      "@errtraq/store-dynamodb": [
+        "packages/adapters/store-dynamodb/src/index.ts"
+      ],
+      "@errtraq/store-dynamodb/stack": [
+        "packages/adapters/store-dynamodb/src/stack.ts"
+      ],
+      "@errtraq/queue-sqs": ["packages/adapters/queue-sqs/src/index.ts"],
+      "@errtraq/queue-sqs/stack": ["packages/adapters/queue-sqs/src/stack.ts"],
+      "@errtraq/blob-s3": ["packages/adapters/blob-s3/src/index.ts"],
+      "@errtraq/blob-s3/stack": ["packages/adapters/blob-s3/src/stack.ts"],
+      "@errtraq/kv-dynamodb": ["packages/adapters/kv-dynamodb/src/index.ts"],
+      "@errtraq/kv-dynamodb/stack": [
+        "packages/adapters/kv-dynamodb/src/stack.ts"
+      ],
+      "@errtraq/platform-aws-lambda": [
+        "packages/platforms/aws-lambda/src/index.ts"
+      ],
+      "@errtraq/platform-aws-lambda/stack": [
+        "packages/platforms/aws-lambda/src/stack.ts"
       ]
     }
   },

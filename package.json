@@ -25,6 +25,11 @@
     "@errtraq/kv-memory": "workspace:*",
     "@errtraq/platform-standalone": "workspace:*",
     "@errtraq/core": "workspace:*",
-    "@errtraq/cli": "workspace:*"
+    "@errtraq/cli": "workspace:*",
+    "@errtraq/store-dynamodb": "workspace:*",
+    "@errtraq/queue-sqs": "workspace:*",
+    "@errtraq/blob-s3": "workspace:*",
+    "@errtraq/kv-dynamodb": "workspace:*",
+    "@errtraq/platform-aws-lambda": "workspace:*"
   }
 }

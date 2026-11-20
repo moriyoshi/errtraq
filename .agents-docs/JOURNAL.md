@@ -417,3 +417,7 @@ Nested selection aliases now need a parent manifest childKinds declaration; modu
 ## 2026-11-21 — M2a2 reference and handoff
 
 INFRA_MODEL.md now describes the implemented model, including the Zod freeze exception, native JSON containers, Terraform literal escaping, capability-dependent queue visibility and the unverified contents of provider policies. Shared and per-topic illustrative AWS stacks compile and validate in the core test suite; the Cloudflare sketch is types only. M2b / M2c follow-ups in TODO.md capture rendering, JSON variable validation, secret-read policies, artifact locations and runtime integration. No generator or cloud adapter was implemented in M2a2.
+
+## 2026-11-21 — M2b AWS descriptor contracts
+
+The AWS descriptors define the HCL module contracts before the modules exist. Both DynamoDB selections use the same module with distinct store and KV purposes. The store promises explicit deletion rather than relying on asynchronous DynamoDB TTL, and does not claim unsupported search capabilities. S3 uses one bucket with a separate `archive-staging/` purpose and policy outputs. SQS uses a 1 MiB encoded-body limit (the M3 producer must account for its envelope), default 180-second visibility and 30-second consumer timeout, and standard queue batch sizes up to 10. Per-topic mode declares three queues, but only topics enabled by core get triggers. Lambda supplies ephemeral writable storage, not a long-lived process or shared in-process state. Actual permissions, cloud behavior and runtime implementations remain M2b / M3 work.

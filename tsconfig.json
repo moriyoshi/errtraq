@@ -30,6 +30,21 @@
     },
     {
       "path": "./packages/platforms/standalone"
+    },
+    {
+      "path": "./packages/adapters/store-dynamodb"
+    },
+    {
+      "path": "./packages/adapters/queue-sqs"
+    },
+    {
+      "path": "./packages/adapters/blob-s3"
+    },
+    {
+      "path": "./packages/adapters/kv-dynamodb"
+    },
+    {
+      "path": "./packages/platforms/aws-lambda"
     }
   ]
 }
