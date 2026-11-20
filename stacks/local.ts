@@ -10,6 +10,7 @@ export default defineStack({
   providers: {},
   platform: standalone({
     port: env("ERRTRAQ_PORT", { defaultValue: "8787", valueType: "number" }),
+    tokenDirectory: env("ERRTRAQ_DATA_DIR", { defaultValue: ".errtraq" }),
     rateLimit: 10000,
     roles: ["ingest", "api", "consumer", "cron"],
     split: [],

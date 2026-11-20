@@ -401,3 +401,7 @@ Module outputs can be nested maps, and capability policies are selected by both 
 ## 2026-11-21 — M2a2 step 5 secret and graph groundwork
 
 Secret bindings carry non-sensitive secret-store identifiers; only explicitly declared sensitive module inputs may contain sensitive variables. Scoped secret-read requirements follow the functions receiving each binding, while SecretSource remains an interface for later platform implementations. Module dependency context is explicit, and the platform depends on derived adapter values and is constructed last. The existing cron table currently contains M4 archive jobs, so those triggers are derived when the archive and cron role are selected; standalone without archive continues without scheduled jobs. The deployment view and lifecycle migration remain open for the rest of step 5.
+
+## 2026-11-21 — M2a2 A12 runtime construction
+
+The CLI constructs adapters in dependency order and closes every returned closeable in reverse order, including after construction failures; the standalone platform closes its server before its dependencies. Queue-only runtime context contains producer routes and event-source to physical-queue to topic mappings. SQLite creates its own parent directory. Standalone owns migration and bootstrap and receives a development-token storage callback; its explicit tokenDirectory replaces the CLI assumption that the token belongs beside the SQLite file. The local stack sets tokenDirectory from the same ERRTRAQ_DATA_DIR reference. A6 remains open.

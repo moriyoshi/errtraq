@@ -44,6 +44,16 @@ for (const kind of ["memory", "file"] as const) {
   });
 }
 describe("SQLite migrations and indexes", () => {
+  it("creates a missing database parent directory when initialized", async () => {
+    const store = create({
+      path: join(directory, "nested", "data", "events.sqlite"),
+    });
+    try {
+      await expect(store.migrate()).resolves.toBeUndefined();
+    } finally {
+      await store.close();
+    }
+  });
   it("closes created adapters before and after initialization", async () => {
     const unused = create({ path: ":memory:" });
     await unused.close();

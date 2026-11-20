@@ -29,7 +29,7 @@ describe("standalone platform", () => {
       { port: 0 },
       {
         store: new MemoryActiveStore(),
-        blobs: new MemoryBlobStore(),
+        blob: new MemoryBlobStore(),
         kv: new MemoryKV(),
         queue: new MemoryQueue(),
       },
@@ -40,7 +40,7 @@ describe("standalone platform", () => {
       { port: 0 },
       {
         store: new MemoryActiveStore(),
-        blobs: new MemoryBlobStore(),
+        blob: new MemoryBlobStore(),
         kv: new MemoryKV(),
         queue: new MemoryQueue(),
       },

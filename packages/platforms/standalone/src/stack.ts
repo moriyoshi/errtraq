@@ -9,6 +9,7 @@ import { z } from "zod";
 const baseConfigSchema = z.strictObject({
   host: z.string().min(1).default("127.0.0.1"),
   port: z.number().int().min(0).max(65535).default(8787),
+  tokenDirectory: z.string().min(1).default(".errtraq"),
   rateLimit: z.number().int().positive().nullable().default(60),
   rateWindowSec: z.number().int().positive().default(60),
   roles: z
@@ -43,7 +44,10 @@ export const configSchema = baseConfigSchema
   );
 export type StandaloneConfig = z.input<typeof configSchema>;
 const stackConfigSchema = baseConfigSchema
-  .extend({ port: portWithReference })
+  .extend({
+    port: portWithReference,
+    tokenDirectory: configReference(z.string().min(1)).default(".errtraq"),
+  })
   .refine(
     (config) => config.roles.length === 4 && new Set(config.roles).size === 4,
     { message: "Standalone deploys all roles in one process" },

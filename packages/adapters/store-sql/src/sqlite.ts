@@ -1,3 +1,5 @@
+import { mkdir } from "node:fs/promises";
+import { dirname } from "node:path";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import {
   CompiledQuery,
@@ -29,6 +31,7 @@ class ImmediateDialect extends SqliteDialect {
 export function sqliteDialect(path: string): SqliteDialect {
   return new ImmediateDialect({
     database: async () => {
+      if (path !== ":memory:") await mkdir(dirname(path), { recursive: true });
       const db = new DatabaseSync(path);
       db.exec("PRAGMA busy_timeout = 20");
       if (path !== ":memory:") db.exec("PRAGMA journal_mode = WAL");

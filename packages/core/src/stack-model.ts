@@ -248,13 +248,26 @@ export interface CreateContext<
   /** Resolve secret identifiers only when an adapter needs the secret bytes. */
   secretSource?: SecretSource;
   cronJobs?: readonly string[];
-  topics: Partial<
+  /** Supplied only to a queue adapter. */
+  topics?: Partial<
     Record<CoreTopic, { physical: string; producerBinding?: string }>
   >;
+  /** Push event-source identifier to physical queue and the topics it carries. */
+  queueConsumers?: readonly {
+    eventSource: unknown;
+    physical: string;
+    topics: readonly CoreTopic[];
+  }[];
+}
+/** An adapter may release resources when construction fails or the process stops. */
+export interface ConstructedAdapter {
+  close?(): void | Promise<void>;
 }
 export interface Adapter<C, B, T> {
   manifest: AdapterManifest<C>;
-  create(context: CreateContext<C, B>): T | Promise<T>;
+  create(
+    context: CreateContext<C, B>,
+  ): (T & ConstructedAdapter) | Promise<T & ConstructedAdapter>;
   infra: InfraDescriptor<C>;
 }
 export interface AdapterSelection<C = unknown> {

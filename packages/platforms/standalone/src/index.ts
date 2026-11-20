@@ -1,6 +1,7 @@
 import {
   type ActiveStore,
   type BlobStore,
+  bootstrapProject,
   type Clock,
   ConsumerService,
   CRON_JOBS,
@@ -12,17 +13,19 @@ import {
   type Queue,
   recoverStagedEnvelopes,
   toTimestamp,
+  WebCryptoIdGen,
 } from "@errtraq/core";
 import { createApiApp, createIngestApp } from "@errtraq/http";
 import { serve } from "@hono/node-server";
 import { Hono } from "hono";
 import { configSchema, type StandaloneConfig } from "./stack.js";
+import type { DevTokenManager } from "./token.js";
 
 export { infra, manifest } from "./stack.js";
 export interface Bindings {
   store: ActiveStore;
   queue: Queue;
-  blobs: BlobStore;
+  blob: BlobStore;
   kv: KV;
   clock?: Clock;
   logger?: Logger;
@@ -102,7 +105,34 @@ export function create({
   const cfg = configSchema.parse(config);
   const clock = bindings.clock ?? { now: () => toTimestamp(new Date()) };
   const logger = bindings.logger ?? defaultLogger;
+  let closeCurrent: (() => Promise<void>) | undefined;
   return {
+    async close() {
+      await closeCurrent?.();
+    },
+    async prepare(rotate: boolean, devToken: DevTokenManager) {
+      await bindings.store.migrate();
+      const ids = new WebCryptoIdGen();
+      const project = await bootstrapProject({
+        store: bindings.store,
+        kv: bindings.kv,
+        ids,
+        orgSlug: "default",
+        projectSlug: "default",
+      });
+      const token = await devToken(
+        bindings.store,
+        ids,
+        project.org.id,
+        cfg.tokenDirectory,
+        rotate,
+      );
+      return {
+        token,
+        publicKey: project.key.publicKey,
+        projectId: project.project.id,
+      };
+    },
     async start() {
       if (!bindings.queue.pull)
         throw new Error("Standalone requires a pull queue");
@@ -120,7 +150,7 @@ export function create({
       const limit = bindings.maxEnvelopeBytes ?? 1024 * 1024;
       const ingest = new IngestService({
         store: bindings.store,
-        blobs: bindings.blobs,
+        blobs: bindings.blob,
         queue: bindings.queue.producer,
         kv: bindings.kv,
         clock,
@@ -131,13 +161,13 @@ export function create({
       });
       const consumer = new ConsumerService({
         store: bindings.store,
-        blobs: bindings.blobs,
+        blobs: bindings.blob,
         kv: bindings.kv,
         logger,
         maxEnvelopeBytes: limit,
       });
       await recoverStagedEnvelopes(
-        bindings.blobs,
+        bindings.blob,
         bindings.queue.producer,
         logger,
       );
@@ -148,7 +178,7 @@ export function create({
         createApiApp({
           store: bindings.store,
           clock,
-          blobs: bindings.blobs,
+          blobs: bindings.blob,
           logger,
         }),
       );
@@ -177,48 +207,60 @@ export function create({
                 logger.error("Cron failed", { error: String(error) }),
               );
       }, 1000);
-      const address = server.address();
-      if (!address || typeof address === "string")
-        throw new Error("Unexpected server address");
-      let closed = false;
-      return {
-        host: address.address,
-        port: address.port,
-        async close() {
-          if (closed) return;
-          closed = true;
-          clearInterval(timer);
-          const deadline = Date.now() + 5000;
-          const force = setTimeout(() => {
-            if ("closeAllConnections" in server) server.closeAllConnections();
-          }, 5000);
-          await new Promise<void>((resolve, reject) =>
-            server.close((error) => (error ? reject(error) : resolve())),
-          );
-          clearTimeout(force);
-          while (
-            bindings.queue.idle &&
-            !(await bindings.queue.idle()) &&
-            Date.now() < deadline
-          )
-            await new Promise<void>((resolve) => setTimeout(resolve, 10));
-          abort.abort();
-          let drainTimer: ReturnType<typeof setTimeout> | undefined;
-          try {
-            await Promise.race([
-              running,
-              new Promise<void>((resolve) => {
-                drainTimer = setTimeout(
-                  resolve,
-                  Math.max(0, deadline - Date.now()),
-                );
-              }),
-            ]);
-          } finally {
-            if (drainTimer) clearTimeout(drainTimer);
-          }
-        },
+      let closePromise: Promise<void> | undefined;
+      const stop = () => {
+        if (!closePromise)
+          closePromise = (async () => {
+            clearInterval(timer);
+            const deadline = Date.now() + 5000;
+            const force = setTimeout(() => {
+              if ("closeAllConnections" in server) server.closeAllConnections();
+            }, 5000);
+            let closeError: unknown;
+            try {
+              await new Promise<void>((resolve, reject) =>
+                server.close((error) => (error ? reject(error) : resolve())),
+              );
+            } catch (error) {
+              closeError = error;
+            } finally {
+              clearTimeout(force);
+            }
+            try {
+              while (
+                bindings.queue.idle &&
+                !(await bindings.queue.idle()) &&
+                Date.now() < deadline
+              )
+                await new Promise<void>((resolve) => setTimeout(resolve, 10));
+            } finally {
+              abort.abort();
+            }
+            let drainTimer: ReturnType<typeof setTimeout> | undefined;
+            try {
+              await Promise.race([
+                running,
+                new Promise<void>((resolve) => {
+                  drainTimer = setTimeout(
+                    resolve,
+                    Math.max(0, deadline - Date.now()),
+                  );
+                }),
+              ]);
+            } finally {
+              if (drainTimer) clearTimeout(drainTimer);
+            }
+            if (closeError) throw closeError;
+          })();
+        return closePromise;
       };
+      closeCurrent = stop;
+      const address = server.address();
+      if (!address || typeof address === "string") {
+        await stop();
+        throw new Error("Unexpected server address");
+      }
+      return { host: address.address, port: address.port, close: stop };
     },
   };
 }
