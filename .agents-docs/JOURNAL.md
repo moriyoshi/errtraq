@@ -349,3 +349,25 @@ Two spikes ran against real AWS; full reports are `.agents-docs/DUCKDB_LAMBDA_SP
 - Known gaps carried forward are in TODO.md: non-snapshot issue paging, tokens minted before
   M1g cannot be enumerated for revocation, issue `shortId` and `userCount`, the Python SDK
   check, and the dialect-neutrality work for M3.
+
+## 2026-11-21 — M2a infrastructure model
+
+- The runtime and module dependency graphs are validated separately: runtime construction order
+  follows explicit named dependencies, while module inputs and existing-value substitutions form
+  the Terraform graph. A dependency in one graph does not by itself create a cycle in the other.
+- Core retains the existing `ingest` topic name and reserves `archive.project` and
+  `notifications`; local routing uses one physical in-memory queue. Reserved topics and the three
+  core cron jobs do not imply implemented M4 handlers, so the local stack enables no cron jobs.
+- Existing selections replace every declared output, including policies. This conservative rule
+  detects future missing outputs early, but requires users to supply outputs not currently used.
+  Policy output types and capability names are checked; their actual IAM permissions require
+  provider-module review in M2b.
+- Function grouping is configuration, not a manifest promise. Standalone intentionally rejects
+  splitting or per-function resource settings because it runs one process. Runtime environment,
+  generation environment, stack values, Terraform variables and output references have separate
+  tags and resolution phases; sensitive variable values must not be emitted to tfvars. The
+  current ingest service needs store read access for project-key authentication, so role scoping
+  must reflect that dependency rather than assume ingest is store-free.
+- Provider module paths use checked-in `infra/modules/<provider>/<component>`; a module version
+  field is release metadata, not a Terraform registry version argument. Backend config cannot
+  refer to Terraform variables or module outputs. M2b/M2c still own generation and builds.

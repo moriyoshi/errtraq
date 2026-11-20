@@ -5,16 +5,26 @@ import { pathToFileURL } from "node:url";
 import {
   type ActiveStore,
   type AdapterSelection,
-  type BlobStore,
   bootstrapProject,
+  type CoreTopic,
+  constructionOrder,
+  type InfraValue,
   type KV,
-  type Queue,
   resolveStack,
+  type StackConfig,
+  selections,
+  type TopicRoute,
   WebCryptoIdGen,
 } from "@errtraq/core";
+import { resolveRuntimeValue } from "./runtime.js";
 import { devToken } from "./token.js";
 
-async function load(selection: AdapterSelection): Promise<unknown> {
+async function load(
+  path: string,
+  selection: AdapterSelection,
+  stack: StackConfig,
+  created: Map<string, unknown>,
+): Promise<unknown> {
   const module: unknown = await import(selection.runtimeModule);
   if (
     !module ||
@@ -23,7 +33,45 @@ async function load(selection: AdapterSelection): Promise<unknown> {
     typeof module.create !== "function"
   )
     throw new Error(`Invalid adapter: ${selection.manifest.id}`);
-  return module.create(selection.config, selection.existing ?? {});
+  const dependencies = Object.fromEntries(
+    Object.entries(selection.dependsOn ?? {}).map(([alias, target]) => {
+      if (!created.has(target))
+        throw new Error(`Missing runtime dependency ${target}`);
+      return [alias, created.get(target)];
+    }),
+  );
+  const bindings = Object.fromEntries(
+    selection.infra.bindings.map((binding) => [
+      binding.name,
+      resolveRuntimeValue(binding.value, path, stack, process.env),
+    ]),
+  );
+  const topics = Object.fromEntries(
+    Object.entries(stack.queue.infra.topics?.routes ?? {}).map(
+      ([topic, route]) => [
+        topic,
+        {
+          physical: route.physical,
+          ...(route.producerBinding
+            ? { producerBinding: route.producerBinding }
+            : {}),
+        },
+      ],
+    ),
+  ) as Partial<
+    Record<CoreTopic, Pick<TopicRoute, "physical" | "producerBinding">>
+  >;
+  return module.create({
+    config: resolveRuntimeValue(
+      selection.config as InfraValue,
+      path,
+      stack,
+      process.env,
+    ),
+    bindings,
+    dependencies,
+    topics,
+  });
 }
 export async function main(args: string[]): Promise<void> {
   const [command, ...initial] = args;
@@ -51,14 +99,22 @@ export async function main(args: string[]): Promise<void> {
   const storeConfig = stack.store.config as { path?: unknown };
   if (typeof storeConfig.path === "string" && storeConfig.path !== ":memory:")
     await mkdir(dirname(storeConfig.path), { recursive: true });
-  const store = (await load(stack.store)) as ActiveStore & {
-    close?: () => Promise<void>;
-  };
+  const selected = selections(stack);
+  const created = new Map<string, unknown>();
+  let store: (ActiveStore & { close?: () => Promise<void> }) | undefined;
   try {
-    await store.migrate();
-    const queue = (await load(stack.queue)) as Queue;
-    const blobs = (await load(stack.blob)) as BlobStore;
-    const kv = (await load(stack.kv)) as KV;
+    for (const path of constructionOrder(stack)) {
+      const selection = selected.get(path);
+      if (!selection) throw new Error(`Missing selection ${path}`);
+      const adapter = await load(path, selection, stack, created);
+      created.set(path, adapter);
+      if (path === "store") {
+        store = adapter as ActiveStore & { close?: () => Promise<void> };
+        await store.migrate();
+      }
+    }
+    if (!store) throw new Error("Missing active store");
+    const kv = created.get("kv") as KV;
     const ids = new WebCryptoIdGen();
     const project = await bootstrapProject({
       store,
@@ -80,20 +136,7 @@ export async function main(args: string[]): Promise<void> {
       console.log(`API token: ${token}`);
       return;
     }
-    const platformModule: unknown = await import(stack.platform.runtimeModule);
-    if (
-      !platformModule ||
-      typeof platformModule !== "object" ||
-      !("create" in platformModule) ||
-      typeof platformModule.create !== "function"
-    )
-      throw new Error("Invalid platform adapter");
-    const platform = platformModule.create(stack.platform.config, {
-      store,
-      queue,
-      blobs,
-      kv,
-    }) as {
+    const platform = created.get("platform") as {
       start: () => Promise<{
         host: string;
         port: number;
@@ -126,7 +169,7 @@ export async function main(args: string[]): Promise<void> {
       process.on("SIGTERM", stop);
     });
   } finally {
-    await store.close?.();
+    await store?.close?.();
   }
 }
 main(process.argv.slice(2)).catch((error) => {

@@ -1,6 +1,13 @@
 import { FakeClock, queueContract } from "@errtraq/testing";
 import { expect, it, vi } from "vitest";
-import { create } from "./index.js";
+import { create as createAdapter } from "./index.js";
+
+const create = (
+  config: Parameters<typeof createAdapter>[0]["config"] = {} as Parameters<
+    typeof createAdapter
+  >[0]["config"],
+  bindings: Parameters<typeof createAdapter>[0]["bindings"] = {},
+) => createAdapter({ config, bindings, dependencies: {}, topics: {} });
 
 const clock = new FakeClock();
 queueContract(() => create({}, { clock }), {
@@ -97,4 +104,30 @@ it("rejects oversized messages", async () => {
       { key: "large", body: "x".repeat(q.capabilities.maxBytes) },
     ]),
   ).rejects.toThrow();
+});
+
+it("uses the resolved topic map and preserves logical topics on the shared queue", async () => {
+  const queue = createAdapter({
+    config: {},
+    bindings: {},
+    dependencies: {},
+    topics: {
+      ingest: { physical: "shared" },
+      "archive.project": { physical: "shared" },
+      notifications: { physical: "shared" },
+    },
+  });
+  await expect(
+    queue.producer.send("unknown", [{ key: "x", body: {} }]),
+  ).rejects.toThrow("Unknown queue topic");
+  await queue.producer.send("archive.project", [{ key: "x", body: {} }]);
+  const signal = new AbortController();
+  await queue.pull.run(async (deliveries) => {
+    expect(deliveries[0]?.topic).toBe("archive.project");
+    signal.abort();
+    return deliveries.map((item) => ({
+      deliveryId: item.id,
+      action: "ack" as const,
+    }));
+  }, signal.signal);
 });

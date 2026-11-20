@@ -238,8 +238,14 @@ try {
   );
   await waitFor(
     async () =>
-      (await createBlobs({ root: join(directory, "blobs") }).list("envelopes/"))
-        .items.length === 0,
+      (
+        await createBlobs({
+          config: { root: join(directory, "blobs") },
+          bindings: {},
+          dependencies: {},
+          topics: {},
+        }).list("envelopes/")
+      ).items.length === 0,
     "duplicate processing",
   );
   issues = await api(`${base}/issues/`);
@@ -290,7 +296,12 @@ try {
   const payload = Buffer.from(
     `{"event_id":"${eventId}"}\n{"type":"event"}\n{"event_id":"${eventId}","message":"recovered event"}\n`,
   );
-  await createBlobs({ root: join(directory, "blobs") }).put(staged, payload);
+  await createBlobs({
+    config: { root: join(directory, "blobs") },
+    bindings: {},
+    dependencies: {},
+    topics: {},
+  }).put(staged, payload);
   await stop("SIGKILL");
   server = await start();
   assert.equal(server.token, token);

@@ -1,5 +1,6 @@
 import {
   type Clock,
+  type CreateContext,
   InvalidCounterError,
   type KV,
   toTimestamp,
@@ -71,10 +72,10 @@ export class MemoryKV implements KV {
     return value;
   }
 }
-export function create(
-  config: KvConfig = {},
-  bindings: { clock?: Clock } = {},
-): MemoryKV {
+export function create({
+  config,
+  bindings,
+}: CreateContext<KvConfig, { clock?: Clock }>): MemoryKV {
   configSchema.parse(config);
   return new MemoryKV(bindings.clock);
 }

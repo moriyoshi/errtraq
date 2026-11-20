@@ -26,6 +26,7 @@ import type {
   SubjectSelector,
   Timestamp,
 } from "./domain.js";
+import type { FunctionRole } from "./stack.js";
 
 export interface IssueQuery {
   projectId: ProjectId;
@@ -342,6 +343,7 @@ export interface KV {
 export interface CronJob {
   name: string;
   schedule: string;
+  role: FunctionRole;
 }
 
 export type CronHandler = (name: string, firedAt: Timestamp) => Promise<void>;

@@ -14,13 +14,13 @@ export const manifest: AdapterManifest<BlobConfig> = {
   runtimes: ["node"],
   capabilities: {},
 };
-// TODO(M2a): local descriptors will be revised with the infra model.
+// TODO(M2b): provide local module generation semantics.
 export const infra: InfraDescriptor<BlobConfig> = {
-  module: "local/blob-fs",
+  module: { provider: "local", component: "blob-fs", outputs: {} },
   inputs: () => ({}),
-  bindings: {},
+  bindings: [],
+  capabilities: {},
   grants: [],
-  triggers: [],
 };
 export function fsBlob(config: BlobConfig): AdapterSelection<BlobConfig> {
   return { manifest, infra, config, runtimeModule: "@errtraq/blob-fs" };

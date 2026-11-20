@@ -14,6 +14,7 @@ import { join } from "node:path";
 import {
   BlobCorruptError,
   type BlobStore,
+  type CreateContext,
   type Cursor,
   decodeCursor,
   encodeCursor,
@@ -362,9 +363,9 @@ export class FsBlobStore implements BlobStore {
     }
   }
 }
-export function create(
-  config: BlobConfig,
-  bindings: { logger?: Pick<Logger, "warn"> } = {},
-): FsBlobStore {
+export function create({
+  config,
+  bindings,
+}: CreateContext<BlobConfig, { logger?: Pick<Logger, "warn"> }>): FsBlobStore {
   return new FsBlobStore(config, bindings.logger);
 }

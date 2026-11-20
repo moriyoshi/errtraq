@@ -1,249 +1,573 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import {
+  type AdapterSelection,
+  constructionOrder,
   defineStack,
+  deriveTriggers,
   env,
+  functionGroups,
+  generationEnv,
   out,
+  output,
   type PortKind,
   resolveStack,
   type StackConfig,
+  selections,
+  stackValue,
   validateStack,
+  variable,
 } from "./index.js";
 
-const selection = (
-  kind: PortKind,
-  capabilities: Record<string, string | boolean | number> = {},
-) => ({
+const roles = ["ingest", "api", "consumer", "cron"] as const;
+const route = (producer: "ingest" | "cron" | "consumer") => ({
+  physical: "shared",
+  producers: [producer],
+  consumer: "consumer" as const,
+  resource: out("arn"),
+});
+const selection = (kind: PortKind): AdapterSelection => ({
   manifest: {
     id: kind,
     kind,
-    runtimes: ["worker"],
-    capabilities,
-    configSchema: z.object({ enabled: z.boolean() }),
+    runtimes: ["node"],
+    configSchema: z.object({ enabled: z.boolean().default(true) }),
+    capabilities:
+      kind === "store"
+        ? {
+            textSearch: false,
+            lastSeenRangeOnOtherSort: false,
+            deleteStrategy: "explicit",
+          }
+        : kind === "queue"
+          ? { delivery: "push", maxBytes: 100, delay: true, dlq: false }
+          : {},
   },
-  infra: {
-    module: `test/${kind}`,
-    inputs: () => ({}),
-    bindings: {},
-    grants: [],
-    triggers: [],
-  },
+  config: {},
   runtimeModule: `@test/${kind}`,
-  config: { enabled: true },
-});
-const stack = (): StackConfig => ({
-  name: "test",
-  platform: {
-    ...selection("platform"),
-    manifest: {
-      ...selection("platform").manifest,
-      kind: "platform",
-      runtime: "worker",
-      compute: "function",
-      functions: ["ingest", "api", "consumer", "cron"],
+  infra: {
+    module: {
+      provider: kind === "queue" ? "local" : "aws",
+      component: kind,
+      outputs: { arn: "string", policy: "json" },
     },
+    inputs: () => ({}),
+    bindings: [],
+    capabilities: {},
+    grants: [],
+    ...(kind === "queue"
+      ? {
+          topics: {
+            mode: "shared",
+            routes: {
+              ingest: route("ingest"),
+              "archive.project": route("cron"),
+              notifications: route("consumer"),
+            },
+          },
+        }
+      : {}),
   },
-  store: selection("store", {
-    textSearch: false,
-    lastSeenRangeOnOtherSort: false,
-    deleteStrategy: "explicit",
-  }),
-  queue: selection("queue", {
-    delivery: "push",
-    maxBytes: 100,
-    delay: false,
-    dlq: false,
-  }),
-  blob: selection("blob"),
-  kv: selection("kv"),
 });
-describe("stack validation", () => {
-  it("accepts a compatible stack and preserves references", () => {
-    const value = stack();
-    expect(defineStack(value)).toEqual(value);
-    expect(env("SECRET")).toEqual({ kind: "env", name: "SECRET" });
-    expect(out("url")).toEqual({ kind: "output", name: "url" });
-  });
-  it("reports adapter schemas, kind, and runtime", () => {
-    const value = stack();
-    value.blob.config = { enabled: "yes" };
-    value.store.manifest.kind = "blob";
-    value.kv.manifest.runtimes = ["node"];
-    expect(validateStack(value).map((x) => x.path)).toEqual(
-      expect.arrayContaining(["blob.config.enabled", "store", "kv"]),
-    );
-  });
-  it("rejects a pull-only queue on functions", () => {
-    const value = stack();
-    value.queue.manifest.capabilities.delivery = "pull";
-    expect(() => defineStack(value)).toThrow(/Pull-only/);
-    value.platform.manifest.compute = "long-lived";
-    expect(validateStack(value)).toEqual([]);
-  });
-  it("enforces capability requirements, including absent adapters", () => {
-    const value = stack();
-    value.requirements = {
-      store: { textSearch: true },
-      archive: { rowDelete: "deletion-vector" },
-    };
-    expect(validateStack(value).map((x) => x.path)).toEqual([
-      "store.capabilities.textSearch",
-      "archive.capabilities.rowDelete",
-    ]);
-  });
-  it("rejects malformed stacks", () => {
-    expect(validateStack({ name: "" }).length).toBeGreaterThan(0);
-  });
-  it("requires infrastructure and an import specifier without importing runtime code", () => {
-    const value = stack();
-    value.queue.runtimeModule = "";
-    expect(validateStack(value).map((x) => x.path)).toContain(
-      "queue.runtimeModule",
-    );
-    const malformed = {
-      ...stack(),
-      blob: { ...stack().blob, infra: undefined },
-    };
-    expect(validateStack(malformed).map((x) => x.path)).toContain("blob.infra");
-  });
-  it("validates every grant and trigger against platform roles", () => {
-    const value = stack();
-    value.platform.manifest.functions = ["ingest"];
-    value.queue.infra.grants.push({
-      role: "producer",
-      to: ["ingest", "consumer"],
+function stack(): StackConfig {
+  return {
+    name: "test",
+    region: "example-region",
+    tags: { purpose: "test" },
+    providers: { aws: { source: "hashicorp/aws", version: "~> 6.0" } },
+    variables: { SECRET: { type: "string", sensitive: true } },
+    platform: {
+      ...selection("platform"),
+      manifest: {
+        ...selection("platform").manifest,
+        kind: "platform",
+        runtime: "node",
+        compute: "function",
+        configSchema: z.object({
+          roles: z.array(z.enum(roles)),
+          split: z.array(z.enum(roles)),
+          cron: z.array(z.string()),
+        }),
+      },
+      config: { roles: [...roles], split: [...roles], cron: [] },
+    },
+    store: selection("store"),
+    queue: selection("queue"),
+    blob: selection("blob"),
+    kv: selection("kv"),
+  };
+}
+function topics(v: StackConfig) {
+  const value = v.queue.infra.topics;
+  if (!value) throw new Error("Missing topic mapping");
+  return value;
+}
+describe("infrastructure model", () => {
+  it("validates and resolves adapter defaults without resolving refs", () => {
+    const v = stack();
+    v.store.infra.inputs = () => ({
+      region: stackValue("region"),
+      source: generationEnv("SOURCE"),
+      secret: variable("SECRET"),
     });
-    value.queue.infra.triggers.push({
-      fn: "cron",
-      kind: "cron",
-      source: "0 * * * *",
-    });
-    expect(validateStack(value).map((x) => x.path)).toEqual([
-      "queue.infra.grants.0.to",
-      "queue.infra.triggers.0.fn",
-    ]);
-    value.platform.manifest.functions.push("consumer", "cron");
-    expect(validateStack(value)).toEqual([]);
-  });
-  it("requires existing bindings to match descriptor names exactly", () => {
-    const value = stack();
-    value.queue.infra.bindings = { URL: out("queue_url"), TOKEN: out("token") };
-    value.queue.existing = { URL: env("QUEUE_URL"), EXTRA: "unexpected" };
-    expect(validateStack(value).map((x) => x.path)).toEqual([
-      "queue.existing.TOKEN",
-      "queue.existing.EXTRA",
-    ]);
-    value.queue.existing = { URL: env("QUEUE_URL"), TOKEN: env("QUEUE_TOKEN") };
-    expect(validateStack(value)).toEqual([]);
-  });
-  it("rejects unknown fields and unsafe names", () => {
-    expect(validateStack({ ...stack(), archvie: {} }).length).toBeGreaterThan(
-      0,
-    );
-    expect(
-      validateStack({ ...stack(), name: "../bad" }).length,
-    ).toBeGreaterThan(0);
-  });
-  it("rejects duplicated binding names", () => {
-    const v = stack();
-    v.store.infra.bindings = { SAME: out("a") };
-    v.queue.infra.bindings = { SAME: out("b") };
-    expect(validateStack(v).some((x) => x.path.includes("bindings.SAME"))).toBe(
-      true,
-    );
-  });
-  it("rejects malformed refs", () => {
-    const v = stack();
-    v.store.infra.bindings = { BAD: { kind: "outptu", name: 1 } };
-    expect(validateStack(v).length).toBeGreaterThan(0);
-  });
-  it("requires valid per-kind capabilities", () => {
-    const v = stack();
-    v.queue.manifest.capabilities.delivery = "Pull";
-    delete v.store.manifest.capabilities.deleteStrategy;
-    expect(validateStack(v).map((x) => x.path)).toEqual(
-      expect.arrayContaining([
-        "queue.manifest.capabilities.delivery",
-        "store.manifest.capabilities.deleteStrategy",
-      ]),
-    );
-  });
-  it("checks existing output refs and trigger sources", () => {
-    const v = stack();
-    v.queue.infra.bindings = { URL: out("url") };
-    v.queue.existing = { URL: out("url") };
-    v.queue.infra.triggers = [
-      { fn: "cron", kind: "cron", source: out("url") },
-      { fn: "consumer", kind: "queue", source: "" },
-      { fn: "consumer", kind: "queue", source: out("missing") },
+    v.store.infra.bindings = [
+      { name: "TOKEN", kind: "secret", roles: ["api"], value: env("TOKEN") },
     ];
-    expect(validateStack(v).length).toBeGreaterThanOrEqual(4);
+    expect(validateStack(v)).toEqual([]);
+    expect(resolveStack(v).store.config).toEqual({ enabled: true });
+    expect(defineStack(v).store.infra.bindings[0]?.value).toEqual(env("TOKEN"));
   });
-  it("reports asynchronous and throwing schemas", () => {
+  it("rejects dangling selections, outputs, variables and runtime refs in module inputs", () => {
     const v = stack();
-    v.store.manifest.configSchema = z
-      .object({ enabled: z.boolean() })
-      .refine(async () => true);
-    expect(validateStack(v).some((x) => x.path === "store.config")).toBe(true);
-    v.store.manifest.configSchema = z.any().transform(() => {
-      throw new Error("boom");
+    v.store.infra.inputs = () => ({
+      a: output("missing", "arn"),
+      b: output("blob", "missing"),
+      c: variable("MISSING"),
+      d: env("TOKEN"),
     });
-    expect(validateStack(v).some((x) => x.path === "store.config")).toBe(true);
+    expect(
+      validateStack(v).filter((x) => x.path.includes("inputs")),
+    ).toHaveLength(4);
   });
-  it("uses parsed defaults in inputs and returns parsed config", () => {
+  it("allows ordinary kind fields in adapter configuration while checking tagged refs", () => {
     const v = stack();
     v.store.manifest.configSchema = z.object({
-      n: z.coerce.number().default(7),
+      kind: z.literal("custom"),
+      nested: z.unknown(),
     });
-    v.store.config = {};
-    v.store.infra.inputs = (cfg) => ({ n: (cfg as { n: number }).n });
+    v.store.config = { kind: "custom", nested: env("TOKEN") };
     expect(validateStack(v)).toEqual([]);
-    expect(resolveStack(v).store.config).toEqual({ n: 7 });
-    v.store.infra.inputs = () => ({ bad: undefined }) as never;
-    expect(validateStack(v).some((x) => x.path === "store.infra.inputs")).toBe(
-      true,
-    );
-  });
-  it("rejects unknown nested fields and missing or invalid capability variants", () => {
-    const v = stack();
-    const broken = {
-      ...v,
-      queue: { ...v.queue, infra: { ...v.queue.infra, typo: true } },
+    v.store.config = {
+      kind: "custom",
+      nested: { kind: "output", name: "missing" },
     };
-    expect(validateStack(broken).some((x) => x.path === "queue.infra")).toBe(
-      true,
-    );
-    const q = stack();
-    q.queue.manifest.capabilities = {
-      delivery: "push",
-      maxBytes: 0,
-      delay: "yes",
-      dlq: "no",
-    };
-    expect(validateStack(q).map((x) => x.path)).toEqual(
-      expect.arrayContaining([
-        "queue.manifest.capabilities.maxBytes",
-        "queue.manifest.capabilities.delay",
-        "queue.manifest.capabilities.dlq",
-      ]),
-    );
-    const archive = stack();
-    archive.archive = selection("archive", { rowDelete: "bad" });
     expect(
-      validateStack(archive).some(
-        (x) => x.path === "archive.manifest.capabilities.rowDelete",
+      validateStack(v).some((issue) =>
+        issue.message.includes("Unknown output"),
       ),
     ).toBe(true);
   });
-  it("allows an existing binding to replace a trigger output", () => {
+  it("rejects malformed references and missing stack region", () => {
     const v = stack();
-    v.queue.infra.bindings = { URL: out("queue_url") };
-    v.queue.existing = { URL: env("QUEUE_URL") };
-    v.queue.infra.triggers.push({
-      fn: "consumer",
-      kind: "queue",
-      source: out("queue_url"),
+    delete v.region;
+    v.store.infra.inputs = () => ({
+      a: { kind: "outptu", name: "x" },
+      b: stackValue("region"),
     });
+    expect(
+      validateStack(v).filter((x) => x.path.includes("inputs")),
+    ).toHaveLength(2);
+  });
+  it("substitutes existing outputs and requires every declared output", () => {
+    const v = stack();
+    v.blob.existing = { arn: variable("SECRET") };
+    v.store.infra.inputs = () => ({ bucket: output("blob", "arn") });
+    expect(
+      validateStack(v).some((x) => x.path === "blob.existing.policy"),
+    ).toBe(true);
+    v.blob.existing.policy = generationEnv("EXTERNAL_POLICY");
     expect(validateStack(v)).toEqual([]);
+    v.blob.existing.arn = out("arn");
+    expect(validateStack(v).some((x) => x.message.includes("own output"))).toBe(
+      true,
+    );
+  });
+  it("rejects unknown existing output names", () => {
+    const v = stack();
+    v.blob.existing = { arn: "a", policy: "p", typo: "x" };
+    expect(validateStack(v).some((x) => x.path === "blob.existing.typo")).toBe(
+      true,
+    );
+  });
+  it("checks existing replacement types and typed variable references", () => {
+    const v = stack();
+    v.blob.existing = { arn: 42, policy: "{}" };
+    expect(
+      validateStack(v).some((issue) =>
+        issue.message.includes("Expected string output"),
+      ),
+    ).toBe(true);
+    v.variables = { LIST: { type: "string[]", sensitive: false } };
+    v.blob.existing.arn = variable("LIST");
+    expect(
+      validateStack(v).some((issue) =>
+        issue.message.includes("Expected string output"),
+      ),
+    ).toBe(true);
+    v.blob.existing.arn = "external";
+    expect(validateStack(v)).toEqual([]);
+  });
+  it("detects duplicate bindings by physical function and allows separate functions", () => {
+    const v = stack();
+    v.store.infra.bindings = [
+      { name: "URL", kind: "env", roles: ["ingest"], value: "a" },
+    ];
+    v.blob.infra.bindings = [
+      { name: "URL", kind: "env", roles: ["api"], value: "b" },
+    ];
+    expect(validateStack(v)).toEqual([]);
+    (v.platform.config as { split: string[] }).split = [];
+    expect(
+      validateStack(v).some((x) => x.message.includes("Duplicate binding")),
+    ).toBe(true);
+  });
+  it("validates role scopes, typed platform bindings and grants", () => {
+    const v = stack();
+    v.store.infra.bindings = [
+      { name: "R2", kind: "platform", roles: ["api"], value: "bucket" },
+    ];
+    v.store.infra.grants = [
+      {
+        role: "api",
+        capability: "read",
+        resource: out("arn"),
+        policy: out("policy"),
+      },
+    ];
+    (v.platform.config as { roles: string[] }).roles = [
+      "ingest",
+      "consumer",
+      "cron",
+    ];
+    expect(
+      validateStack(v).some((x) => x.message.includes("does not deploy api")),
+    ).toBe(true);
+    expect(
+      validateStack(v).some((x) => x.message.includes("requires a type")),
+    ).toBe(true);
+    expect(
+      validateStack(v).some((x) => x.message.includes("Unknown capability")),
+    ).toBe(true);
+  });
+  it("requires secret bindings to use sensitive or runtime references", () => {
+    const v = stack();
+    v.store.infra.bindings = [
+      { name: "SECRET", kind: "secret", roles: ["api"], value: "plaintext" },
+    ];
+    expect(
+      validateStack(v).some((x) =>
+        x.message.includes("Secret binding must be a reference"),
+      ),
+    ).toBe(true);
+    v.variables = { PUBLIC: { type: "string", sensitive: false } };
+    v.store.infra.bindings[0] = {
+      name: "SECRET",
+      kind: "secret",
+      roles: ["api"],
+      value: variable("PUBLIC"),
+    };
+    expect(
+      validateStack(v).some((x) => x.message.includes("must be sensitive")),
+    ).toBe(true);
+  });
+  it("requires secret output references to be declared as such", () => {
+    const v = stack();
+    v.store.infra.bindings = [
+      { name: "SECRET", kind: "secret", roles: ["api"], value: out("arn") },
+    ];
+    expect(validateStack(v).some((x) => x.message.includes("secret-ref"))).toBe(
+      true,
+    );
+    v.store.infra.module.outputs.secret_id = "secret-ref";
+    v.store.infra.bindings[0] = {
+      name: "SECRET",
+      kind: "secret",
+      roles: ["api"],
+      value: out("secret_id"),
+    };
+    expect(validateStack(v)).toEqual([]);
+  });
+  it("validates grant resource and policy output declarations", () => {
+    const v = stack();
+    v.store.infra.capabilities = { read: "policy" };
+    v.store.infra.grants = [
+      {
+        role: "api",
+        capability: "read",
+        resource: out("arn"),
+        policy: out("missing"),
+      },
+    ];
+    expect(
+      validateStack(v).some((x) => x.message.includes("Unknown output")),
+    ).toBe(true);
+    const grant = v.store.infra.grants[0];
+    if (!grant) throw new Error("Missing grant");
+    grant.policy = out("policy");
+    expect(validateStack(v)).toEqual([]);
+  });
+  it("requires topic coverage, producer paths and one deployed consumer", () => {
+    const v = stack();
+    const routes = topics(v).routes;
+    delete (routes as Partial<typeof routes>).ingest;
+    expect(
+      validateStack(v).some((x) => x.message.includes("Missing topic")),
+    ).toBe(true);
+    const n = stack();
+    topics(n).routes.ingest.producers = [];
+    expect(validateStack(n).length).toBeGreaterThan(0);
+    const x = stack();
+    topics(x).routes.ingest.consumer = "api";
+    (x.platform.config as { roles: string[] }).roles = [
+      "ingest",
+      "consumer",
+      "cron",
+    ];
+    expect(
+      validateStack(x).some((i) => i.message.includes("does not deploy api")),
+    ).toBe(true);
+  });
+  it("rejects undeclared producer binding names even for local queues", () => {
+    const v = stack();
+    topics(v).routes.ingest.producerBinding = "MISSING";
+    expect(
+      validateStack(v).some((issue) =>
+        issue.message.includes("Unknown producer binding"),
+      ),
+    ).toBe(true);
+  });
+  it("requires every cloud topic producer and consumer to have matching bindings and grants", () => {
+    const v = stack();
+    v.queue.infra.module.provider = "aws";
+    expect(
+      validateStack(v).some((issue) =>
+        issue.message.includes("Missing producer binding"),
+      ),
+    ).toBe(true);
+    const q = v.queue.infra;
+    q.capabilities = { produce: "policy", consume: "policy" };
+    q.bindings = [
+      {
+        name: "QUEUE_URL",
+        kind: "env",
+        roles: ["ingest", "cron", "consumer"],
+        value: out("arn"),
+      },
+    ];
+    q.grants = [
+      ...(["ingest", "cron", "consumer"] as const).map((role) => ({
+        role,
+        capability: "produce",
+        resource: out("arn"),
+        policy: out("policy"),
+      })),
+      {
+        role: "consumer",
+        capability: "consume",
+        resource: out("arn"),
+        policy: out("policy"),
+      },
+    ];
+    for (const route of Object.values(topics(v).routes))
+      route.producerBinding = "QUEUE_URL";
+    expect(validateStack(v)).toEqual([]);
+    q.grants = q.grants.map((grant) => ({
+      ...grant,
+      resource: output("queue", "arn"),
+    }));
+    expect(validateStack(v)).toEqual([]);
+    q.grants = q.grants.filter((grant) => grant.role !== "cron");
+    expect(
+      validateStack(v).some((issue) =>
+        issue.message.includes("lacks a resource grant"),
+      ),
+    ).toBe(true);
+  });
+  it("requires a single consumer and resource for a shared queue", () => {
+    const v = stack();
+    topics(v).routes.ingest.consumer = "api";
+    expect(
+      validateStack(v).some((issue) => issue.message.includes("one consumer")),
+    ).toBe(true);
+    const other = stack();
+    topics(other).routes.ingest.resource = "different";
+    expect(
+      validateStack(other).some((issue) =>
+        issue.message.includes("one resource"),
+      ),
+    ).toBe(true);
+  });
+  it("rejects undefined or non-JSON capability policies and self-output inputs", () => {
+    const v = stack();
+    v.store.infra.capabilities = { read: "arn" };
+    v.store.infra.inputs = () => ({ self: out("arn") });
+    expect(
+      validateStack(v).some((issue) => issue.message.includes("JSON policy")),
+    ).toBe(true);
+    expect(
+      validateStack(v).some((issue) => issue.message.includes("own output")),
+    ).toBe(true);
+  });
+  it("validates physical shared and per-topic mapping", () => {
+    const v = stack();
+    topics(v).routes.ingest.physical = "different";
+    expect(
+      validateStack(v).some((x) => x.message.includes("same physical")),
+    ).toBe(true);
+    const n = stack();
+    topics(n).mode = "per-topic";
+    expect(validateStack(n).some((x) => x.message.includes("distinct"))).toBe(
+      true,
+    );
+    topics(n).routes.ingest.physical = "one";
+    topics(n).routes["archive.project"].physical = "two";
+    topics(n).routes.notifications.physical = "three";
+    expect(
+      validateStack(n).some((x) => x.message.includes("distinct resources")),
+    ).toBe(true);
+    n.queue.infra.module.outputs = {
+      one: "string",
+      two: "string",
+      three: "string",
+    };
+    topics(n).routes.ingest.resource = out("one");
+    topics(n).routes["archive.project"].resource = out("two");
+    topics(n).routes.notifications.resource = out("three");
+    expect(validateStack(n)).toEqual([]);
+  });
+  it("derives one shared queue trigger and named cron triggers", () => {
+    const v = stack();
+    (v.platform.config as { cron: string[] }).cron = ["retention"];
+    expect(deriveTriggers(v)).toEqual([
+      {
+        kind: "queue",
+        physical: "shared",
+        role: "consumer",
+        resource: out("arn"),
+        topics: ["ingest", "archive.project", "notifications"],
+      },
+      { kind: "cron", name: "retention", schedule: "15 * * * *", role: "cron" },
+    ]);
+  });
+  it("checks named cron jobs, duplicate routes and deployed roles", () => {
+    const v = stack();
+    (v.platform.config as { cron: string[] }).cron = [
+      "unknown",
+      "retention",
+      "retention",
+    ];
+    (v.platform.config as { roles: string[] }).roles = [
+      "ingest",
+      "api",
+      "consumer",
+    ];
+    expect(
+      validateStack(v).some((x) => x.message.includes("Unknown cron")),
+    ).toBe(true);
+    expect(
+      validateStack(v).some((x) => x.message.includes("Duplicate cron")),
+    ).toBe(true);
+    expect(
+      validateStack(v).some((x) => x.message.includes("does not deploy cron")),
+    ).toBe(true);
+  });
+  it("derives split groups and validates role settings", () => {
+    const v = stack();
+    expect(
+      functionGroups({ roles: [...roles], split: ["ingest"], cron: [] }),
+    ).toEqual([["ingest"], ["api", "consumer", "cron"]]);
+    (v.platform.config as { split: string[] }).split = ["api", "api"];
+    expect(validateStack(v).some((x) => x.message.includes("Duplicate"))).toBe(
+      true,
+    );
+  });
+  it("traverses nested adapters and orders dependencies", () => {
+    const v = stack();
+    v.archive = selection("archive");
+    v.archive.manifest.capabilities = { rowDelete: "copy-on-write" };
+    v.archive.children = {
+      catalog: selection("catalog"),
+      engine: selection("engine"),
+    };
+    v.archive.dependsOn = { catalog: "archive.catalog", blob: "blob" };
+    expect([...selections(v).keys()]).toContain("archive.catalog");
+    const order = constructionOrder(v);
+    expect(order.indexOf("archive.catalog")).toBeLessThan(
+      order.indexOf("archive"),
+    );
+    expect(order.indexOf("blob")).toBeLessThan(order.indexOf("archive"));
+  });
+  it("rejects dangling dependencies and cycles in each dependency graph", () => {
+    const v = stack();
+    v.store.dependsOn = { foo: "missing", blob: "blob" };
+    v.blob.dependsOn = { store: "store" };
+    expect(
+      validateStack(v).some((x) => x.message.includes("Unknown selection")),
+    ).toBe(true);
+    expect(
+      validateStack(v).some((x) =>
+        x.message.includes("Runtime dependency cycle"),
+      ),
+    ).toBe(true);
+    const modules = stack();
+    modules.store.infra.inputs = () => ({ other: output("blob", "arn") });
+    modules.blob.infra.inputs = () => ({ other: output("store", "arn") });
+    expect(
+      validateStack(modules).some((x) =>
+        x.message.includes("Module dependency cycle"),
+      ),
+    ).toBe(true);
+    const independent = stack();
+    independent.store.dependsOn = { blob: "blob" };
+    independent.blob.infra.inputs = () => ({ other: output("store", "arn") });
+    expect(validateStack(independent)).toEqual([]);
+  });
+  it("restricts backend configuration to generation-time values", () => {
+    const v = stack();
+    v.backend = {
+      type: "s3",
+      config: { bucket: output("blob", "arn"), key: variable("SECRET") },
+    };
+    expect(
+      validateStack(v).filter((x) =>
+        x.message.includes("Backend config requires"),
+      ),
+    ).toHaveLength(2);
+    v.backend.config = {
+      bucket: generationEnv("BACKEND_BUCKET"),
+      key: "state.tfstate",
+    };
+    expect(validateStack(v)).toEqual([]);
+  });
+  it("requires provider metadata and enforces runtime and capabilities", () => {
+    const v = stack();
+    delete v.providers;
+    v.kv.manifest.runtimes = ["worker"];
+    v.requirements = { store: { textSearch: true } };
+    expect(validateStack(v).some((x) => x.message.includes("provider"))).toBe(
+      true,
+    );
+    expect(validateStack(v).some((x) => x.message.includes("runtime"))).toBe(
+      true,
+    );
+    expect(validateStack(v).some((x) => x.message.includes("Requires"))).toBe(
+      true,
+    );
+  });
+  it("rejects requirements for unknown selection paths", () => {
+    const v = stack();
+    v.requirements = { missing: {} };
+    expect(
+      validateStack(v).some((issue) =>
+        issue.message.includes("Unknown selection"),
+      ),
+    ).toBe(true);
+  });
+  it("rejects pull-only queues on function platforms", () => {
+    const v = stack();
+    v.queue.manifest.capabilities.delivery = "pull";
+    expect(validateStack(v).some((x) => x.message.includes("Pull-only"))).toBe(
+      true,
+    );
+    v.platform.manifest.compute = "long-lived";
+    expect(validateStack(v)).toEqual([]);
+  });
+  it("rejects unknown fields, bad configs and throwing schemas", () => {
+    const v = stack();
+    v.blob.manifest.configSchema = z.any().transform(() => {
+      throw new Error("bad");
+    });
+    expect(validateStack(v).some((x) => x.path === "blob.config")).toBe(true);
+    expect(validateStack({ ...stack(), typo: true }).length).toBeGreaterThan(0);
   });
 });

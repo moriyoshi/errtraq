@@ -4,7 +4,15 @@ import { bootstrapProject, WebCryptoIdGen } from "@errtraq/core";
 import { activeStoreContract, FakeClock, MemoryKV } from "@errtraq/testing";
 import { Kysely, sql } from "kysely";
 import { afterAll, afterEach, describe, expect, it } from "vitest";
-import { create } from "./index.js";
+import { create as createAdapter } from "./index.js";
+
+const create = (
+  config: Parameters<typeof createAdapter>[0]["config"] = {} as Parameters<
+    typeof createAdapter
+  >[0]["config"],
+  bindings: Parameters<typeof createAdapter>[0]["bindings"] = {},
+) => createAdapter({ config, bindings, dependencies: {}, topics: {} });
+
 import { createInitialSchema, migrate, type SqlDatabase } from "./schema.js";
 import { sqliteDialect, sqliteStoreDialect } from "./sqlite.js";
 import { createSqlStore } from "./store.js";

@@ -22,13 +22,36 @@ export const manifest: AdapterManifest = {
     dlq: false,
   },
 };
-// TODO(M2a): local descriptors will be revised with the infra model.
+// TODO(M2b): provide local module generation semantics.
 export const infra: InfraDescriptor<QueueConfig> = {
-  module: "local/queue-memory",
+  module: { provider: "local", component: "queue-memory", outputs: {} },
   inputs: () => ({}),
-  bindings: {},
+  bindings: [],
+  capabilities: {},
   grants: [],
-  triggers: [],
+  topics: {
+    mode: "shared",
+    routes: {
+      ingest: {
+        physical: "memory",
+        producers: ["ingest"],
+        consumer: "consumer",
+        resource: "memory",
+      },
+      "archive.project": {
+        physical: "memory",
+        producers: ["cron"],
+        consumer: "consumer",
+        resource: "memory",
+      },
+      notifications: {
+        physical: "memory",
+        producers: ["consumer"],
+        consumer: "consumer",
+        resource: "memory",
+      },
+    },
+  },
 };
 export function memoryQueue(
   config: QueueConfig = {},

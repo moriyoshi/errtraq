@@ -366,48 +366,20 @@ Every step is idempotent (re-deleting matches nothing; DV snapshot carries
 
 ## Stack configuration + infra abstraction
 
-One typed file is the single source of truth for runtime wiring *and* provisioning:
+A stack selects adapters and a platform once for runtime wiring and future infrastructure
+generation. Descriptors declare typed module outputs, qualified output references, scoped
+bindings, abstract resource grants, queue topic routes and explicit runtime dependencies.
+References distinguish generation-time stack values and environment, Terraform variables and
+module expressions, and runtime environment lookups. Existing resources replace declared
+outputs without creating a module. Nested selections expose sub-adapters to validation and
+future builds.
 
-```ts
-// stacks/aws-dynamodb.ts
-export default defineStack({
-  name: 'prod',
-  platform: awsLambda({ region: 'ap-northeast-1', split: ['ingest', 'api', 'consumer', 'cron'] }),
-  store:    dynamodb({ billing: 'on-demand' }),
-  queue:    sqs({ visibilityTimeoutSec: 120, dlq: true }),
-  blob:     s3({}),
-  archive:  iceberg({ catalog: lakekeeper({ url: env('LAKEKEEPER_URL') }), engine: duckdb(), after: '30d' }),
-  kv:       dynamodbKv(),
-});
-```
-
-Every adapter package exports three things:
-
-- `manifest` — id, port kind, zod config schema, capabilities, supported runtimes.
-- `create(config, bindings)` — runtime factory; `bindings` are env vars / platform bindings.
-- `infra` — a declarative descriptor, no Terraform logic in TS:
-  ```ts
-  infra: {
-    module: 'aws/sqs',                                   // -> infra/modules/aws/sqs
-    inputs: (cfg) => ({ visibility_timeout: cfg.visibilityTimeoutSec, dlq: cfg.dlq }),
-    bindings: { QUEUE_URL: out('queue_url') },           // module outputs -> runtime env/bindings
-    grants: [{ role: 'producer', to: ['ingest'] }, { role: 'consumer', to: ['consumer'] }],
-    triggers: [{ fn: 'consumer', source: out('queue_arn'), kind: 'queue' }],
-  }
-  ```
-  `existing: { ... }` on any adapter skips the module and supplies bindings directly (bring-your-own DB / Lakekeeper).
-
-The **platform** adapter is the composer: it owns the compute module (`aws/lambda-app`,
-`cloudflare/worker`, …), and translates other adapters' abstract `grants` / `triggers` /
-`bindings` into its provider's terms (IAM policies + event source mappings on AWS; wrangler-style
-bindings + queue consumers + cron triggers on Cloudflare).
-
-CLI flow:
-
-- `errtraq validate --stack X` — schema + cross-adapter compatibility (runtime support, push/pull vs compute, capabilities).
-- `errtraq build --stack X` — generates the entrypoint importing only selected adapters; esbuild → Lambda zips / Worker bundle / Node server.
-- `errtraq infra generate --stack X` → `infra/generated/X/{main.tf.json, terraform.tfvars.json, backend.tf.json}` composing the versioned HCL modules. Deterministic output, committed or CI-generated; users run plain `terraform plan/apply` (OpenTofu works). Terraform itself sets function env from module outputs, so app and infra cannot drift.
-- `errtraq dev --stack local` — standalone Node server: all apps mounted on one port, pull-queue loop and scheduler in-process.
+Platform configuration describes deployed roles, function grouping and resource settings; core
+owns the logical topics and static cron table. Validation checks references, capability policies,
+queue producers and consumers, cron coverage, function scopes, provider metadata and cycles.
+Factories receive `{ config, bindings, dependencies, topics }` in dependency order. See
+[INFRA_MODEL.md](./.agents-docs/INFRA_MODEL.md) for resolution rules and the AWS worked example.
+Terraform generation, cloud modules and static entrypoint generation are M2b/M2c work.
 
 ## Milestones
 

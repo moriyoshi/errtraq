@@ -36,11 +36,38 @@ export async function assertStackHelper(
     },
     config: selection.config,
     infra: {
-      module: `local/${kind}`,
+      module: { provider: "local", component: kind, outputs: {} },
       inputs: () => ({}),
-      bindings: {},
+      bindings: [],
+      capabilities: {},
       grants: [],
-      triggers: [],
+      ...(kind === "queue"
+        ? {
+            topics: {
+              mode: "shared" as const,
+              routes: {
+                ingest: {
+                  physical: "memory",
+                  producers: ["ingest" as const],
+                  consumer: "consumer" as const,
+                  resource: "memory",
+                },
+                "archive.project": {
+                  physical: "memory",
+                  producers: ["cron" as const],
+                  consumer: "consumer" as const,
+                  resource: "memory",
+                },
+                notifications: {
+                  physical: "memory",
+                  producers: ["consumer" as const],
+                  consumer: "consumer" as const,
+                  resource: "memory",
+                },
+              },
+            },
+          }
+        : {}),
     },
     runtimeModule: `dummy-${kind}`,
   });
@@ -52,9 +79,11 @@ export async function assertStackHelper(
       kind: "platform" as const,
       runtime: "node",
       compute: "long-lived" as const,
-      functions: ["ingest", "api", "consumer", "cron"] as Array<
-        "ingest" | "api" | "consumer" | "cron"
-      >,
+      configSchema: schema.transform(() => ({
+        roles: ["ingest", "api", "consumer", "cron"],
+        split: [],
+        cron: [],
+      })),
     },
   };
   const stack: StackConfig = {

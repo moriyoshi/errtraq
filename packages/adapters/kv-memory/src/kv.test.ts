@@ -1,6 +1,13 @@
 import { FakeClock, kvContract } from "@errtraq/testing";
 import { expect, it } from "vitest";
-import { create } from "./index.js";
+import { create as createAdapter } from "./index.js";
+
+const create = (
+  config: Parameters<typeof createAdapter>[0]["config"] = {} as Parameters<
+    typeof createAdapter
+  >[0]["config"],
+  bindings: Parameters<typeof createAdapter>[0]["bindings"] = {},
+) => createAdapter({ config, bindings, dependencies: {}, topics: {} });
 
 const clock = new FakeClock();
 kvContract(() => create({}, { clock }), {

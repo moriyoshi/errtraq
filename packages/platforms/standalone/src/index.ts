@@ -3,8 +3,9 @@ import {
   type BlobStore,
   type Clock,
   ConsumerService,
+  CRON_JOBS,
+  type CreateContext,
   type CronHandler,
-  type CronJob,
   IngestService,
   type KV,
   type Logger,
@@ -25,7 +26,6 @@ export interface Bindings {
   kv: KV;
   clock?: Clock;
   logger?: Logger;
-  jobs?: CronJob[];
   cronHandler?: CronHandler;
   maxEnvelopeBytes?: number;
 }
@@ -92,7 +92,12 @@ export function cronMatches(schedule: string, date: Date): boolean {
     );
   return matches.every(Boolean);
 }
-export function create(config: StandaloneConfig, bindings: Bindings) {
+export function create({
+  config,
+  bindings: runtimeBindings,
+  dependencies,
+}: CreateContext<StandaloneConfig, Partial<Bindings>, Bindings>) {
+  const bindings = { ...dependencies, ...runtimeBindings };
   const cfg = configSchema.parse(config);
   const clock = bindings.clock ?? { now: () => toTimestamp(new Date()) };
   const logger = bindings.logger ?? defaultLogger;
@@ -100,9 +105,12 @@ export function create(config: StandaloneConfig, bindings: Bindings) {
     async start() {
       if (!bindings.queue.pull)
         throw new Error("Standalone requires a pull queue");
-      for (const job of bindings.jobs ?? [])
-        cronMatches(job.schedule, new Date());
-      if (bindings.jobs?.length && !bindings.cronHandler)
+      for (const name of cfg.cron)
+        if (!CRON_JOBS.some((job) => job.name === name))
+          throw new Error(`Unknown cron job ${name}`);
+      const jobs = CRON_JOBS.filter((job) => cfg.cron.includes(job.name));
+      for (const job of jobs) cronMatches(job.schedule, new Date());
+      if (jobs.length && !bindings.cronHandler)
         throw new Error("Cron handler required");
       if (!bindings.queue.idle)
         throw new Error(
@@ -160,7 +168,7 @@ export function create(config: StandaloneConfig, bindings: Bindings) {
         const current = Math.floor(now.valueOf() / 60000);
         if (current === minute) return;
         minute = current;
-        for (const job of bindings.jobs ?? [])
+        for (const job of jobs)
           if (cronMatches(job.schedule, now))
             void Promise.resolve()
               .then(() => bindings.cronHandler?.(job.name, toTimestamp(now)))

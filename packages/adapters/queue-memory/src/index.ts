@@ -1,5 +1,6 @@
 import {
   type Clock,
+  type CreateContext,
   type Delivery,
   type Logger,
   type Queue,
@@ -24,13 +25,22 @@ export class MemoryQueue implements Queue {
   private readonly systemClock: boolean;
   private readonly maxAttempts: number;
   private readonly logger: Pick<Logger, "error">;
+  private readonly topicMap: Record<string, { physical: string }> | undefined;
   constructor(
     config: QueueConfig = {},
     clock?: Clock,
     logger: Pick<Logger, "error"> = {
       error: (message, fields) => console.error(message, fields),
     },
+    topics?: Record<string, { physical: string }>,
   ) {
+    this.topicMap = topics && Object.keys(topics).length ? topics : undefined;
+    if (
+      this.topicMap &&
+      new Set(Object.values(this.topicMap).map((route) => route.physical))
+        .size !== 1
+    )
+      throw new Error("Memory queue supports a single shared physical queue");
     this.systemClock = clock === undefined;
     this.clock = clock ?? { now: () => toTimestamp(new Date()) };
     this.maxAttempts = configSchema.parse(config).maxAttempts;
@@ -51,6 +61,8 @@ export class MemoryQueue implements Queue {
   }
   producer: Queue["producer"] = {
     send: async (topic, messages, options) => {
+      if (this.topicMap && !Object.hasOwn(this.topicMap, topic))
+        throw new Error(`Unknown queue topic: ${topic}`);
       const delay = options?.delaySec ?? 0;
       if (!Number.isFinite(delay) || delay < 0)
         throw new RangeError("Invalid queue delay");
@@ -155,9 +167,13 @@ export class MemoryQueue implements Queue {
     },
   };
 }
-export function create(
-  config: QueueConfig = {},
-  bindings: { clock?: Clock; logger?: Pick<Logger, "error"> } = {},
-): MemoryQueue {
-  return new MemoryQueue(config, bindings.clock, bindings.logger);
+export function create({
+  config,
+  bindings,
+  topics,
+}: CreateContext<
+  QueueConfig,
+  { clock?: Clock; logger?: Pick<Logger, "error"> }
+>): MemoryQueue {
+  return new MemoryQueue(config, bindings.clock, bindings.logger, topics);
 }

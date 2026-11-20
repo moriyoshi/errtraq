@@ -13,13 +13,13 @@ export const manifest: AdapterManifest<KvConfig> = {
   runtimes: ["node"],
   capabilities: {},
 };
-// TODO(M2a): local descriptors will be revised with the infra model.
+// TODO(M2b): provide local module generation semantics.
 export const infra: InfraDescriptor<KvConfig> = {
-  module: "local/kv-memory",
+  module: { provider: "local", component: "kv-memory", outputs: {} },
   inputs: () => ({}),
-  bindings: {},
+  bindings: [],
+  capabilities: {},
   grants: [],
-  triggers: [],
 };
 export function memoryKv(config: KvConfig = {}): AdapterSelection<KvConfig> {
   return { manifest, infra, config, runtimeModule: "@errtraq/kv-memory" };

@@ -5,30 +5,34 @@ import {
   MemoryQueue,
 } from "@errtraq/testing";
 import { describe, expect, it } from "vitest";
-import { create, cronMatches } from "./index.js";
+import { create as createAdapter, cronMatches } from "./index.js";
+
+const create = (
+  config: Parameters<typeof createAdapter>[0]["config"],
+  dependencies: Parameters<typeof createAdapter>[0]["dependencies"],
+) => createAdapter({ config, dependencies, bindings: {}, topics: {} });
+
 import { configSchema, standalone } from "./stack.js";
 
 describe("standalone platform", () => {
   it("defaults to loopback and rejects unsupported jobs before starting", async () => {
     expect(configSchema.parse({}).host).toBe("127.0.0.1");
+    expect(configSchema.safeParse({ split: ["api"] }).success).toBe(false);
+    expect(configSchema.safeParse({ roles: ["api"] }).success).toBe(false);
     expect(standalone().manifest).toMatchObject({
       runtime: "node",
       compute: "long-lived",
-      functions: ["ingest", "api", "consumer", "cron"],
     });
     const platform = create(
-      { port: 0 },
+      { port: 0, cron: ["bad"] },
       {
         store: new MemoryActiveStore(),
         blobs: new MemoryBlobStore(),
         kv: new MemoryKV(),
         queue: new MemoryQueue(),
-        jobs: [{ name: "bad", schedule: "not-cron" }],
       },
     );
-    await expect(platform.start()).rejects.toThrow(
-      "Unsupported cron expression",
-    );
+    await expect(platform.start()).rejects.toThrow("Unknown cron job");
     const missingIdle = create(
       { port: 0 },
       {
