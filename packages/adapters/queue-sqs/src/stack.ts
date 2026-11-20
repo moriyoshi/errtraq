@@ -95,17 +95,23 @@ function descriptor(config: ResolvedConfig): InfraDescriptor<Config> {
       component: "sqs",
       outputs: {
         queues: { map: { map: "string" } },
-        policies: { map: { map: "json" } },
+        policies: { map: { map: "string" } },
       },
     },
     inputs: () => ({
       name: stackValue("name"),
       region: stackValue("region"),
       tags: stackValue("tags"),
-      physical_queues: keys,
-      visibility_timeout_sec: config.visibilityTimeoutSec,
-      dlq_enabled: config.dlq,
-      max_receive_count: config.maxReceiveCount,
+      physical_queues: Object.fromEntries(
+        keys.map((key) => [
+          key,
+          {
+            visibility_timeout_sec: config.visibilityTimeoutSec,
+            dlq_enabled: config.dlq,
+            max_receive_count: config.maxReceiveCount,
+          },
+        ]),
+      ),
     }),
     resources: Object.fromEntries(
       keys.map((key) => [key, out("queues", key, "arn")]),

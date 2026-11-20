@@ -47,5 +47,8 @@ item should be resolved or removed once addressed. Milestone work itself is trac
 - [x] M2b: choose queue visibility and consumer timeout defaults that satisfy the six-times rule whenever the queue supports visibility; core checks explicit values only. AWS defaults are 180 and 30 seconds. — *source: M2a2 review A6*
 - [ ] M2c: satisfy each function's artifact reference with the actual build output, create role-scoped entrypoints and queue event-source mappings, and integrate runtime secret sources. — *source: M2a2 review A4 / A6 / A12*
 
-- [ ] M2b: implement AWS HCL module contracts declared by the Lambda, DynamoDB, SQS and S3 descriptors, including purpose-keyed policy outputs, SQS DLQs and event source mappings, S3 staging prefix permissions, HTTP URLs and scoped secret reads. — *source: M2b step 1*
+- [x] M2b: implement AWS HCL module contracts declared by the Lambda, DynamoDB, SQS and S3 descriptors, including purpose-keyed policy outputs, SQS DLQs and event source mappings, S3 staging prefix permissions, HTTP URLs and scoped secret reads. — *source: M2b step 1*
 - [ ] M3: implement the AWS runtime adapters; enforce the 1 MiB SQS body limit including serialization and envelope overhead, and make DynamoDB explicit deletion honor erasure semantics. — *source: M2b step 1*
+
+- [ ] M2c / M3: match the Lambda module contract: ZIP artifacts exposing `index.handler`, EventBridge `{ "job": name }` dispatch, partial SQS batch failures, and lazy Secrets Manager ARN resolution. — *source: M2b step 2*
+- [ ] M3: implement and test the DynamoDB sparse-index and lookup-item layout documented in `infra/modules/aws/README.md`, including eventual-consistency limits and explicit erasure. — *source: M2b step 2*

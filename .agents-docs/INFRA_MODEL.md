@@ -77,6 +77,9 @@ scalar. `TF_VAR_` values enter as strings and the CLI parses JSON into that nati
 scalars. `terraformVariableType("json")` returns `any`; M2b must emit a Terraform validation
 that requires an object or array as well. `string[]` maps to `list(string)`. This differs from a
 JSON policy document serialized as text: an existing `json` output must be supplied as native data.
+Capability policy outputs may use `json` for native documents or `string` for serialized documents;
+the AWS modules use `string` because IAM policy inputs expect JSON text. Core checks the declared
+type, not whether a string contains a valid provider policy.
 
 Literal strings may contain Terraform template introducers. `terraformLiteral(s)` returns
 `{ value: s, needsEscaping }` without changing the data; `escapeTerraformLiteral(s)` escapes

@@ -1210,9 +1210,10 @@ describe("infrastructure model", () => {
       ),
     ).toBe(true);
   });
-  it("rejects undefined or non-JSON capability policies and self-output inputs", () => {
+  it("rejects undefined or non-policy-typed capability outputs and self-output inputs", () => {
     const v = stack();
-    v.store.infra.capabilities = { read: { primary: out("arn") } };
+    v.store.infra.module.outputs.invalidPolicy = "string[]";
+    v.store.infra.capabilities = { read: { primary: out("invalidPolicy") } };
     v.store.infra.inputs = () => ({ self: out("arn") });
     expect(
       validateStack(v).some((issue) => issue.message.includes("JSON policy")),

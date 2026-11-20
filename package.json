@@ -11,7 +11,8 @@
     "lint": "biome check . && node scripts/check-layering.mjs && node scripts/check-exports.mjs",
     "test": "vitest run",
     "build": "tsc -b",
-    "e2e": "pnpm build && node scripts/e2e.mjs"
+    "e2e": "pnpm build && node scripts/e2e.mjs",
+    "infra:validate": "node scripts/infra-validate.mjs"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.15",

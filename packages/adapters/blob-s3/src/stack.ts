@@ -25,7 +25,7 @@ export const infra: InfraDescriptor<Config> = {
       bucket_name: "string",
       bucket_arn: "string",
       staging_arn: "string",
-      policies: { map: { map: "json" } },
+      policies: { map: { map: "string" } },
     },
   },
   inputs: () => ({

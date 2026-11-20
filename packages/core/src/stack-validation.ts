@@ -1170,16 +1170,17 @@ function inspect(input: unknown): {
           fail(loc, "Unknown policy resource purpose");
         if (policy) {
           checkValue(policy, path, loc, false, new Set(), false, false);
+          const policyType = outputTypeAt(
+            ownValue(sel.infra.module.outputs, policy.name),
+            policy.path,
+          );
           if (
             (policy.selection ?? path) !== path ||
-            outputTypeAt(
-              ownValue(sel.infra.module.outputs, policy.name),
-              policy.path,
-            ) !== "json"
+            (policyType !== "json" && policyType !== "string")
           )
             fail(
               loc,
-              "Capability requires a declared JSON policy output from its own module",
+              "Capability requires a declared JSON policy or JSON-text string output from its own module",
             );
         }
       }

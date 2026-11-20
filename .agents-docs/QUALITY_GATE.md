@@ -67,9 +67,14 @@ persisted in `api-token` under the local data directory with mode 0600. The loca
 
 ## 4. Infra generation (when you touch `infra-gen`, an `infra` descriptor, or `infra/modules`)
 
-TODO(M2): record the commands here. The check is: snapshot tests of the generated
-`main.tf.json` per example stack pass, and `terraform validate` succeeds on each generated
-root. Never run `terraform apply` as part of the gate.
+```sh
+pnpm infra:validate
+```
+
+This checks module formatting, initializes each module in an ignored temporary directory with a
+plugin cache under `.agents-workspace/tmp`, validates it, and runs Terraform mock-provider tests
+without credentials. Generated-root snapshots and validation remain TODO(M2b). Never run
+`terraform apply` as part of the gate.
 
 ## Pick your level
 

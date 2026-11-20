@@ -25,7 +25,7 @@ export const infra: InfraDescriptor<Config> = {
     outputs: {
       table_name: "string",
       table_arn: "string",
-      policies: { map: { map: "json" } },
+      policies: { map: { map: "string" } },
     },
   },
   inputs: () => ({
