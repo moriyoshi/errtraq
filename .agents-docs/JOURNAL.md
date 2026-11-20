@@ -159,3 +159,34 @@ briefly placed in `docs/`; that name stays free for a user-facing docs site.) Sk
   endpoint with path-style access and runs its own maintenance queues; S3 Tables supports v3
   and its compaction applies deletes; Athena cannot read v3; Cloudflare's catalog is the weak
   spot. Hands-on spikes (DuckDB on Lambda, deletion vectors on S3 Tables) are in progress.
+
+## 2026-11-21 — M1a: SQLite store and tooling boundaries
+
+- The Kysely SQLite dialect wraps `node:sqlite` statements; Node 22 does not expose the newer
+  statement column metadata API, so the wrapper classifies the query forms emitted by Kysely.
+  File databases enable WAL and a five-second busy timeout. The schema uses indexed promoted
+  columns and JSON records, and metadata compare-and-set uses conditional writes.
+- SQL advertises `lastSeenRangeOnOtherSort: false`: a range on last-seen while ordering by a
+  different key would require scanning that ordering or a separate sort, so the store rejects
+  it rather than promising a bounded index-backed access pattern.
+- Node-only packages have a separate no-emit typecheck with Node types; core and HTTP retain
+  their independent WebWorker-only check. The SQL adapter declares Zod directly because its
+  stack helper validates configuration; Zod was already a workspace dependency.
+- The offline frozen install needed an explicit denial of the unrelated esbuild build script
+  (`--allow-build '!esbuild'`); no new dependency was fetched from the network.
+
+## 2026-11-21 — M1b: local queue, blob and KV adapters
+
+- The queue is pull-only, preserves topics, retries failed or unacknowledged messages, and exposes
+  a snapshot of in-flight deliveries. It uses an injectable clock and a short poll so test clocks
+  can advance without real-time delays; abort waits for an active handler to finish.
+- Filesystem blob keys are SHA-256 encoded into a flat directory, including absolute, traversal
+  and NUL-containing keys. Each object contains a small key/content-type header followed by the
+  streamed bytes, so a temp-file rename replaces body and metadata together. Opens do not follow
+  symlinks, and the configured root is resolved to its canonical directory.
+- Memory KV increments are synchronous atomic map updates with TTL applied on creation. The
+  production adapters do not import testing fakes; separate reference implementations preserve
+  independent contract coverage. Stack helpers are separate subpath exports without runtime code.
+- Each stack helper declares the already-present Zod dependency directly. The workspace now
+  explicitly permits the already-installed esbuild postinstall; unlike the temporary denial in
+  the M1a install attempt, the final frozen offline install runs its local setup successfully.

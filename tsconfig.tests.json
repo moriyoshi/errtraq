@@ -13,9 +13,5 @@
       "@errtraq/testing": ["packages/testing/src/index.ts"]
     }
   },
-  "include": [
-    "packages/*/src/**/*.ts",
-    "packages/adapters/*/src/**/*.ts",
-    "packages/platforms/*/src/**/*.ts"
-  ]
+  "include": ["packages/core/src/**/*.ts", "packages/http/src/**/*.ts"]
 }

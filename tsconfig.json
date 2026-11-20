@@ -1,10 +1,32 @@
 {
   "files": [],
   "references": [
-    { "path": "./packages/core" },
-    { "path": "./packages/http" },
-    { "path": "./packages/testing" },
-    { "path": "./packages/cli" },
-    { "path": "./packages/infra-gen" }
+    {
+      "path": "./packages/core"
+    },
+    {
+      "path": "./packages/http"
+    },
+    {
+      "path": "./packages/testing"
+    },
+    {
+      "path": "./packages/cli"
+    },
+    {
+      "path": "./packages/infra-gen"
+    },
+    {
+      "path": "./packages/adapters/store-sql"
+    },
+    {
+      "path": "./packages/adapters/queue-memory"
+    },
+    {
+      "path": "./packages/adapters/blob-fs"
+    },
+    {
+      "path": "./packages/adapters/kv-memory"
+    }
   ]
 }

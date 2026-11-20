@@ -1,0 +1,14 @@
+{
+  "extends": "./tsconfig.tests.json",
+  "compilerOptions": {
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "types": ["node"]
+  },
+  "include": [
+    "packages/testing/src/**/*.ts",
+    "packages/cli/src/**/*.ts",
+    "packages/infra-gen/src/**/*.ts",
+    "packages/adapters/*/src/**/*.ts",
+    "packages/platforms/*/src/**/*.ts"
+  ]
+}
