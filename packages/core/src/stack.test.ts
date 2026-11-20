@@ -2,15 +2,22 @@ import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import {
   type AdapterSelection,
+  configReference,
   constructionOrder,
   defineStack,
   deriveTriggers,
   env,
   functionGroups,
   generationEnv,
+  isEnvRef,
+  isInfraRef,
+  isOutputRef,
+  isStackRef,
+  isVariableRef,
   out,
   output,
   type PortKind,
+  REF,
   resolveStack,
   type StackConfig,
   selections,
@@ -72,9 +79,14 @@ const selection = (kind: PortKind): AdapterSelection => ({
 function stack(): StackConfig {
   return {
     name: "test",
-    region: "example-region",
-    tags: { purpose: "test" },
-    providers: { aws: { source: "hashicorp/aws", version: "~> 6.0" } },
+    providers: {
+      aws: {
+        source: "hashicorp/aws",
+        version: "~> 6.0",
+        region: "example-region",
+        tags: { purpose: "test" },
+      },
+    },
     variables: { SECRET: { type: "string", sensitive: true } },
     platform: {
       ...selection("platform"),
@@ -103,6 +115,95 @@ function topics(v: StackConfig) {
   return value;
 }
 describe("infrastructure model", () => {
+  it("does not parse transformed configuration a second time", () => {
+    const v = stack();
+    v.blob.manifest.configSchema = z.object({
+      n: z.string().transform(Number),
+    });
+    v.blob.config = { n: "5" };
+    const resolved = resolveStack(v);
+    expect(resolved.blob.config).toEqual({ n: 5 });
+    expect(resolveStack(resolved)).toBe(resolved);
+    expect(constructionOrder(resolved)).toContain("blob");
+    expect(deriveTriggers(resolved)).toHaveLength(1);
+    expect(validateStack(resolved)).toEqual([]);
+    expect(Object.isFrozen(resolved)).toBe(true);
+    expect(Object.isFrozen(resolved.blob.config)).toBe(true);
+    expect(Object.isFrozen(resolved.queue.infra.topics?.routes.ingest)).toBe(
+      true,
+    );
+    expect(() =>
+      Object.assign(resolved.blob.config as object, { n: 9 }),
+    ).toThrow();
+    expect(v.blob.config).toEqual({ n: "5" });
+    expect(Object.isFrozen(v.blob.config)).toBe(false);
+  });
+  it("distinguishes all reference types from ordinary kind-bearing data", () => {
+    expect(isOutputRef(out("id"))).toBe(true);
+    expect(isStackRef(stackValue("name"))).toBe(true);
+    expect(isEnvRef(env("TOKEN"))).toBe(true);
+    expect(isVariableRef(variable("SECRET"))).toBe(true);
+    expect(isInfraRef({ kind: "output", name: "id" })).toBe(false);
+  });
+  it("allows runtime and variable config references but rejects generation and output references even with permissive schemas", () => {
+    const v = stack();
+    v.store.manifest.configSchema = z.object({
+      path: configReference(z.string()),
+    });
+    v.store.config = { path: env("DATA") };
+    expect(validateStack(v)).toEqual([]);
+    v.store.config = { path: variable("SECRET") };
+    expect(validateStack(v)).toEqual([]);
+    v.store.config = { path: generationEnv("DATA") };
+    expect(validateStack(v).length).toBeGreaterThan(0);
+    v.store.manifest.configSchema = z.any();
+    for (const ref of [
+      generationEnv("DATA"),
+      output("blob", "arn"),
+      stackValue("name"),
+    ]) {
+      v.store.config = { nested: ref };
+      expect(
+        validateStack(v).some((issue) =>
+          issue.message.includes("Only runtime environment"),
+        ),
+      ).toBe(true);
+    }
+    v.store.manifest.configSchema = z.object({ nested: z.coerce.string() });
+    v.store.config = { nested: output("blob", "arn") };
+    expect(
+      validateStack(v).some((issue) =>
+        issue.message.includes("Only runtime environment"),
+      ),
+    ).toBe(true);
+  });
+  it("resolves provider values against the owner or an explicit provider", () => {
+    const v = stack();
+    v.providers = {
+      ...v.providers,
+      cloudflare: {
+        source: "cloudflare/cloudflare",
+        version: "~> 5",
+        tags: { region: "other" },
+      },
+    };
+    v.store.infra.inputs = () => ({
+      region: stackValue("region"),
+      tags: stackValue("tags", "cloudflare"),
+    });
+    expect(validateStack(v)).toEqual([]);
+    v.store.infra.inputs = () => ({
+      region: stackValue("region", "cloudflare"),
+      tags: stackValue("tags", "missing"),
+    });
+    const issues = validateStack(v);
+    expect(issues.some((i) => i.message.includes("region is missing"))).toBe(
+      true,
+    );
+    expect(
+      issues.some((i) => i.message.includes("Unknown provider missing")),
+    ).toBe(true);
+  });
   it("validates and resolves adapter defaults without resolving refs", () => {
     const v = stack();
     v.store.infra.inputs = () => ({
@@ -151,19 +252,19 @@ describe("infrastructure model", () => {
     expect(validateStack(v)).toEqual([]);
     v.store.config = {
       kind: "custom",
-      nested: { kind: "output", name: "missing" },
+      nested: output("missing", "missing"),
     };
     expect(
       validateStack(v).some((issue) =>
-        issue.message.includes("Unknown output"),
+        issue.message.includes("Only runtime environment"),
       ),
     ).toBe(true);
   });
   it("rejects malformed references and missing stack region", () => {
     const v = stack();
-    delete v.region;
+    if (v.providers?.aws) delete v.providers.aws.region;
     v.store.infra.inputs = () => ({
-      a: { kind: "outptu", name: "x" },
+      a: Object.defineProperty(out("x"), REF, { value: "outptu" }),
       b: stackValue("region"),
     });
     expect(

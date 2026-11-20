@@ -1,16 +1,15 @@
 import {
-  type EnvRef,
-  type InfraValue,
-  type OutputRef,
+  isEnvRef,
+  isOutputRef,
+  isStackRef,
+  isVariableRef,
   type StackConfig,
-  type StackRef,
   selections,
-  type VariableRef,
 } from "@errtraq/core";
 
 /** Resolve runtime bindings and existing substitutions without printing their values. */
 export function resolveRuntimeValue(
-  value: InfraValue,
+  value: unknown,
   owner: string,
   stack: StackConfig,
   environment: Record<string, string | undefined>,
@@ -20,59 +19,68 @@ export function resolveRuntimeValue(
     return value.map((item) =>
       resolveRuntimeValue(item, owner, stack, environment),
     );
-  if ("kind" in value) {
-    const ref = value as OutputRef | EnvRef | VariableRef | StackRef;
-    if (ref.kind === "stack")
-      return ref.name === "name"
-        ? stack.name
-        : ref.name === "region"
-          ? stack.region
-          : (stack.tags ?? {});
-    if (ref.kind === "env") {
-      const result = environment[ref.name];
-      if (result === undefined)
-        throw new Error(`Missing environment variable ${ref.name}`);
-      return result;
+  if (isStackRef(value)) {
+    if (value.name === "name") return stack.name;
+    const provider =
+      value.provider ?? selections(stack).get(owner)?.infra.module.provider;
+    const entry =
+      provider && Object.hasOwn(stack.providers ?? {}, provider)
+        ? stack.providers?.[provider]
+        : undefined;
+    if (!entry) throw new Error(`Unknown provider ${provider ?? ""}`);
+    return value.name === "region" ? entry.region : (entry.tags ?? {});
+  }
+  if (isEnvRef(value)) {
+    const raw = environment[value.name] ?? value.defaultValue;
+    if (raw === undefined)
+      throw new Error(`Missing environment variable ${value.name}`);
+    const result = raw + (value.suffix ?? "");
+    if (value.valueType === "number") {
+      const number = Number(result);
+      if (!result.trim() || !Number.isFinite(number))
+        throw new Error(`Invalid environment variable ${value.name}`);
+      return number;
     }
-    if (ref.kind === "variable") {
-      const raw = environment[`TF_VAR_${ref.name}`];
-      if (raw === undefined)
-        throw new Error(`Missing stack variable ${ref.name}`);
-      const type = stack.variables?.[ref.name]?.type;
-      try {
-        if (type === "number") {
-          const n = Number(raw);
-          if (!Number.isFinite(n) || !raw.trim()) throw new Error();
-          return n;
-        }
-        if (type === "bool") {
-          if (raw !== "true" && raw !== "false") throw new Error();
-          return raw === "true";
-        }
-        if (type === "string[]" || type === "json") {
-          const parsed: unknown = JSON.parse(raw);
-          if (
-            type === "string[]" &&
-            (!Array.isArray(parsed) ||
-              !parsed.every((item) => typeof item === "string"))
-          )
-            throw new Error();
-          return parsed;
-        }
-        return raw;
-      } catch {
-        throw new Error(`Invalid stack variable ${ref.name}`);
+    return result;
+  }
+  if (isVariableRef(value)) {
+    const raw = environment[`TF_VAR_${value.name}`];
+    if (raw === undefined)
+      throw new Error(`Missing stack variable ${value.name}`);
+    const type = stack.variables?.[value.name]?.type;
+    try {
+      if (type === "number") {
+        const n = Number(raw);
+        if (!Number.isFinite(n) || !raw.trim()) throw new Error();
+        return n;
       }
+      if (type === "bool") {
+        if (raw !== "true" && raw !== "false") throw new Error();
+        return raw === "true";
+      }
+      if (type === "string[]" || type === "json") {
+        const parsed: unknown = JSON.parse(raw);
+        if (
+          type === "string[]" &&
+          (!Array.isArray(parsed) ||
+            !parsed.every((item) => typeof item === "string"))
+        )
+          throw new Error();
+        return parsed;
+      }
+      return raw;
+    } catch {
+      throw new Error(`Invalid stack variable ${value.name}`);
     }
-    if (ref.kind === "output") {
-      const target = ref.selection ?? owner;
-      const replacement = selections(stack).get(target)?.existing?.[ref.name];
-      if (replacement === undefined)
-        throw new Error(
-          `Output ${target}.${ref.name} is not available in local runtime`,
-        );
-      return resolveRuntimeValue(replacement, target, stack, environment);
-    }
+  }
+  if (isOutputRef(value)) {
+    const target = value.selection ?? owner;
+    const replacement = selections(stack).get(target)?.existing?.[value.name];
+    if (replacement === undefined)
+      throw new Error(
+        `Output ${target}.${value.name} is not available in local runtime`,
+      );
+    return resolveRuntimeValue(replacement, target, stack, environment);
   }
   return Object.fromEntries(
     Object.entries(value).map(([key, item]) => [

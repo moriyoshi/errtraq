@@ -377,3 +377,11 @@ Two spikes ran against real AWS; full reports are `.agents-docs/DUCKDB_LAMBDA_SP
 - Stack validation must use own-property lookups for user-controlled names: inherited keys such as `constructor` are not declared providers, variables, capabilities or outputs.
 - Stack helper import checks now traverse relative imports and reject package imports other than `zod` and `@errtraq/core`, including type-only imports. Dynamic imports remain prohibited.
 - The M2a2 model redesign remains unfinished. A preliminary, unintegrated requirements-table draft is in the ignored agent workspace; the existing descriptors and runtime still use the M2a model. Do not begin M2b until all review items and their tests are complete.
+
+## 2026-11-21 — M2a2 validate-once investigation
+
+Adapter config schemas can transform their inputs, so validating an already resolved stack again can reject a valid stack. Construction order is now cached by resolved stack identity and a regression test covers transforming schemas. This is only the first part of A8: the resolved object remains mutable, so the cache assumes callers do not mutate it after resolution; the complete M2a2 model must enforce that invariant before relying on it as a validation boundary.
+
+## 2026-11-21 — M2a2 step 1 references and providers
+
+Infrastructure references use a symbol discriminator so ordinary `kind` fields remain data. Config references allow runtime environment and declared variable references; resolution is deferred until runtime. Region and tags belong to provider entries, with unqualified references using the owning module provider. Resolved stack data is detached and recursively frozen before construction order is cached. Zod schema instances remain shared and unfrozen: freezing a Zod 4 schema prevents lazy method initialization, so the entire reachable object graph is not yet deeply frozen. Adapter schema validation is never repeated on a resolved stack.

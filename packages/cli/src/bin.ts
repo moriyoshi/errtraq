@@ -8,7 +8,6 @@ import {
   bootstrapProject,
   type CoreTopic,
   constructionOrder,
-  type InfraValue,
   type KV,
   resolveStack,
   type StackConfig,
@@ -62,12 +61,7 @@ async function load(
     Record<CoreTopic, Pick<TopicRoute, "physical" | "producerBinding">>
   >;
   return module.create({
-    config: resolveRuntimeValue(
-      selection.config as InfraValue,
-      path,
-      stack,
-      process.env,
-    ),
+    config: resolveRuntimeValue(selection.config, path, stack, process.env),
     bindings,
     dependencies,
     topics,
@@ -96,7 +90,12 @@ export async function main(args: string[]): Promise<void> {
     console.log(`Valid stack: ${stack.name}`);
     return;
   }
-  const storeConfig = stack.store.config as { path?: unknown };
+  const storeConfig = resolveRuntimeValue(
+    stack.store.config,
+    "store",
+    stack,
+    process.env,
+  ) as { path?: unknown };
   if (typeof storeConfig.path === "string" && storeConfig.path !== ":memory:")
     await mkdir(dirname(storeConfig.path), { recursive: true });
   const selected = selections(stack);

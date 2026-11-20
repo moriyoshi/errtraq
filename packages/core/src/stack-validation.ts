@@ -9,17 +9,20 @@ import {
   type AdapterSelection,
   type CoreTopic,
   CRON_JOBS,
-  type EnvRef,
   type FunctionRole,
   type InfraValue,
+  isEnvRef,
+  isInfraRef,
+  isOutputRef,
+  isStackRef,
+  isVariableRef,
   type OutputRef,
   type OutputType,
   type PlatformConfig,
+  REF,
   type StackConfig,
-  type StackRef,
   type StackValidationIssue,
   TOPICS,
-  type VariableRef,
 } from "./stack-model.js";
 import {
   platformConfigSchema,
@@ -27,6 +30,42 @@ import {
   requiredCapabilities,
   rootSchema,
 } from "./stack-schema.js";
+
+// A resolved stack has already passed all checks, including potentially transforming
+// adapter schemas. Keep its construction order alongside its identity.
+const resolvedOrders = new WeakMap<StackConfig, string[]>();
+declare const resolvedBrand: unique symbol;
+export type ResolvedStack = StackConfig & { readonly [resolvedBrand]: true };
+
+// Clone only data objects; schemas are shared, executable objects owned by adapters.
+// Never freeze an input object supplied by the caller.
+function frozenSnapshot<T>(value: T, seen = new WeakMap<object, object>()): T {
+  if (value === null || typeof value !== "object") return value;
+  const prototype = Object.getPrototypeOf(value);
+  if (
+    !Array.isArray(value) &&
+    prototype !== Object.prototype &&
+    prototype !== null
+  )
+    return value;
+  const previous = seen.get(value);
+  if (previous) return previous as T;
+  const copy: object = Array.isArray(value) ? [] : Object.create(prototype);
+  seen.set(value, copy);
+  for (const key of Reflect.ownKeys(value)) {
+    if (Array.isArray(value) && key === "length") continue;
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    if (descriptor && "value" in descriptor) {
+      Object.defineProperty(copy, key, {
+        value: frozenSnapshot(descriptor.value, seen),
+        enumerable: descriptor.enumerable,
+        writable: false,
+        configurable: false,
+      });
+    }
+  }
+  return Object.freeze(copy) as T;
+}
 
 /** Flatten all selected modules using stable, qualified selection paths. */
 export function selections(stack: StackConfig): Map<string, AdapterSelection> {
@@ -81,9 +120,13 @@ function inspect(input: unknown): {
     return { issues };
   }
   const platform = platformParsed.data;
-  if (stack.providers?.aws && !stack.region)
-    fail("region", "Region is required for the AWS provider");
+  if (
+    ownValue(stack.providers, "aws") &&
+    !ownValue(stack.providers, "aws")?.region
+  )
+    fail("providers.aws.region", "Region is required for the AWS provider");
   const all = selections(stack);
+  const rawConfigs = new Map<string, unknown>();
   const graph = new Map<string, Set<string>>();
   const moduleGraph = new Map<string, Set<string>>();
   for (const path of all.keys()) {
@@ -91,6 +134,7 @@ function inspect(input: unknown): {
     moduleGraph.set(path, new Set());
   }
   for (const [path, sel] of all) {
+    rawConfigs.set(path, sel.config);
     if (!path.includes(".") && sel.manifest.kind !== path)
       fail(path, `Expected ${path} adapter`);
     if (!sel.manifest.runtimes.includes(platform.runtime))
@@ -182,30 +226,36 @@ function inspect(input: unknown): {
       seen.delete(value);
       return;
     }
-    const rec = value as Record<string, unknown>;
-    if (
-      "kind" in rec &&
-      (!configMode ||
-        ["output", "stack", "variable", "env"].includes(String(rec.kind)))
-    ) {
-      const keys = Object.keys(rec).sort().join(",");
+    if (REF in value) {
+      const keys = Object.keys(value).sort();
       if (
-        rec.kind === "output" &&
-        (keys === "kind,name" || keys === "kind,name,selection") &&
-        typeof rec.name === "string" &&
-        rec.name &&
-        (rec.selection === undefined || typeof rec.selection === "string")
+        configMode &&
+        !(
+          isVariableRef(value) ||
+          (isEnvRef(value) && value.phase === "runtime")
+        )
+      )
+        fail(
+          path,
+          "Only runtime environment and variable references are allowed in config",
+        );
+      if (
+        isOutputRef(value) &&
+        keys.every((k) => ["name", "selection"].includes(k)) &&
+        typeof value.name === "string" &&
+        value.name &&
+        (value.selection === undefined || typeof value.selection === "string")
       ) {
-        const target = (rec.selection as string | undefined) ?? owner;
+        const target = value.selection ?? owner;
         const selected = all.get(target);
         if (!selected) fail(path, `Unknown selection ${target}`);
-        else if (!Object.hasOwn(selected.infra.module.outputs, rec.name))
-          fail(path, `Unknown output ${target}.${rec.name}`);
+        else if (!Object.hasOwn(selected.infra.module.outputs, value.name))
+          fail(path, `Unknown output ${target}.${value.name}`);
         else if (
           selected.existing &&
-          !Object.hasOwn(selected.existing, rec.name)
+          !Object.hasOwn(selected.existing, value.name)
         )
-          fail(path, `Missing existing output ${target}.${rec.name}`);
+          fail(path, `Missing existing output ${target}.${value.name}`);
         if (
           target !== owner &&
           selected &&
@@ -217,35 +267,57 @@ function inspect(input: unknown): {
         if (target === owner && path.includes(".infra.inputs"))
           fail(path, "Module input cannot reference its own output");
       } else if (
-        rec.kind === "stack" &&
-        keys === "kind,name" &&
-        ["name", "region", "tags"].includes(String(rec.name))
+        isStackRef(value) &&
+        keys.every((k) => ["name", "provider"].includes(k)) &&
+        ["name", "region", "tags"].includes(value.name)
       ) {
-        if (rec.name === "region" && !stack.region)
-          fail(path, "Stack region is missing");
+        if (value.name === "name" && value.provider !== undefined)
+          fail(path, "Stack name is not provider-qualified");
+        if (value.name !== "name") {
+          const provider =
+            value.provider ?? all.get(owner)?.infra.module.provider;
+          const entry = provider
+            ? ownValue(stack.providers, provider)
+            : undefined;
+          if (!entry) fail(path, `Unknown provider ${provider ?? ""}`);
+          else if (value.name === "region" && !entry.region)
+            fail(path, `Provider ${provider} region is missing`);
+        }
       } else if (
-        rec.kind === "variable" &&
-        keys === "kind,name" &&
-        typeof rec.name === "string"
+        isVariableRef(value) &&
+        keys.length === 1 &&
+        keys[0] === "name" &&
+        typeof value.name === "string"
       ) {
-        if (!ownValue(stack.variables, rec.name))
-          fail(path, `Unknown variable ${rec.name}`);
+        if (!ownValue(stack.variables, value.name))
+          fail(path, `Unknown variable ${value.name}`);
       } else if (
-        rec.kind === "env" &&
-        keys === "kind,name,phase" &&
-        typeof rec.name === "string" &&
-        /^[A-Za-z_][A-Za-z0-9_]*$/.test(rec.name) &&
-        ["runtime", "generate"].includes(String(rec.phase))
+        isEnvRef(value) &&
+        keys.every((k) =>
+          ["name", "phase", "defaultValue", "suffix", "valueType"].includes(k),
+        ) &&
+        typeof value.name === "string" &&
+        /^[A-Za-z_][A-Za-z0-9_]*$/.test(value.name) &&
+        ["runtime", "generate"].includes(value.phase) &&
+        (value.defaultValue === undefined ||
+          typeof value.defaultValue === "string") &&
+        (value.suffix === undefined || typeof value.suffix === "string") &&
+        (value.valueType === undefined || value.valueType === "number") &&
+        (value.phase === "runtime" ||
+          (value.defaultValue === undefined &&
+            value.suffix === undefined &&
+            value.valueType === undefined))
       ) {
-        if (rec.phase === "runtime" && !allowRuntime)
+        if (value.phase === "runtime" && !allowRuntime)
           fail(
             path,
             "Runtime environment reference cannot resolve during generation",
           );
       } else fail(path, "Invalid reference");
-    } else
-      for (const [k, v] of Object.entries(rec))
+    } else {
+      for (const [k, v] of Object.entries(value))
         checkValue(v, owner, `${path}.${k}`, allowRuntime, seen, configMode);
+    }
     seen.delete(value);
   };
   if (stack.backend) {
@@ -258,8 +330,8 @@ function inspect(input: unknown): {
         return;
       }
       if (!value || typeof value !== "object") return;
-      if ("kind" in value) {
-        if (value.kind !== "env" || value.phase !== "generate")
+      if (isInfraRef(value)) {
+        if (!isEnvRef(value) || value.phase !== "generate")
           fail(
             path,
             "Backend config requires literals or generation environment references",
@@ -276,40 +348,32 @@ function inspect(input: unknown): {
     expected: OutputType,
     owner: string,
   ): boolean {
-    if (
-      value &&
-      typeof value === "object" &&
-      !Array.isArray(value) &&
-      "kind" in value
-    ) {
-      const ref = value as OutputRef | EnvRef | VariableRef | StackRef;
-      if (ref.kind === "output") {
-        const actual = ownValue(
-          all.get(ref.selection ?? owner)?.infra.module.outputs,
-          ref.name,
-        );
-        return !actual || actual === expected;
-      }
-      if (ref.kind === "stack")
-        return ref.name === "tags"
-          ? expected === "json"
-          : expected === "string" || expected === "json";
-      if (ref.kind === "env")
-        return (
-          expected === "string" ||
-          expected === "json" ||
-          expected === "secret-ref"
-        );
-      if (ref.kind === "variable") {
-        const type = ownValue(stack.variables, ref.name)?.type;
-        return (
-          !type ||
-          (expected === "string" && type === "string") ||
-          (expected === "string[]" && type === "string[]") ||
-          (expected === "secret-ref" && type === "string") ||
-          (expected === "json" && (type === "json" || type === "string"))
-        );
-      }
+    if (isOutputRef(value)) {
+      const actual = ownValue(
+        all.get(value.selection ?? owner)?.infra.module.outputs,
+        value.name,
+      );
+      return !actual || actual === expected;
+    }
+    if (isStackRef(value))
+      return value.name === "tags"
+        ? expected === "json"
+        : expected === "string" || expected === "json";
+    if (isEnvRef(value))
+      return (
+        expected === "string" ||
+        expected === "json" ||
+        expected === "secret-ref"
+      );
+    if (isVariableRef(value)) {
+      const type = ownValue(stack.variables, value.name)?.type;
+      return (
+        !type ||
+        (expected === "string" && type === "string") ||
+        (expected === "string[]" && type === "string[]") ||
+        (expected === "secret-ref" && type === "string") ||
+        (expected === "json" && (type === "json" || type === "string"))
+      );
     }
     if (expected === "string" || expected === "secret-ref")
       return typeof value === "string";
@@ -325,6 +389,16 @@ function inspect(input: unknown): {
   const groups = functionGroups(functions);
   const names = new Map<string, string>();
   for (const [path, sel] of all) {
+    // Inspect before parsing as well: a coercion or transform must not hide a
+    // reference that is illegal in config.
+    checkValue(
+      rawConfigs.get(path),
+      path,
+      `${path}.config`,
+      true,
+      new Set(),
+      true,
+    );
     checkValue(sel.config, path, `${path}.config`, true, new Set(), true);
     try {
       const inputs = sel.existing ? {} : sel.infra.inputs(sel.config);
@@ -356,17 +430,10 @@ function inspect(input: unknown): {
       checkValue(binding.value, path, `${loc}.value`, true);
       if (binding.kind === "secret") {
         const value = binding.value;
-        if (
-          !value ||
-          typeof value !== "object" ||
-          Array.isArray(value) ||
-          !("kind" in value) ||
-          !["output", "variable", "env"].includes(String(value.kind))
-        )
+        if (!isOutputRef(value) && !isVariableRef(value) && !isEnvRef(value))
           fail(loc, "Secret binding must be a reference");
-        else if (value.kind === "output" && typeof value.name === "string") {
-          const target =
-            typeof value.selection === "string" ? value.selection : path;
+        else if (isOutputRef(value)) {
+          const target = value.selection ?? path;
           const outputType = ownValue(
             all.get(target)?.infra.module.outputs,
             value.name,
@@ -374,12 +441,11 @@ function inspect(input: unknown): {
           if (outputType && outputType !== "secret-ref")
             fail(loc, "Secret output must be declared as secret-ref");
         } else if (
-          value.kind === "variable" &&
-          typeof value.name === "string" &&
+          isVariableRef(value) &&
           !ownValue(stack.variables, value.name)?.sensitive
         )
           fail(loc, "Secret variable must be sensitive");
-        else if (value.kind === "env" && value.phase !== "runtime")
+        else if (isEnvRef(value) && value.phase !== "runtime")
           fail(loc, "Secret environment reference must resolve at runtime");
       }
       for (const r of binding.roles) {
@@ -410,13 +476,7 @@ function inspect(input: unknown): {
         ["resource", grant.resource],
         ["policy", grant.policy],
       ] as const) {
-        if (
-          !v ||
-          typeof v !== "object" ||
-          Array.isArray(v) ||
-          !("kind" in v) ||
-          v.kind !== "output"
-        )
+        if (!isOutputRef(v))
           fail(`${loc}.${field}`, "Grant requires an output reference");
         else {
           checkValue(v, path, `${loc}.${field}`, false);
@@ -483,12 +543,7 @@ function inspect(input: unknown): {
         );
       if (stack.queue.infra.module.provider !== "local") {
         const resource = route.resource;
-        const isOutput =
-          resource &&
-          typeof resource === "object" &&
-          !Array.isArray(resource) &&
-          "kind" in resource &&
-          resource.kind === "output";
+        const isOutput = isOutputRef(resource);
         if (!isOutput)
           fail(
             `queue.infra.topics.${topic}.resource`,
@@ -546,13 +601,7 @@ function inspect(input: unknown): {
     )
       fail("queue.infra.topics", "A shared queue requires one consumer role");
     const resourceKey = (value: InfraValue): string => {
-      if (
-        value &&
-        typeof value === "object" &&
-        !Array.isArray(value) &&
-        "kind" in value &&
-        value.kind === "output"
-      )
+      if (isOutputRef(value))
         return JSON.stringify([value.selection ?? "queue", value.name]);
       return JSON.stringify(value);
     };
@@ -632,18 +681,34 @@ function inspect(input: unknown): {
   return { issues, resolved: stack, order };
 }
 export function validateStack(stack: unknown): StackValidationIssue[] {
+  if (
+    typeof stack === "object" &&
+    stack !== null &&
+    resolvedOrders.has(stack as StackConfig)
+  )
+    return [];
   return inspect(stack).issues;
 }
 /** Validates and resolves configuration defaults without resolving Terraform or runtime references. */
-export function resolveStack(stack: unknown): StackConfig {
+export function resolveStack(stack: unknown): ResolvedStack {
+  if (
+    typeof stack === "object" &&
+    stack !== null &&
+    resolvedOrders.has(stack as StackConfig)
+  )
+    return stack as ResolvedStack;
   const result = inspect(stack);
   if (result.issues.length || !result.resolved)
     throw new Error(
       `Invalid stack: ${result.issues.map((i) => `${i.path}: ${i.message}`).join("; ")}`,
     );
-  return result.resolved;
+  const snapshot = frozenSnapshot(result.resolved) as ResolvedStack;
+  resolvedOrders.set(snapshot, result.order ?? []);
+  return snapshot;
 }
 export function constructionOrder(stack: StackConfig): string[] {
+  const cached = resolvedOrders.get(stack);
+  if (cached) return [...cached];
   const result = inspect(stack);
   if (result.issues.length || !result.order)
     throw new Error(
@@ -651,8 +716,10 @@ export function constructionOrder(stack: StackConfig): string[] {
     );
   return result.order;
 }
-export function defineStack<T extends StackConfig>(stack: T): T {
-  return resolveStack(stack) as T;
+export function defineStack<T extends StackConfig>(
+  stack: T,
+): T & ResolvedStack {
+  return resolveStack(stack) as T & ResolvedStack;
 }
 
 export type DerivedTrigger =

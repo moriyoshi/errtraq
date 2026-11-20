@@ -1,4 +1,4 @@
-import type { z } from "zod";
+import { z } from "zod";
 
 export type PortKind =
   | "platform"
@@ -52,47 +52,94 @@ export interface PlatformConfig {
   settings?: Partial<Record<FunctionRole, FunctionSettings>>;
   cron: string[];
 }
+/** A symbol cannot collide with keys in user-provided infrastructure objects. */
+export const REF = Symbol.for("@errtraq/infra-reference");
 export interface OutputRef {
-  readonly kind: "output";
+  readonly [REF]: "output";
   readonly selection?: string;
   readonly name: string;
 }
 export interface StackRef {
-  readonly kind: "stack";
+  readonly [REF]: "stack";
   readonly name: "name" | "region" | "tags";
+  readonly provider?: string;
 }
 export interface EnvRef {
-  readonly kind: "env";
+  readonly [REF]: "env";
   readonly name: string;
   readonly phase: "generate" | "runtime";
+  readonly defaultValue?: string;
+  readonly suffix?: string;
+  readonly valueType?: "number";
 }
 export interface VariableRef {
-  readonly kind: "variable";
+  readonly [REF]: "variable";
   readonly name: string;
 }
-export const out = (name: string): OutputRef => ({ kind: "output", name });
+export type InfraRef = OutputRef | StackRef | EnvRef | VariableRef;
+function hasTag(value: unknown, tag: InfraRef[typeof REF]): boolean {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    REF in value &&
+    value[REF] === tag
+  );
+}
+export const isOutputRef = (value: unknown): value is OutputRef =>
+  hasTag(value, "output");
+export const isStackRef = (value: unknown): value is StackRef =>
+  hasTag(value, "stack");
+export const isEnvRef = (value: unknown): value is EnvRef =>
+  hasTag(value, "env");
+export const isVariableRef = (value: unknown): value is VariableRef =>
+  hasTag(value, "variable");
+export const isInfraRef = (value: unknown): value is InfraRef =>
+  isOutputRef(value) ||
+  isStackRef(value) ||
+  isEnvRef(value) ||
+  isVariableRef(value);
+
+/** Config references resolve from the runtime environment, or from TF_VAR values at runtime. */
+export function configReference<T extends z.ZodType>(schema: T) {
+  return z.union([
+    z.custom<EnvRef | VariableRef>(
+      (value) =>
+        isVariableRef(value) || (isEnvRef(value) && value.phase === "runtime"),
+    ),
+    schema,
+  ]);
+}
+export const out = (name: string): OutputRef => ({ [REF]: "output", name });
 export const output = (selection: string, name: string): OutputRef => ({
-  kind: "output",
+  [REF]: "output",
   selection,
   name,
 });
-export const stackValue = (name: StackRef["name"]): StackRef => ({
-  kind: "stack",
+export const stackValue = (
+  name: StackRef["name"],
+  provider?: string,
+): StackRef => ({
+  [REF]: "stack",
   name,
+  ...(provider === undefined ? {} : { provider }),
 });
 /** Runtime environment lookup; never read from the generator process. */
-export const env = (name: string): EnvRef => ({
-  kind: "env",
+export const env = (
+  name: string,
+  options: Pick<EnvRef, "defaultValue" | "suffix" | "valueType"> = {},
+): EnvRef => ({
+  [REF]: "env",
   name,
   phase: "runtime",
+  ...options,
 });
 export const generationEnv = (name: string): EnvRef => ({
-  kind: "env",
+  [REF]: "env",
   name,
   phase: "generate",
 });
 export const variable = (name: string): VariableRef => ({
-  kind: "variable",
+  [REF]: "variable",
   name,
 });
 export type InfraValue =
@@ -176,9 +223,15 @@ export interface PlatformSelection extends AdapterSelection {
 }
 export interface StackConfig {
   name: string;
-  region?: string;
-  tags?: Record<string, string>;
-  providers?: Record<string, { source: string; version: string }>;
+  providers?: Record<
+    string,
+    {
+      source: string;
+      version: string;
+      region?: string;
+      tags?: Record<string, string>;
+    }
+  >;
   backend?: { type: string; config: Record<string, InfraValue> };
   variables?: Record<
     string,

@@ -4,6 +4,7 @@ import {
   FUNCTION_ROLES,
   type InfraValue,
   type PortKind,
+  REF,
 } from "./stack-model.js";
 
 const role = z.enum(FUNCTION_ROLES);
@@ -11,6 +12,9 @@ const name = z.string().regex(/^[a-z][a-z0-9_-]*$/);
 const refName = z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/);
 const infraValue: z.ZodType<InfraValue> = z.lazy(() =>
   z.union([
+    z.custom<InfraValue>(
+      (value) => typeof value === "object" && value !== null && REF in value,
+    ),
     z.string(),
     z.number().finite(),
     z.boolean(),
@@ -103,12 +107,15 @@ const selectionSchema: z.ZodType<AdapterSelection> = z.lazy(() =>
 ) as z.ZodType<AdapterSelection>;
 export const rootSchema = z.strictObject({
   name: z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/),
-  region: z.string().min(1).optional(),
-  tags: z.record(z.string(), z.string()).optional(),
   providers: z
     .record(
       name,
-      z.strictObject({ source: z.string().min(1), version: z.string().min(1) }),
+      z.strictObject({
+        source: z.string().min(1),
+        version: z.string().min(1),
+        region: z.string().min(1).optional(),
+        tags: z.record(z.string(), z.string()).optional(),
+      }),
     )
     .optional(),
   backend: z
