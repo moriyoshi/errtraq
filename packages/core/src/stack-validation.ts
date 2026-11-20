@@ -25,6 +25,7 @@ import {
   type PlatformConfig,
   REF,
   type ScopedBinding,
+  type SecretReadRequirement,
   type StackConfig,
   type StackValidationIssue,
   TOPICS,
@@ -98,7 +99,11 @@ function accessRequirements(
 function deriveAccessFor(
   stack: StackConfig,
   functions: PhysicalFunction[],
-): { grants: DerivedGrant[]; bindings: ScopedBinding[] } {
+): {
+  grants: DerivedGrant[];
+  bindings: ScopedBinding[];
+  secretReads: SecretReadRequirement[];
+} {
   const all = selections(stack);
   const grants: DerivedGrant[] = [];
   const bindings: ScopedBinding[] = [];
@@ -148,12 +153,24 @@ function deriveAccessFor(
           });
     }
   }
-  return { grants, bindings };
+  return {
+    grants,
+    bindings,
+    secretReads: bindings
+      .filter((item) => item.binding.kind === "secret")
+      .map((item) => ({
+        functionId: item.functionId,
+        selection: item.selection,
+        bindingName: item.binding.name,
+        identifier: item.binding.value,
+      })),
+  };
 }
 /** Access derived from core requirements, grouped by the actual physical functions. */
 export function deriveAccess(input: StackConfig): {
   grants: DerivedGrant[];
   bindings: ScopedBinding[];
+  secretReads: SecretReadRequirement[];
 } {
   const stack = resolveStack(input);
   return deriveAccessFor(
@@ -370,6 +387,8 @@ function inspect(input: unknown): {
     configMode = false,
     reachable = true,
     seenOutputs = new Set<string>(),
+    context: "input" | "existing" | "backend" | "other" = "other",
+    sensitiveInput = false,
   ) => {
     if (
       value === null ||
@@ -394,6 +413,8 @@ function inspect(input: unknown): {
           configMode,
           reachable,
           seenOutputs,
+          context,
+          sensitiveInput,
         );
       });
       seen.delete(value);
@@ -474,6 +495,8 @@ function inspect(input: unknown): {
               false,
               true,
               seenOutputs,
+              "existing",
+              false,
             );
           else {
             for (const key of value.path ?? []) {
@@ -506,6 +529,8 @@ function inspect(input: unknown): {
                 false,
                 true,
                 seenOutputs,
+                "existing",
+                false,
               );
           }
           seenOutputs.delete(label);
@@ -513,12 +538,12 @@ function inspect(input: unknown): {
         if (
           target !== owner &&
           selected &&
-          (path.includes(".infra.inputs") || path.includes(".existing."))
+          (context === "input" || context === "existing")
         )
           moduleGraph.get(owner)?.add(target);
-        if (target === owner && path.includes(".existing."))
+        if (target === owner && context === "existing")
           fail(path, "Existing value cannot refer to its own output");
-        if (target === owner && path.includes(".infra.inputs"))
+        if (target === owner && context === "input")
           fail(path, "Module input cannot reference its own output");
       } else if (
         isStackRef(value) &&
@@ -543,8 +568,16 @@ function inspect(input: unknown): {
         keys[0] === "name" &&
         typeof value.name === "string"
       ) {
-        if (!ownValue(stack.variables, value.name))
-          fail(path, `Unknown variable ${value.name}`);
+        const declaration = ownValue(stack.variables, value.name);
+        if (!declaration) fail(path, `Unknown variable ${value.name}`);
+        else if (
+          declaration.sensitive &&
+          !(context === "input" && sensitiveInput)
+        )
+          fail(
+            path,
+            "Sensitive variables require a declared sensitive module input",
+          );
       } else if (
         isEnvRef(value) &&
         keys.every((k) =>
@@ -562,6 +595,11 @@ function inspect(input: unknown): {
             value.suffix === undefined &&
             value.valueType === undefined))
       ) {
+        if (value.phase === "generate" && context !== "backend")
+          fail(
+            path,
+            "Generation environment references are only allowed in backend config or stack metadata",
+          );
         if (value.phase === "runtime" && !allowRuntime)
           fail(
             path,
@@ -579,12 +617,24 @@ function inspect(input: unknown): {
           configMode,
           reachable,
           seenOutputs,
+          context,
+          sensitiveInput,
         );
     }
     seen.delete(value);
   };
   if (stack.backend) {
-    checkValue(stack.backend.config, "platform", "backend.config", false);
+    checkValue(
+      stack.backend.config,
+      "platform",
+      "backend.config",
+      false,
+      new Set(),
+      false,
+      true,
+      new Set(),
+      "backend",
+    );
     const checkBackend = (value: InfraValue, path: string): void => {
       if (Array.isArray(value)) {
         value.forEach((item, index) => {
@@ -712,7 +762,20 @@ function inspect(input: unknown): {
       const inputs = sel.existing ? {} : sel.infra.inputs(sel.config);
       if (!inputs || typeof inputs !== "object" || Array.isArray(inputs))
         fail(`${path}.infra.inputs`, "Expected an input record");
-      else checkValue(inputs, path, `${path}.infra.inputs`, false);
+      else
+        for (const [key, value] of Object.entries(inputs))
+          checkValue(
+            value,
+            path,
+            `${path}.infra.inputs.${key}`,
+            false,
+            new Set(),
+            false,
+            true,
+            new Set(),
+            "input",
+            sel.infra.module.sensitiveInputs?.includes(key) ?? false,
+          );
     } catch (error) {
       fail(`${path}.infra.inputs`, String(error));
     }
@@ -728,6 +791,8 @@ function inspect(input: unknown): {
           new Set(),
           false,
           false,
+          new Set(),
+          "existing",
         );
         const expected = ownValue(sel.infra.module.outputs, name);
         if (expected && !existingTypeCompatible(val, expected, path))
@@ -779,8 +844,8 @@ function inspect(input: unknown): {
       }
       if (binding.kind === "secret") {
         const value = binding.value;
-        if (!isOutputRef(value) && !isVariableRef(value) && !isEnvRef(value))
-          fail(loc, "Secret binding must be a reference");
+        if (!isOutputRef(value) && !isVariableRef(value))
+          fail(loc, "Secret binding must reference a secret-store identifier");
         else if (isOutputRef(value)) {
           const target = value.selection ?? path;
           const outputType = outputTypeAt(
@@ -791,11 +856,13 @@ function inspect(input: unknown): {
             fail(loc, "Secret output must be declared as secret-ref");
         } else if (
           isVariableRef(value) &&
-          !ownValue(stack.variables, value.name)?.sensitive
+          (ownValue(stack.variables, value.name)?.type !== "string" ||
+            ownValue(stack.variables, value.name)?.sensitive)
         )
-          fail(loc, "Secret variable must be sensitive");
-        else if (isEnvRef(value) && value.phase !== "runtime")
-          fail(loc, "Secret environment reference must resolve at runtime");
+          fail(
+            loc,
+            "Secret identifier variable must be a non-sensitive string",
+          );
       }
       if (!Object.hasOwn(sel.infra.resources, binding.purpose))
         fail(loc, `Unknown binding purpose ${binding.purpose}`);
@@ -989,13 +1056,6 @@ function inspect(input: unknown): {
     )
       fail("queue.infra.topics", "Per-topic queues must be distinct");
   }
-  for (const job of functions.cron) {
-    const match = CRON_JOBS.find((j) => j.name === job);
-    if (!match) fail("platform.config.cron", `Unknown cron job ${job}`);
-    else roleExists(match.role, `platform.config.cron.${job}`);
-  }
-  if (new Set(functions.cron).size !== functions.cron.length)
-    fail("platform.config.cron", "Duplicate cron job");
   if (
     stack.queue.manifest.capabilities.delivery === "pull" &&
     platform.compute === "function"
@@ -1009,6 +1069,14 @@ function inspect(input: unknown): {
       if (!sel || ownValue(sel.manifest.capabilities, cap) !== expected)
         fail(`${kind}.capabilities.${cap}`, `Requires ${String(expected)}`);
   }
+  // The platform consumes these derived values and is built after all adapters.
+  const access = deriveAccessFor(stack, groups);
+  for (const item of [...access.grants, ...access.bindings])
+    if (item.selection !== "platform")
+      moduleGraph.get("platform")?.add(item.selection);
+  if (topics) moduleGraph.get("platform")?.add("queue");
+  for (const path of all.keys())
+    if (path !== "platform") graph.get("platform")?.add(path);
   function topological(
     edges: Map<string, Set<string>>,
     label: string,
@@ -1110,10 +1178,12 @@ export function deriveTriggers(input: StackConfig): DerivedTrigger[] {
     trigger.topics.push(topic);
   }
   const config = platformConfigSchema.parse(stack.platform.config);
-  const cron = config.cron.map((name) => {
-    const job = CRON_JOBS.find((item) => item.name === name);
-    if (!job) throw new Error(`Unknown cron job ${name}`);
-    return { kind: "cron" as const, ...job };
-  });
+  // TODO(M4): all currently declared jobs belong to the optional archive feature.
+  const cron = stack.archive
+    ? CRON_JOBS.filter((job) => config.roles.includes(job.role)).map((job) => ({
+        kind: "cron" as const,
+        ...job,
+      }))
+    : [];
   return [...queues.values(), ...cron];
 }

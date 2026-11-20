@@ -28,7 +28,6 @@ const baseConfigSchema = z.strictObject({
       }),
     )
     .optional(),
-  cron: z.array(z.string()).default([]),
 });
 const portWithReference = configReference(
   z.number().int().min(0).max(65535),
@@ -88,6 +87,5 @@ export function standalone(
     infra,
     runtimeModule: "@errtraq/platform-standalone",
     config,
-    dependsOn: { store: "store", queue: "queue", blobs: "blob", kv: "kv" },
   };
 }

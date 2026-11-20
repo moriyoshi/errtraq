@@ -139,7 +139,6 @@ export async function assertStackHelper(
       configSchema: schema.transform(() => ({
         roles: ["ingest", "api", "consumer", "cron"],
         split: [],
-        cron: [],
       })),
     },
   };

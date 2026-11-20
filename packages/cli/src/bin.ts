@@ -8,6 +8,7 @@ import {
   bootstrapProject,
   type CoreTopic,
   constructionOrder,
+  deriveTriggers,
   type FunctionRole,
   type KV,
   type PlatformConfig,
@@ -43,6 +44,13 @@ async function load(
       return [alias, created.get(target)];
     }),
   );
+  if (selection.manifest.kind === "platform") {
+    for (const [name, adapter] of created) {
+      const kind = selections(stack).get(name)?.manifest.kind;
+      if (kind && !name.includes("."))
+        dependencies[kind === "blob" ? "blobs" : kind] = adapter;
+    }
+  }
   const bindings = resolveRoleBindings(stack, roles, path, process.env);
   const topics = Object.fromEntries(
     Object.entries(stack.queue.infra.topics?.routes ?? {}).map(
@@ -64,6 +72,13 @@ async function load(
     bindings,
     dependencies,
     topics,
+    ...(selection.manifest.kind === "platform"
+      ? {
+          cronJobs: deriveTriggers(stack)
+            .filter((trigger) => trigger.kind === "cron")
+            .map((trigger) => trigger.name),
+        }
+      : {}),
   });
 }
 export async function main(args: string[]): Promise<void> {

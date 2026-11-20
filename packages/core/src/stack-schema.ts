@@ -65,7 +65,7 @@ const descriptorSchema = z.strictObject({
   module: z.strictObject({
     provider: name,
     component: name,
-    version: z.string().min(1).optional(),
+    sensitiveInputs: z.array(refName).optional(),
     outputs: z.record(refName, outputType),
   }),
   inputs: z.custom<(config: unknown) => Record<string, InfraValue>>(
@@ -152,6 +152,7 @@ export const platformConfigSchema = z
   .object({
     roles: z.array(role).min(1),
     split: z.array(role),
+    cron: z.never().optional(),
     settings: z
       .partialRecord(
         role,
@@ -165,7 +166,6 @@ export const platformConfigSchema = z
           .passthrough(),
       )
       .optional(),
-    cron: z.array(z.string()),
   })
   .passthrough();
 export const requiredCapabilities: Partial<

@@ -13,7 +13,6 @@ export default defineStack({
     rateLimit: 10000,
     roles: ["ingest", "api", "consumer", "cron"],
     split: [],
-    cron: [],
   }),
   store: sqlite({
     path: env("ERRTRAQ_DATA_DIR", {

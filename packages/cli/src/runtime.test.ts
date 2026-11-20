@@ -105,7 +105,6 @@ it("rejects local adapters on ephemeral or multi-function compute", () => {
       config: {
         roles: ["ingest", "api", "consumer", "cron"],
         split: ["api"],
-        cron: [],
       },
     },
   };

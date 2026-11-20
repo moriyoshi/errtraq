@@ -144,11 +144,10 @@ function stack(): StackConfig {
           .object({
             roles: z.array(z.enum(roles)),
             split: z.array(z.enum(roles)),
-            cron: z.array(z.string()),
           })
           .passthrough(),
       },
-      config: { roles: [...roles], split: [...roles], cron: [] },
+      config: { roles: [...roles], split: [...roles] },
     },
     store: selection("store"),
     queue: selection("queue"),
@@ -372,7 +371,11 @@ describe("infrastructure model", () => {
     });
     v.store.config = { path: env("DATA") };
     expect(validateStack(v)).toEqual([]);
-    v.store.config = { path: variable("SECRET") };
+    v.variables = {
+      ...v.variables,
+      PUBLIC: { type: "string", sensitive: false },
+    };
+    v.store.config = { path: variable("PUBLIC") };
     expect(validateStack(v)).toEqual([]);
     v.store.config = { path: generationEnv("DATA") };
     expect(validateStack(v).length).toBeGreaterThan(0);
@@ -428,20 +431,26 @@ describe("infrastructure model", () => {
     const v = stack();
     v.store.infra.inputs = () => ({
       region: stackValue("region"),
-      source: generationEnv("SOURCE"),
       secret: variable("SECRET"),
     });
+    v.store.infra.module.sensitiveInputs = ["secret"];
     v.store.infra.bindings = [
       {
         name: "TOKEN",
         kind: "secret",
         purpose: "primary",
-        value: env("TOKEN"),
+        value: variable("IDENTIFIER"),
       },
     ];
+    v.variables = {
+      ...v.variables,
+      IDENTIFIER: { type: "string", sensitive: false },
+    };
     expect(validateStack(v)).toEqual([]);
     expect(resolveStack(v).store.config).toEqual({ enabled: true });
-    expect(defineStack(v).store.infra.bindings[0]?.value).toEqual(env("TOKEN"));
+    expect(defineStack(v).store.infra.bindings[0]?.value).toEqual(
+      variable("IDENTIFIER"),
+    );
   });
   it("rejects dangling selections, outputs, variables and runtime refs in module inputs", () => {
     const v = stack();
@@ -498,14 +507,14 @@ describe("infrastructure model", () => {
   });
   it("substitutes reachable existing outputs", () => {
     const v = stack();
-    v.blob.existing = { arn: variable("SECRET") };
+    v.blob.existing = { arn: "external" };
     v.store.infra.inputs = () => ({ bucket: output("blob", "arn") });
     expect(
       validateStack(v).some((x) =>
         x.message.includes("Missing existing output blob.policy"),
       ),
     ).toBe(true);
-    v.blob.existing.policy = generationEnv("EXTERNAL_POLICY");
+    v.blob.existing.policy = "{}";
     expect(validateStack(v)).toEqual([]);
     v.blob.existing.arn = out("arn");
     expect(validateStack(v).some((x) => x.message.includes("own output"))).toBe(
@@ -581,7 +590,9 @@ describe("infrastructure model", () => {
     ];
     expect(
       validateStack(v).some((x) =>
-        x.message.includes("Secret binding must be a reference"),
+        x.message.includes(
+          "Secret binding must reference a secret-store identifier",
+        ),
       ),
     ).toBe(true);
     v.variables = { PUBLIC: { type: "string", sensitive: false } };
@@ -591,9 +602,7 @@ describe("infrastructure model", () => {
       purpose: "primary",
       value: variable("PUBLIC"),
     };
-    expect(
-      validateStack(v).some((x) => x.message.includes("must be sensitive")),
-    ).toBe(true);
+    expect(validateStack(v)).toEqual([]);
   });
   it("requires secret output references to be declared as such", () => {
     const v = stack();
@@ -610,6 +619,90 @@ describe("infrastructure model", () => {
       purpose: "primary",
       value: out("secret_id"),
     };
+    expect(validateStack(v)).toEqual([]);
+  });
+  it("derives secret-read requirements only for functions receiving identifiers", () => {
+    const v = stack();
+    v.variables = { ID: { type: "string", sensitive: false } };
+    v.store.infra.bindings = [
+      {
+        name: "SECRET_ID",
+        kind: "secret",
+        purpose: "primary",
+        capabilities: ["write"],
+        value: variable("ID"),
+      },
+    ];
+    const requirements = deriveAccess(v).secretReads;
+    expect(requirements.map((r) => r.functionId).sort()).toEqual([
+      "api",
+      "consumer",
+    ]);
+    expect(requirements.every((r) => r.bindingName === "SECRET_ID")).toBe(true);
+    expect(requirements[0]?.identifier).toEqual(variable("ID"));
+    v.variables.ID = { type: "string", sensitive: true };
+    expect(
+      validateStack(v).some((issue) =>
+        issue.message.includes("non-sensitive string"),
+      ),
+    ).toBe(true);
+    v.store.infra.bindings[0] = {
+      name: "SECRET_ID",
+      kind: "secret",
+      purpose: "primary",
+      value: env("SECRET"),
+    };
+    expect(
+      validateStack(v).some((issue) =>
+        issue.message.includes("secret-store identifier"),
+      ),
+    ).toBe(true);
+  });
+  it("limits sensitive variables and generation environment references to their declared contexts", () => {
+    const v = stack();
+    v.store.infra.inputs = () => ({
+      credentials: { token: variable("SECRET") },
+    });
+    expect(
+      validateStack(v).some((issue) =>
+        issue.message.includes("Sensitive variables require"),
+      ),
+    ).toBe(true);
+    v.store.infra.module.sensitiveInputs = ["credentials"];
+    expect(validateStack(v)).toEqual([]);
+    v.store.infra.inputs = () => ({ credentials: generationEnv("PASSWORD") });
+    expect(
+      validateStack(v).some((issue) =>
+        issue.message.includes("Generation environment references"),
+      ),
+    ).toBe(true);
+    v.store.infra.inputs = () => ({});
+    v.store.infra.bindings = [
+      {
+        name: "BAD",
+        kind: "env",
+        purpose: "primary",
+        value: variable("SECRET"),
+      },
+    ];
+    expect(
+      validateStack(v).some((issue) =>
+        issue.message.includes("Sensitive variables require"),
+      ),
+    ).toBe(true);
+    v.store.infra.bindings[0] = {
+      name: "BAD",
+      kind: "env",
+      purpose: "primary",
+      value: generationEnv("PASSWORD"),
+    };
+    expect(
+      validateStack(v).some((issue) =>
+        issue.message.includes("Generation environment references"),
+      ),
+    ).toBe(true);
+    v.store.infra.bindings = [];
+    v.backend = { type: "s3", config: { bucket: generationEnv("BUCKET") } };
     expect(validateStack(v)).toEqual([]);
   });
   it("validates required capabilities and derives policies for each physical function", () => {
@@ -886,7 +979,6 @@ describe("infrastructure model", () => {
   });
   it("derives one shared queue trigger and named cron triggers", () => {
     const v = stack();
-    (v.platform.config as { cron: string[] }).cron = ["retention"];
     expect(deriveTriggers(v)).toEqual([
       {
         kind: "queue",
@@ -895,7 +987,6 @@ describe("infrastructure model", () => {
         resource: out("arn"),
         topics: ["ingest", "notifications"],
       },
-      { kind: "cron", name: "retention", schedule: "15 * * * *", role: "cron" },
     ]);
     v.archive = selection("archive");
     v.archive.manifest.capabilities = { rowDelete: "copy-on-write" };
@@ -903,36 +994,35 @@ describe("infrastructure model", () => {
       topics: ["ingest", "archive.project", "notifications"],
     });
   });
-  it("checks named cron jobs, duplicate routes and deployed roles", () => {
+  it("derives all core cron jobs when the archive and cron role are selected", () => {
     const v = stack();
-    (v.platform.config as { cron: string[] }).cron = [
-      "unknown",
-      "retention",
-      "retention",
-    ];
+    expect(
+      deriveTriggers(v).filter((trigger) => trigger.kind === "cron"),
+    ).toEqual([]);
+    v.archive = selection("archive");
+    v.archive.manifest.capabilities = { rowDelete: "copy-on-write" };
+    expect(
+      deriveTriggers(v).filter((trigger) => trigger.kind === "cron"),
+    ).toHaveLength(3);
     (v.platform.config as { roles: string[] }).roles = [
       "ingest",
       "api",
       "consumer",
     ];
     expect(
-      validateStack(v).some((x) => x.message.includes("Unknown cron")),
-    ).toBe(true);
-    expect(
-      validateStack(v).some((x) => x.message.includes("Duplicate cron")),
-    ).toBe(true);
-    expect(
-      validateStack(v).some((x) => x.message.includes("does not deploy cron")),
+      validateStack(v).some((issue) =>
+        issue.message.includes("does not deploy cron"),
+      ),
     ).toBe(true);
   });
   it("derives split groups and validates role settings", () => {
     const v = stack();
-    expect(
-      physicalFunctions({ roles: [...roles], split: ["ingest"], cron: [] }),
-    ).toEqual([
-      { id: "ingest", roles: ["ingest"], settings: {} },
-      { id: "shared", roles: ["api", "consumer", "cron"], settings: {} },
-    ]);
+    expect(physicalFunctions({ roles: [...roles], split: ["ingest"] })).toEqual(
+      [
+        { id: "ingest", roles: ["ingest"], settings: {} },
+        { id: "shared", roles: ["api", "consumer", "cron"], settings: {} },
+      ],
+    );
     (v.platform.config as { split: string[] }).split = ["api", "api"];
     expect(validateStack(v).some((x) => x.message.includes("Duplicate"))).toBe(
       true,
@@ -942,7 +1032,7 @@ describe("infrastructure model", () => {
     const a = {
       roles: [...roles],
       split: ["consumer", "ingest"] as (typeof roles)[number][],
-      cron: [],
+
       settings: { api: { memoryMb: 512 }, cron: { timeoutSec: 30 } },
     };
     const b = {
@@ -964,7 +1054,7 @@ describe("infrastructure model", () => {
     v.platform.config = {
       roles: [...roles],
       split: [],
-      cron: [],
+
       settings: { ingest: { memoryMb: 128 }, api: { memoryMb: 1024 } },
     };
     expect(
@@ -984,7 +1074,7 @@ describe("infrastructure model", () => {
       v.platform.config = {
         roles: [...roles],
         split: [],
-        cron: [],
+
         settings: { consumer: settings },
       };
       expect(
@@ -1108,6 +1198,49 @@ describe("infrastructure model", () => {
     independent.store.dependsOn = { blob: "blob" };
     independent.blob.infra.inputs = () => ({ other: output("store", "arn") });
     expect(validateStack(independent)).toEqual([]);
+  });
+  it("derives platform graph edges and constructs the platform last", () => {
+    const v = stack();
+    expect(constructionOrder(v).at(-1)).toBe("platform");
+    v.queue.infra.inputs = () => ({ platform: output("platform", "arn") });
+    expect(
+      validateStack(v).some((issue) =>
+        issue.message.includes("Module dependency cycle"),
+      ),
+    ).toBe(true);
+  });
+  it("does not interpret a child selection named existing as an existing-value context", () => {
+    const v = stack();
+    const child = selection("kv");
+    child.infra.bindings = [
+      { name: "CHILD", kind: "env", purpose: "primary", value: out("arn") },
+    ];
+    v.kv.children = { existing: child };
+    expect(validateStack(v)).toEqual([]);
+  });
+  it("rejects removed module versions and cron lists", () => {
+    const v = stack();
+    expect(
+      validateStack({
+        ...v,
+        platform: {
+          ...v.platform,
+          config: { roles: [...roles], split: [], cron: [] },
+        },
+      }).length,
+    ).toBeGreaterThan(0);
+    expect(
+      validateStack({
+        ...v,
+        blob: {
+          ...v.blob,
+          infra: {
+            ...v.blob.infra,
+            module: { ...v.blob.infra.module, version: "1" },
+          },
+        },
+      }).length,
+    ).toBeGreaterThan(0);
   });
   it("restricts backend configuration to generation-time values", () => {
     const v = stack();

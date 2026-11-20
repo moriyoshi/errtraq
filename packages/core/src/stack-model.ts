@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { SecretSource } from "./ports.js";
 
 export type PortKind =
   | "platform"
@@ -67,7 +68,6 @@ export interface PlatformConfig {
   roles: FunctionRole[];
   split: FunctionRole[];
   settings?: Partial<Record<FunctionRole, FunctionSettings>>;
-  cron: string[];
 }
 /** In-process reference tag; generators must render references, not JSON-serialize them. */
 export const REF = Symbol.for("@errtraq/infra-reference");
@@ -189,8 +189,9 @@ export type OutputType =
 export interface ModuleDescriptor {
   provider: string;
   component: string;
-  version?: string;
   outputs: Record<string, OutputType>;
+  /** Names of module inputs allowed to contain sensitive variables. */
+  sensitiveInputs?: string[];
 }
 export interface Binding {
   name: string;
@@ -212,6 +213,12 @@ export interface ScopedBinding {
   functionId: string;
   selection: string;
   binding: Binding;
+}
+export interface SecretReadRequirement {
+  functionId: string;
+  selection: string;
+  bindingName: string;
+  identifier: InfraValue;
 }
 export interface TopicRoute {
   physical: string;
@@ -238,6 +245,9 @@ export interface CreateContext<
   config: C;
   bindings: B;
   dependencies: D;
+  /** Resolve secret identifiers only when an adapter needs the secret bytes. */
+  secretSource?: SecretSource;
+  cronJobs?: readonly string[];
   topics: Partial<
     Record<CoreTopic, { physical: string; producerBinding?: string }>
   >;

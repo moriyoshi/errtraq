@@ -10,7 +10,9 @@ import { create as createAdapter, cronMatches } from "./index.js";
 const create = (
   config: Parameters<typeof createAdapter>[0]["config"],
   dependencies: Parameters<typeof createAdapter>[0]["dependencies"],
-) => createAdapter({ config, dependencies, bindings: {}, topics: {} });
+  cronJobs: string[] = [],
+) =>
+  createAdapter({ config, dependencies, bindings: {}, topics: {}, cronJobs });
 
 import { configSchema, standalone } from "./stack.js";
 
@@ -24,13 +26,14 @@ describe("standalone platform", () => {
       compute: "long-lived",
     });
     const platform = create(
-      { port: 0, cron: ["bad"] },
+      { port: 0 },
       {
         store: new MemoryActiveStore(),
         blobs: new MemoryBlobStore(),
         kv: new MemoryKV(),
         queue: new MemoryQueue(),
       },
+      ["bad"],
     );
     await expect(platform.start()).rejects.toThrow("Unknown cron job");
     const missingIdle = create(

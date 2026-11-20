@@ -96,6 +96,7 @@ export function create({
   config,
   bindings: runtimeBindings,
   dependencies,
+  cronJobs = [],
 }: CreateContext<StandaloneConfig, Partial<Bindings>, Bindings>) {
   const bindings = { ...dependencies, ...runtimeBindings };
   const cfg = configSchema.parse(config);
@@ -105,10 +106,10 @@ export function create({
     async start() {
       if (!bindings.queue.pull)
         throw new Error("Standalone requires a pull queue");
-      for (const name of cfg.cron)
+      for (const name of cronJobs)
         if (!CRON_JOBS.some((job) => job.name === name))
           throw new Error(`Unknown cron job ${name}`);
-      const jobs = CRON_JOBS.filter((job) => cfg.cron.includes(job.name));
+      const jobs = CRON_JOBS.filter((job) => cronJobs.includes(job.name));
       for (const job of jobs) cronMatches(job.schedule, new Date());
       if (jobs.length && !bindings.cronHandler)
         throw new Error("Cron handler required");

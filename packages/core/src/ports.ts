@@ -362,3 +362,7 @@ export interface Logger {
   warn(message: string, fields?: Record<string, unknown>): void;
   error(message: string, fields?: Record<string, unknown>): void;
 }
+/** Retrieves the value of an identifier held by an external secret store. */
+export interface SecretSource {
+  read(identifier: string): Promise<string>;
+}
