@@ -371,3 +371,9 @@ Two spikes ran against real AWS; full reports are `.agents-docs/DUCKDB_LAMBDA_SP
 - Provider module paths use checked-in `infra/modules/<provider>/<component>`; a module version
   field is release metadata, not a Terraform registry version argument. Backend config cannot
   refer to Terraform variables or module outputs. M2b/M2c still own generation and builds.
+
+## 2026-11-21 — M2a2 review: partial validation hardening
+
+- Stack validation must use own-property lookups for user-controlled names: inherited keys such as `constructor` are not declared providers, variables, capabilities or outputs.
+- Stack helper import checks now traverse relative imports and reject package imports other than `zod` and `@errtraq/core`, including type-only imports. Dynamic imports remain prohibited.
+- The M2a2 model redesign remains unfinished. A preliminary, unintegrated requirements-table draft is in the ignored agent workspace; the existing descriptors and runtime still use the M2a model. Do not begin M2b until all review items and their tests are complete.

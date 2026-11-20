@@ -37,3 +37,5 @@ item should be resolved or removed once addressed. Milestone work itself is trac
 - [ ] M5 / UI: add per-project issue short IDs, actual distinct-user counts, and numeric-looking issue IDs if a client requires them; implement statsPeriod statistics and indexed environment and free-text filters. — *source: M1g closing review section B*
 - [ ] CI: run the Python SDK end-to-end check required by ARCHITECTURE.md once a Python environment is available. — *source: M1g closing review section B*
 - [ ] M2: provide indexed token enumeration and revocation for tokens issued before M1g; their plaintext was not retained, so local token rotation can revoke only the file-backed token. — *source: M1g closing review*
+
+- [ ] M2a2: complete the infra model redesign and review items A1-A13, validation items B2-B6 and B8, and documentation item C before M2b. The prototype-property and stack-helper import validation fixes are in progress separately. — *source: `.agents-workspace/tmp/m2a-review-fixes.md`*

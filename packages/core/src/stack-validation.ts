@@ -1,3 +1,10 @@
+function ownValue<T>(
+  record: Record<string, T> | undefined,
+  key: string,
+): T | undefined {
+  return record && Object.hasOwn(record, key) ? record[key] : undefined;
+}
+
 import {
   type AdapterSelection,
   type CoreTopic,
@@ -94,7 +101,7 @@ function inspect(input: unknown): {
     for (const [cap, schema] of Object.entries(
       requiredCapabilities[sel.manifest.kind] ?? {},
     ))
-      if (!schema.safeParse(sel.manifest.capabilities[cap]).success)
+      if (!schema.safeParse(ownValue(sel.manifest.capabilities, cap)).success)
         fail(
           `${path}.manifest.capabilities.${cap}`,
           "Missing or invalid capability",
@@ -110,7 +117,7 @@ function inspect(input: unknown): {
     }
     if (
       sel.infra.module.provider !== "local" &&
-      !stack.providers?.[sel.infra.module.provider]
+      !ownValue(stack.providers, sel.infra.module.provider)
     )
       fail(`${path}.infra.module.provider`, "Missing provider requirement");
     for (const [alias, target] of Object.entries(sel.dependsOn ?? {})) {
@@ -221,7 +228,7 @@ function inspect(input: unknown): {
         keys === "kind,name" &&
         typeof rec.name === "string"
       ) {
-        if (!stack.variables?.[rec.name])
+        if (!ownValue(stack.variables, rec.name))
           fail(path, `Unknown variable ${rec.name}`);
       } else if (
         rec.kind === "env" &&
@@ -277,9 +284,10 @@ function inspect(input: unknown): {
     ) {
       const ref = value as OutputRef | EnvRef | VariableRef | StackRef;
       if (ref.kind === "output") {
-        const actual = all.get(ref.selection ?? owner)?.infra.module.outputs[
-          ref.name
-        ];
+        const actual = ownValue(
+          all.get(ref.selection ?? owner)?.infra.module.outputs,
+          ref.name,
+        );
         return !actual || actual === expected;
       }
       if (ref.kind === "stack")
@@ -293,7 +301,7 @@ function inspect(input: unknown): {
           expected === "secret-ref"
         );
       if (ref.kind === "variable") {
-        const type = stack.variables?.[ref.name]?.type;
+        const type = ownValue(stack.variables, ref.name)?.type;
         return (
           !type ||
           (expected === "string" && type === "string") ||
@@ -334,7 +342,7 @@ function inspect(input: unknown): {
         if (!Object.hasOwn(sel.infra.module.outputs, name))
           fail(`${path}.existing.${name}`, "Unknown existing output");
         checkValue(val, path, `${path}.existing.${name}`, false);
-        const expected = sel.infra.module.outputs[name];
+        const expected = ownValue(sel.infra.module.outputs, name);
         if (expected && !existingTypeCompatible(val, expected, path))
           fail(`${path}.existing.${name}`, `Expected ${expected} output value`);
       }
@@ -359,13 +367,16 @@ function inspect(input: unknown): {
         else if (value.kind === "output" && typeof value.name === "string") {
           const target =
             typeof value.selection === "string" ? value.selection : path;
-          const outputType = all.get(target)?.infra.module.outputs[value.name];
+          const outputType = ownValue(
+            all.get(target)?.infra.module.outputs,
+            value.name,
+          );
           if (outputType && outputType !== "secret-ref")
             fail(loc, "Secret output must be declared as secret-ref");
         } else if (
           value.kind === "variable" &&
           typeof value.name === "string" &&
-          !stack.variables?.[value.name]?.sensitive
+          !ownValue(stack.variables, value.name)?.sensitive
         )
           fail(loc, "Secret variable must be sensitive");
         else if (value.kind === "env" && value.phase !== "runtime")
@@ -384,7 +395,7 @@ function inspect(input: unknown): {
     for (const [capability, policyOutput] of Object.entries(
       sel.infra.capabilities,
     )) {
-      if (sel.infra.module.outputs[policyOutput] !== "json")
+      if (ownValue(sel.infra.module.outputs, policyOutput) !== "json")
         fail(
           `${path}.infra.capabilities.${capability}`,
           "Capability requires a declared JSON policy output",
@@ -441,7 +452,7 @@ function inspect(input: unknown): {
   else {
     const keys = Object.keys(topics.routes);
     for (const topic of TOPICS)
-      if (!topics.routes[topic])
+      if (!ownValue(topics.routes, topic))
         fail(`queue.infra.topics.${topic}`, "Missing topic route");
     for (const key of keys)
       if (!TOPICS.includes(key as CoreTopic))
@@ -591,7 +602,7 @@ function inspect(input: unknown): {
     if (!sel && Object.keys(required).length === 0)
       fail(`${kind}.capabilities`, "Unknown selection");
     for (const [cap, expected] of Object.entries(required))
-      if (!sel || sel.manifest.capabilities[cap] !== expected)
+      if (!sel || ownValue(sel.manifest.capabilities, cap) !== expected)
         fail(`${kind}.capabilities.${cap}`, `Requires ${String(expected)}`);
   }
   function topological(

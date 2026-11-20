@@ -129,6 +129,18 @@ describe("infrastructure model", () => {
       validateStack(v).filter((x) => x.path.includes("inputs")),
     ).toHaveLength(4);
   });
+  it("rejects undeclared variable and provider names inherited from Object.prototype", () => {
+    const v = stack();
+    v.store.infra.inputs = () => ({ value: variable("constructor") });
+    v.store.infra.module.provider = "constructor";
+    const issues = validateStack(v);
+    expect(
+      issues.some((issue) => issue.message === "Unknown variable constructor"),
+    ).toBe(true);
+    expect(
+      issues.some((issue) => issue.message === "Missing provider requirement"),
+    ).toBe(true);
+  });
   it("allows ordinary kind fields in adapter configuration while checking tagged refs", () => {
     const v = stack();
     v.store.manifest.configSchema = z.object({

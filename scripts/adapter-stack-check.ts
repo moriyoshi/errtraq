@@ -9,6 +9,44 @@ import {
   validateStack,
 } from "../packages/core/src/index.js";
 
+/** Stack helpers may import only local files and the explicitly safe package APIs. */
+export async function assertSafeStackImports(stackUrl: URL): Promise<void> {
+  const visited = new Set<string>();
+  async function visitFile(path: string): Promise<void> {
+    if (visited.has(path)) return;
+    visited.add(path);
+    const source = ts.createSourceFile(
+      path,
+      await readFile(path, "utf8"),
+      ts.ScriptTarget.Latest,
+      true,
+    );
+    const edges: string[] = [];
+    function visit(node: ts.Node): void {
+      if (
+        ts.isCallExpression(node) &&
+        node.expression.kind === ts.SyntaxKind.ImportKeyword
+      )
+        throw new Error("Dynamic import in stack graph");
+      if (
+        (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) &&
+        node.moduleSpecifier &&
+        ts.isStringLiteral(node.moduleSpecifier)
+      ) {
+        const specifier = node.moduleSpecifier.text;
+        if (specifier.startsWith(".")) edges.push(specifier);
+        else if (specifier !== "zod" && specifier !== "@errtraq/core")
+          throw new Error(`Forbidden stack package import: ${specifier}`);
+      }
+      ts.forEachChild(node, visit);
+    }
+    visit(source);
+    for (const edge of edges)
+      await visitFile(resolve(dirname(path), edge.replace(/\.js$/, ".ts")));
+  }
+  await visitFile(fileURLToPath(stackUrl));
+}
+
 /** Check a selection in a complete stack and follow its local import graph. */
 export async function assertStackHelper(
   selection: AdapterSelection,
@@ -95,6 +133,7 @@ export async function assertStackHelper(
     kv: selection.manifest.kind === "kv" ? selection : dummy("kv"),
   };
   expect(validateStack(stack)).toEqual([]);
+  await assertSafeStackImports(stackUrl);
   const stackPath = fileURLToPath(stackUrl);
   const runtimePath = resolve(dirname(stackPath), "index.ts");
   async function graph(
