@@ -48,6 +48,9 @@ module outputs, so the application and its infrastructure cannot drift.
 
 ## Status
 
-Implementation is at the start of milestone M0 (workspace scaffold, ports, contract tests).
-See the "Milestones" section of ARCHITECTURE.md; the first round covers M0 to M2 (abstractions,
-local standalone stack, infra generation). AWS is the first cloud target, Cloudflare the second.
+M0 (ports, stack-config validation, contract suites) and M1 (local standalone stack) are done.
+`errtraq dev --stack stacks/local.ts` runs ingest, consumer, the minimal `/api/0` API and a cron
+timer in one Node process on SQLite, an in-memory queue, filesystem blobs and an in-memory KV;
+`pnpm e2e` drives it with the real `@sentry/node` SDK. Next is M2 (infra generation), which
+starts with a redesign of the infra descriptor model (see TODO.md). AWS is the first cloud
+target, Cloudflare the second. See "Milestones" in ARCHITECTURE.md.

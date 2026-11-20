@@ -327,3 +327,25 @@ Two spikes ran against real AWS; full reports are `.agents-docs/DUCKDB_LAMBDA_SP
 - The opt-in SDK check now uses the SDK's default transport and integrations via a loopback relay.
   It verifies gzip replay, sessions, overflow, paging, authentication, token rotation, persistence,
   accepted-burst drain, staged-blob recovery and bounded shutdown without committing captured data.
+
+## 2026-11-21 — M1 closed
+
+- M1 ran as slices M1a (SQLite store), M1b (queue, blob and KV adapters), M1c (ingest
+  pipeline), M1d (API, standalone platform, CLI, e2e), each followed by an independent review
+  that reproduced its findings before reporting them, and a fix slice: M1e (for M1a / M1b),
+  M1f (for M1c), M1g (for M1d and M1 as a whole).
+- Closing verification by the orchestrator on a fresh copy of the tree with a clean install and
+  no build: typecheck, lint and 262 tests pass; `pnpm e2e` passes; a manual run with the real
+  SDK showed grouped issues, Sentry-shaped event responses (tags as pairs, exception entries
+  with frames), 401 without a token, 400 for an unsupported filter, the same dev token and the
+  same data after a restart, and a clean exit on SIGTERM.
+- Worth knowing when testing by hand: the SDK's default Dedupe integration drops consecutive
+  identical errors on the client, so capturing the same exception three times in a row yields
+  one event and a `client_report`. Counts above one need distinct call sites or a re-POSTed
+  envelope.
+- Captured SDK fixtures are scrubbed of machine details by a checked-in script, and a test
+  rejects fixtures containing the current host name, user name or repository path. Nothing
+  machine-specific may be written to tracked files; the repository is meant to be published.
+- Known gaps carried forward are in TODO.md: non-snapshot issue paging, tokens minted before
+  M1g cannot be enumerated for revocation, issue `shortId` and `userCount`, the Python SDK
+  check, and the dialect-neutrality work for M3.
