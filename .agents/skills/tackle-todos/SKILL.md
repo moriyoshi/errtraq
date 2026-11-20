@@ -85,5 +85,5 @@ After all agents complete:
 ## Notes
 
 - **Do not attempt design-category items** without user approval. These require architectural decisions.
-- Respect `AGENTS.md` rules: no `git checkout`, no `git restore`, no discretionary commits. Agents should only edit files, not commit.
+- Respect the `AGENTS.md` Git Workflow rules: no `git checkout`, no `git restore`, and commit only as that section currently allows. Parallel subagents should only edit files; the dispatching agent commits their results.
 - When running tests, always use focused package targeting (`pnpm --filter @errtraq/<pkg> test`) rather than the whole suite when iterating. Tests that need emulators (winterbaume, Lakekeeper, databases) are opt-in and skip when the service is absent.

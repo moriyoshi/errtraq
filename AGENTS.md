@@ -64,8 +64,12 @@ Shared agent skills live under `./.agents/skills/` (Codex reads them there; `./.
 ## Git Workflow
 
 * ❌ Do not run `git checkout` or `git restore` against the working tree. Another agent may be working concurrently in the same directory.
-* ❌ Never make discretionary commits. Commit or push only when the user or the task brief explicitly asks. When a brief asks for a commit, make exactly one for the slice, with the message `<slice>: <summary>` (e.g. `M0b: core ports and domain types`), and only after the gate passes.
-* If your sandbox cannot write to `.git` (the Codex workspace sandbox cannot), do not work around it. Leave the changes uncommitted, say so in your report, and the orchestrator will review and commit.
+* ✅ For now (bootstrap phase), every agent (Claude Code and Codex alike) may commit freely, without being asked. Commit whenever a coherent unit of work passes the gate; small, frequent commits are preferred over one large one.
+  * Message format: `<slice>: <summary>` for milestone work (e.g. `M0c: contract suites and in-memory fakes`), or a plain imperative summary for anything else. Say in the body who implemented and who reviewed when both agents were involved.
+  * Stage only the files you changed (`git add <paths>`). Do not use `git add -A` or `git commit -a`: another agent may have unfinished work in the same tree.
+  * ❌ Do not rewrite history that is not yours: no `git commit --amend` on another agent's commit, no rebase, no reset, no force.
+  * ❌ Pushing is not covered by this rule. Push only when the user explicitly asks.
+* If your sandbox cannot write to `.git`, do not work around it. Leave the changes uncommitted, say so in your report, and the other agent will commit them after review.
 
 ## Documentation
 
