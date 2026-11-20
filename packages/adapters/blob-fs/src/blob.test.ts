@@ -1,9 +1,17 @@
 import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
-import { readFile, symlink, writeFile } from "node:fs/promises";
+import {
+  readFile,
+  stat,
+  symlink,
+  truncate,
+  utimes,
+  writeFile,
+} from "node:fs/promises";
 import { join } from "node:path";
+import { BlobCorruptError } from "@errtraq/core";
 import { blobStoreContract } from "@errtraq/testing";
-import { afterAll, expect, it } from "vitest";
+import { afterAll, expect, it, vi } from "vitest";
 import { create } from "./index.js";
 
 const parent = join(process.cwd(), ".agents-workspace", "tmp");
@@ -52,4 +60,43 @@ it("leaves the old object intact if a replacement write fails", async () => {
   const result = await b.get("item");
   if (!result) throw new Error("Missing object");
   expect(await new Response(result).text()).toBe("old");
+});
+
+it("skips corrupted files at startup and reports corruption on direct access", async () => {
+  const root = join(directory, "corrupt");
+  const first = create({ root });
+  await first.put("good", new TextEncoder().encode("ok"));
+  await first.put("bad", new TextEncoder().encode("bad"));
+  const bad = join(
+    root,
+    `object-${createHash("sha256").update("bad", "utf16le").digest("hex")}`,
+  );
+  const info = await stat(bad);
+  await truncate(bad, info.size - 1);
+  const zero = join(
+    root,
+    `object-${createHash("sha256").update("zero", "utf16le").digest("hex")}`,
+  );
+  await writeFile(zero, new Uint8Array());
+  const log = vi.fn();
+  const reopened = create({ root }, { logger: { warn: log } });
+  expect((await reopened.list("")).items).toEqual(["good"]);
+  expect(log).toHaveBeenCalled();
+  await expect(reopened.get("bad")).rejects.toBeInstanceOf(BlobCorruptError);
+  await expect(reopened.head("bad")).rejects.toBeInstanceOf(BlobCorruptError);
+  await expect(reopened.get("zero")).rejects.toBeInstanceOf(BlobCorruptError);
+});
+it("cleans stale temp files and accepts a symlinked configured root", async () => {
+  const root = join(directory, "real-root");
+  mkdirSync(root);
+  const stale = join(root, ".tmp-stale");
+  await writeFile(stale, "x");
+  const old = new Date(Date.now() - 7200000);
+  await utimes(stale, old, old);
+  const alias = join(directory, "root-link");
+  await symlink(root, alias);
+  const b = create({ root: alias });
+  await b.put("key", new TextEncoder().encode("value"));
+  await expect(stat(stale)).rejects.toMatchObject({ code: "ENOENT" });
+  expect((await b.list("")).items).toEqual(["key"]);
 });

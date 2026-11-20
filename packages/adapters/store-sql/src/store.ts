@@ -2,13 +2,18 @@ import {
   type ActiveStore,
   type ArchiveState,
   type ArtifactBundle,
+  ConflictError,
   type Cursor,
+  decodeCursor,
   type ErasureRequest,
+  encodeCursor,
+  InvalidCursorError,
   type Issue,
   type IssueId,
   NotFoundError,
   type Page,
   type ProjectId,
+  pageLimit,
   type StoredEvent,
   UnsupportedQueryError,
   VersionConflictError,
@@ -22,15 +27,16 @@ export interface SqlStoreOptions {
 }
 const pk = (...parts: string[]) => JSON.stringify(parts);
 const decode = <T>(data: unknown): T => JSON.parse(String(data)) as T;
-const limitOf = (limit?: number) => Math.max(1, limit ?? 100);
-const offsetOf = (cursor?: Cursor) => (cursor ? Number(cursor) : 0);
-function page<T>(rows: T[], cursor?: Cursor, limit?: number): Page<T> {
-  const size = limitOf(limit);
-  return {
-    items: rows.slice(0, size),
-    nextCursor:
-      rows.length > size ? (String(offsetOf(cursor) + size) as Cursor) : null,
-  };
+const limitOf = pageLimit;
+function cursorKeys(
+  cursor: Cursor | undefined,
+  scope: string,
+  length: number,
+): (string | number)[] | undefined {
+  const keys = decodeCursor(cursor, scope);
+  if (keys && keys.length !== length)
+    throw new InvalidCursorError("Invalid cursor shape");
+  return keys;
 }
 
 export function createSqlStore({ db, dialect }: SqlStoreOptions): ActiveStore {
@@ -46,7 +52,17 @@ export function createSqlStore({ db, dialect }: SqlStoreOptions): ActiveStore {
     table: string,
     values: Record<string, string | number | null>,
   ) {
-    await dialect.upsert(db, table, values);
+    try {
+      await retryBusy(() => dialect.upsert(db, table, values));
+    } catch (error) {
+      const e = error as { errcode?: number; message?: string };
+      if (
+        e.errcode === 2067 ||
+        /unique constraint failed/i.test(e.message ?? "")
+      )
+        throw new ConflictError("Natural key already exists");
+      throw error;
+    }
   }
   async function list<T>(
     table: string,
@@ -58,24 +74,61 @@ export function createSqlStore({ db, dialect }: SqlStoreOptions): ActiveStore {
       limit?: number;
     },
   ): Promise<Page<T>> {
-    let q = db.selectFrom(table).select("data");
+    const scope = JSON.stringify([
+      table,
+      query.projectId ?? null,
+      query.scope ?? null,
+      query.state ?? null,
+    ]);
+    const after = cursorKeys(query.cursor, scope, 1);
+    if (after && typeof after[0] !== "string")
+      throw new InvalidCursorError("Invalid cursor key");
+    let q = db.selectFrom(table).select(["pk", "data"]);
     if (query.projectId) q = q.where("project_id", "=", query.projectId);
     if (query.scope) q = q.where("scope", "=", query.scope);
     if (query.state) q = q.where("state", "=", query.state);
+    if (after) q = q.where("pk", ">", after[0] as string);
+    const size = limitOf(query.limit);
     const rows = await q
       .orderBy("pk")
-      .limit(limitOf(query.limit) + 1)
-      .offset(offsetOf(query.cursor))
+      .limit(size + 1)
       .execute();
-    return page(
-      rows.map((r) => decode<T>(r.data)),
-      query.cursor,
-      query.limit,
-    );
+    const selected = rows.slice(0, size);
+    const last = selected.at(-1);
+    return {
+      items: selected.map((r) => decode<T>(r.data)),
+      nextCursor:
+        rows.length > size && last
+          ? encodeCursor(scope, [String(last.pk)])
+          : null,
+    };
   }
+  async function retryBusy<T>(operation: () => Promise<T>): Promise<T> {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await operation();
+      } catch (error) {
+        const e = error as {
+          code?: string;
+          errcode?: number;
+          message?: string;
+        };
+        const busy =
+          (typeof e.errcode === "number" && (e.errcode & 255) === 5) ||
+          e.code === "SQLITE_BUSY" ||
+          /database is (?:locked|busy)/i.test(e.message ?? "");
+        if (!busy || attempt >= 7) throw error;
+        await new Promise<void>((resolve) =>
+          setTimeout(resolve, Math.min(50, 2 ** attempt * 2)),
+        );
+      }
+    }
+  }
+  const transaction = <T>(operation: (trx: SqlDatabase) => Promise<T>) =>
+    retryBusy(() => db.transaction().execute(operation));
   const store: ActiveStore = {
     capabilities: { textSearch: false, lastSeenRangeOnOtherSort: false },
-    migrate: async () => migrate(db, dialect),
+    migrate: async () => retryBusy(() => migrate(db, dialect)),
     recordEvent: async (occurrence, event) => {
       if (
         occurrence.projectId !== event.projectId ||
@@ -84,7 +137,7 @@ export function createSqlStore({ db, dialect }: SqlStoreOptions): ActiveStore {
         occurrence.receivedAt !== event.receivedAt
       )
         throw new Error("Occurrence and event mismatch");
-      return db.transaction().execute(async (trx) => {
+      return transaction(async (trx) => {
         const inserted = await dialect.insertIfAbsent(trx, "events", {
           pk: pk(event.projectId, event.eventId),
           project_id: event.projectId,
@@ -270,31 +323,73 @@ export function createSqlStore({ db, dialect }: SqlStoreOptions): ActiveStore {
         if (q.status) query = query.where("status", "=", q.status);
         if (q.from) query = query.where("last_seen", ">=", q.from);
         if (q.to) query = query.where("last_seen", "<", q.to);
+        const scope = JSON.stringify([
+          "issues",
+          q.projectId,
+          q.sort,
+          q.status ?? null,
+          q.from ?? null,
+          q.to ?? null,
+        ]);
+        const after = cursorKeys(q.cursor, scope, 2);
+        if (after) {
+          const [sortKey, id] = after;
+          if (
+            (q.sort === "count"
+              ? typeof sortKey !== "number"
+              : typeof sortKey !== "string") ||
+            typeof id !== "string"
+          )
+            throw new InvalidCursorError("Invalid issue cursor");
+          query = query.where((eb) =>
+            eb.or([
+              eb(column, "<", sortKey ?? ""),
+              eb.and([eb(column, "=", sortKey ?? ""), eb("issue_id", ">", id)]),
+            ]),
+          );
+        }
+        const size = limitOf(q.limit);
         const rows = await query
+          .select([column, "issue_id"])
           .orderBy(column, "desc")
           .orderBy("issue_id", "asc")
-          .limit(limitOf(q.limit) + 1)
-          .offset(offsetOf(q.cursor))
+          .limit(size + 1)
           .execute();
-        return page(
-          rows.map((r) => decode<Issue>(r.data)),
-          q.cursor,
-          q.limit,
-        );
+        const selected = rows.slice(0, size);
+        const last = selected.at(-1);
+        return {
+          items: selected.map((r) => decode<Issue>(r.data)),
+          nextCursor:
+            rows.length > size && last
+              ? encodeCursor(scope, [
+                  last[column] as string | number,
+                  String(last.issue_id),
+                ])
+              : null,
+        };
       },
-      update: async (projectId, id, patch) => {
-        const issue = await byKey<Issue>("issues", pk(projectId, id));
-        if (!issue) throw new NotFoundError("Issue not found");
-        Object.assign(issue, patch);
-        await db
-          .updateTable("issues")
-          .set({ status: issue.status, data: JSON.stringify(issue) })
-          .where("pk", "=", pk(projectId, id))
-          .execute();
-        return issue;
-      },
+      update: async (projectId, id, patch) =>
+        transaction(async (trx) => {
+          const row = await trx
+            .selectFrom("issues")
+            .select("data")
+            .where("pk", "=", pk(projectId, id))
+            .executeTakeFirst();
+          if (!row) throw new NotFoundError("Issue not found");
+          const issue = decode<Issue>(row.data);
+          Object.assign(issue, patch);
+          const updated = await trx
+            .updateTable("issues")
+            .set({ status: issue.status, data: JSON.stringify(issue) })
+            .where("pk", "=", pk(projectId, id))
+            .where("data", "=", String(row.data))
+            .executeTakeFirst();
+          if (Number(updated.numUpdatedRows) !== 1)
+            throw new VersionConflictError("Issue changed concurrently");
+          return issue;
+        }),
       repairAfterErasure: async (projectId, id, count) =>
-        db.transaction().execute(async (trx) => {
+        transaction(async (trx) => {
           const row = await trx
             .selectFrom("issues")
             .select("data")
@@ -316,11 +411,14 @@ export function createSqlStore({ db, dialect }: SqlStoreOptions): ActiveStore {
             issue.lastEventId = event.eventId;
             issue.lastEventReceivedAt = event.receivedAt;
           }
-          await trx
+          const updated = await trx
             .updateTable("issues")
             .set({ count: issue.count, data: JSON.stringify(issue) })
             .where("pk", "=", pk(projectId, id))
-            .execute();
+            .where("data", "=", String(row.data))
+            .executeTakeFirst();
+          if (Number(updated.numUpdatedRows) !== 1)
+            throw new VersionConflictError("Issue changed concurrently");
           return issue;
         }),
     },
@@ -361,47 +459,96 @@ export function createSqlStore({ db, dialect }: SqlStoreOptions): ActiveStore {
         };
       },
       scanOlderThan: async (projectId, cutoff, options) => {
-        const rows = await db
+        const scope = JSON.stringify(["scan", projectId, cutoff]);
+        const after = cursorKeys(options?.cursor, scope, 2);
+        let q = db
           .selectFrom("events")
-          .select("data")
+          .select(["data", "received_at", "event_id"])
           .where("project_id", "=", projectId)
-          .where("received_at", "<", cutoff)
+          .where("received_at", "<", cutoff);
+        if (after) {
+          const [time, id] = after;
+          if (typeof time !== "string" || typeof id !== "string")
+            throw new InvalidCursorError("Invalid scan cursor");
+          q = q.where((eb) =>
+            eb.or([
+              eb("received_at", ">", time),
+              eb.and([eb("received_at", "=", time), eb("event_id", ">", id)]),
+            ]),
+          );
+        }
+        const size = limitOf(options?.limit);
+        const rows = await q
           .orderBy("received_at")
           .orderBy("event_id")
-          .limit(limitOf(options?.limit) + 1)
-          .offset(offsetOf(options?.cursor))
+          .limit(size + 1)
           .execute();
-        return page(
-          rows.map((r) => decode<StoredEvent>(r.data)),
-          options?.cursor,
-          options?.limit,
-        );
+        const selected = rows.slice(0, size);
+        const last = selected.at(-1);
+        return {
+          items: selected.map((r) => decode<StoredEvent>(r.data)),
+          nextCursor:
+            rows.length > size && last
+              ? encodeCursor(scope, [
+                  String(last.received_at),
+                  String(last.event_id),
+                ])
+              : null,
+        };
       },
       deleteBatch: async (projectId, ids) => {
-        if (ids.length)
-          await db
-            .deleteFrom("events")
-            .where("project_id", "=", projectId)
-            .where("event_id", "in", ids)
-            .execute();
+        for (let i = 0; i < ids.length; i += dialect.maxParameters - 1)
+          await retryBusy(() =>
+            db
+              .deleteFrom("events")
+              .where("project_id", "=", projectId)
+              .where(
+                "event_id",
+                "in",
+                ids.slice(i, i + dialect.maxParameters - 1),
+              )
+              .execute(),
+          );
       },
       deleteBySubject: async (projectId, selector, before, limit) =>
-        db.transaction().execute(async (trx) => {
-          if (limit < 1) throw new Error("Limit must be positive");
-          let query = trx
+        transaction(async (trx) => {
+          limitOf(limit);
+          const query = trx
             .selectFrom("events")
             .select(["pk", "data"])
             .where("project_id", "=", projectId)
             .where("received_at", "<=", before);
+          let rows: Array<{
+            pk: string | number | null;
+            data: string | number | null;
+          }>;
           if (selector.kind === "eventIds") {
-            if (!selector.eventIds.length)
-              return {
-                deleted: 0,
-                hasMore: false,
-                issueCounts: [],
-                payloadBlobKeys: [],
-              };
-            query = query.where("event_id", "in", selector.eventIds);
+            const found: typeof rows = [];
+            const ids = [...new Set(selector.eventIds)];
+            for (let i = 0; i < ids.length; i += dialect.maxParameters - 1) {
+              const chunk = ids
+                .slice(i, i + dialect.maxParameters - 1)
+                .map((id) => pk(projectId, id));
+              if (chunk.length)
+                found.push(
+                  ...(await trx
+                    .selectFrom("events")
+                    .select(["pk", "data"])
+                    .where("pk", "in", chunk)
+                    .where("received_at", "<=", before)
+                    .execute()),
+                );
+            }
+            rows = found
+              .sort((a, b) => {
+                const x = decode<StoredEvent>(a.data),
+                  y = decode<StoredEvent>(b.data);
+                return (
+                  x.receivedAt.localeCompare(y.receivedAt) ||
+                  x.eventId.localeCompare(y.eventId)
+                );
+              })
+              .slice(0, limit + 1);
           } else {
             const column = {
               userId: "user_id",
@@ -409,21 +556,23 @@ export function createSqlStore({ db, dialect }: SqlStoreOptions): ActiveStore {
               username: "user_name",
               ipAddress: "user_ip",
             }[selector.kind];
-            query = query.where(column, "=", selector.value);
+            rows = await query
+              .where(column, "=", selector.value)
+              .orderBy("received_at")
+              .orderBy("event_id")
+              .limit(limit + 1)
+              .execute();
           }
-          const rows = await query
-            .orderBy("received_at")
-            .orderBy("event_id")
-            .limit(limit + 1)
-            .execute();
           const selected = rows.slice(0, limit);
-          if (selected.length)
+          for (let i = 0; i < selected.length; i += dialect.maxParameters)
             await trx
               .deleteFrom("events")
               .where(
                 "pk",
                 "in",
-                selected.map((r) => String(r.pk)),
+                selected
+                  .slice(i, i + dialect.maxParameters)
+                  .map((r) => String(r.pk)),
               )
               .execute();
           const counts = new Map<IssueId, number>();
@@ -465,7 +614,7 @@ export function createSqlStore({ db, dialect }: SqlStoreOptions): ActiveStore {
       list: (projectId, cursor, limit) =>
         list("releases", { projectId, cursor, limit }),
       putBundle: async (bundle) =>
-        db.transaction().execute(async (trx) => {
+        transaction(async (trx) => {
           const key = pk(bundle.projectId, bundle.id);
           const values = {
             pk: key,
@@ -491,7 +640,7 @@ export function createSqlStore({ db, dialect }: SqlStoreOptions): ActiveStore {
       listBundles: (projectId, releaseId, cursor, limit) =>
         list("bundles", { projectId, scope: releaseId, cursor, limit }),
       deleteBundle: async (projectId, id) =>
-        db.transaction().execute(async (trx) => {
+        transaction(async (trx) => {
           const key = pk(projectId, id);
           await trx
             .deleteFrom("bundle_debug_ids")
@@ -543,15 +692,17 @@ export function createSqlStore({ db, dialect }: SqlStoreOptions): ActiveStore {
       data: JSON.stringify(next),
     };
     if (expected === null) {
-      if (!(await dialect.insertIfAbsent(db, table, values)))
+      if (!(await retryBusy(() => dialect.insertIfAbsent(db, table, values))))
         throw new VersionConflictError("Already exists");
     } else {
-      const r = await db
-        .updateTable(table)
-        .set(values)
-        .where("pk", "=", key)
-        .where("version", "=", expected)
-        .executeTakeFirst();
+      const r = await retryBusy(() =>
+        db
+          .updateTable(table)
+          .set(values)
+          .where("pk", "=", key)
+          .where("version", "=", expected)
+          .executeTakeFirst(),
+      );
       if (Number(r.numUpdatedRows) !== 1)
         throw new VersionConflictError("Version mismatch");
     }

@@ -4,7 +4,7 @@ import { activeStoreContract } from "@errtraq/testing";
 import { Kysely, sql } from "kysely";
 import { afterAll, afterEach, describe, expect, it } from "vitest";
 import { create } from "./index.js";
-import { migrate, type SqlDatabase } from "./schema.js";
+import { createInitialSchema, migrate, type SqlDatabase } from "./schema.js";
 import { sqliteDialect, sqliteStoreDialect } from "./sqlite.js";
 import { createSqlStore } from "./store.js";
 
@@ -47,23 +47,192 @@ describe("SQLite migrations and indexes", () => {
     await migrate(db, sqliteStoreDialect);
     await migrate(db, sqliteStoreDialect);
     const rows = await db.selectFrom("schema_version").selectAll().execute();
-    expect(rows).toHaveLength(1);
-    expect(rows[0]?.version).toBe(1);
+    expect(rows.map((r) => r.version)).toEqual([1, 2]);
+  });
+  it("upgrades version one and rejects newer schemas", async () => {
+    const db = database(":memory:");
+    await db.schema
+      .createTable("schema_version")
+      .addColumn("version", "integer", (c) => c.primaryKey())
+      .execute();
+    await createInitialSchema(db);
+    await db.insertInto("schema_version").values({ version: 1 }).execute();
+    await migrate(db, sqliteStoreDialect);
+    expect(
+      (
+        await db
+          .selectFrom("schema_version")
+          .select("version")
+          .orderBy("version")
+          .execute()
+      ).map((r) => r.version),
+    ).toEqual([1, 2]);
+    await db.insertInto("schema_version").values({ version: 7 }).execute();
+    await expect(migrate(db, sqliteStoreDialect)).rejects.toMatchObject({
+      name: "UnsupportedSchemaVersionError",
+    });
   });
   it("uses indexes for issue and event access patterns", async () => {
     const db = database(":memory:");
     await migrate(db, sqliteStoreDialect);
-    const queries = [
-      sql`explain query plan select * from issues where project_id = ${"1"} order by last_seen desc, issue_id asc limit 20`,
-      sql`explain query plan select * from events where project_id = ${"1"} and issue_id = ${"i"} order by received_at, event_id limit 20`,
-      sql`explain query plan select * from events where project_id = ${"1"} and received_at < ${"2024"} order by received_at, event_id limit 20`,
-      sql`explain query plan select * from events where project_id = ${"1"} and user_email = ${"x"} and received_at <= ${"2024"} order by received_at, event_id limit 20`,
-    ];
+    const queries: string[] = [];
+    for (const sort of ["first_seen", "last_seen", "count"])
+      for (const status of [false, true])
+        queries.push(
+          `select * from issues where project_id = '1' ${status ? "and status = 'resolved'" : ""} order by ${sort} desc, issue_id asc limit 20`,
+        );
+    for (const direction of ["asc", "desc"])
+      queries.push(
+        `select * from events where project_id = '1' and issue_id = 'i' order by received_at ${direction}, event_id ${direction} limit 20`,
+      );
+    queries.push(
+      "select * from events where project_id = '1' and received_at < '2024' order by received_at, event_id limit 20",
+    );
+    for (const column of ["user_id", "user_email", "user_name", "user_ip"])
+      queries.push(
+        `select * from events where project_id = '1' and ${column} = 'x' and received_at <= '2024' order by received_at, event_id limit 20`,
+      );
+    queries.push(
+      "select * from events where pk in ('event-key') and received_at <= '2024'",
+    );
+    queries.push(
+      "select bundles.data from bundle_debug_ids join bundles on bundles.pk = bundle_debug_ids.bundle_pk where bundle_debug_ids.project_id = '1' and bundle_debug_ids.debug_id = 'd'",
+    );
+    queries.push(
+      "select * from erasures where state = 'received' order by pk",
+      "select * from erasures where project_id = '1' order by pk",
+      "select * from erasures where project_id = '1' and state = 'received' order by pk",
+    );
     for (const query of queries) {
-      const result = await query.execute(db);
-      expect(result.rows.map((row) => JSON.stringify(row)).join(" ")).toMatch(
-        /USING INDEX/,
+      const result = await sql.raw(`explain query plan ${query}`).execute(db);
+      const plan = result.rows.map((row) => JSON.stringify(row)).join(" ");
+      expect(plan, query).toMatch(/(?:USING INDEX|USING COVERING INDEX)/);
+      expect(plan, query).not.toMatch(
+        /TEMP B-TREE|SCAN (?:issues|events|erasures|bundles|bundle_debug_ids)(?:[\s"]|$)/,
       );
     }
   });
+});
+
+it("retries interleaved writes from two connections without snapshot upgrade failures", async () => {
+  const path = join(directory, `shared-${++sequence}.db`);
+  const left = database(path),
+    right = database(path);
+  const a = createSqlStore({ db: left, dialect: sqliteStoreDialect }),
+    b = createSqlStore({ db: right, dialect: sqliteStoreDialect });
+  await a.migrate();
+  await b.migrate();
+  const projectId = "1" as import("@errtraq/core").ProjectId,
+    issueId = "i" as import("@errtraq/core").IssueId,
+    eventId = "e" as import("@errtraq/core").EventId,
+    receivedAt =
+      "2024-01-01T00:00:00.000Z" as import("@errtraq/core").Timestamp;
+  await a.recordEvent(
+    {
+      projectId,
+      issueId,
+      eventId,
+      receivedAt,
+      timestamp: receivedAt,
+      fingerprint: "fp",
+      title: "x",
+      culprit: "",
+      level: "error",
+      type: "error",
+      metadata: {},
+    },
+    {
+      projectId,
+      issueId,
+      eventId,
+      receivedAt,
+      timestamp: receivedAt,
+      level: "error",
+      tags: {},
+      payload: {},
+      user: { email: "x" },
+    },
+  );
+  let release: (() => void) | undefined;
+  let acquired: (() => void) | undefined;
+  const hold = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const ready = new Promise<void>((resolve) => {
+    acquired = resolve;
+  });
+  const lock = left.transaction().execute(async () => {
+    acquired?.();
+    await hold;
+  });
+  await ready;
+  const repair = b.issues.repairAfterErasure(projectId, issueId, 0);
+  setTimeout(() => release?.(), 30);
+  await Promise.all([lock, repair]);
+  expect((await b.issues.get(projectId, issueId))?.count).toBe(1);
+  const [removed] = await Promise.all([
+    b.events.deleteBySubject(
+      projectId,
+      { kind: "email", value: "x" },
+      receivedAt,
+      10,
+    ),
+    a.issues.update(projectId, issueId, { status: "resolved" }),
+  ]);
+  expect(removed.deleted).toBe(1);
+});
+
+it("chunks large event ID lists and respects the deletion limit", async () => {
+  const db = database(":memory:");
+  const store = createSqlStore({ db, dialect: sqliteStoreDialect });
+  await store.migrate();
+  const projectId = "1" as import("@errtraq/core").ProjectId,
+    issueId = "i" as import("@errtraq/core").IssueId,
+    receivedAt =
+      "2024-01-01T00:00:00.000Z" as import("@errtraq/core").Timestamp;
+  const ids = Array.from(
+    { length: 40000 },
+    (_, i) => `e${i}` as import("@errtraq/core").EventId,
+  );
+  for (const eventId of ids.slice(0, 3))
+    await store.recordEvent(
+      {
+        projectId,
+        issueId,
+        eventId,
+        receivedAt,
+        timestamp: receivedAt,
+        fingerprint: "fp",
+        title: "x",
+        culprit: "",
+        level: "error",
+        type: "error",
+        metadata: {},
+      },
+      {
+        projectId,
+        issueId,
+        eventId,
+        receivedAt,
+        timestamp: receivedAt,
+        level: "error",
+        tags: {},
+        payload: {},
+      },
+    );
+  const removed = await store.events.deleteBySubject(
+    projectId,
+    { kind: "eventIds", eventIds: ids },
+    receivedAt,
+    2,
+  );
+  expect(removed.deleted).toBe(2);
+  expect(removed.hasMore).toBe(true);
+  await store.events.deleteBatch(projectId, ids);
+  expect(
+    await store.events.get(
+      projectId,
+      ids[2] as import("@errtraq/core").EventId,
+    ),
+  ).toBeNull();
 });

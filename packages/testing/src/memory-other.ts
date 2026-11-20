@@ -10,8 +10,10 @@ import type {
   Queue,
   StoredEvent,
 } from "@errtraq/core";
+import { InvalidCounterError } from "@errtraq/core";
 import {
   bytes,
+  compareUtf8,
   copy,
   eventPage,
   FakeClock,
@@ -69,9 +71,14 @@ export class MemoryBlobStore implements BlobStore {
     limit?: number,
   ) {
     return page(
-      [...this.objects.keys()].filter((k) => k.startsWith(prefix)).sort(),
+      [...this.objects.keys()]
+        .filter((k) => k.startsWith(prefix))
+        .sort(compareUtf8),
       cursor,
       limit,
+      (key) => [key],
+      JSON.stringify(["blob", prefix]),
+      (a, b) => compareUtf8(String(a[0]), String(b[0])),
     );
   }
   async delete(key: string): Promise<void> {
@@ -91,9 +98,17 @@ export class MemoryKV implements KV {
     const now = Date.parse(this.clock.now());
     const current =
       row && (row.expires === undefined || row.expires > now) ? row : undefined;
+    if (
+      current &&
+      (!/^-?\d+$/.test(current.value) ||
+        !Number.isSafeInteger(Number(current.value)))
+    )
+      throw new InvalidCounterError("Counter must be decimal");
+    if (!Number.isSafeInteger(by))
+      throw new InvalidCounterError("Increment must be a safe integer");
     const result = Number(current?.value ?? "0") + by;
     if (!Number.isSafeInteger(result))
-      throw new Error("Value must be an integer");
+      throw new InvalidCounterError("Value must be an integer");
     this.values.set(key, {
       value: String(result),
       ...(current?.expires !== undefined
@@ -145,16 +160,20 @@ export class MemoryQueue implements Queue {
   constructor(private clock: Clock = new FakeClock()) {}
   producer: Queue["producer"] = {
     send: async (topic, messages, options) => {
-      for (const message of messages)
+      const delay = options?.delaySec ?? 0;
+      if (!Number.isFinite(delay) || delay < 0)
+        throw new RangeError("Invalid queue delay");
+      const copies = messages.map((message) => copy(message));
+      for (const message of copies)
+        if (
+          new TextEncoder().encode(JSON.stringify(message)).length >
+          this.capabilities.maxBytes
+        )
+          throw new Error("Message too large");
+      for (const message of copies)
         this.rows.push({
-          delivery: {
-            id: String(++this.nextId),
-            topic,
-            message: copy(message),
-            attempt: 1,
-          },
-          available:
-            Date.parse(this.clock.now()) + (options?.delaySec ?? 0) * 1000,
+          delivery: { id: String(++this.nextId), topic, message, attempt: 1 },
+          available: Date.parse(this.clock.now()) + delay * 1000,
         });
     },
   };
@@ -224,6 +243,7 @@ export class MemoryQueue implements Queue {
         }
         item.delivery.attempt++;
         this.rows.push(item);
+        await new Promise<void>((resolve) => setTimeout(resolve, 0));
       }
     },
   };

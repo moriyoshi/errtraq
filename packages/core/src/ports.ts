@@ -48,6 +48,7 @@ export interface EventQuery {
   limit?: number;
 }
 
+/** Puts update the same ID; a natural key owned by another ID raises ConflictError. */
 export interface ProjectRepo {
   getOrg(id: OrgId): Promise<Org | null>;
   /** Lookup organization by its slug. */
@@ -69,7 +70,8 @@ export interface ProjectRepo {
 export interface IssueRepo {
   get(projectId: ProjectId, issueId: IssueId): Promise<Issue | null>;
   /** Descending sort key, ascending issue ID tie-break; lastSeen uses [from, to).
-   * Range with a non-lastSeen sort throws UnsupportedQueryError unless supported by capability. */
+   * Range with a non-lastSeen sort throws UnsupportedQueryError unless supported by capability.
+   * Keysets do not provide a snapshot: changes crossing the cursor can be missed or repeated. */
   list(query: IssueQuery): Promise<Page<Issue>>;
   /** Subtract removedCount and repoint to newest remaining active event; if none remain, leave the previous pointer. */
   repairAfterErasure(
@@ -116,6 +118,7 @@ export interface EventRepo {
   }>;
 }
 
+/** A release version already owned by another ID raises ConflictError. */
 export interface ReleaseRepo {
   get(projectId: ProjectId, id: ReleaseId): Promise<Release | null>;
   put(release: Release): Promise<void>;
@@ -225,6 +228,7 @@ export type BatchResult = Array<
 export type BatchHandler = (batch: Delivery[]) => Promise<BatchResult>;
 
 export interface QueueProducer {
+  /** Validate the whole batch before publishing; delaySec must be finite and non-negative. */
   send(
     topic: Topic,
     messages: Message[],
@@ -267,13 +271,13 @@ export interface BlobStore {
     body: Uint8Array | ReadableStream<Uint8Array>,
     metadata?: { contentType?: string; size?: number },
   ): Promise<void>;
-  /** Optional byte range starts at offset and spans at most length bytes. */
+  /** Optional byte range starts at offset and spans at most length bytes. Corrupt data raises BlobCorruptError. */
   get(
     key: string,
     options?: { range?: { offset: number; length?: number } },
   ): Promise<ReadableStream<Uint8Array> | null>;
   head(key: string): Promise<BlobMetadata | null>;
-  /** Keys matching prefix in ascending lexicographic order. */
+  /** Keys matching prefix in ascending UTF-8 byte order; cursor and limits are validated. */
   list(prefix: string, cursor?: Cursor, limit?: number): Promise<Page<string>>;
   delete(key: string): Promise<void>;
   presign?(
@@ -317,7 +321,8 @@ export interface ArchiveStore {
 }
 
 export interface KV {
-  /** Atomically add by and return the new integer; TTL applies on creation. */
+  /** Atomically add by and return the new safe integer; TTL applies on creation.
+   * Existing values must match /^-?\d+$/ and fit a safe integer, otherwise InvalidCounterError. */
   increment(
     key: string,
     by: number,

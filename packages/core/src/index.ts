@@ -1,5 +1,6 @@
 export * from "./bootstrap.js";
 export * from "./consumer.js";
+export * from "./cursor.js";
 export * from "./domain.js";
 export * from "./envelope.js";
 export * from "./errors.js";

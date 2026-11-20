@@ -6,6 +6,7 @@ import {
   type ArchiveStore,
   type BlobStore,
   type Clock,
+  ConflictError,
   type Cursor,
   type Day,
   type Delivery,
@@ -14,6 +15,8 @@ import {
   type EventId,
   type EventPage,
   type EventPosition,
+  InvalidCounterError,
+  InvalidCursorError,
   type IssueId,
   type KV,
   type Message,
@@ -229,6 +232,26 @@ export function activeStoreContract(
       await vi.waitFor(async () =>
         expect(await store.events.get(project, o.eventId)).toBeNull(),
       );
+    });
+    it("preserves an occurrence concurrent with an issue update", async () => {
+      const store = await factory();
+      const first = occurrence("first", 1);
+      await record(store, first);
+      await Promise.all([
+        store.issues.update(project, first.issueId, {
+          status: "resolved",
+          resolvedAt: t(10),
+        }),
+        record(store, occurrence("second", 2)),
+      ]);
+      const issue = await store.issues.get(project, first.issueId);
+      expect(issue).toMatchObject({
+        count: 2,
+        status: "resolved",
+        lastSeen: t(2),
+        lastEventId: "second",
+        lastEventReceivedAt: t(2),
+      });
     });
     it("atomically ignores concurrent duplicate deliveries", async () => {
       const s = await factory();
@@ -677,6 +700,141 @@ export function activeStoreContract(
         await store.releases.get(otherProject, secondRelease.id),
       ).toBeNull();
     });
+    it("uses stable keysets when earlier events are inserted or removed", async () => {
+      const store = await factory();
+      for (let i = 1; i <= 4; i++)
+        await record(store, occurrence(`e${i}`, i, `issue${i}`));
+      const first = await store.events.scanOlderThan(project, t(9), {
+        limit: 2,
+      });
+      expect(first.items.map((e) => e.eventId)).toEqual(["e1", "e2"]);
+      expect(first.nextCursor).not.toBeNull();
+      await store.events.deleteBatch(project, ["e1" as EventId]);
+      await record(store, occurrence("earlier", 0, "new"));
+      const second = await store.events.scanOlderThan(project, t(9), {
+        limit: 2,
+        cursor: first.nextCursor ?? undefined,
+      });
+      expect(second.items.map((e) => e.eventId)).toEqual(["e3", "e4"]);
+    });
+    it("does not repeat issues when earlier entries are inserted or bumped", async () => {
+      const store = await factory();
+      for (let i = 1; i <= 4; i++)
+        await record(store, occurrence(`issue-event${i}`, i, `issue${i}`));
+      const first = await store.issues.list({
+        projectId: project,
+        sort: "lastSeen",
+        limit: 2,
+      });
+      expect(first.nextCursor).not.toBeNull();
+      await record(store, occurrence("new-event", 7, "new-issue"));
+      await record(store, occurrence("bump", 8, "issue4"));
+      const second = await store.issues.list({
+        projectId: project,
+        sort: "lastSeen",
+        limit: 2,
+        cursor: first.nextCursor ?? undefined,
+      });
+      expect(second.items.map((v) => v.fingerprint)).toEqual([
+        "issue2",
+        "issue1",
+      ]);
+    });
+    it("rejects malformed cursors and invalid page limits", async () => {
+      const store = await factory();
+      for (const value of ["abc", "1.5", ""] as Cursor[]) {
+        await expect(store.projects.list(value, 2)).rejects.toBeInstanceOf(
+          InvalidCursorError,
+        );
+        await expect(
+          store.issues.list({
+            projectId: project,
+            sort: "lastSeen",
+            cursor: value,
+            limit: 2,
+          }),
+        ).rejects.toBeInstanceOf(InvalidCursorError);
+        await expect(
+          store.events.scanOlderThan(project, t(9), {
+            cursor: value,
+            limit: 2,
+          }),
+        ).rejects.toBeInstanceOf(InvalidCursorError);
+        await expect(
+          store.releases.list(project, value, 2),
+        ).rejects.toBeInstanceOf(InvalidCursorError);
+        await expect(
+          store.releases.listBundles(project, "release" as ReleaseId, value, 2),
+        ).rejects.toBeInstanceOf(InvalidCursorError);
+        await expect(
+          store.meta.listErasureRequests({ cursor: value, limit: 2 }),
+        ).rejects.toBeInstanceOf(InvalidCursorError);
+      }
+      for (const limit of [0, -1, 1.5, 10001]) {
+        await expect(
+          store.projects.list(undefined, limit),
+        ).rejects.toBeInstanceOf(InvalidCursorError);
+        await expect(
+          store.issues.list({ projectId: project, sort: "lastSeen", limit }),
+        ).rejects.toBeInstanceOf(InvalidCursorError);
+        await expect(
+          store.events.scanOlderThan(project, t(9), { limit }),
+        ).rejects.toBeInstanceOf(InvalidCursorError);
+        await expect(
+          store.events.listByIssue({ projectId: project, limit }),
+        ).rejects.toBeInstanceOf(InvalidCursorError);
+      }
+    });
+    it("rejects duplicate natural keys owned by another record", async () => {
+      const s = await factory();
+      const org = { id: "org-a" as OrgId, slug: "same", name: "one" };
+      await s.projects.putOrg(org);
+      await expect(
+        s.projects.putOrg({ ...org, id: "org-b" as OrgId }),
+      ).rejects.toBeInstanceOf(ConflictError);
+      const p: Project = {
+        id: project,
+        orgId: org.id,
+        slug: "same",
+        name: "one",
+        retentionDays: 30,
+      };
+      await s.projects.put(p);
+      await expect(
+        s.projects.put({ ...p, id: otherProject }),
+      ).rejects.toBeInstanceOf(ConflictError);
+      const key = {
+        id: "k1" as import("@errtraq/core").ProjectKeyId,
+        projectId: project,
+        publicKey: "pub",
+      };
+      await s.projects.putKey(key);
+      await expect(
+        s.projects.putKey({ ...key, id: "k2" as typeof key.id }),
+      ).rejects.toBeInstanceOf(ConflictError);
+      const token: ApiToken = {
+        id: "a" as ApiTokenId,
+        orgId: org.id,
+        tokenHash: "hash",
+        scopes: [],
+      };
+      await s.projects.putToken(token);
+      await expect(
+        s.projects.putToken({ ...token, id: "b" as ApiTokenId }),
+      ).rejects.toBeInstanceOf(ConflictError);
+      const release: Release = {
+        id: "r1" as ReleaseId,
+        projectId: project,
+        version: "v",
+        createdAt: t(1),
+      };
+      await s.releases.put(release);
+      await expect(
+        s.releases.put({ ...release, id: "r2" as ReleaseId }),
+      ).rejects.toBeInstanceOf(ConflictError);
+      await s.projects.putOrg({ ...org, name: "updated" });
+      expect((await s.projects.getOrg(org.id))?.name).toBe("updated");
+    });
     it("looks up keys, hashed tokens, releases and debug ids", async () => {
       const s = await factory();
       const key = {
@@ -804,6 +962,68 @@ export function queueContract(
         expect(seen[1]?.attempt).toBeGreaterThan(seen[0]?.attempt ?? 0);
         await new Promise((resolve) => setTimeout(resolve, 30));
         expect(seen).toHaveLength(2);
+      } finally {
+        controller.abort();
+        await running;
+      }
+    });
+    it("validates a batch before publishing any message", async () => {
+      const q = await factory();
+      for (const delaySec of [-1, Number.NaN, Number.POSITIVE_INFINITY])
+        await expect(
+          q.producer.send("contract", [{ key: "x", body: null }], { delaySec }),
+        ).rejects.toThrow();
+      await expect(
+        q.producer.send("contract", [
+          { key: "good", body: 1 },
+          { key: "bad", body: () => {} },
+        ]),
+      ).rejects.toThrow();
+      await expect(
+        q.producer.send("contract", [
+          { key: "large", body: "x".repeat(q.capabilities.maxBytes) },
+        ]),
+      ).rejects.toThrow();
+      if (q.pull && !options.skip?.pull) {
+        const controller = new AbortController();
+        const seen: Delivery[] = [];
+        const running = q.pull.run(async (batch) => {
+          seen.push(...batch);
+          return batch.map((d) => ({
+            deliveryId: d.id,
+            action: "ack" as const,
+          }));
+        }, controller.signal);
+        try {
+          await new Promise((resolve) => setTimeout(resolve, 30));
+          expect(seen).toEqual([]);
+        } finally {
+          controller.abort();
+          await running;
+        }
+      }
+    });
+    it("serves other messages and aborts when one handler repeatedly throws", async () => {
+      const q = await factory();
+      if (q.capabilities.delivery === "push" || options.skip?.pull) return;
+      if (!q.pull) throw new Error("Missing pull source");
+      const controller = new AbortController();
+      const seen: string[] = [];
+      const running = q.pull.run(async (batch) => {
+        const first = batch[0];
+        if (!first) return [];
+        seen.push(first.message.key);
+        if (first.message.key === "bad") throw new Error("failure");
+        return batch.map((d) => ({ deliveryId: d.id, action: "ack" as const }));
+      }, controller.signal);
+      try {
+        await q.producer.send("contract", [
+          { key: "bad", body: null },
+          { key: "good", body: null },
+        ]);
+        await vi.waitFor(() => expect(seen).toContain("good"), {
+          timeout: 1000,
+        });
       } finally {
         controller.abort();
         await running;
@@ -998,6 +1218,23 @@ export function blobStoreContract(
       if (!tail) throw new Error("Missing blob");
       expect(new TextDecoder().decode(await bytes(tail))).toBe("ef");
     });
+    it("orders non-ASCII keys by UTF-8 bytes", async () => {
+      const b = await factory();
+      for (const key of ["p/😀", "p/～", "p/a"])
+        await b.put(key, new Uint8Array());
+      const rows = await collect((cursor) => b.list("p/", cursor, 1));
+      expect(rows).toEqual(["p/a", "p/～", "p/😀"]);
+    });
+    it("rejects malformed cursors and invalid limits", async () => {
+      const b = await factory();
+      await expect(b.list("p/", "abc" as Cursor, 1)).rejects.toBeInstanceOf(
+        InvalidCursorError,
+      );
+      for (const limit of [0, -1, 1.5, 10001])
+        await expect(b.list("p/", undefined, limit)).rejects.toBeInstanceOf(
+          InvalidCursorError,
+        );
+    });
     it("lists a prefix across all pages without duplicates", async () => {
       const b = await factory();
       for (const key of ["p/3", "p/1", "p/2", "p/4", "other"])
@@ -1034,6 +1271,16 @@ export function kvContract(
       expect(new Set(results).size).toBe(50);
       expect(await kv.get("counter")).toBe("50");
       expect(await kv.increment("counter", -2)).toBe(48);
+    });
+    it("rejects non-decimal counter contents", async () => {
+      const kv = await factory();
+      for (const value of ["", " 5 ", "0x10", "1.5", "9007199254740993"]) {
+        await kv.put("counter", value);
+        await expect(kv.increment("counter", 1)).rejects.toBeInstanceOf(
+          InvalidCounterError,
+        );
+        expect(await kv.get("counter")).toBe(value);
+      }
     });
     it("expires values at TTL without affecting permanent values", async () => {
       if (options.skip?.ttl) return;

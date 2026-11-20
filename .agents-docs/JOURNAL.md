@@ -214,3 +214,27 @@ briefly placed in `docs/`; that name stays free for a user-facing docs site.) Sk
   reset. Lookup-then-put for org/project slugs is not atomic across concurrent bootstrappers;
   the caller must supply a cryptographically secure IdGen for public keys. Both are tracked for
   M1d. No core ports or shared adapter contracts changed; the in-process test uses existing fakes.
+
+## 2026-11-21 — M1e adapter review fixes
+
+- Issue updates now use the same write transaction as event recording and erasure repair.
+  SQLite write transactions begin immediately; a 20 ms synchronous busy timeout is followed by
+  at most seven asynchronous retries with capped backoff. Versioned migrations apply the original
+  schema and directional/unique indexes as separate transactions and reject newer schemas.
+- SQL and reference fakes use scoped opaque keyset cursors and reject malformed cursors or limits
+  outside 1 through 10,000 with `InvalidCursorError`. Inserts or deletes before the cursor no longer
+  shift offsets. A mutable sort key can still cross the cursor between requests: exact snapshot
+  pagination requires persistent snapshot or version history and is tracked for M1d.
+- Natural-key duplicates owned by another record raise `ConflictError`; an existing ID can be
+  updated. SQLite ID lists are chunked below the dialect's 900-parameter limit. Query-plan tests
+  cover both event orders, issue sorts and status combinations, selectors and metadata lookups.
+- The local queue validates batches before publishing, wakes idle consumers on send, backs off
+  failed or unacknowledged deliveries, and drops with an error log after 10 attempts by default.
+  Its fake-clock path uses a short timer to observe externally advanced clocks; it has no DLQ.
+- The local blob adapter builds one sorted in-memory UTF-8 key index at startup, so external
+  writers require a reopen. New files record a fixed-width size to detect truncation; older files
+  without a size field cannot detect body-only truncation. Startup warns and skips corrupt files,
+  removes temp files older than one hour, and writes sync the file and containing directory.
+- KV counters accept only decimal safe integers, preserve creation TTL, and opportunistically
+  sweep expired entries. Stack-helper tests validate complete stacks and inspect the local import
+  graph without loading adapter runtime code. Deferred SQL dialect portability is listed under M3.

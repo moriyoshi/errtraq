@@ -1,11 +1,12 @@
-import { type Kysely, sql } from "kysely";
+import { UnsupportedSchemaVersionError } from "@errtraq/core";
+import type { Kysely } from "kysely";
 import type { SqlStoreDialect } from "./dialect.js";
 
 export type SqlDatabase = Kysely<
   Record<string, Record<string, string | number | null>>
 >;
 
-/** Versioned migrations; each statement is safe to rerun. */
+/** Apply numbered migrations transactionally; reject databases newer than this code. */
 export async function migrate(
   db: SqlDatabase,
   dialect: SqlStoreDialect,
@@ -15,6 +16,44 @@ export async function migrate(
     .ifNotExists()
     .addColumn("version", "integer", (c) => c.primaryKey())
     .execute();
+  const latest = await db
+    .selectFrom("schema_version")
+    .select("version")
+    .orderBy("version", "desc")
+    .executeTakeFirst();
+  if (Number(latest?.version ?? 0) > 2)
+    throw new UnsupportedSchemaVersionError(
+      `Unsupported schema version ${String(latest?.version)}`,
+    );
+  const steps = [
+    { version: 1, run: createInitialSchema },
+    { version: 2, run: upgradeIndexes },
+  ];
+  for (const step of steps)
+    await db.transaction().execute(async (trx) => {
+      const current = await trx
+        .selectFrom("schema_version")
+        .select("version")
+        .orderBy("version", "desc")
+        .executeTakeFirst();
+      const version = Number(current?.version ?? 0);
+      if (version > 2)
+        throw new UnsupportedSchemaVersionError(
+          `Unsupported schema version ${version}`,
+        );
+      if (version >= step.version) return;
+      await step.run(trx);
+      await dialect.insertIfAbsent(
+        trx,
+        "schema_version",
+        { version: step.version },
+        "version",
+      );
+    });
+}
+
+/** The original version-one schema is kept intact for existing installations. */
+export async function createInitialSchema(db: SqlDatabase): Promise<void> {
   for (const table of [
     "orgs",
     "projects",
@@ -127,6 +166,57 @@ export async function migrate(
       .on(table)
       .columns(columns)
       .execute();
-  await dialect.insertIfAbsent(db, "schema_version", { version: 1 }, "version");
-  await sql`select 1`.execute(db);
+}
+
+/** M1e migration: directional indexes and unique natural keys. */
+export async function upgradeIndexes(db: SqlDatabase): Promise<void> {
+  for (const name of [
+    "issues_lookup",
+    "issues_fingerprint",
+    "project_list",
+    "org_slug",
+    "project_slug",
+    "keys_public",
+    "token_hash",
+    "release_version",
+    ...["first_seen", "last_seen", "count"].flatMap((col) => [
+      `issues_${col}`,
+      `issues_status_${col}`,
+    ]),
+  ])
+    await db.schema.dropIndex(name).ifExists().execute();
+  for (const col of ["first_seen", "last_seen", "count"]) {
+    await db.schema
+      .createIndex(`issues_${col}`)
+      .ifNotExists()
+      .on("issues")
+      .columns(["project_id", `${col} desc`, "issue_id asc"])
+      .execute();
+    await db.schema
+      .createIndex(`issues_status_${col}`)
+      .ifNotExists()
+      .on("issues")
+      .columns(["project_id", "status", `${col} desc`, "issue_id asc"])
+      .execute();
+  }
+  for (const [name, table, columns] of [
+    ["org_slug_unique", "orgs", ["lookup"]],
+    ["project_slug_unique", "projects", ["scope", "lookup"]],
+    ["keys_public_unique", "keys", ["lookup"]],
+    ["token_hash_unique", "tokens", ["lookup"]],
+    ["release_version_unique", "releases", ["project_id", "lookup"]],
+  ] as Array<[string, string, string[]]>)
+    await db.schema
+      .createIndex(name)
+      .ifNotExists()
+      .unique()
+      .on(table)
+      .columns(columns)
+      .execute();
+  await db.schema
+    .createIndex("erasures_project_only")
+    .ifNotExists()
+    .on("erasures")
+    .columns(["project_id", "pk"])
+    .execute();
 }

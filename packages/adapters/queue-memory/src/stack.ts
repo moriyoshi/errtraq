@@ -5,14 +5,22 @@ import type {
 } from "@errtraq/core";
 import { z } from "zod";
 
-export const configSchema = z.strictObject({});
+export const QUEUE_MAX_BYTES = 262144;
+export const configSchema = z.strictObject({
+  maxAttempts: z.number().int().positive().default(10),
+});
 export type QueueConfig = z.input<typeof configSchema>;
 export const manifest: AdapterManifest = {
   id: "queue-memory",
   kind: "queue",
   configSchema,
   runtimes: ["node"],
-  capabilities: { delivery: "pull", maxBytes: 262144, delay: true, dlq: false },
+  capabilities: {
+    delivery: "pull",
+    maxBytes: QUEUE_MAX_BYTES,
+    delay: true,
+    dlq: false,
+  },
 };
 // TODO(M2a): local descriptors will be revised with the infra model.
 export const infra: InfraDescriptor<QueueConfig> = {

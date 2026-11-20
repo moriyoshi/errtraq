@@ -4,18 +4,27 @@ import {
   type ArchiveState,
   type ArtifactBundle,
   type Clock,
+  ConflictError,
   type ErasureRequest,
   type Issue,
   NotFoundError,
   type Org,
   type Project,
   type ProjectKey,
+  pageLimit,
   type Release,
   type StoredEvent,
   UnsupportedQueryError,
   VersionConflictError,
 } from "@errtraq/core";
-import { copy, eventOrder, eventPage, matchesSubject, page } from "./shared.js";
+import {
+  compareKeys,
+  copy,
+  eventOrder,
+  eventPage,
+  matchesSubject,
+  page,
+} from "./shared.js";
 
 export class MemoryActiveStore implements ActiveStore {
   readonly capabilities = {
@@ -56,6 +65,12 @@ export class MemoryActiveStore implements ActiveStore {
     getOrgBySlug: async (slug) =>
       copy([...this.orgs.values()].find((o) => o.slug === slug) ?? null),
     putOrg: async (org) => {
+      if (
+        [...this.orgs.values()].some(
+          (row) => row.slug === org.slug && row.id !== org.id,
+        )
+      )
+        throw new ConflictError("Organization slug exists");
       this.orgs.set(org.id, copy(org));
     },
     get: async (id) => copy(this.projectRows.get(id) ?? null),
@@ -66,16 +81,34 @@ export class MemoryActiveStore implements ActiveStore {
         ) ?? null,
       ),
     put: async (project) => {
+      if (
+        [...this.projectRows.values()].some(
+          (row) =>
+            row.orgId === project.orgId &&
+            row.slug === project.slug &&
+            row.id !== project.id,
+        )
+      )
+        throw new ConflictError("Project slug exists");
       this.projectRows.set(project.id, copy(project));
     },
     list: async (cursor, limit) =>
       page(
-        [...this.projectRows.values()].sort((a, b) => a.id.localeCompare(b.id)),
+        [...this.projectRows.values()].sort((a, b) =>
+          compareKeys([a.id], [b.id]),
+        ),
         cursor,
         limit,
+        (p) => [p.id],
+        "projects",
       ),
     getKey: async (key) => copy(this.keys.get(key) ?? null),
     putKey: async (key) => {
+      const other = this.keys.get(key.publicKey);
+      if (other && other.id !== key.id) throw new ConflictError("Key exists");
+      for (const [value, row] of this.keys)
+        if (row.id === key.id && value !== key.publicKey)
+          this.keys.delete(value);
       this.keys.set(key.publicKey, copy(key));
     },
     listKeys: async (projectId) =>
@@ -84,6 +117,12 @@ export class MemoryActiveStore implements ActiveStore {
       ),
     getTokenByHash: async (hash) => copy(this.tokens.get(hash) ?? null),
     putToken: async (token) => {
+      const other = this.tokens.get(token.tokenHash);
+      if (other && other.id !== token.id)
+        throw new ConflictError("Token exists");
+      for (const [value, row] of this.tokens)
+        if (row.id === token.id && value !== token.tokenHash)
+          this.tokens.delete(value);
       this.tokens.set(token.tokenHash, copy(token));
     },
   };
@@ -185,9 +224,25 @@ export class MemoryActiveStore implements ActiveStore {
       rows.sort((a, b) => {
         const av = a[query.sort],
           bv = b[query.sort];
-        return av < bv ? 1 : av > bv ? -1 : a.id.localeCompare(b.id);
+        return av < bv ? 1 : av > bv ? -1 : compareKeys([a.id], [b.id]);
       });
-      return page(rows, query.cursor, query.limit);
+      return page(
+        rows,
+        query.cursor,
+        query.limit,
+        (issue) => [issue[query.sort], issue.id],
+        JSON.stringify([
+          "issues",
+          query.projectId,
+          query.sort,
+          query.status ?? null,
+          query.from ?? null,
+          query.to ?? null,
+        ]),
+        (a, b) =>
+          -compareKeys([a[0] ?? ""], [b[0] ?? ""]) ||
+          compareKeys([a[1] ?? ""], [b[1] ?? ""]),
+      );
     },
     repairAfterErasure: async (projectId, id, removedCount) => {
       const issue = [...this.issueRows.values()].find(
@@ -238,13 +293,19 @@ export class MemoryActiveStore implements ActiveStore {
       const all = [...this.eventRows.values()]
         .filter((e) => e.projectId === projectId && e.receivedAt < cutoff)
         .sort(eventOrder);
-      return page(all, options?.cursor, options?.limit);
+      return page(
+        all,
+        options?.cursor,
+        options?.limit,
+        (event) => [event.receivedAt, event.eventId],
+        JSON.stringify(["scan", projectId, cutoff]),
+      );
     },
     deleteBatch: async (projectId, ids) => {
       for (const id of ids) this.eventRows.delete(this.key(projectId, id));
     },
     deleteBySubject: async (projectId, selector, before, limit) => {
-      if (limit < 1) throw new Error("limit must be positive");
+      pageLimit(limit);
       const matches = [...this.eventRows.entries()]
         .filter(
           ([, e]) =>
@@ -282,6 +343,15 @@ export class MemoryActiveStore implements ActiveStore {
         ) ?? null,
       ),
     put: async (release) => {
+      if (
+        [...this.releaseRows.values()].some(
+          (row) =>
+            row.projectId === release.projectId &&
+            row.version === release.version &&
+            row.id !== release.id,
+        )
+      )
+        throw new ConflictError("Release version exists");
       this.releaseRows.set(
         this.key(release.projectId, release.id),
         copy(release),
@@ -291,9 +361,11 @@ export class MemoryActiveStore implements ActiveStore {
       page(
         [...this.releaseRows.values()]
           .filter((r) => r.projectId === projectId)
-          .sort((a, b) => a.id.localeCompare(b.id)),
+          .sort((a, b) => compareKeys([a.id], [b.id])),
         cursor,
         limit,
+        (r) => [r.id],
+        JSON.stringify(["releases", projectId]),
       ),
     putBundle: async (bundle) => {
       this.bundles.set(this.key(bundle.projectId, bundle.id), copy(bundle));
@@ -302,9 +374,11 @@ export class MemoryActiveStore implements ActiveStore {
       page(
         [...this.bundles.values()]
           .filter((b) => b.projectId === projectId && b.releaseId === releaseId)
-          .sort((a, b) => a.id.localeCompare(b.id)),
+          .sort((a, b) => compareKeys([a.id], [b.id])),
         cursor,
         limit,
+        (b) => [b.id],
+        JSON.stringify(["bundles", projectId, releaseId]),
       ),
     deleteBundle: async (projectId, bundleId) => {
       this.bundles.delete(this.key(projectId, bundleId));
@@ -338,9 +412,15 @@ export class MemoryActiveStore implements ActiveStore {
               (!state || r.state === state) &&
               (!projectId || r.projectId === projectId),
           )
-          .sort((a, b) => a.id.localeCompare(b.id)),
+          .sort(
+            (a, b) =>
+              compareKeys([a.projectId], [b.projectId]) ||
+              compareKeys([a.id], [b.id]),
+          ),
         cursor,
         limit,
+        (r) => [r.projectId, r.id],
+        JSON.stringify(["erasures", projectId ?? null, state ?? null]),
       ),
     compareAndSetErasureRequest: async (projectId, id, expected, next) => {
       const key = this.key(projectId, id);

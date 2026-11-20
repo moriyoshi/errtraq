@@ -7,10 +7,20 @@ import {
   readdir,
   realpath,
   rename,
+  stat,
   unlink,
 } from "node:fs/promises";
 import { join } from "node:path";
-import type { BlobStore, Cursor } from "@errtraq/core";
+import {
+  BlobCorruptError,
+  type BlobStore,
+  type Cursor,
+  decodeCursor,
+  encodeCursor,
+  InvalidCursorError,
+  type Logger,
+  pageLimit,
+} from "@errtraq/core";
 import { type BlobConfig, configSchema } from "./stack.js";
 
 export { infra, manifest } from "./stack.js";
@@ -18,39 +28,119 @@ export { infra, manifest } from "./stack.js";
 interface Header {
   key: string;
   contentType?: string;
+  size?: string;
 }
 const hashKey = (key: string) =>
   `object-${createHash("sha256").update(key, "utf16le").digest("hex")}`;
 const noFollow = constants.O_RDONLY | constants.O_NOFOLLOW;
+function compareUtf8(a: string, b: string): number {
+  return Buffer.compare(Buffer.from(a), Buffer.from(b));
+}
+function lowerBound(keys: string[], value: string): number {
+  let lo = 0,
+    hi = keys.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >>> 1;
+    const key = keys[mid];
+    if (key !== undefined && compareUtf8(key, value) < 0) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo;
+}
+async function syncDirectory(root: string) {
+  const directory = await open(root, constants.O_RDONLY);
+  try {
+    await directory.sync();
+  } finally {
+    await directory.close();
+  }
+}
+
 async function readHeader(
   file: FileHandle,
 ): Promise<{ header: Header; offset: number }> {
-  const lengthBytes = Buffer.alloc(4);
-  if ((await file.read(lengthBytes, 0, 4, 0)).bytesRead !== 4)
-    throw new Error("Invalid blob header");
-  const length = lengthBytes.readUInt32BE();
-  if (length > 1024 * 1024) throw new Error("Blob header too large");
-  const payload = Buffer.alloc(length);
-  if ((await file.read(payload, 0, length, 4)).bytesRead !== length)
-    throw new Error("Invalid blob header");
-  return {
-    header: JSON.parse(payload.toString("utf8")) as Header,
-    offset: 4 + length,
-  };
+  try {
+    const lengthBytes = Buffer.alloc(4);
+    if ((await file.read(lengthBytes, 0, 4, 0)).bytesRead !== 4)
+      throw new Error("Invalid blob header");
+    const length = lengthBytes.readUInt32BE();
+    if (length > 1024 * 1024) throw new Error("Blob header too large");
+    const payload = Buffer.alloc(length);
+    if ((await file.read(payload, 0, length, 4)).bytesRead !== length)
+      throw new Error("Truncated blob header");
+    const header = JSON.parse(payload.toString("utf8")) as Header;
+    const offset = 4 + length;
+    const info = await file.stat();
+    if (
+      !header ||
+      typeof header.key !== "string" ||
+      (header.contentType !== undefined &&
+        typeof header.contentType !== "string") ||
+      (header.size !== undefined &&
+        (!/^\d{16}$/.test(header.size) ||
+          Number(header.size) !== info.size - offset))
+    )
+      throw new Error("Corrupt blob data");
+    return { header, offset };
+  } catch (error) {
+    throw new BlobCorruptError(`Invalid blob: ${String(error)}`);
+  }
 }
 function missing(error: unknown) {
   return error instanceof Error && "code" in error && error.code === "ENOENT";
 }
 
-/** Keys are encoded as hashes in a flat directory; symlinks are never followed. */
+/** Single-process index: external writers require reopening the adapter. Keys use flat hashes. */
 export class FsBlobStore implements BlobStore {
   private root: Promise<string>;
-  constructor(config: BlobConfig) {
+  private readonly keys: string[] = [];
+  constructor(
+    config: BlobConfig,
+    logger: Pick<Logger, "warn"> = {
+      warn: (message, fields) => console.warn(message, fields),
+    },
+  ) {
     const { root } = configSchema.parse(config);
     this.root = (async () => {
       await mkdir(root, { recursive: true });
-      return realpath(root);
+      const canonical = await realpath(root);
+      const entries = await readdir(canonical, { withFileTypes: true });
+      for (const entry of entries) {
+        const path = join(canonical, entry.name);
+        if (entry.isFile() && entry.name.startsWith(".tmp-")) {
+          const info = await stat(path);
+          if (Date.now() - info.mtimeMs > 3600000) await unlink(path);
+          continue;
+        }
+        if (!entry.isFile() || !/^object-[a-f0-9]{64}$/.test(entry.name))
+          continue;
+        let file: FileHandle | undefined;
+        try {
+          file = await open(path, noFollow);
+          const { header } = await readHeader(file);
+          if (hashKey(header.key) !== entry.name)
+            throw new BlobCorruptError("Blob key mismatch");
+          this.keys.push(header.key);
+        } catch (error) {
+          logger.warn("Skipping unreadable blob", {
+            path,
+            error: String(error),
+          });
+        } finally {
+          await file?.close();
+        }
+      }
+      this.keys.sort(compareUtf8);
+      return canonical;
     })();
+  }
+  private insertKey(key: string) {
+    const i = lowerBound(this.keys, key);
+    if (this.keys[i] !== key) this.keys.splice(i, 0, key);
+  }
+  private removeKey(key: string) {
+    const i = lowerBound(this.keys, key);
+    if (this.keys[i] === key) this.keys.splice(i, 1);
   }
   private async path(key: string) {
     return join(await this.root, hashKey(key));
@@ -65,6 +155,7 @@ export class FsBlobStore implements BlobStore {
     const target = await this.path(key);
     const header: Header = {
       key,
+      size: "0000000000000000",
       ...(metadata?.contentType === undefined
         ? {}
         : { contentType: metadata.contentType }),
@@ -118,8 +209,27 @@ export class FsBlobStore implements BlobStore {
       }
       if (metadata?.size !== undefined && size !== metadata.size)
         throw new Error("Size mismatch");
+      const finalHeader = Buffer.from(
+        JSON.stringify({ ...header, size: String(size).padStart(16, "0") }),
+      );
+      if (finalHeader.length !== json.length)
+        throw new Error("Blob size too large");
+      let written = 0;
+      while (written < finalHeader.length) {
+        const result = await file.write(
+          finalHeader,
+          written,
+          finalHeader.length - written,
+          4 + written,
+        );
+        if (!result.bytesWritten) throw new Error("Short blob header write");
+        written += result.bytesWritten;
+      }
+      await file.sync();
       await file.close();
       await rename(temp, target);
+      this.insertKey(key);
+      await syncDirectory(root);
     } catch (error) {
       await file.close().catch(() => {});
       await unlink(temp).catch(() => {});
@@ -148,7 +258,7 @@ export class FsBlobStore implements BlobStore {
     }
     try {
       const { header, offset } = await readHeader(file);
-      if (header.key !== key) throw new Error("Blob key mismatch");
+      if (header.key !== key) throw new BlobCorruptError("Blob key mismatch");
       const stat = await file.stat();
       const begin = Math.min(stat.size, offset + (range?.offset ?? 0));
       let position = begin;
@@ -198,7 +308,7 @@ export class FsBlobStore implements BlobStore {
     }
     try {
       const { header, offset } = await readHeader(file);
-      if (header.key !== key) throw new Error("Blob key mismatch");
+      if (header.key !== key) throw new BlobCorruptError("Blob key mismatch");
       const stat = await file.stat();
       return {
         size: stat.size - offset,
@@ -210,44 +320,43 @@ export class FsBlobStore implements BlobStore {
       await file.close();
     }
   }
-  async list(prefix: string, cursor?: Cursor, limit = 100) {
-    if (!Number.isSafeInteger(limit) || limit < 1)
-      throw new RangeError("Invalid limit");
-    const root = await this.root;
-    const entries = await readdir(root, { withFileTypes: true });
-    const keys: string[] = [];
-    for (const entry of entries) {
-      if (!entry.isFile() || !/^object-[a-f0-9]{64}$/.test(entry.name))
-        continue;
-      let file: FileHandle;
-      try {
-        file = await open(join(root, entry.name), noFollow);
-      } catch (error) {
-        if (missing(error)) continue;
-        throw error;
-      }
-      try {
-        const { header } = await readHeader(file);
-        if (hashKey(header.key) !== entry.name)
-          throw new Error("Blob key mismatch");
-        if (header.key.startsWith(prefix)) keys.push(header.key);
-      } finally {
-        await file.close();
-      }
+  async list(prefix: string, cursor?: Cursor, limit?: number) {
+    await this.root;
+    const size = pageLimit(limit);
+    const scope = JSON.stringify(["blob", prefix]);
+    const after = decodeCursor(cursor, scope);
+    if (after && (after.length !== 1 || typeof after[0] !== "string"))
+      throw new InvalidCursorError("Invalid blob cursor");
+    if (after && !String(after[0]).startsWith(prefix))
+      throw new InvalidCursorError("Blob cursor outside prefix");
+    const start = after
+      ? lowerBound(this.keys, after[0] as string)
+      : lowerBound(this.keys, prefix);
+    let i = start;
+    if (after && this.keys[i] === after[0]) i++;
+    const rows: string[] = [];
+    while (i < this.keys.length && rows.length <= size) {
+      const key = this.keys[i++];
+      if (key === undefined || !key.startsWith(prefix)) break;
+      rows.push(key);
     }
-    keys.sort();
-    const after = cursor !== undefined ? String(cursor) : undefined;
-    const rows = after === undefined ? keys : keys.filter((key) => key > after);
-    const items = rows.slice(0, limit);
+    const items = rows.slice(0, size);
+    const last = items.at(-1);
     return {
       items,
       nextCursor:
-        rows.length > limit ? (items[items.length - 1] as Cursor) : null,
+        rows.length > size && last !== undefined
+          ? encodeCursor(scope, [last])
+          : null,
     };
   }
+
   async delete(key: string) {
     try {
+      const root = await this.root;
       await unlink(await this.path(key));
+      this.removeKey(key);
+      await syncDirectory(root);
     } catch (error) {
       if (!missing(error)) throw error;
     }
@@ -255,7 +364,7 @@ export class FsBlobStore implements BlobStore {
 }
 export function create(
   config: BlobConfig,
-  _bindings: Record<string, unknown> = {},
+  bindings: { logger?: Pick<Logger, "warn"> } = {},
 ): FsBlobStore {
-  return new FsBlobStore(config);
+  return new FsBlobStore(config, bindings.logger);
 }
