@@ -6,14 +6,6 @@ variable "name" {
     error_message = "name must contain 1-40 letters, digits, or hyphens and start with a letter or digit."
   }
 }
-variable "region" {
-  type        = string
-  description = "AWS region selected by the stack provider."
-  validation {
-    condition     = can(regex("^[a-z]{2}(-[a-z]+)+-[0-9]+$", var.region))
-    error_message = "region must be an AWS region identifier."
-  }
-}
 variable "tags" {
   type        = map(string)
   description = "Tags applied to supported resources."

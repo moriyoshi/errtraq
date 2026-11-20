@@ -11,6 +11,8 @@ const settings = z.strictObject({
   memoryMb: z.number().int().min(128).max(10240).optional(),
   timeoutSec: z.number().int().min(1).max(900).optional(),
   architecture: z.enum(["x86_64", "arm64"]).optional(),
+  urlAuth: z.enum(["NONE", "AWS_IAM"]).optional(),
+  reservedConcurrency: z.number().int().min(0).max(100000).optional(),
 });
 export const configSchema = z
   .strictObject({
@@ -18,6 +20,14 @@ export const configSchema = z
     split: z.array(role).default(["ingest", "api", "consumer", "cron"]),
     http: z.array(z.enum(["ingest", "api"])).default(["ingest", "api"]),
     settings: z.partialRecord(role, settings).default({}),
+    runtime: z.string().min(1).default("nodejs22.x"),
+    handler: z.string().min(1).default("index.handler"),
+    cronRetryAttempts: z.number().int().min(0).max(185).default(185),
+    cronMaxEventAgeSec: z.number().int().min(60).max(86400).default(86400),
+    cronDlqArn: z
+      .string()
+      .regex(/^arn:[^:]+:sqs:/)
+      .optional(),
   })
   .transform((config) => ({
     ...config,
@@ -61,10 +71,11 @@ export const infra: InfraDescriptor<Config> = {
     component: "lambda-app",
     outputs: { ingest_url: "string", api_url: "string" },
   },
-  inputs: (_config, deployment) => ({
+  inputs: (config, deployment) => ({
     name: stackValue("name"),
-    region: stackValue("region"),
     tags: stackValue("tags"),
+    runtime: config.runtime ?? "nodejs22.x",
+    handler: config.handler ?? "index.handler",
     functions: Object.fromEntries(
       deployment.functions.map((fn) => [
         fn.id,
@@ -75,6 +86,13 @@ export const infra: InfraDescriptor<Config> = {
           memory_mb: fn.settings.memoryMb ?? 512,
           timeout_sec: fn.settings.timeoutSec ?? 30,
           architecture: fn.settings.architecture ?? "x86_64",
+          auth_type:
+            typeof fn.settings.urlAuth === "string"
+              ? fn.settings.urlAuth
+              : "NONE",
+          ...(typeof fn.settings.reservedConcurrency !== "number"
+            ? {}
+            : { reserved_concurrency: fn.settings.reservedConcurrency }),
           environment: Object.fromEntries(
             fn.envBindings.map((item) => [
               item.binding.name,
@@ -97,27 +115,40 @@ export const infra: InfraDescriptor<Config> = {
     queue_triggers: Object.fromEntries(
       deployment.triggers
         .filter((trigger) => trigger.kind === "queue")
-        .map((trigger) => [
-          trigger.physical,
-          {
-            function_id: trigger.functionId,
-            resource: trigger.resource,
-            topics: trigger.topics,
-            ...(trigger.settings.batchSize === undefined
-              ? {}
-              : { batch_size: trigger.settings.batchSize }),
-            ...(trigger.settings.maxConcurrency === undefined
-              ? {}
-              : { max_concurrency: trigger.settings.maxConcurrency }),
-          },
-        ]),
+        .map((trigger) => {
+          if (trigger.settings.visibilityTimeoutSec === undefined)
+            throw new Error(
+              `Queue ${trigger.physical} requires a visibility timeout for Lambda`,
+            );
+          return [
+            trigger.physical,
+            {
+              function_id: trigger.functionId,
+              resource: trigger.resource,
+              topics: trigger.topics,
+              visibility_timeout_sec: trigger.settings.visibilityTimeoutSec,
+              ...(trigger.settings.batchSize === undefined
+                ? {}
+                : { batch_size: trigger.settings.batchSize }),
+              ...(trigger.settings.maxConcurrency === undefined
+                ? {}
+                : { max_concurrency: trigger.settings.maxConcurrency }),
+            },
+          ];
+        }),
     ),
     cron_triggers: Object.fromEntries(
       deployment.triggers
         .filter((trigger) => trigger.kind === "cron")
         .map((trigger) => [
           trigger.name,
-          { function_id: trigger.functionId, schedule: trigger.schedule },
+          {
+            function_id: trigger.functionId,
+            schedule: trigger.schedule,
+            retry_attempts: config.cronRetryAttempts ?? 185,
+            max_event_age_seconds: config.cronMaxEventAgeSec ?? 86400,
+            ...(config.cronDlqArn ? { dlq_arn: config.cronDlqArn } : {}),
+          },
         ]),
     ),
   }),

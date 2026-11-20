@@ -272,6 +272,7 @@ export interface BlobMetadata {
   contentType?: string;
 }
 
+/** Blob read capability includes whatever prefix-scoped listing is required to distinguish a missing key from an authorization failure. */
 export interface BlobStore {
   put(
     key: string,

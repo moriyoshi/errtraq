@@ -285,3 +285,13 @@ it("uses non-sensitive stack variable defaults when TF_VAR is absent", () => {
     resolveRuntimeValue(variable("DOC"), "store", stack, { TF_VAR_DOC: "[]" }),
   ).toEqual([]);
 });
+
+it("resolves the safe default and explicit stack protection", () => {
+  expect(
+    resolveRuntimeValue(stackValue("protection"), "store", local, {}),
+  ).toBe("production");
+  const disposable = { ...copyStack(local), protection: "disposable" as const };
+  expect(
+    resolveRuntimeValue(stackValue("protection"), "store", disposable, {}),
+  ).toBe("disposable");
+});

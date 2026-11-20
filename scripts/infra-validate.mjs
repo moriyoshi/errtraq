@@ -1,5 +1,13 @@
 import { spawnSync } from "node:child_process";
-import { cpSync, mkdirSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
+import {
+  cpSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { resolve } from "node:path";
 
 const root = resolve("infra/modules");
@@ -28,16 +36,9 @@ function run(args, cwd) {
   const output = `${result.stdout}\n${result.stderr}`;
   const summary = output.match(/Success! \d+ passed, \d+ failed\./)?.[0];
   console.log(`  ${args[0]}: ${summary ?? "passed"}`);
-  if (output.includes("Warning:")) {
-    const warnings = output
-      .split("\n")
-      .filter(
-        (line) =>
-          line.startsWith("Warning:") ||
-          line.includes(" is deprecated.") ||
-          /\(and \d+ more similar warnings/.test(line),
-      );
-    for (const warning of warnings) console.log(`  ${warning}`);
+  if (/Warning:[\s\S]*?deprecated/i.test(output)) {
+    process.stdout.write(output);
+    throw new Error(`terraform ${args[0]} emitted a deprecation warning`);
   }
 }
 try {
@@ -51,15 +52,33 @@ try {
       withFileTypes: true,
     }).filter((entry) => entry.isDirectory())) {
       const name = `${provider.name}/${component.name}`;
-      const target = resolve(temporary, provider.name, component.name);
-      mkdirSync(target, { recursive: true });
-      cpSync(resolve(providerRoot, component.name), target, {
-        recursive: true,
-      });
-      console.log(`\nValidating ${name}`);
-      run(["init", "-backend=false", "-input=false", "-no-color"], target);
-      run(["validate", "-no-color"], target);
-      run(["test", "-no-color"], target);
+      for (const version of ["6.30.0", "6.73.0"]) {
+        const target = resolve(
+          temporary,
+          version,
+          provider.name,
+          component.name,
+        );
+        mkdirSync(target, { recursive: true });
+        cpSync(resolve(providerRoot, component.name), target, {
+          recursive: true,
+        });
+        const versions = resolve(target, "versions.tf");
+        const source = readFileSync(versions, "utf8");
+        if (!source.includes('version = ">= 6.30.0, < 7.0"'))
+          throw new Error(`Unexpected provider constraint in ${name}`);
+        writeFileSync(
+          versions,
+          source.replace(
+            'version = ">= 6.30.0, < 7.0"',
+            `version = "= ${version}"`,
+          ),
+        );
+        console.log(`\nValidating ${name} with AWS provider ${version}`);
+        run(["init", "-backend=false", "-input=false", "-no-color"], target);
+        run(["validate", "-no-color"], target);
+        run(["test", "-no-color"], target);
+      }
     }
   }
 } catch (error) {

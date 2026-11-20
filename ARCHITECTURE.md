@@ -323,6 +323,9 @@ interface EventRepo {   // bounded: repeat while hasMore
 interface IssueRepo { repairAfterErasure(projectId, issueId, removedCount): Promise<Issue>; }
 ```
 
+DynamoDB point-in-time recovery can retain erased active-store data for up to 35 days; the M3
+erasure design must explicitly account for backup retention and operational deletion.
+
 **Deletion vectors mask, they do not erase.** After the DV commit the rows are invisible to
 every reader, but the bytes remain in the Parquet file and in older snapshots. So an erasure
 request is a two-phase ledger entry (`ErasureRequest` in `MetaRepo`, CAS transitions, exposed

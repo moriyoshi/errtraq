@@ -42,6 +42,7 @@ export function resolveRuntimeValue(
     );
   if (isStackRef(value)) {
     if (value.name === "name") return stack.name;
+    if (value.name === "protection") return stack.protection ?? "production";
     const provider =
       value.provider ??
       selections(stack).get(owner)?.provider ??

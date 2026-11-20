@@ -2,17 +2,25 @@ mock_provider "aws" {}
 run "queues_and_policies" {
   command = apply
   variables {
-    name   = "example"
-    region = "us-east-1"
-    tags   = {}
+    name = "example"
+
+    tags = {}
     physical_queues = {
       ingest        = { visibility_timeout_sec = 180, dlq_enabled = true, max_receive_count = 5 }
       notifications = { visibility_timeout_sec = 270, dlq_enabled = false, max_receive_count = 3 }
     }
   }
   assert {
+    condition     = alltrue(flatten([for resources in values(output.policies) : [for policy in values(resources) : length(policy) <= 1024]]))
+    error_message = "Current per-resource policies must fit the 1024-character sizing budget."
+  }
+  assert {
     condition     = toset(keys(output.policies)) == toset(["produce", "consume"]) && alltrue([for policies in values(output.policies) : toset(keys(policies)) == toset(keys(output.queues)) && alltrue([for policy in values(policies) : can(jsondecode(policy))])]) && alltrue([for queue in values(output.queues) : toset(keys(queue)) == toset(["arn", "url"])])
     error_message = "Queue and policy output shapes must match the descriptor."
+  }
+  assert {
+    condition     = aws_sqs_queue.queue["ingest"].message_retention_seconds == 345600 && aws_sqs_queue.dlq["ingest"].message_retention_seconds == 1209600
+    error_message = "SQS source and DLQ retention must be explicit."
   }
   assert {
     condition     = length(output.queues) == 2 && length(aws_sqs_queue.dlq) == 1 && aws_sqs_queue.queue["notifications"].visibility_timeout_seconds == 270

@@ -6,14 +6,6 @@ variable "name" {
     error_message = "name must contain 1-40 letters, digits, or hyphens and start with a letter or digit."
   }
 }
-variable "region" {
-  type        = string
-  description = "AWS region selected by the stack provider."
-  validation {
-    condition     = can(regex("^[a-z]{2}(-[a-z]+)+-[0-9]+$", var.region))
-    error_message = "region must be an AWS region identifier."
-  }
-}
 variable "tags" {
   type        = map(string)
   description = "Tags applied to supported resources."
@@ -34,16 +26,18 @@ variable "log_retention_days" {
 variable "functions" {
   description = "Physical functions, scoped bindings, policies and build-produced ZIP artifacts."
   type = map(object({
-    roles        = list(string)
-    http         = list(string)
-    artifact     = string
-    memory_mb    = number
-    timeout_sec  = number
-    architecture = string
-    environment  = map(string)
-    secrets      = map(string)
-    policies     = list(string)
-    secret_reads = list(string)
+    roles                = list(string)
+    http                 = list(string)
+    artifact             = string
+    memory_mb            = number
+    timeout_sec          = number
+    architecture         = string
+    auth_type            = optional(string, "NONE")
+    reserved_concurrency = optional(number)
+    environment          = map(string)
+    secrets              = map(string)
+    policies             = list(string)
+    secret_reads         = list(string)
   }))
   validation {
     condition = alltrue([for id, fn in var.functions :
@@ -53,6 +47,8 @@ variable "functions" {
       fn.memory_mb >= 128 && fn.memory_mb <= 10240 && floor(fn.memory_mb) == fn.memory_mb &&
       fn.timeout_sec >= 1 && fn.timeout_sec <= 900 && floor(fn.timeout_sec) == fn.timeout_sec &&
       contains(["x86_64", "arm64"], fn.architecture) && length(fn.artifact) > 0 &&
+      contains(["NONE", "AWS_IAM"], fn.auth_type) &&
+      (fn.reserved_concurrency == null ? true : fn.reserved_concurrency >= 0 && floor(fn.reserved_concurrency) == fn.reserved_concurrency) &&
       length(setintersection(toset(keys(fn.environment)), toset(keys(fn.secrets)))) == 0 &&
       alltrue([for secret in fn.secret_reads : can(regex("^arn:[^:]+:secretsmanager:[^:]+:[0-9]{12}:secret:.+", secret))]) &&
       alltrue([for secret in values(fn.secrets) : contains(fn.secret_reads, secret)])
@@ -67,16 +63,18 @@ variable "functions" {
 variable "queue_triggers" {
   description = "Physical queue triggers keyed by queue identifier."
   type = map(object({
-    function_id     = string
-    resource        = string
-    topics          = list(string)
-    batch_size      = optional(number, 10)
-    max_concurrency = optional(number)
+    function_id            = string
+    resource               = string
+    topics                 = list(string)
+    batch_size             = optional(number, 10)
+    max_concurrency        = optional(number)
+    visibility_timeout_sec = number
   }))
   validation {
     condition = alltrue([for trigger in values(var.queue_triggers) :
       contains(keys(var.functions), trigger.function_id) &&
       can(regex("^arn:[^:]+:sqs:", trigger.resource)) &&
+      trigger.visibility_timeout_sec >= 1 && trigger.visibility_timeout_sec <= 43200 && floor(trigger.visibility_timeout_sec) == trigger.visibility_timeout_sec &&
       trigger.batch_size >= 1 && trigger.batch_size <= 10 && floor(trigger.batch_size) == trigger.batch_size &&
       (trigger.max_concurrency == null ? true : trigger.max_concurrency >= 2 && trigger.max_concurrency <= 1000 && floor(trigger.max_concurrency) == trigger.max_concurrency)
     ])
@@ -85,13 +83,41 @@ variable "queue_triggers" {
 }
 variable "cron_triggers" {
   description = "Five-field UTC cron schedules keyed by job name."
-  type        = map(object({ function_id = string, schedule = string }))
+  type = map(object({
+    function_id           = string
+    schedule              = string
+    retry_attempts        = optional(number, 185)
+    max_event_age_seconds = optional(number, 86400)
+    dlq_arn               = optional(string)
+  }))
   validation {
     condition = alltrue([for job, trigger in var.cron_triggers :
       can(regex("^[a-zA-Z0-9_-]{1,23}$", job)) && contains(keys(var.functions), trigger.function_id) &&
+      trigger.retry_attempts >= 0 && trigger.retry_attempts <= 185 && floor(trigger.retry_attempts) == trigger.retry_attempts &&
+      trigger.max_event_age_seconds >= 60 && trigger.max_event_age_seconds <= 86400 && floor(trigger.max_event_age_seconds) == trigger.max_event_age_seconds &&
+      (trigger.dlq_arn == null ? true : can(regex("^arn:[^:]+:sqs:", trigger.dlq_arn))) &&
       length(split(" ", trigger.schedule)) == 5 &&
       try(split(" ", trigger.schedule)[4] == "*", false)
     ])
     error_message = "Cron jobs need a function, five fields with day-of-week set to * (Unix weekday numbering differs from EventBridge)."
+  }
+}
+
+variable "runtime" {
+  type        = string
+  description = "Lambda runtime compatible with the built handler."
+  default     = "nodejs22.x"
+  validation {
+    condition     = can(regex("^[a-zA-Z0-9.]+$", var.runtime))
+    error_message = "runtime must be a Lambda runtime identifier."
+  }
+}
+variable "handler" {
+  type        = string
+  description = "Lambda handler exported by the artifact."
+  default     = "index.handler"
+  validation {
+    condition     = can(regex("^[a-zA-Z0-9_./-]+$", var.handler))
+    error_message = "handler must be a Lambda handler identifier."
   }
 }

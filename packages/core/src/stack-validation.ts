@@ -931,11 +931,14 @@ function inspect(input: unknown): {
       } else if (
         isStackRef(value) &&
         keys.every((k) => ["name", "provider"].includes(k)) &&
-        ["name", "region", "tags"].includes(value.name)
+        ["name", "region", "tags", "protection"].includes(value.name)
       ) {
-        if (value.name === "name" && value.provider !== undefined)
+        if (
+          (value.name === "name" || value.name === "protection") &&
+          value.provider !== undefined
+        )
           fail(path, "Stack name is not provider-qualified");
-        if (value.name !== "name") {
+        if (value.name !== "name" && value.name !== "protection") {
           const provider =
             value.provider ??
             all.get(owner)?.provider ??

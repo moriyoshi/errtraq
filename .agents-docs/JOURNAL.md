@@ -464,3 +464,21 @@ support literal non-sensitive defaults, which the future generator can emit in t
 defaults must be encoded as text. Existing queue settings remain an operator promise, not an
 inspection of external resources. The root test workspace now directly declares the already-used
 Zod version for AWS config-reference tests; no new runtime dependency was introduced.
+
+## 2026-11-21 — M2b AWS HCL review fixes
+
+Provider 6.28 introduced Lambda URL invoke permission support, and 6.29 introduced DynamoDB
+GSI `key_schema`, but 6.29 crashes validating this module's dynamic GSIs. The practical minimum
+is 6.30; the opt-in module gate pins 6.30.0 and 6.73.0 and fails deprecation warnings. DynamoDB
+uses `key_schema` and a delete-only IAM action rather than BatchWriteItem. Stack protection
+defaults to production and must explicitly be disposable to permit table and bucket teardown.
+
+Blob read includes prefix-scoped list access. A deployed cron role has the read / list / queue
+produce requirements for staged-envelope recovery; its scheduler and handler remain M3 work.
+The S3 adapter must distinguish 403 from absence with an authorized prefix probe rather than
+mapping 403 to missing. Overflow objects cannot use a fixed expiry without violating per-project
+retention. Lambda URL authorization is per function; ingest CORS at the URL needs coordination
+with app CORS in the future Lambda handler. External EventBridge DLQs need a resource policy.
+The current per-topic stack's sampled largest inline-policy total is about 2440 characters with
+logging and no secrets; a Terraform precondition enforces the actual 10240-character limit.
+Section B is recorded in TODO; review item 10 remains the next slice.

@@ -57,3 +57,11 @@ item should be resolved or removed once addressed. Milestone work itself is trac
 - [ ] M2 / M3 / M6: address second-review follow-ups N9 and N12-N15, including Cloudflare binding authorization and runtime limitations. — *source: `.agents-workspace/tmp/m2a2-review-fixes.md`*
 
 - [ ] M2b: emit non-sensitive stack variable defaults into tfvars, encoding JSON defaults as JSON text; never emit sensitive values. Render provider aliases and consume the M2c build artifact manifest. — *source: M2a2 second review*
+
+- [ ] M3: evaluate DynamoDB sortable encodings for numeric counts / timestamps, GSI projection cost, project write sharding, transaction fan-out under 100 items and PITR retention of erased data for up to 35 days. — *source: M2b HCL review section B*
+- [ ] M3: ensure secret identifiers contain the full Secrets Manager ARN including its random suffix, or safely support suffix matching. — *source: M2b HCL review section B*
+- [ ] M3: never map an S3 403 directly to missing; use an authorized exact-prefix list to establish absence and propagate real access failures. — *source: M2b HCL review section B*
+- [ ] M3: schedule cron-based staged-envelope recovery for deployed stacks; keep idempotency and a recovery window longer than the sweep interval. — *source: M2b HCL review A3*
+- [ ] M3 / M4: delete overflow payloads when their corresponding events are retained, archived or erased; a fixed bucket lifecycle would violate per-project retention. — *source: M2b HCL review A9*
+- [ ] M2c / M3: avoid duplicate Lambda Function URL and ingest app CORS headers, and support S3-based deployment for ZIPs too large for direct upload. — *source: M2b HCL review A8*
+- [ ] M2b next: strengthen HCL output / policy contracts and add the requested mutation check from item 10. — *source: M2b HCL review A10*

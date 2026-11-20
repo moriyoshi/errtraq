@@ -87,7 +87,7 @@ export interface OutputRef {
 }
 export interface StackRef {
   readonly [REF]: "stack";
-  readonly name: "name" | "region" | "tags";
+  readonly name: "name" | "region" | "tags" | "protection";
   readonly provider?: string;
 }
 export interface EnvRef {
@@ -377,6 +377,8 @@ export interface PlatformSelection extends AdapterSelection {
 }
 export interface StackConfig {
   name: string;
+  /** Production protection is the default; disposable permits resource teardown. */
+  protection?: "production" | "disposable";
   outputs?: Record<string, OutputRef>;
   providers?: Record<
     string,

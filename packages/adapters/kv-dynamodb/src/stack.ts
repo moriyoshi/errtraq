@@ -30,7 +30,7 @@ export const infra: InfraDescriptor<Config> = {
   },
   inputs: () => ({
     name: stackValue("name"),
-    region: stackValue("region"),
+    protection: stackValue("protection"),
     tags: stackValue("tags"),
     purpose: "kv",
   }),
@@ -38,6 +38,7 @@ export const infra: InfraDescriptor<Config> = {
   capabilities: {
     read: { primary: out("policies", "read", "primary") },
     write: { primary: out("policies", "write", "primary") },
+    delete: { primary: out("policies", "delete", "primary") },
   },
   bindings: [
     {

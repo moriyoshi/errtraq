@@ -9,6 +9,7 @@ The illustrative descriptors below are test fixtures.
 
 A `StackConfig` names a platform, store, queue, blob, KV and optional archive, along with
 providers, variables, backend, optional output references and optional capability requirements.
+`protection` defaults to `production`; `disposable` explicitly permits AWS table / bucket teardown.
 A selection contains a manifest, `config`, a `runtimeModule`, an `infra` descriptor, optional
 provider entry, runtime `dependsOn` aliases, `children`, and `existing` substitutions. Parent
 manifests declare `childKinds` for every child alias; a platform cannot be a child. The module
@@ -67,6 +68,7 @@ exported guards (`isOutputRef`, `isStackRef`, `isEnvRef`, `isVariableRef`, `isAr
 |---|---|
 | `out(name, ...keys)`, `output(selection, name, ...keys)` | Terraform module output expression, or an `existing` substitution. |
 | `stackValue("name")` | Generation-time stack name. |
+| `stackValue("protection")` | Generation-time protection setting, defaulting to `production`. |
 | `stackValue("region" / "tags", provider?)` | Generation-time provider value. Without a provider, use the owning selection's module provider. |
 | `variable(name)` | Declared Terraform variable; CLI runtime reads `TF_VAR_<name>`. |
 | `env(name, options?)` | Runtime environment lookup; optional string default and suffix, and optional numeric conversion. |
@@ -160,7 +162,9 @@ and `api` have HTTP apps. The standalone platform mounts exactly the configured 
 `PORT_REQUIREMENTS` and `TOPIC_ROUTES` in `stack-requirements.ts` own the role matrix. For M1,
 ingest needs store read, blob write/delete, KV read/write and queue produce; API needs store
 read/write and blob read; consumer needs store read/write and blob read/write/delete and queue
-consume. `ingest` is produced by ingest and consumed by consumer. The M4 `notifications` route is
+consume. Blob read includes the prefix-scoped list access needed to distinguish missing objects.
+Deployed cron also needs primary blob read / list and ingest-queue produce to recover staged
+envelopes; M3 must schedule that job. `ingest` is produced by ingest and cron, and consumed by consumer. The M4 `notifications` route is
 produced and consumed by consumer and is enabled only by `features.notifications: true`; the M4
 `archive.project` route is enabled when archive is selected, produced by cron and consumer, and
 consumed by consumer. Archive selection adds the marked M4 store, blob staging and primary,

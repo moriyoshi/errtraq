@@ -100,7 +100,6 @@ function descriptor(config: ResolvedConfig): InfraDescriptor<Config> {
     },
     inputs: (_config, deployment) => ({
       name: stackValue("name"),
-      region: stackValue("region"),
       tags: stackValue("tags"),
       physical_queues: Object.fromEntries(
         [

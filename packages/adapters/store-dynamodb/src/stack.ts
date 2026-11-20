@@ -34,7 +34,7 @@ export const infra: InfraDescriptor<Config> = {
   },
   inputs: () => ({
     name: stackValue("name"),
-    region: stackValue("region"),
+    protection: stackValue("protection"),
     tags: stackValue("tags"),
     purpose: "store",
   }),

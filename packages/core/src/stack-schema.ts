@@ -146,6 +146,7 @@ const selectionSchema: z.ZodType<AdapterSelection> = z.lazy(() =>
 ) as z.ZodType<AdapterSelection>;
 export const rootSchema = z.strictObject({
   name: z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/),
+  protection: z.enum(["production", "disposable"]).default("production"),
   outputs: z.record(refName, z.custom(isOutputRef)).optional(),
   providers: z
     .record(

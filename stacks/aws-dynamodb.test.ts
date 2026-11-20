@@ -7,6 +7,8 @@ import {
   env,
   out,
   output,
+  resolveStack,
+  stackValue,
   validateStack,
   variable,
 } from "@errtraq/core";
@@ -55,7 +57,10 @@ describe("AWS descriptor stacks", () => {
       "ERRTRAQ_QUEUE_SOURCE_SHARED",
       "ERRTRAQ_STORE_TABLE",
     ]);
-    expect(names(byId.cron?.envBindings ?? [])).toEqual([]);
+    expect(names(byId.cron?.envBindings ?? [])).toEqual([
+      "ERRTRAQ_BLOB_BUCKET",
+      "ERRTRAQ_QUEUE_SHARED_URL",
+    ]);
     expect(byId.ingest?.http).toEqual(["ingest"]);
     expect(byId.api?.http).toEqual(["api"]);
     expect(byId.consumer?.settings).toMatchObject({ timeoutSec: 30 });
@@ -103,7 +108,11 @@ describe("AWS descriptor stacks", () => {
       "store:read:primary",
       "store:write:primary",
     ]);
-    expect(byId.cron?.policies).toEqual([]);
+    expect(policyKeys("cron")).toEqual([
+      "blob:list:primary",
+      "blob:read:primary",
+      "queue:produce:shared",
+    ]);
     expect(view.triggers).toEqual([
       {
         kind: "queue",
@@ -131,6 +140,7 @@ describe("AWS descriptor stacks", () => {
           function_id: "consumer",
           resource: output("queue", "queues", "shared", "arn"),
           batch_size: 10,
+          visibility_timeout_sec: 180,
         },
       },
     });
@@ -200,6 +210,46 @@ describe("AWS descriptor stacks", () => {
         ?.policies.map((grant) => grant.policyOutput),
     ).toContainEqual(output("queue", "policies", "consume", "notifications"));
   });
+  it("threads the safe stack protection choice into both tables and the bucket", () => {
+    const production = resolveStack(copyStack(shared));
+    const disposable = resolveStack({
+      ...copyStack(shared),
+      protection: "disposable",
+    });
+    expect(production.protection).toBe("production");
+    expect(disposable.protection).toBe("disposable");
+    for (const stack of [production, disposable]) {
+      const view = deriveDeployment(stack);
+      for (const item of [stack.store, stack.kv, stack.blob])
+        expect(item.infra.inputs(item.config, view).protection).toEqual(
+          stackValue("protection"),
+        );
+    }
+    expect(
+      validateStack({ ...copyStack(shared), protection: "invalid" }).length,
+    ).toBeGreaterThan(0);
+  });
+  it("grants cron the staged-envelope recovery capabilities", () => {
+    const cron = deriveDeployment(perTopic).functions.find(
+      (fn) => fn.id === "cron",
+    );
+    expect(
+      cron?.policies.map((grant) => [
+        grant.selection,
+        grant.capability,
+        grant.purpose,
+      ]),
+    ).toEqual(
+      expect.arrayContaining([
+        ["blob", "read", "primary"],
+        ["blob", "list", "primary"],
+        ["queue", "produce", "ingest"],
+      ]),
+    );
+    expect(cron?.envBindings.map((item) => item.binding.name)).toContain(
+      "ERRTRAQ_QUEUE_INGEST_URL",
+    );
+  });
   it("publishes honest adapter capabilities, resource policies and AWS bounds", () => {
     expect(SQS_MAX_BYTES).toBe(1_048_576);
     expect(sqsQueue().manifest.capabilities).toMatchObject({
@@ -219,6 +269,9 @@ describe("AWS descriptor stacks", () => {
     );
     expect(dynamoKv().infra.capabilities.write?.primary).toEqual(
       outPolicy("write", "primary"),
+    );
+    expect(dynamoKv().infra.capabilities.delete?.primary).toEqual(
+      outPolicy("delete", "primary"),
     );
     expect(() => sqsQueue({ batchSize: 11 })).toThrow();
     expect(() => sqsQueue({ visibilityTimeoutSec: 43201 })).toThrow();
@@ -324,6 +377,67 @@ describe("AWS descriptor stacks", () => {
         ),
       ).toBe(true);
     }
+  });
+  it("rejects Lambda queue triggers without a visibility timeout", () => {
+    const queue = sqsQueue();
+    if (!queue.infra.topics) throw new Error("missing queue routes");
+    const v = {
+      ...copyStack(shared),
+      queue: {
+        ...queue,
+        manifest: {
+          ...queue.manifest,
+          capabilities: {
+            ...queue.manifest.capabilities,
+            visibilityTimeout: false,
+          },
+        },
+        infra: {
+          ...queue.infra,
+          topics: {
+            ...queue.infra.topics,
+            settings: { shared: { batchSize: 10 } },
+          },
+        },
+      },
+    };
+    expect(
+      validateStack(v).some((issue) =>
+        issue.message.includes("requires a visibility timeout for Lambda"),
+      ),
+    ).toBe(true);
+  });
+  it("passes per-function URL auth, concurrency and runtime settings", () => {
+    const v = {
+      ...copyStack(shared),
+      platform: awsLambda({
+        runtime: "nodejs20.x",
+        handler: "app.handle",
+        settings: { ingest: { urlAuth: "AWS_IAM", reservedConcurrency: 5 } },
+      }),
+    };
+    expect(validateStack(v)).toEqual([]);
+    const view = deriveDeployment(v);
+    expect(v.platform.infra.inputs(v.platform.config, view)).toMatchObject({
+      runtime: "nodejs20.x",
+      handler: "app.handle",
+      functions: {
+        ingest: { auth_type: "AWS_IAM", reserved_concurrency: 5 },
+        api: { auth_type: "NONE" },
+      },
+    });
+    expect(() =>
+      awsLambda({ settings: { ingest: { reservedConcurrency: -1 } } }),
+    ).toThrow();
+  });
+  it("keeps per-topic role policy counts safely below the inline guard budget", () => {
+    const view = deriveDeployment(perTopic);
+    for (const fn of view.functions) {
+      expect(fn.secretReads).toHaveLength(0);
+      // Each current generated policy is budgeted at 1024 characters and logging at 1024.
+      expect((fn.policies.length + 1) * 1024).toBeLessThan(10240);
+    }
+    expect(Math.max(...view.functions.map((fn) => fn.policies.length))).toBe(6);
   });
   it("keeps stack helpers free of runtime imports", async () => {
     for (const path of [

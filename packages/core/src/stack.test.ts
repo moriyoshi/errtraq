@@ -1299,7 +1299,11 @@ describe("infrastructure model", () => {
       { name: "DATA", kind: "env", purpose: "primary", value: "data" },
       { name: "STAGING", kind: "env", purpose: "staging", value: "stage" },
     ];
-    expect(bindingsForRoles(v, ["cron"])).toEqual([]);
+    expect(
+      bindingsForRoles(v, ["cron"])
+        .map((item) => item.binding.name)
+        .sort(),
+    ).toEqual(["DATA", "QUEUE_URL"]);
     v.archive = selection("archive");
     v.archive.manifest.capabilities = { rowDelete: "copy-on-write" };
     const access = deriveAccess(v);

@@ -26,6 +26,9 @@ export const PORT_REQUIREMENTS: readonly PortRequirement[] = [
   { kind: "blob", role: "consumer", capability: "read", purpose: "primary" },
   { kind: "blob", role: "consumer", capability: "write", purpose: "primary" },
   { kind: "blob", role: "consumer", capability: "delete", purpose: "primary" },
+  // M3 deployed cron sweeps staged envelopes, including legacy keys that require reads.
+  { kind: "blob", role: "cron", capability: "read", purpose: "primary" },
+  { kind: "blob", role: "cron", capability: "list", purpose: "primary" },
   { kind: "kv", role: "ingest", capability: "read", purpose: "primary" },
   { kind: "kv", role: "ingest", capability: "write", purpose: "primary" },
   // TODO(M4): archive workers, erasure suppression, and archive-aware queries.
@@ -109,7 +112,7 @@ export const TOPIC_ROUTES: Readonly<
     }
   >
 > = {
-  ingest: { producers: ["ingest"], consumer: "consumer" },
+  ingest: { producers: ["ingest", "cron"], consumer: "consumer" },
   "archive.project": {
     producers: ["cron", "consumer"],
     consumer: "consumer",

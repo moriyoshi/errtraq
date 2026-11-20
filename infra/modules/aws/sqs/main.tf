@@ -10,6 +10,7 @@ resource "aws_sqs_queue" "queue" {
   name                       = "${var.name}-${each.key}"
   sqs_managed_sse_enabled    = true
   visibility_timeout_seconds = each.value.visibility_timeout_sec
+  message_retention_seconds  = 345600
   max_message_size           = 1048576
   redrive_policy             = each.value.dlq_enabled ? jsonencode({ deadLetterTargetArn = aws_sqs_queue.dlq[each.key].arn, maxReceiveCount = each.value.max_receive_count }) : null
   tags                       = var.tags

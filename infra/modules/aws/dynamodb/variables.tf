@@ -6,14 +6,6 @@ variable "name" {
     error_message = "name must contain 1-40 letters, digits, or hyphens and start with a letter or digit."
   }
 }
-variable "region" {
-  type        = string
-  description = "AWS region selected by the stack provider."
-  validation {
-    condition     = can(regex("^[a-z]{2}(-[a-z]+)+-[0-9]+$", var.region))
-    error_message = "region must be an AWS region identifier."
-  }
-}
 variable "tags" {
   type        = map(string)
   description = "Tags applied to supported resources."
@@ -30,12 +22,13 @@ variable "purpose" {
     error_message = "purpose must be store or kv."
   }
 }
-variable "deletion_protection" {
-  type        = bool
-  description = "Protect the table from accidental deletion."
-  default     = true
+
+variable "protection" {
+  type        = string
+  description = "Production prevents resource destruction; disposable permits teardown."
+  default     = "production"
   validation {
-    condition     = var.deletion_protection == true || var.deletion_protection == false
-    error_message = "deletion_protection must be a boolean."
+    condition     = contains(["production", "disposable"], var.protection)
+    error_message = "protection must be production or disposable."
   }
 }

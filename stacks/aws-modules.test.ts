@@ -100,7 +100,7 @@ describe("AWS module descriptor contracts", () => {
         for (const [name, type] of Object.entries(module.outputs)) {
           const body = declarationsByName.get(name) ?? "";
           const contract =
-            /description\s*=\s*"errtraq-type=([^;]+); errtraq-keys=([^"]*)"/.exec(
+            /description\s*=\s*"errtraq-type=([^;]+); errtraq-keys=([^;"]*); [^"]+"/.exec(
               body,
             );
           expect(contract?.[1], `${name} output type`).toBe(typeName(type));

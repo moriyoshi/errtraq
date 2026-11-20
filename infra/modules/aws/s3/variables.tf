@@ -6,14 +6,6 @@ variable "name" {
     error_message = "name must contain 1-40 letters, digits, or hyphens and start with a letter or digit."
   }
 }
-variable "region" {
-  type        = string
-  description = "AWS region selected by the stack provider."
-  validation {
-    condition     = can(regex("^[a-z]{2}(-[a-z]+)+-[0-9]+$", var.region))
-    error_message = "region must be an AWS region identifier."
-  }
-}
 variable "tags" {
   type        = map(string)
   description = "Tags applied to supported resources."
@@ -46,5 +38,15 @@ variable "staging_retention_days" {
   validation {
     condition     = var.staging_retention_days >= 1 && floor(var.staging_retention_days) == var.staging_retention_days
     error_message = "staging_retention_days must be a positive integer."
+  }
+}
+
+variable "protection" {
+  type        = string
+  description = "Production prevents resource destruction; disposable permits teardown."
+  default     = "production"
+  validation {
+    condition     = contains(["production", "disposable"], var.protection)
+    error_message = "protection must be production or disposable."
   }
 }

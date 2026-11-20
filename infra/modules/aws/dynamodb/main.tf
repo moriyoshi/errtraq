@@ -9,7 +9,7 @@ resource "aws_dynamodb_table" "this" {
   billing_mode                = "PAY_PER_REQUEST"
   hash_key                    = "PK"
   range_key                   = "SK"
-  deletion_protection_enabled = var.deletion_protection
+  deletion_protection_enabled = var.protection == "production"
   attribute {
     name = "PK"
     type = "S"
@@ -28,9 +28,15 @@ resource "aws_dynamodb_table" "this" {
   dynamic "global_secondary_index" {
     for_each = var.purpose == "store" ? toset([for i in range(1, 9) : tostring(i)]) : toset([])
     content {
-      name            = "gsi${global_secondary_index.value}"
-      hash_key        = "GSI${global_secondary_index.value}PK"
-      range_key       = "GSI${global_secondary_index.value}SK"
+      name = "gsi${global_secondary_index.value}"
+      key_schema {
+        attribute_name = "GSI${global_secondary_index.value}PK"
+        key_type       = "HASH"
+      }
+      key_schema {
+        attribute_name = "GSI${global_secondary_index.value}SK"
+        key_type       = "RANGE"
+      }
       projection_type = "ALL"
     }
   }
@@ -47,6 +53,6 @@ locals {
   policies = {
     read   = { primary = jsonencode({ Version = "2012-10-17", Statement = [{ Effect = "Allow", Action = ["dynamodb:GetItem", "dynamodb:BatchGetItem", "dynamodb:Query"], Resource = local.table_and_indexes }] }) }
     write  = { primary = jsonencode({ Version = "2012-10-17", Statement = [{ Effect = "Allow", Action = ["dynamodb:PutItem", "dynamodb:UpdateItem", "dynamodb:ConditionCheckItem"], Resource = [aws_dynamodb_table.this.arn] }] }) }
-    delete = { primary = jsonencode({ Version = "2012-10-17", Statement = [{ Effect = "Allow", Action = ["dynamodb:DeleteItem", "dynamodb:BatchWriteItem"], Resource = [aws_dynamodb_table.this.arn] }] }) }
+    delete = { primary = jsonencode({ Version = "2012-10-17", Statement = [{ Effect = "Allow", Action = ["dynamodb:DeleteItem"], Resource = [aws_dynamodb_table.this.arn] }] }) }
   }
 }
