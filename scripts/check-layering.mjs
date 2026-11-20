@@ -1,53 +1,30 @@
-import { readdir, readFile } from "node:fs/promises";
+import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 import ts from "typescript";
+import { findLayeringViolations } from "./layering.mjs";
 
-let failed = false;
-
-async function checkDirectory(directory) {
+const files = [];
+async function collect(directory) {
   for (const entry of await readdir(directory, { withFileTypes: true })) {
     const path = join(directory, entry.name);
-    if (entry.isDirectory() && !["node_modules", "dist"].includes(entry.name)) {
-      await checkDirectory(path);
-    } else if (/\.[cm]?[jt]sx?$/.test(entry.name)) {
-      const source = ts.createSourceFile(
-        path,
-        await readFile(path, "utf8"),
-        ts.ScriptTarget.Latest,
-        true,
-      );
-      function visit(node) {
-        const isModuleSpecifier =
-          node.parent &&
-          (ts.isImportDeclaration(node.parent) ||
-            ts.isExportDeclaration(node.parent)) &&
-          node.parent.moduleSpecifier === node;
-        const isDynamicImport =
-          node.parent &&
-          ts.isCallExpression(node.parent) &&
-          node.parent.expression.kind === ts.SyntaxKind.ImportKeyword;
-        if (
-          (ts.isStringLiteral(node) &&
-            node.text.startsWith("node:") &&
-            (isModuleSpecifier || isDynamicImport)) ||
-          (ts.isIdentifier(node) &&
-            (node.text === "Buffer" || node.text === "process"))
-        ) {
-          const { line, character } = source.getLineAndCharacterOfPosition(
-            node.getStart(source),
-          );
-          console.error(
-            `${path}:${line + 1}:${character + 1}: forbidden Node API ${node.getText(source)}`,
-          );
-          failed = true;
-        }
-        ts.forEachChild(node, visit);
-      }
-      visit(source);
-    }
+    if (entry.isDirectory() && !["node_modules", "dist"].includes(entry.name))
+      await collect(path);
+    else if (entry.isFile() && /\.[cm]?[jt]sx?$/.test(entry.name))
+      files.push(path);
   }
 }
-
-for (const name of ["core", "http"])
-  await checkDirectory(join("packages", name));
-if (failed) process.exitCode = 1;
+for (const name of ["core", "http"]) await collect(join("packages", name));
+const program = ts.createProgram(files, {
+  allowJs: true,
+  noEmit: true,
+  target: ts.ScriptTarget.ES2022,
+  module: ts.ModuleKind.NodeNext,
+  moduleResolution: ts.ModuleResolutionKind.NodeNext,
+  skipLibCheck: true,
+});
+const violations = program
+  .getSourceFiles()
+  .filter((source) => files.includes(source.fileName))
+  .flatMap((source) => findLayeringViolations(program, source));
+for (const violation of violations) console.error(violation);
+if (violations.length) process.exitCode = 1;
