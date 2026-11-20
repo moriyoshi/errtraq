@@ -69,13 +69,23 @@ persisted in `api-token` under the local data directory with mode 0600. The loca
 
 ```sh
 pnpm infra:validate
+pnpm infra:mutate
 ```
 
 This checks module formatting, initializes each module in an ignored temporary directory with a
 plugin cache under `.agents-workspace/tmp`, validates it, and runs Terraform mock-provider tests
 without credentials. AWS provider versions 6.30.0 and 6.73.0 are pinned for the minimum and
-recorded latest-tested runs; any deprecation warning fails the check. Generated-root snapshots and validation remain TODO(M2b). Never run
-`terraform apply` as part of the gate.
+recorded latest-tested runs; any deprecation warning fails the check. On a cache hit, init uses
+the cache as a filesystem mirror and does not contact the registry. A cache miss downloads the
+pinned version. Mock output values are reduced to shapes and compared with the committed
+`infra/modules/aws/output-shapes.json`; the default test compares the snapshot with descriptor
+types and every referenced output path. When deliberately changing output shapes, run
+`UPDATE_INFRA_SHAPES=1 pnpm infra:validate` and review the snapshot diff.
+
+`pnpm infra:mutate` requires the cached 6.73.0 provider. It verifies unmodified baselines, applies
+each mutation from `scripts/infra-mutations.json` in its own temporary copy, and reports whether
+validation, HCL tests or the output-shape check detected it. Generated-root snapshots and
+validation remain TODO(M2b). Never run `terraform apply` as part of the gate.
 
 ## Pick your level
 

@@ -5,22 +5,43 @@ import { describe, expect, it } from "vitest";
 import stack from "./aws-dynamodb.js";
 import perTopic from "./aws-dynamodb-per-topic.js";
 
-function typeName(type: OutputType): string {
-  return typeof type === "string" ? type : `map(${typeName(type.map)})`;
-}
 function references(value: unknown): { name: string; path: string[] }[] {
   if (isOutputRef(value))
     return [{ name: value.name, path: [...(value.path ?? [])] }];
   if (!value || typeof value !== "object") return [];
   return Object.values(value).flatMap(references);
 }
-function matches(pattern: string, path: string[]): boolean {
-  const parts = pattern.split(".");
-  return (
-    parts.length === path.length &&
-    parts.every((part, i) => part === "*" || part === path[i])
-  );
+function assertType(value: unknown, type: OutputType, path: string): void {
+  if (typeof type === "string") {
+    if (type === "secret-ref") expect(value, path).toBe("string");
+    else if (type === "string[]") {
+      expect(Array.isArray(value), path).toBe(true);
+      if (Array.isArray(value))
+        for (const item of value) expect(item, path).toBe("string");
+    } else if (type === "json") {
+      expect(value, path).toBeTruthy();
+      expect(typeof value, path).toBe("object");
+    } else expect(value, path).toBe(type);
+    return;
+  }
+  expect(value, path).toBeTruthy();
+  expect(typeof value, path).toBe("object");
+  expect(Array.isArray(value), path).toBe(false);
+  if (value && typeof value === "object")
+    for (const [key, child] of Object.entries(value))
+      assertType(child, type.map, `${path}.${key}`);
 }
+function atPath(value: unknown, path: readonly string[]): unknown {
+  for (const key of path) {
+    if (!value || typeof value !== "object" || !Object.hasOwn(value, key))
+      return undefined;
+    value = Reflect.get(value, key);
+  }
+  return value;
+}
+const shapes: unknown = JSON.parse(
+  readFileSync(resolve("infra/modules/aws/output-shapes.json"), "utf8"),
+);
 
 describe("AWS module descriptor contracts", () => {
   for (const selectedStack of [stack, perTopic]) {
@@ -70,55 +91,24 @@ describe("AWS module descriptor contracts", () => {
           ...source.matchAll(/^variable\s+"([a-zA-Z0-9_]+)"\s*\{/gm),
         ].map((match) => match[1]);
         expect(outputs).toEqual(Object.keys(module.outputs).sort());
-        const outputSource = readFileSync(
-          resolve(directory, "outputs.tf"),
-          "utf8",
-        );
-        const declarationsByName = new Map(
-          [...outputSource.matchAll(/^output "([^"]+)" \{([\s\S]*?)^\}/gm)].map(
-            (m) => [m[1], m[2]],
-          ),
-        );
-        const related = [
-          selectedStack.platform,
-          selectedStack.store,
-          selectedStack.queue,
-          selectedStack.blob,
-          selectedStack.kv,
-        ].filter(
-          (item) =>
-            item.infra.module.provider === module.provider &&
-            item.infra.module.component === module.component,
-        );
-        const refs = references(
-          related.map((item) => [
-            item.infra.resources,
-            item.infra.capabilities,
-            item.infra.bindings,
-          ]),
-        );
-        for (const [name, type] of Object.entries(module.outputs)) {
-          const body = declarationsByName.get(name) ?? "";
-          const contract =
-            /description\s*=\s*"errtraq-type=([^;]+); errtraq-keys=([^;"]*); [^"]+"/.exec(
-              body,
-            );
-          expect(contract?.[1], `${name} output type`).toBe(typeName(type));
-          const patterns = contract?.[2] ? contract[2].split(",") : [];
-          const paths = refs
-            .filter((ref) => ref.name === name && ref.path.length > 0)
-            .map((ref) => ref.path);
-          for (const path of paths)
-            expect(
-              patterns.some((pattern) => matches(pattern, path)),
-              `${name}.${path.join(".")}`,
-            ).toBe(true);
-          for (const pattern of patterns)
-            expect(
-              paths.some((path) => matches(pattern, path)),
-              `${name}.${pattern}`,
-            ).toBe(true);
-        }
+        const actual = atPath(shapes, [module.component]);
+        expect(actual, `${module.component} output snapshot`).toBeTruthy();
+        for (const [name, type] of Object.entries(module.outputs))
+          assertType(
+            atPath(actual, [name]),
+            type,
+            `${module.component}.${name}`,
+          );
+        const refs = references([
+          selection.infra.resources,
+          selection.infra.capabilities,
+          selection.infra.bindings,
+        ]);
+        for (const ref of refs)
+          expect(
+            atPath(actual, [ref.name, ...ref.path]),
+            `${module.component}.${[ref.name, ...ref.path].join(".")}`,
+          ).toBeDefined();
         const inputs = selection.infra.inputs(selection.config, view);
         const variablesSource = readFileSync(
           resolve(directory, "variables.tf"),

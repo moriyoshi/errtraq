@@ -51,9 +51,10 @@ Child capability policies are granted to functions with the matching parent capa
 child resource must have a binding or capability, and capabilities and filtered bindings without
 an active matching parent requirement are rejected. Child topic mappings are not supported.
 
-The default AWS contract test compares the types and key patterns declared in HCL output
-descriptions with descriptors; opt-in mock-provider tests check actual output shapes. Terraform
-`validate` alone does not prove an output's type or keys. The model validates reference types
+The default AWS contract test compares descriptor types and referenced paths with a committed
+snapshot of mock-provider output shapes. The opt-in infrastructure gate captures actual Terraform
+outputs at both pinned provider versions and compares them with the snapshot. Output descriptions
+are informational; Terraform `validate` alone does not prove an output's type or keys. The model validates reference types
 and policy output placement, but it does **not** inspect a
 policy document or module input to prove that it contains no raw provider IAM or that its policy
 is least privilege. An adapter author and the future HCL module must provide that guarantee.

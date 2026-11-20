@@ -83,7 +83,8 @@ return null only when absence is established, otherwise propagate the authorizat
 Deployed cron requires primary blob read / list and ingest-queue produce to recover staged
 envelopes; M3 must schedule and implement that recovery. Standalone already recovers at startup.
 
-Output descriptions carry `errtraq-type` and `errtraq-keys` declarations because HCL output
-blocks have no type constraint. The default TypeScript contract test compares these declarations
-with the descriptors; Terraform mock-provider tests independently check the actual output shapes
-and encoded policy leaves. Keep all three in sync when changing module outputs.
+The default TypeScript contract test checks descriptor types and referenced paths against the
+committed `output-shapes.json` snapshot. `pnpm infra:validate` runs mock-provider Terraform tests
+at both pinned provider versions, captures actual output values and compares their normalized
+shapes with that snapshot. Output descriptions are informational and are not trusted as type
+proof. The opt-in `pnpm infra:mutate` checks the contract against the reviewed fault catalog.

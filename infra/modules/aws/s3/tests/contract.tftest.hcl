@@ -8,6 +8,22 @@ run "policies_and_lifecycle" {
     staging_prefix = "archive-staging/"
   }
   assert {
+    condition = alltrue([for purpose, prefixes in { primary = ["envelopes/", "payloads/", "artifacts/"], staging = ["archive-staging/"] } :
+      jsonencode(jsondecode(output.policies.read[purpose])) == jsonencode({ Version = "2012-10-17", Statement = [
+        { Effect = "Allow", Action = ["s3:GetObject"], Resource = [for prefix in prefixes : "${aws_s3_bucket.this.arn}/${prefix}*"] },
+        { Effect = "Allow", Action = ["s3:ListBucket"], Resource = aws_s3_bucket.this.arn, Condition = { StringLike = { "s3:prefix" = [for prefix in prefixes : "${prefix}*"] } } }
+      ] }) &&
+      jsonencode(jsondecode(output.policies.write[purpose])) == jsonencode({ Version = "2012-10-17", Statement = [{ Effect = "Allow", Action = ["s3:PutObject"], Resource = [for prefix in prefixes : "${aws_s3_bucket.this.arn}/${prefix}*"] }] }) &&
+      jsonencode(jsondecode(output.policies.delete[purpose])) == jsonencode({ Version = "2012-10-17", Statement = [{ Effect = "Allow", Action = ["s3:DeleteObject"], Resource = [for prefix in prefixes : "${aws_s3_bucket.this.arn}/${prefix}*"] }] }) &&
+      jsonencode(jsondecode(output.policies.list[purpose])) == jsonencode({ Version = "2012-10-17", Statement = [{ Effect = "Allow", Action = ["s3:ListBucket"], Resource = aws_s3_bucket.this.arn, Condition = { StringLike = { "s3:prefix" = [for prefix in prefixes : "${prefix}*"] } } }] })
+    ])
+    error_message = "Every S3 policy must match its capability and prefix-scoped resources exactly."
+  }
+  assert {
+    condition     = aws_s3_bucket_public_access_block.this.block_public_acls && aws_s3_bucket_public_access_block.this.block_public_policy && aws_s3_bucket_public_access_block.this.ignore_public_acls && aws_s3_bucket_public_access_block.this.restrict_public_buckets && one(one(aws_s3_bucket_server_side_encryption_configuration.this.rule).apply_server_side_encryption_by_default).sse_algorithm == "AES256" && jsonencode(jsondecode(aws_s3_bucket_policy.tls.policy)) == jsonencode({ Version = "2012-10-17", Statement = [{ Sid = "DenyInsecureTransport", Effect = "Deny", Principal = "*", Action = "s3:*", Resource = [aws_s3_bucket.this.arn, "${aws_s3_bucket.this.arn}/*"], Condition = { Bool = { "aws:SecureTransport" = "false" } } }] }) && one([for rule in aws_s3_bucket_lifecycle_configuration.this.rule : rule.expiration[0].days if rule.id == "abandoned-envelopes"]) == 14 && one([for rule in aws_s3_bucket_lifecycle_configuration.this.rule : rule.expiration[0].days if rule.id == "abandoned-archive-staging"]) == 7
+    error_message = "Public access, encryption, TLS and expiry rules must remain secure."
+  }
+  assert {
     condition     = alltrue(flatten([for resources in values(output.policies) : [for policy in values(resources) : length(policy) <= 1024]]))
     error_message = "Current per-resource policies must fit the 1024-character sizing budget."
   }

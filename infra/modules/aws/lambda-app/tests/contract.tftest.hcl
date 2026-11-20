@@ -1,6 +1,6 @@
 mock_provider "aws" {
   mock_data "aws_iam_policy_document" {
-    defaults = { json = "{\"Version\":\"2012-10-17\",\"Statement\":[]}" }
+    defaults = { json = "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":[\"sts:AssumeRole\"],\"Principal\":{\"Service\":[\"lambda.amazonaws.com\"]}}]}" }
   }
   mock_resource "aws_iam_role" {
     defaults = { arn = "arn:aws:iam::000000000000:role/test" }
@@ -26,7 +26,7 @@ run "functions_triggers_and_urls" {
     tags = {}
     functions = {
       shared = {
-        roles                = ["ingest", "api", "consumer", "cron"]
+        roles                = ["ingest", "api", "consumer"]
         http                 = ["ingest", "api"]
         artifact             = "tests/artifact.txt"
         memory_mb            = 512
@@ -37,15 +37,43 @@ run "functions_triggers_and_urls" {
         environment          = { TABLE = "example" }
         secrets              = { SECRET_ID = "arn:aws:secretsmanager:us-east-1:000000000000:secret:test-123456" }
         secret_reads         = ["arn:aws:secretsmanager:us-east-1:000000000000:secret:test-123456"]
-        policies             = ["{\"Version\":\"2012-10-17\",\"Statement\":[]}"]
+        policies             = [jsonencode({ Version = "2012-10-17", Statement = [{ Effect = "Allow", Action = ["s3:GetObject"], Resource = ["arn:aws:s3:::example-bucket/envelopes/*"] }] })]
+      }
+      worker = {
+        roles        = ["cron"]
+        http         = []
+        artifact     = "tests/artifact.txt"
+        memory_mb    = 256
+        timeout_sec  = 30
+        architecture = "x86_64"
+        environment  = { QUEUE = "worker-only" }
+        secrets      = {}
+        secret_reads = []
+        policies     = [jsonencode({ Version = "2012-10-17", Statement = [{ Effect = "Allow", Action = ["sqs:SendMessage"], Resource = ["arn:aws:sqs:us-east-1:000000000000:queue"] }] })]
       }
     }
     queue_triggers = {
       ingest = { function_id = "shared", resource = "arn:aws:sqs:us-east-1:000000000000:queue", topics = ["ingest"], batch_size = 5, max_concurrency = 7, visibility_timeout_sec = 180 }
     }
-    cron_triggers = { retention = { function_id = "shared", schedule = "0 * * * *", retry_attempts = 4, max_event_age_seconds = 3600, dlq_arn = "arn:aws:sqs:us-east-1:000000000000:cron-dlq" } }
+    cron_triggers = { retention = { function_id = "worker", schedule = "0 * * * *", retry_attempts = 4, max_event_age_seconds = 3600, dlq_arn = "arn:aws:sqs:us-east-1:000000000000:cron-dlq" } }
     runtime       = "nodejs20.x"
     handler       = "app.handle"
+  }
+  assert {
+    condition     = length(data.aws_iam_policy_document.assume.statement) == 1 && length(data.aws_iam_policy_document.assume.statement[0].condition) == 0 && length(data.aws_iam_policy_document.assume.statement[0].not_principals) == 0 && data.aws_iam_policy_document.assume.statement[0].not_actions == null && coalesce(data.aws_iam_policy_document.assume.statement[0].effect, "Allow") == "Allow" && aws_iam_role.function["shared"].assume_role_policy == data.aws_iam_policy_document.assume.json && aws_iam_role.function["worker"].assume_role_policy == data.aws_iam_policy_document.assume.json && jsonencode(data.aws_iam_policy_document.assume.statement[0].actions) == jsonencode(["sts:AssumeRole"]) && length(data.aws_iam_policy_document.assume.statement[0].principals) == 1 && one(data.aws_iam_policy_document.assume.statement[0].principals).type == "Service" && toset(one(data.aws_iam_policy_document.assume.statement[0].principals).identifiers) == toset(["lambda.amazonaws.com"])
+    error_message = "Lambda trust must allow only the Lambda service principal and sts:AssumeRole."
+  }
+  assert {
+    condition     = length(aws_iam_role_policy.capability) == 2 && aws_iam_role.function["shared"].id != aws_iam_role.function["worker"].id && aws_iam_role_policy.capability["shared-0"].role == aws_iam_role.function["shared"].id && aws_iam_role_policy.capability["worker-0"].role == aws_iam_role.function["worker"].id && aws_iam_role_policy.capability["shared-0"].policy == var.functions["shared"].policies[0] && aws_iam_role_policy.capability["worker-0"].policy == var.functions["worker"].policies[0]
+    error_message = "Different functions must receive only their own capability policies."
+  }
+  assert {
+    condition     = jsonencode(aws_lambda_function.function["shared"].environment[0].variables) == jsonencode({ TABLE = "example", SECRET_ID = "arn:aws:secretsmanager:us-east-1:000000000000:secret:test-123456" }) && jsonencode(aws_lambda_function.function["worker"].environment[0].variables) == jsonencode({ QUEUE = "worker-only" })
+    error_message = "Each function environment must contain exactly its own values."
+  }
+  assert {
+    condition     = alltrue([for id in ["shared", "worker"] : jsonencode(jsondecode(aws_iam_role_policy.logs[id].policy)) == jsonencode({ Version = "2012-10-17", Statement = [{ Effect = "Allow", Action = ["logs:CreateLogStream", "logs:PutLogEvents"], Resource = "${aws_cloudwatch_log_group.function[id].arn}:*" }] }) && aws_iam_role_policy.logs[id].role == aws_iam_role.function[id].id]) && jsonencode(jsondecode(aws_iam_role_policy.secret_reads["shared"].policy)) == jsonencode({ Version = "2012-10-17", Statement = [{ Effect = "Allow", Action = ["secretsmanager:GetSecretValue"], Resource = ["arn:aws:secretsmanager:us-east-1:000000000000:secret:test-123456"] }] }) && aws_iam_role_policy.secret_reads["shared"].role == aws_iam_role.function["shared"].id && !contains(keys(aws_iam_role_policy.secret_reads), "worker")
+    error_message = "Logging and secret-read policies must have exact actions, resources and role scopes."
   }
   assert {
     condition     = length(aws_iam_role_policy.logs["shared"].policy) <= 1024

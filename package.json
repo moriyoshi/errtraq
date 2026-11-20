@@ -12,7 +12,8 @@
     "test": "vitest run",
     "build": "tsc -b",
     "e2e": "pnpm build && node scripts/e2e.mjs",
-    "infra:validate": "node scripts/infra-validate.mjs"
+    "infra:validate": "node scripts/infra-validate.mjs",
+    "infra:mutate": "node scripts/infra-mutate.mjs"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.15",

@@ -1,0 +1,142 @@
+[
+  {
+    "id": "ddb-read-wildcard",
+    "module": "dynamodb",
+    "file": "main.tf",
+    "find": "Action = [\"dynamodb:GetItem\", \"dynamodb:BatchGetItem\", \"dynamodb:Query\"], Resource = local.table_and_indexes",
+    "replace": "Action = [\"dynamodb:*\"], Resource = [\"*\"]"
+  },
+  {
+    "id": "ddb-write-missing-put",
+    "module": "dynamodb",
+    "file": "main.tf",
+    "find": "\"dynamodb:PutItem\", \"dynamodb:UpdateItem\"",
+    "replace": "\"dynamodb:UpdateItem\""
+  },
+  {
+    "id": "ddb-read-missing-index",
+    "module": "dynamodb",
+    "file": "main.tf",
+    "find": "[aws_dynamodb_table.this.arn, \"${aws_dynamodb_table.this.arn}/index/*\"]",
+    "replace": "[aws_dynamodb_table.this.arn]"
+  },
+  {
+    "id": "ddb-pitr-disabled",
+    "module": "dynamodb",
+    "file": "main.tf",
+    "find": "point_in_time_recovery { enabled = true }",
+    "replace": "point_in_time_recovery { enabled = false }"
+  },
+  {
+    "id": "ddb-gsi-projection",
+    "module": "dynamodb",
+    "file": "main.tf",
+    "find": "projection_type = \"ALL\"",
+    "replace": "projection_type = \"KEYS_ONLY\""
+  },
+  {
+    "id": "ddb-ttl-removed",
+    "module": "dynamodb",
+    "file": "main.tf",
+    "find": "  ttl {\n    attribute_name = \"expiresAt\"\n    enabled        = true\n  }\n",
+    "replace": ""
+  },
+  {
+    "id": "ddb-table-name-list",
+    "module": "dynamodb",
+    "file": "outputs.tf",
+    "find": "value       = aws_dynamodb_table.this.name",
+    "replace": "value       = [aws_dynamodb_table.this.name]"
+  },
+  {
+    "id": "ddb-extra-scan",
+    "module": "dynamodb",
+    "file": "main.tf",
+    "find": "\"dynamodb:BatchGetItem\", \"dynamodb:Query\"",
+    "replace": "\"dynamodb:BatchGetItem\", \"dynamodb:Query\", \"dynamodb:Scan\""
+  },
+  {
+    "id": "sqs-send-replaced",
+    "module": "sqs",
+    "file": "main.tf",
+    "find": "\"sqs:SendMessage\"",
+    "replace": "\"sqs:ReceiveMessage\""
+  },
+  {
+    "id": "sqs-encryption-off",
+    "module": "sqs",
+    "file": "main.tf",
+    "find": "sqs_managed_sse_enabled    = true",
+    "replace": "sqs_managed_sse_enabled    = false"
+  },
+  {
+    "id": "sqs-redrive-count-one",
+    "module": "sqs",
+    "file": "main.tf",
+    "find": "maxReceiveCount = each.value.max_receive_count",
+    "replace": "maxReceiveCount = 1"
+  },
+  {
+    "id": "sqs-queues-string-map",
+    "module": "sqs",
+    "file": "main.tf",
+    "find": "key => { arn = queue.arn, url = queue.url }",
+    "replace": "key => queue.url"
+  },
+  {
+    "id": "s3-public-access",
+    "module": "s3",
+    "file": "main.tf",
+    "find": "block_public_acls       = true",
+    "replace": "block_public_acls       = false"
+  },
+  {
+    "id": "s3-encryption-changed",
+    "module": "s3",
+    "file": "main.tf",
+    "find": "sse_algorithm = \"AES256\"",
+    "replace": "sse_algorithm = \"aws:kms\""
+  },
+  {
+    "id": "s3-lifecycle-days",
+    "module": "s3",
+    "file": "main.tf",
+    "find": "expiration { days = var.raw_retention_days }",
+    "replace": "expiration { days = 1 }"
+  },
+  {
+    "id": "lambda-url-auth",
+    "module": "lambda-app",
+    "file": "main.tf",
+    "find": "authorization_type = each.value.auth_type",
+    "replace": "authorization_type = \"NONE\""
+  },
+  {
+    "id": "lambda-log-wildcard",
+    "module": "lambda-app",
+    "file": "main.tf",
+    "find": "policy   = jsonencode({ Version = \"2012-10-17\", Statement = [{ Effect = \"Allow\", Action = [\"logs:CreateLogStream\", \"logs:PutLogEvents\"], Resource = \"${aws_cloudwatch_log_group.function[each.key].arn}:*\" }] })",
+    "replace": "policy   = jsonencode({ Version = \"2012-10-17\", Statement = [{ Effect = \"Allow\", Action = [\"logs:CreateLogStream\", \"logs:PutLogEvents\"], Resource = \"*\" }] })"
+  },
+  {
+    "id": "lambda-trust-wildcard",
+    "module": "lambda-app",
+    "file": "main.tf",
+    "find": "identifiers = [\"lambda.amazonaws.com\"]",
+    "replace": "identifiers = [\"*\"]"
+  },
+  {
+    "id": "lambda-policy-wrong-role",
+    "module": "lambda-app",
+    "file": "main.tf",
+    "find": "role     = aws_iam_role.function[each.value.id].id",
+    "replace": "role     = aws_iam_role.function[\"worker\"].id"
+  },
+  {
+    "id": "lambda-extra-env",
+    "module": "lambda-app",
+    "file": "main.tf",
+    "find": "merge(each.value.environment, each.value.secrets)",
+    "replace": "merge(each.value.environment, each.value.secrets, { EXTRA = \"injected\" })"
+  }
+]

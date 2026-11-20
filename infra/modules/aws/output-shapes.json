@@ -1,0 +1,78 @@
+{
+  "dynamodb": {
+    "policies": {
+      "delete": {
+        "primary": "json-document"
+      },
+      "read": {
+        "primary": "json-document"
+      },
+      "write": {
+        "primary": "json-document"
+      }
+    },
+    "table_arn": "string",
+    "table_name": "string"
+  },
+  "lambda-app": {
+    "api_url": "string",
+    "ingest_url": "string"
+  },
+  "s3": {
+    "bucket_arn": "string",
+    "bucket_name": "string",
+    "policies": {
+      "delete": {
+        "primary": "json-document",
+        "staging": "json-document"
+      },
+      "list": {
+        "primary": "json-document",
+        "staging": "json-document"
+      },
+      "read": {
+        "primary": "json-document",
+        "staging": "json-document"
+      },
+      "write": {
+        "primary": "json-document",
+        "staging": "json-document"
+      }
+    },
+    "staging_arn": "string"
+  },
+  "sqs": {
+    "policies": {
+      "consume": {
+        "archive_project": "json-document",
+        "ingest": "json-document",
+        "notifications": "json-document",
+        "shared": "json-document"
+      },
+      "produce": {
+        "archive_project": "json-document",
+        "ingest": "json-document",
+        "notifications": "json-document",
+        "shared": "json-document"
+      }
+    },
+    "queues": {
+      "archive_project": {
+        "arn": "string",
+        "url": "string"
+      },
+      "ingest": {
+        "arn": "string",
+        "url": "string"
+      },
+      "notifications": {
+        "arn": "string",
+        "url": "string"
+      },
+      "shared": {
+        "arn": "string",
+        "url": "string"
+      }
+    }
+  }
+}

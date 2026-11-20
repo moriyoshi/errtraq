@@ -482,3 +482,20 @@ with app CORS in the future Lambda handler. External EventBridge DLQs need a res
 The current per-topic stack's sampled largest inline-policy total is about 2440 characters with
 logging and no secrets; a Terraform precondition enforces the actual 10240-character limit.
 Section B is recorded in TODO; review item 10 remains the next slice.
+
+## 2026-11-21 — M2b HCL contract and mutation checks
+
+Terraform module tests now compare exact capability policies and security-relevant resource
+settings, including role-specific attachment, environment, trust, GSI schemas and protection.
+The default TypeScript test checks descriptor output types and reference paths against a committed
+snapshot; the opt-in gate captures real mock-provider output values and compares their shapes
+at both pinned AWS provider versions. Output descriptions are no longer treated as type proof.
+
+The mutation catalog contains the 20 distinct mutations actually listed in the review (the prose
+says 21). All were detected: Terraform tests caught 19, the live output-shape check caught the
+DynamoDB name type change, and both caught the SQS queue output shape change. The mutation runner
+first checks unmodified baselines and uses isolated temporary copies. Provider initialization uses
+`-plugin-dir` against the cached filesystem mirror when the exact platform binary exists, with
+Terraform's cache environment variable removed to avoid installing the mirror into itself. A
+run with unreachable HTTP proxies verified that cached provider versions do not need registry
+access. Initial cache misses still download the pinned version through the normal registry path.

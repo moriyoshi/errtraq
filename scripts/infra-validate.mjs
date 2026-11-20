@@ -1,6 +1,7 @@
 import { spawnSync } from "node:child_process";
 import {
   cpSync,
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
@@ -9,6 +10,12 @@ import {
   writeFileSync,
 } from "node:fs";
 import { resolve } from "node:path";
+import {
+  capturedShape,
+  checkShape,
+  shapeFixture,
+  snapshotPath,
+} from "./infra-shapes.mjs";
 
 const root = resolve("infra/modules");
 const scratch = resolve(".agents-workspace/tmp");
@@ -21,11 +28,14 @@ const env = {
   TF_IN_AUTOMATION: "1",
   CHECKPOINT_DISABLE: "1",
 };
-function run(args, cwd) {
+function run(args, cwd, offline = false) {
+  const commandEnv = { ...env, TF_DATA_DIR: resolve(cwd, ".terraform") };
+  if (offline) delete commandEnv.TF_PLUGIN_CACHE_DIR;
   const result = spawnSync("terraform", args, {
     cwd,
-    env: { ...env, TF_DATA_DIR: resolve(cwd, ".terraform") },
+    env: commandEnv,
     encoding: "utf8",
+    maxBuffer: 64 * 1024 * 1024,
   });
   if (result.error) throw result.error;
   if (result.status !== 0) {
@@ -36,11 +46,16 @@ function run(args, cwd) {
   const output = `${result.stdout}\n${result.stderr}`;
   const summary = output.match(/Success! \d+ passed, \d+ failed\./)?.[0];
   console.log(`  ${args[0]}: ${summary ?? "passed"}`);
-  if (/Warning:[\s\S]*?deprecated/i.test(output)) {
+  if (
+    /Warning:[\s\S]*?deprecated/i.test(output) ||
+    /"summary"\s*:\s*"[^"]*deprecated/i.test(output)
+  ) {
     process.stdout.write(output);
     throw new Error(`terraform ${args[0]} emitted a deprecation warning`);
   }
+  return output;
 }
+const observed = {};
 try {
   console.log("Checking Terraform module formatting");
   run(["fmt", "-check", "-recursive", root], process.cwd());
@@ -75,12 +90,67 @@ try {
           ),
         );
         console.log(`\nValidating ${name} with AWS provider ${version}`);
-        run(["init", "-backend=false", "-input=false", "-no-color"], target);
+        const platform = `${process.platform === "win32" ? "windows" : process.platform}_${process.arch === "x64" ? "amd64" : process.arch}`;
+        const cachedDirectory = resolve(
+          cache,
+          "registry.terraform.io",
+          "hashicorp",
+          "aws",
+          version,
+          platform,
+        );
+        const cached =
+          existsSync(cachedDirectory) &&
+          readdirSync(cachedDirectory).some((name) =>
+            name.startsWith(`terraform-provider-aws_v${version}`),
+          );
+        const initArgs = [
+          "init",
+          "-backend=false",
+          "-input=false",
+          "-no-color",
+        ];
+        if (cached) initArgs.push(`-plugin-dir=${cache}`);
+        run(initArgs, target, cached);
         run(["validate", "-no-color"], target);
         run(["test", "-no-color"], target);
+        const fixturePath = resolve(target, "tests", "shapes.tftest.hcl");
+        writeFileSync(
+          fixturePath,
+          shapeFixture(
+            readFileSync(
+              resolve(target, "tests", "contract.tftest.hcl"),
+              "utf8",
+            ),
+          ),
+        );
+        const output = run(
+          [
+            "test",
+            "-json",
+            "-verbose",
+            "-no-color",
+            "-filter=tests/shapes.tftest.hcl",
+          ],
+          target,
+        );
+        const current = capturedShape(output, component.name);
+        if (process.env.UPDATE_INFRA_SHAPES === "1") {
+          if (
+            observed[component.name] &&
+            JSON.stringify(observed[component.name]) !== JSON.stringify(current)
+          )
+            throw new Error(
+              `Provider versions disagree on ${component.name} output shape`,
+            );
+          observed[component.name] = current;
+        } else checkShape(component.name, current);
+        console.log(`  shape: matched`);
       }
     }
   }
+  if (process.env.UPDATE_INFRA_SHAPES === "1")
+    writeFileSync(snapshotPath, `${JSON.stringify(observed, null, 2)}\n`);
 } catch (error) {
   console.error(error);
   process.exitCode = 1;
