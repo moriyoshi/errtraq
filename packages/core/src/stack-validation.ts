@@ -7,13 +7,17 @@ function ownValue<T>(
 
 import {
   type AdapterSelection,
+  artifact,
   type CoreTopic,
   CRON_JOBS,
+  type DeploymentTrigger,
+  type DeploymentView,
   type DerivedGrant,
   FUNCTION_ROLES,
   type FunctionRole,
   type FunctionSettings,
   type InfraValue,
+  isArtifactRef,
   isEnvRef,
   isInfraRef,
   isOutputRef,
@@ -23,6 +27,7 @@ import {
   output,
   type PhysicalFunction,
   type PlatformConfig,
+  QUEUE_VISIBILITY_FACTOR,
   REF,
   type ScopedBinding,
   type SecretReadRequirement,
@@ -165,6 +170,125 @@ function deriveAccessFor(
         identifier: item.binding.value,
       })),
   };
+}
+/** Derive the immutable inputs a platform needs, without re-running adapter schemas. */
+function qualifyValue(value: InfraValue, owner: string): InfraValue {
+  if (Array.isArray(value))
+    return value.map((item) => qualifyValue(item, owner));
+  if (!value || typeof value !== "object") return value;
+  if (isOutputRef(value))
+    return value.selection
+      ? value
+      : output(owner, value.name, ...(value.path ?? []));
+  if (isInfraRef(value)) return value;
+  return Object.fromEntries(
+    Object.entries(value).map(([key, item]) => [
+      key,
+      qualifyValue(item, owner),
+    ]),
+  );
+}
+function deploymentFor(
+  stack: StackConfig,
+  functions: PhysicalFunction[],
+  config: PlatformConfig,
+): DeploymentView {
+  const access = deriveAccessFor(stack, functions);
+  const bindings = access.bindings.map((item) => ({
+    ...item,
+    binding: {
+      ...item.binding,
+      value: qualifyValue(item.binding.value, item.selection),
+    },
+  }));
+  const view: DeploymentView = {
+    functions: functions.map((fn) => ({
+      ...fn,
+      artifact: artifact(fn.id),
+      http: (config.http ?? []).filter((role) => fn.roles.includes(role)),
+      envBindings: bindings.filter(
+        (item) => item.functionId === fn.id && item.binding.kind === "env",
+      ),
+      secretBindings: bindings.filter(
+        (item) => item.functionId === fn.id && item.binding.kind === "secret",
+      ),
+      platformBindings: bindings.filter(
+        (item) => item.functionId === fn.id && item.binding.kind === "platform",
+      ),
+      policies: access.grants
+        .filter(
+          (grant) =>
+            grant.functionId === fn.id && grant.policyOutput !== undefined,
+        )
+        .map((grant) => ({
+          ...grant,
+          policyOutput:
+            grant.policyOutput &&
+            output(
+              grant.selection,
+              grant.policyOutput.name,
+              ...(grant.policyOutput.path ?? []),
+            ),
+        })),
+      secretReads: access.secretReads
+        .filter((item) => item.functionId === fn.id)
+        .map((item) => ({
+          ...item,
+          identifier: qualifyValue(item.identifier, item.selection),
+        })),
+    })),
+    triggers: [],
+  };
+  const mapping = stack.queue.infra.topics;
+  if (mapping) {
+    const queues = new Map<
+      string,
+      Extract<DeploymentTrigger, { kind: "queue" }>
+    >();
+    for (const topic of TOPICS) {
+      const contract = TOPIC_ROUTES[topic];
+      if (contract.feature && !stack[contract.feature]) continue;
+      const route = mapping.routes[topic];
+      if (!route) continue;
+      const fn = functions.find((item) =>
+        item.roles.includes(contract.consumer),
+      );
+      if (!fn) continue;
+      let trigger = queues.get(route.physical);
+      if (!trigger) {
+        const resource =
+          ownValue(stack.queue.infra.resources, route.physical) ?? null;
+        trigger = {
+          kind: "queue",
+          functionId: fn.id,
+          physical: route.physical,
+          resource: qualifyValue(resource, "queue"),
+          topics: [],
+          settings: ownValue(mapping.settings, route.physical) ?? {},
+        };
+        queues.set(route.physical, trigger);
+      }
+      trigger.topics.push(topic);
+    }
+    view.triggers.push(...queues.values());
+  }
+  if (stack.archive)
+    for (const job of CRON_JOBS) {
+      const fn = functions.find((item) => item.roles.includes(job.role));
+      if (fn)
+        view.triggers.push({
+          kind: "cron",
+          functionId: fn.id,
+          name: job.name,
+          schedule: job.schedule,
+        });
+    }
+  return view;
+}
+export function deriveDeployment(input: StackConfig): DeploymentView {
+  const stack = resolveStack(input);
+  const config = platformConfigSchema.parse(stack.platform.config);
+  return deploymentFor(stack, physicalFunctions(config), config);
 }
 /** Access derived from core requirements, grouped by the actual physical functions. */
 export function deriveAccess(input: StackConfig): {
@@ -371,6 +495,14 @@ function inspect(input: unknown): {
   for (const roleName of functions.split)
     if (!functions.roles.includes(roleName))
       fail("platform.config.split", `Unknown deployed role ${roleName}`);
+  if (new Set(functions.http ?? []).size !== (functions.http ?? []).length)
+    fail("platform.config.http", "Duplicate HTTP role");
+  for (const roleName of functions.http ?? []) {
+    if (roleName !== "ingest" && roleName !== "api")
+      fail("platform.config.http", `Role ${roleName} has no HTTP app`);
+    if (!functions.roles.includes(roleName))
+      fail("platform.config.http", `Platform does not deploy ${roleName}`);
+  }
   for (const roleName of Object.keys(functions.settings ?? {}))
     if (!functions.roles.includes(roleName as FunctionRole))
       fail("platform.config.settings", `Unknown deployed role ${roleName}`);
@@ -545,6 +677,19 @@ function inspect(input: unknown): {
           fail(path, "Existing value cannot refer to its own output");
         if (target === owner && context === "input")
           fail(path, "Module input cannot reference its own output");
+      } else if (
+        isArtifactRef(value) &&
+        keys.length === 1 &&
+        keys[0] === "functionId" &&
+        typeof value.functionId === "string"
+      ) {
+        if (context !== "input" || owner !== "platform")
+          fail(
+            path,
+            "Artifact references are only valid in platform module inputs",
+          );
+        else if (!groups.some((fn) => fn.id === value.functionId))
+          fail(path, `Unknown artifact function ${value.functionId}`);
       } else if (
         isStackRef(value) &&
         keys.every((k) => ["name", "provider"].includes(k)) &&
@@ -722,6 +867,54 @@ function inspect(input: unknown): {
   } catch (error) {
     fail("platform.config.settings", String(error));
   }
+  // Descriptors cannot alter the data that validation subsequently relies on.
+  const deployment = frozenSnapshot(deploymentFor(stack, groups, functions));
+  for (const [name, ref] of Object.entries(stack.outputs ?? {}))
+    checkValue(ref, "platform", `outputs.${name}`, false);
+  for (const key of Object.keys(stack.queue.infra.topics?.settings ?? {}))
+    if (
+      !Object.values(stack.queue.infra.topics?.routes ?? {}).some(
+        (route) => route.physical === key,
+      )
+    )
+      fail(`queue.infra.topics.settings.${key}`, "Unknown physical queue");
+  for (const trigger of deployment.triggers) {
+    if (trigger.kind !== "queue") continue;
+    const setting = trigger.settings;
+    if (setting.dlq?.enabled && !stack.queue.manifest.capabilities.dlq)
+      fail(
+        `queue.infra.topics.settings.${trigger.physical}.dlq`,
+        "Queue does not support a DLQ",
+      );
+    if (
+      setting.dlq?.enabled === false &&
+      setting.dlq.maxReceiveCount !== undefined
+    )
+      fail(
+        `queue.infra.topics.settings.${trigger.physical}.dlq`,
+        "Disabled DLQ cannot specify maxReceiveCount",
+      );
+    const timeout = deployment.functions.find(
+      (fn) => fn.id === trigger.functionId,
+    )?.settings.timeoutSec;
+    if (timeout !== undefined && setting.visibilityTimeoutSec === undefined)
+      fail(
+        `queue.infra.topics.settings.${trigger.physical}.visibilityTimeoutSec`,
+        "Queue visibility is required when the consumer timeout is configured",
+      );
+    if (setting.visibilityTimeoutSec !== undefined) {
+      if (timeout === undefined)
+        fail(
+          `queue.infra.topics.settings.${trigger.physical}.visibilityTimeoutSec`,
+          "Consumer timeout is required to validate queue visibility",
+        );
+      else if (setting.visibilityTimeoutSec < timeout * QUEUE_VISIBILITY_FACTOR)
+        fail(
+          `queue.infra.topics.settings.${trigger.physical}.visibilityTimeoutSec`,
+          "Visibility timeout must be at least six times the consumer timeout",
+        );
+    }
+  }
   if (
     platform.authorization === "none" &&
     (platform.compute !== "long-lived" || groups.length !== 1)
@@ -759,7 +952,9 @@ function inspect(input: unknown): {
     );
     checkValue(sel.config, path, `${path}.config`, true, new Set(), true);
     try {
-      const inputs = sel.existing ? {} : sel.infra.inputs(sel.config);
+      const inputs = sel.existing
+        ? {}
+        : sel.infra.inputs(sel.config, deployment);
       if (!inputs || typeof inputs !== "object" || Array.isArray(inputs))
         fail(`${path}.infra.inputs`, "Expected an input record");
       else
@@ -1148,42 +1343,31 @@ export function defineStack<T extends StackConfig>(
 export type DerivedTrigger =
   | {
       kind: "queue";
+      functionId: string;
       physical: string;
       role: FunctionRole;
       resource: InfraValue;
       topics: CoreTopic[];
+      settings: import("./stack-model.js").QueueTriggerSettings;
     }
-  | { kind: "cron"; name: string; schedule: string; role: FunctionRole };
-/** Derive one queue trigger per physical queue and one named trigger per enabled cron job. */
+  | {
+      kind: "cron";
+      functionId: string;
+      name: string;
+      schedule: string;
+      role: FunctionRole;
+    };
+/** Queue and cron triggers share the same derivation as the platform deployment view. */
 export function deriveTriggers(input: StackConfig): DerivedTrigger[] {
-  const stack = resolveStack(input);
-  const mapping = stack.queue.infra.topics;
-  if (!mapping) throw new Error("Missing queue mapping");
-  const queues = new Map<string, Extract<DerivedTrigger, { kind: "queue" }>>();
-  for (const topic of TOPICS) {
-    const contract = TOPIC_ROUTES[topic];
-    if (contract.feature && !stack[contract.feature]) continue;
-    const route = mapping.routes[topic];
-    let trigger = queues.get(route.physical);
-    if (!trigger) {
-      trigger = {
-        kind: "queue",
-        physical: route.physical,
-        role: TOPIC_ROUTES[topic].consumer,
-        resource: stack.queue.infra.resources[route.physical] ?? null,
-        topics: [],
-      };
-      queues.set(route.physical, trigger);
+  const view = deriveDeployment(input);
+  return view.triggers.map((trigger) => {
+    if (trigger.kind === "queue") {
+      const first = trigger.topics[0];
+      if (!first) throw new Error("Queue trigger has no topics");
+      return { ...trigger, role: TOPIC_ROUTES[first].consumer };
     }
-    trigger.topics.push(topic);
-  }
-  const config = platformConfigSchema.parse(stack.platform.config);
-  // TODO(M4): all currently declared jobs belong to the optional archive feature.
-  const cron = stack.archive
-    ? CRON_JOBS.filter((job) => config.roles.includes(job.role)).map((job) => ({
-        kind: "cron" as const,
-        ...job,
-      }))
-    : [];
-  return [...queues.values(), ...cron];
+    const job = CRON_JOBS.find((item) => item.name === trigger.name);
+    if (!job) throw new Error(`Unknown cron job ${trigger.name}`);
+    return { ...trigger, role: job.role };
+  });
 }

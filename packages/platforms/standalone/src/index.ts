@@ -172,16 +172,18 @@ export function create({
         logger,
       );
       const app = new Hono({ strict: false });
-      app.route("/", createIngestApp(ingest, logger));
-      app.route(
-        "/",
-        createApiApp({
-          store: bindings.store,
-          clock,
-          blobs: bindings.blob,
-          logger,
-        }),
-      );
+      if (cfg.http.includes("ingest"))
+        app.route("/", createIngestApp(ingest, logger));
+      if (cfg.http.includes("api"))
+        app.route(
+          "/",
+          createApiApp({
+            store: bindings.store,
+            clock,
+            blobs: bindings.blob,
+            logger,
+          }),
+        );
       const server = serve({
         fetch: app.fetch,
         hostname: cfg.host,

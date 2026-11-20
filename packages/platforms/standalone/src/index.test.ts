@@ -17,6 +17,34 @@ const create = (
 import { configSchema, standalone } from "./stack.js";
 
 describe("standalone platform", () => {
+  it("exposes only the configured HTTP apps", async () => {
+    for (const http of [["ingest"], ["api"]] as const) {
+      const queue = Object.assign(new MemoryQueue(), {
+        idle: async () => true,
+      });
+      const platform = create(
+        { port: 0, http: [...http] },
+        {
+          store: new MemoryActiveStore(),
+          blob: new MemoryBlobStore(),
+          kv: new MemoryKV(),
+          queue,
+        },
+      );
+      const server = await platform.start();
+      try {
+        const base = `http://127.0.0.1:${server.port}`;
+        const ingest = await fetch(`${base}/api/1/envelope/`, {
+          method: "POST",
+        });
+        const api = await fetch(`${base}/api/0/issues/123`);
+        expect(ingest.status === 404).toBe(http[0] !== "ingest");
+        expect(api.status === 404).toBe(http[0] !== "api");
+      } finally {
+        await platform.close();
+      }
+    }
+  });
   it("defaults to loopback and rejects unsupported jobs before starting", async () => {
     expect(configSchema.parse({}).host).toBe("127.0.0.1");
     expect(configSchema.safeParse({ split: ["api"] }).success).toBe(false);

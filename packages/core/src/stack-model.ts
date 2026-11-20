@@ -20,6 +20,8 @@ export const FUNCTION_ROLES: readonly FunctionRole[] = [
 /** Logical topics are part of core's contract; later handlers must not acknowledge unknown topics. */
 export const TOPICS = ["ingest", "archive.project", "notifications"] as const;
 export type CoreTopic = (typeof TOPICS)[number];
+/** Visibility must cover six consumer timeouts, allowing for retries and delays. */
+export const QUEUE_VISIBILITY_FACTOR = 6;
 export const CRON_JOBS = [
   { name: "archive-planner", schedule: "0 * * * *", role: "cron" },
   { name: "retention", schedule: "15 * * * *", role: "cron" },
@@ -58,6 +60,7 @@ export interface FunctionSettings {
   memoryMb?: number;
   timeoutSec?: number;
   architecture?: "x86_64" | "arm64";
+  [key: string]: unknown;
 }
 export interface PhysicalFunction {
   id: string;
@@ -67,6 +70,7 @@ export interface PhysicalFunction {
 export interface PlatformConfig {
   roles: FunctionRole[];
   split: FunctionRole[];
+  http?: FunctionRole[];
   settings?: Partial<Record<FunctionRole, FunctionSettings>>;
 }
 /** In-process reference tag; generators must render references, not JSON-serialize them. */
@@ -94,7 +98,17 @@ export interface VariableRef {
   readonly [REF]: "variable";
   readonly name: string;
 }
-export type InfraRef = OutputRef | StackRef | EnvRef | VariableRef;
+/** A location supplied by the M2c builder for a physical function. */
+export interface ArtifactRef {
+  readonly [REF]: "artifact";
+  readonly functionId: string;
+}
+export type InfraRef =
+  | OutputRef
+  | StackRef
+  | EnvRef
+  | VariableRef
+  | ArtifactRef;
 function hasTag(value: unknown, tag: InfraRef[typeof REF]): boolean {
   return (
     typeof value === "object" &&
@@ -111,11 +125,18 @@ export const isEnvRef = (value: unknown): value is EnvRef =>
   hasTag(value, "env");
 export const isVariableRef = (value: unknown): value is VariableRef =>
   hasTag(value, "variable");
+export const isArtifactRef = (value: unknown): value is ArtifactRef =>
+  hasTag(value, "artifact");
 export const isInfraRef = (value: unknown): value is InfraRef =>
   isOutputRef(value) ||
   isStackRef(value) ||
   isEnvRef(value) ||
-  isVariableRef(value);
+  isVariableRef(value) ||
+  isArtifactRef(value);
+export const artifact = (functionId: string): ArtifactRef => ({
+  [REF]: "artifact",
+  functionId,
+});
 
 /** Config references resolve from the runtime environment, or from TF_VAR values at runtime. */
 export function configReference<T extends z.ZodType>(schema: T) {
@@ -178,6 +199,7 @@ export type InfraValue =
   | StackRef
   | EnvRef
   | VariableRef
+  | ArtifactRef
   | InfraValue[]
   | { [key: string]: InfraValue };
 export type OutputType =
@@ -227,10 +249,40 @@ export interface TopicRoute {
 export interface TopicMapping {
   mode: "shared" | "per-topic";
   routes: Record<CoreTopic, TopicRoute>;
+  settings?: Record<string, QueueTriggerSettings>;
+}
+export interface QueueTriggerSettings {
+  batchSize?: number;
+  maxConcurrency?: number;
+  visibilityTimeoutSec?: number;
+  dlq?: { enabled: boolean; maxReceiveCount?: number };
+}
+export interface DeploymentFunction extends PhysicalFunction {
+  artifact: ArtifactRef;
+  http: FunctionRole[];
+  envBindings: ScopedBinding[];
+  secretBindings: ScopedBinding[];
+  platformBindings: ScopedBinding[];
+  policies: DerivedGrant[];
+  secretReads: SecretReadRequirement[];
+}
+export type DeploymentTrigger =
+  | {
+      kind: "queue";
+      functionId: string;
+      physical: string;
+      resource: InfraValue;
+      topics: CoreTopic[];
+      settings: QueueTriggerSettings;
+    }
+  | { kind: "cron"; functionId: string; name: string; schedule: string };
+export interface DeploymentView {
+  functions: DeploymentFunction[];
+  triggers: DeploymentTrigger[];
 }
 export interface InfraDescriptor<C> {
   module: ModuleDescriptor;
-  inputs(config: C): Record<string, InfraValue>;
+  inputs(config: C, deployment: DeploymentView): Record<string, InfraValue>;
   bindings: Binding[];
   /** A null policy means the capability needs no IAM policy on this adapter. */
   capabilities: Record<string, Record<string, OutputRef | null>>;
@@ -284,6 +336,7 @@ export interface PlatformSelection extends AdapterSelection {
 }
 export interface StackConfig {
   name: string;
+  outputs?: Record<string, OutputRef>;
   providers?: Record<
     string,
     {

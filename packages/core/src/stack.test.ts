@@ -2,14 +2,17 @@ import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import {
   type AdapterSelection,
+  artifact,
   bindingsForRoles,
   configReference,
   constructionOrder,
   defineStack,
   deriveAccess,
+  deriveDeployment,
   deriveTriggers,
   env,
   generationEnv,
+  isArtifactRef,
   isEnvRef,
   isInfraRef,
   isOutputRef,
@@ -212,6 +215,235 @@ function keyedQueue(mode: "shared" | "per-topic"): StackConfig {
   return v;
 }
 describe("infrastructure model", () => {
+  it("passes the derived deployment view to platform inputs", () => {
+    const v = keyedQueue("shared");
+    v.platform.config = {
+      roles: [...roles],
+      split: [...roles],
+      http: ["ingest", "api"],
+      settings: { consumer: { timeoutSec: 30 } },
+    };
+    v.queue.manifest.capabilities.dlq = true;
+    topics(v).settings = {
+      shared: {
+        batchSize: 10,
+        maxConcurrency: 3,
+        visibilityTimeoutSec: 180,
+        dlq: { enabled: true, maxReceiveCount: 4 },
+      },
+    };
+    v.store.infra.module.outputs.secret = "secret-ref";
+    v.store.infra.bindings = [
+      { name: "DB", kind: "env", purpose: "primary", value: out("arn") },
+      {
+        name: "SECRET",
+        kind: "secret",
+        purpose: "primary",
+        value: out("secret"),
+      },
+    ];
+    let observed: ReturnType<typeof deriveDeployment> | undefined;
+    v.platform.infra.inputs = (_config, view) => {
+      observed = view;
+      expect(Object.isFrozen(view)).toBe(true);
+      expect(Object.isFrozen(view.functions)).toBe(true);
+      const ingest = view.functions.find((fn) => fn.id === "ingest");
+      if (!ingest) throw new Error("Missing ingest function");
+      return { artifact: ingest.artifact };
+    };
+    const resolved = resolveStack(v);
+    const view = deriveDeployment(resolved);
+    expect(observed).toEqual(view);
+    const ingest = view.functions.find((fn) => fn.id === "ingest");
+    expect(ingest?.http).toEqual(["ingest"]);
+    expect(isArtifactRef(ingest?.artifact)).toBe(true);
+    expect(ingest?.envBindings.some((item) => item.binding.name === "DB")).toBe(
+      true,
+    );
+    expect(
+      ingest?.envBindings.find((item) => item.binding.name === "DB")?.binding
+        .value,
+    ).toEqual(output("store", "arn"));
+    expect(
+      ingest?.secretBindings.some((item) => item.binding.name === "SECRET"),
+    ).toBe(true);
+    expect(
+      ingest?.secretReads.some((item) => item.bindingName === "SECRET"),
+    ).toBe(true);
+    expect(
+      ingest?.policies.some(
+        (grant) => grant.policyOutput?.selection === "store",
+      ),
+    ).toBe(true);
+    expect(
+      view.triggers.find((trigger) => trigger.kind === "queue"),
+    ).toMatchObject({
+      functionId: "consumer",
+      resource: output("queue", "queues", "shared", "arn"),
+      settings: { batchSize: 10, maxConcurrency: 3, visibilityTimeoutSec: 180 },
+    });
+    expect(
+      view.triggers.filter((trigger) => trigger.kind === "cron"),
+    ).toHaveLength(3);
+    expect(
+      view.triggers
+        .filter((trigger) => trigger.kind === "cron")
+        .every((trigger) => trigger.functionId === "cron"),
+    ).toBe(true);
+  });
+  it("validates HTTP exposure and deployed stack output references", () => {
+    const v = stack();
+    v.platform.config = {
+      roles: [...roles],
+      split: [...roles],
+      http: ["ingest", "api"],
+    };
+    v.outputs = { ingest_url: output("platform", "arn") };
+    expect(validateStack(v)).toEqual([]);
+    v.platform.existing = {};
+    expect(
+      validateStack(v).some(
+        (issue) =>
+          issue.path === "outputs.ingest_url" &&
+          issue.message.includes("Missing existing output"),
+      ),
+    ).toBe(true);
+    delete v.platform.existing;
+    v.outputs.ingest_url = output("platform", "missing");
+    expect(
+      validateStack(v).some(
+        (issue) =>
+          issue.path === "outputs.ingest_url" &&
+          issue.message.includes("Unknown output"),
+      ),
+    ).toBe(true);
+    v.outputs.ingest_url = output("platform", "arn");
+    v.platform.config = {
+      roles: ["ingest", "consumer", "cron"],
+      split: ["ingest", "consumer", "cron"],
+      http: ["api", "consumer"],
+    };
+    const issues = validateStack(v);
+    expect(
+      issues.some((issue) => issue.message.includes("does not deploy api")),
+    ).toBe(true);
+    expect(
+      issues.some((issue) =>
+        issue.message.includes("consumer has no HTTP app"),
+      ),
+    ).toBe(true);
+    v.platform.config = {
+      roles: [...roles],
+      split: [],
+      http: ["ingest", "ingest"],
+    };
+    expect(
+      validateStack(v).some((issue) =>
+        issue.message.includes("Duplicate HTTP"),
+      ),
+    ).toBe(true);
+  });
+  it("restricts build artifact references to deployed platform inputs", () => {
+    const v = stack();
+    v.platform.infra.inputs = () => ({ bundle: artifact("missing") });
+    expect(
+      validateStack(v).some((issue) =>
+        issue.message.includes("Unknown artifact function missing"),
+      ),
+    ).toBe(true);
+    v.platform.infra.inputs = () => ({});
+    v.store.infra.inputs = () => ({ bundle: artifact("ingest") });
+    expect(
+      validateStack(v).some((issue) =>
+        issue.message.includes("only valid in platform module inputs"),
+      ),
+    ).toBe(true);
+  });
+  it("enforces queue visibility, trigger limits and DLQ support", () => {
+    const v = stack();
+    v.platform.config = {
+      roles: [...roles],
+      split: [...roles],
+      settings: { consumer: { timeoutSec: 30 } },
+    };
+    v.queue.manifest.capabilities.dlq = true;
+    topics(v).settings = {
+      shared: {
+        visibilityTimeoutSec: 180,
+        batchSize: 1,
+        maxConcurrency: 1,
+        dlq: { enabled: true, maxReceiveCount: 3 },
+      },
+    };
+    expect(validateStack(v)).toEqual([]);
+    topics(v).settings = {};
+    expect(
+      validateStack(v).some((issue) =>
+        issue.message.includes("Queue visibility is required"),
+      ),
+    ).toBe(true);
+    topics(v).settings = { shared: { visibilityTimeoutSec: 179 } };
+    expect(
+      validateStack(v).some((issue) => issue.message.includes("six times")),
+    ).toBe(true);
+    v.platform.config = { roles: [...roles], split: [...roles] };
+    expect(
+      validateStack(v).some((issue) =>
+        issue.message.includes("Consumer timeout is required"),
+      ),
+    ).toBe(true);
+    topics(v).settings = { shared: { batchSize: 0 } };
+    expect(validateStack(v).length).toBeGreaterThan(0);
+    topics(v).settings = { shared: { maxConcurrency: 0 } };
+    expect(validateStack(v).length).toBeGreaterThan(0);
+    topics(v).settings = { shared: { dlq: { enabled: true } } };
+    v.queue.manifest.capabilities.dlq = false;
+    expect(
+      validateStack(v).some((issue) =>
+        issue.message.includes("does not support a DLQ"),
+      ),
+    ).toBe(true);
+    topics(v).settings = { missing: { batchSize: 1 } };
+    expect(
+      validateStack(v).some((issue) =>
+        issue.message.includes("Unknown physical queue"),
+      ),
+    ).toBe(true);
+  });
+  it("preserves platform-owned per-function settings accepted by a Workers schema", () => {
+    const v = stack();
+    for (const selection of selections(v).values())
+      selection.manifest.runtimes = ["workers"];
+    v.platform.manifest.runtime = "workers";
+    v.platform.manifest.configSchema = z.object({
+      roles: z.array(z.enum(roles)),
+      split: z.array(z.enum(roles)),
+      settings: z.partialRecord(
+        z.enum(roles),
+        z.object({ cpuMs: z.number().int().positive() }),
+      ),
+    });
+    v.platform.config = {
+      roles: [...roles],
+      split: [...roles],
+      settings: { consumer: { cpuMs: 50 } },
+    };
+    expect(validateStack(v)).toEqual([]);
+    expect(
+      deriveDeployment(v).functions.find((fn) => fn.id === "consumer")?.settings
+        .cpuMs,
+    ).toBe(50);
+    v.platform.config = {
+      roles: [...roles],
+      split: [...roles],
+      settings: { consumer: { cpuMs: "invalid" } },
+    };
+    expect(
+      validateStack(v).some((issue) =>
+        issue.path.includes("platform.config.settings"),
+      ),
+    ).toBe(true);
+  });
   it("derives per-resource queue policies and triggers in per-topic and shared modes", () => {
     const v = keyedQueue("per-topic");
     expect(validateStack(v)).toEqual([]);
@@ -982,9 +1214,11 @@ describe("infrastructure model", () => {
     expect(deriveTriggers(v)).toEqual([
       {
         kind: "queue",
+        functionId: "consumer",
         physical: "shared",
         role: "consumer",
-        resource: out("arn"),
+        resource: output("queue", "arn"),
+        settings: {},
         topics: ["ingest", "notifications"],
       },
     ]);

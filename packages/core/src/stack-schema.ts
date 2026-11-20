@@ -1,6 +1,7 @@
 import { z } from "zod";
 import {
   type AdapterSelection,
+  type DeploymentView,
   ENVIRONMENT_FEATURES,
   FUNCTION_ROLES,
   type InfraValue,
@@ -68,9 +69,9 @@ const descriptorSchema = z.strictObject({
     sensitiveInputs: z.array(refName).optional(),
     outputs: z.record(refName, outputType),
   }),
-  inputs: z.custom<(config: unknown) => Record<string, InfraValue>>(
-    (v) => typeof v === "function",
-  ),
+  inputs: z.custom<
+    (config: unknown, deployment: DeploymentView) => Record<string, InfraValue>
+  >((v) => typeof v === "function"),
   bindings: z.array(
     z.strictObject({
       name: refName,
@@ -96,6 +97,22 @@ const descriptorSchema = z.strictObject({
           producerBinding: refName.optional(),
         }),
       ),
+      settings: z
+        .record(
+          name,
+          z.strictObject({
+            batchSize: z.number().int().positive().optional(),
+            maxConcurrency: z.number().int().positive().optional(),
+            visibilityTimeoutSec: z.number().int().positive().optional(),
+            dlq: z
+              .strictObject({
+                enabled: z.boolean(),
+                maxReceiveCount: z.number().int().positive().optional(),
+              })
+              .optional(),
+          }),
+        )
+        .optional(),
     })
     .optional(),
 });
@@ -112,6 +129,7 @@ const selectionSchema: z.ZodType<AdapterSelection> = z.lazy(() =>
 ) as z.ZodType<AdapterSelection>;
 export const rootSchema = z.strictObject({
   name: z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/),
+  outputs: z.record(refName, z.custom(isOutputRef)).optional(),
   providers: z
     .record(
       name,
@@ -152,6 +170,7 @@ export const platformConfigSchema = z
   .object({
     roles: z.array(role).min(1),
     split: z.array(role),
+    http: z.array(role).optional(),
     cron: z.never().optional(),
     settings: z
       .partialRecord(

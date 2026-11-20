@@ -19,6 +19,7 @@ const baseConfigSchema = z.strictObject({
     .array(z.enum(["ingest", "api", "consumer", "cron"]))
     .max(0)
     .default([]),
+  http: z.array(z.enum(["ingest", "api"])).default(["ingest", "api"]),
   settings: z
     .partialRecord(
       z.enum(["ingest", "api", "consumer", "cron"]),
