@@ -1,25 +1,25 @@
 ---
 name: good-sleep
-description: "Read JOURNAL.md and reorganize its contents into semantically separate long-term memory documents under docs/LTM/. Use when you want to consolidate accumulated journal entries into reusable, topic-organised reference files."
+description: "Read JOURNAL.md and reorganize its contents into semantically separate long-term memory documents under .agents-docs/LTM/. Use when you want to consolidate accumulated journal entries into reusable, topic-organised reference files."
 user-invocable: true
 allowed-tools: Bash, Read, Write, Edit, Grep, Glob
 ---
 
 # Good Sleep: Reorganize JOURNAL.md into Long-Term Memory
 
-This skill reads `docs/JOURNAL.md`, identifies semantically related sections, and reorganizes them into topic-based documents under `docs/LTM/`. This mirrors how the brain consolidates episodic memories into structured long-term knowledge during sleep.
+This skill reads `.agents-docs/JOURNAL.md`, identifies semantically related sections, and reorganizes them into topic-based documents under `.agents-docs/LTM/`. This mirrors how the brain consolidates episodic memories into structured long-term knowledge during sleep.
 
 **Use this skill when:** JOURNAL.md has accumulated multiple entries and you want to distill them into organised, reusable reference documents.
 
 ## Overview
 
-JOURNAL.md is an append-only chronological log. Over time it grows unwieldy. This skill extracts knowledge from it and organises it by **topic** (not by date) into separate files under `docs/LTM/`.
+JOURNAL.md is an append-only chronological log. Over time it grows unwieldy. This skill extracts knowledge from it and organises it by **topic** (not by date) into separate files under `.agents-docs/LTM/`.
 
 ## Step 1: Read and Analyze JOURNAL.md
 
-Read the full contents of `docs/JOURNAL.md`.
+Read the full contents of `.agents-docs/JOURNAL.md`.
 
-**First, identify and extract any to-do items** (tasks, action items, follow-ups, open issues, "TODO", "FIXME", "next steps", etc.) from all journal entries. These must NOT go into LTM — they go into `docs/TODO.md` (see Step 3 below).
+**First, identify and extract any to-do items** (tasks, action items, follow-ups, open issues, "TODO", "FIXME", "next steps", etc.) from all journal entries. These must NOT go into LTM — they go into `.agents-docs/TODO.md` (see Step 3 below).
 
 Identify semantically distinct topics. A "topic" is a cohesive area of knowledge that an agent would want to look up as a unit. Examples of good topic boundaries for errtraq:
 
@@ -46,7 +46,7 @@ Before writing LTM documents, collect all to-do items found in JOURNAL.md entrie
 - Action items or follow-ups described as pending work
 - Open issues or unresolved investigations flagged for future attention
 
-Append them to `docs/TODO.md`. If the file does not exist, create it with this structure:
+Append them to `.agents-docs/TODO.md`. If the file does not exist, create it with this structure:
 
 ```markdown
 # Project To-Dos
@@ -62,9 +62,9 @@ If the file already exists, append new items under the existing `## Open Items` 
 
 ## Step 4: Create LTM Documents
 
-Create the directory `docs/LTM/` if it doesn't exist.
+Create the directory `.agents-docs/LTM/` if it doesn't exist.
 
-For each planned document, create `docs/LTM/<filename>.md` with:
+For each planned document, create `.agents-docs/LTM/<filename>.md` with:
 
 ### Document Structure
 
@@ -107,7 +107,7 @@ For each planned document, create `docs/LTM/<filename>.md` with:
 
 ## Step 5: Create an Index
 
-Create or refresh `docs/LTM/INDEX.md` that lists all LTM documents with one-line descriptions:
+Create or refresh `.agents-docs/LTM/INDEX.md` that lists all LTM documents with one-line descriptions:
 
 ```markdown
 # Long-Term Memory Index
@@ -127,14 +127,14 @@ After creating LTM documents, **do NOT delete** existing JOURNAL.md content (per
 
 ## LTM Consolidation Record
 
-The following sections have been consolidated into long-term memory documents under `docs/LTM/`:
+The following sections have been consolidated into long-term memory documents under `.agents-docs/LTM/`:
 
 | Section | LTM Document |
 |---------|-------------|
 | <original heading> | <LTM filename> |
 | ... | ... |
 
-See `docs/LTM/INDEX.md` for the full index.
+See `.agents-docs/LTM/INDEX.md` for the full index.
 ```
 
 ## Notes

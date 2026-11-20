@@ -2,7 +2,7 @@
 
 Append-only log of findings, insights, decisions, and peer code review history. Add new
 entries at the end as `## YYYY-MM-DD — <title>`. Do not edit existing entries. The
-`good-sleep` skill consolidates entries into `docs/LTM/`.
+`good-sleep` skill consolidates entries into `.agents-docs/LTM/`.
 
 ---
 
@@ -26,7 +26,7 @@ entries at the end as `## YYYY-MM-DD — <title>`. Do not edit existing entries.
   M4 spike; a native committer is the fallback.
 - Working model: Claude Code orchestrates and reviews; a Codex session implements one milestone
   slice at a time, with one commit per slice requested in each brief.
-- The agent harness (AGENTS.md layout, `docs`, `.agents/skills`, `.agents-workspace`)
+- The agent harness (AGENTS.md layout, agent docs, `.agents/skills`, `.agents-workspace`)
   was adopted from the sibling `cornus` repository and adapted from Go to the pnpm / TypeScript gate.
 
 ## 2026-11-21 — M0b: contract decisions in core ports and stack config
@@ -64,9 +64,10 @@ after review by Claude):
   registry access (installs run offline from the local cache). Commits and journal entries are
   therefore made by the orchestrator.
 
-## 2026-11-21 — Agent docs moved from `.agents/docs` to `docs/`
+## 2026-11-21 — Agent docs live in `.agents-docs/`
 
-The agent documents (OVERVIEW, JOURNAL, TODO, QUALITY_GATE, LTM) live in `docs/` at the
-repository root, unlike cornus where they are under `.agents/docs`. The Codex sandbox treats
-`.agents/` as read-only, so agents could not append to the journal there. Skills stay under
-`.agents/skills`. A future user-facing docs site must use its own directory, not `docs/`.
+The agent documents (OVERVIEW, JOURNAL, TODO, QUALITY_GATE, LTM) live in `.agents-docs/` at
+the repository root, unlike cornus where they are under `.agents/docs`. The Codex sandbox
+treats `.agents/` as read-only, so agents could not append to the journal there. (They were
+briefly placed in `docs/`; that name stays free for a user-facing docs site.) Skills stay under
+`.agents/skills`.

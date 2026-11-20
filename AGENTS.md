@@ -4,17 +4,17 @@
 
 # Documents for coding agents
 
-* [./docs/OVERVIEW.md](./docs/OVERVIEW.md) ... project overview.
-* [./docs/JOURNAL.md](./docs/JOURNAL.md) ... findings, insights, and peer code review history.
-* [./docs/LTM/INDEX.md](./docs/LTM/INDEX.md) ... long-term memory index for durable project knowledge under `./docs/LTM/`.
-* [./docs/TODO.md](./docs/TODO.md) ... open to-do items extracted from JOURNAL.md during `good-sleep` consolidation, plus open follow-ups. Check and update this file when picking up or finishing work.
-* [./docs/QUALITY_GATE.md](./docs/QUALITY_GATE.md) ... the standard verification gate to run before declaring a change complete.
+* [./.agents-docs/OVERVIEW.md](./.agents-docs/OVERVIEW.md) ... project overview.
+* [./.agents-docs/JOURNAL.md](./.agents-docs/JOURNAL.md) ... findings, insights, and peer code review history.
+* [./.agents-docs/LTM/INDEX.md](./.agents-docs/LTM/INDEX.md) ... long-term memory index for durable project knowledge under `./.agents-docs/LTM/`.
+* [./.agents-docs/TODO.md](./.agents-docs/TODO.md) ... open to-do items extracted from JOURNAL.md during `good-sleep` consolidation, plus open follow-ups. Check and update this file when picking up or finishing work.
+* [./.agents-docs/QUALITY_GATE.md](./.agents-docs/QUALITY_GATE.md) ... the standard verification gate to run before declaring a change complete.
 
 # Skills
 
 Shared agent skills live under `./.agents/skills/` (Codex reads them there; `./.claude/skills` is a symlink to the same directory, so Claude Code sees the identical set).
 
-* `good-sleep` ... consolidate `JOURNAL.md` into topic-organised documents under `docs/LTM/`, and extract to-dos into `TODO.md`.
+* `good-sleep` ... consolidate `JOURNAL.md` into topic-organised documents under `.agents-docs/LTM/`, and extract to-dos into `TODO.md`.
 * `deep-sleep` ... merge and synthesize overlapping LTM documents.
 * `reconcile-journal-ltm` ... audit `JOURNAL.md` against LTM and remove entries that are already consolidated.
 * `distill-memories` ... promote durable knowledge from JOURNAL / LTM into `OVERVIEW.md` and `ARCHITECTURE.md`.
@@ -35,7 +35,7 @@ Shared agent skills live under `./.agents/skills/` (Codex reads them there; `./.
 
 ## File Management
 
-* When you'd make summary documents for your work, be sure to write them under `./docs`, not under `/tmp`.
+* When you'd make summary documents for your work, be sure to write them under `./.agents-docs`, not under `/tmp`.
 * Temporary files should be created under `./.agents-workspace/tmp`, not under `/tmp`.
 * ❌ Do not write build output or generated bundles into the version-controlled tree outside the git-ignored locations (`dist/`, `infra/generated/`). One-off experiment output goes to `./.agents-workspace/tmp`.
 * ❌ Never delete user files without permission. Only safe to delete: files YOU created in THIS session that are in `./.agents-workspace/tmp/`. Always ask first if unsure. Assume all pre-existing files belong to the user.
@@ -51,7 +51,7 @@ Shared agent skills live under `./.agents/skills/` (Codex reads them there; `./.
   pnpm lint
   pnpm test                      # or focused: pnpm --filter @errtraq/<pkg> test
   ```
-  Fix violations and re-run until clean. Do not declare a change complete with failing typecheck, lint, or tests. See [QUALITY_GATE.md](./docs/QUALITY_GATE.md) for the deeper levels.
+  Fix violations and re-run until clean. Do not declare a change complete with failing typecheck, lint, or tests. See [QUALITY_GATE.md](./.agents-docs/QUALITY_GATE.md) for the deeper levels.
 
 ## Testing
 
@@ -70,10 +70,10 @@ Shared agent skills live under `./.agents/skills/` (Codex reads them there; `./.
 ## Documentation
 
 * Finish every task with a short report: what was built, what was verified (commands and results), and anything you deviated from or found wrong or underspecified in `ARCHITECTURE.md`.
-* Append durable findings (non-obvious constraints, dead ends, decisions and their reasons, review outcomes) to the end of `./docs/JOURNAL.md` as a dated `## YYYY-MM-DD — <title>` entry. Do not journal routine progress.
-* Try to write your work summary to one of the existing documents under `./docs`.
-* ❌ Avoid editing any existing sections of `JOURNAL.md`. Append new entries to the end. (The sole exception is the `reconcile-journal-ltm` skill, which may remove entries already consolidated into `docs/LTM/` per the canonical `## LTM Consolidation Record`.)
-* ❌ For repo-authored documentation only (e.g. `AGENTS.md`, `README.md`, `docs/**`), never use full-width parentheses (`（` `）`). Use half-width parentheses (`(` `)`) with a half-width space before/after when adjacent to a non-whitespace character. This does not apply to generated or third-party reference files under `skills/**/references/**`.
+* Append durable findings (non-obvious constraints, dead ends, decisions and their reasons, review outcomes) to the end of `./.agents-docs/JOURNAL.md` as a dated `## YYYY-MM-DD — <title>` entry. Do not journal routine progress.
+* Try to write your work summary to one of the existing documents under `./.agents-docs`.
+* ❌ Avoid editing any existing sections of `JOURNAL.md`. Append new entries to the end. (The sole exception is the `reconcile-journal-ltm` skill, which may remove entries already consolidated into `.agents-docs/LTM/` per the canonical `## LTM Consolidation Record`.)
+* ❌ For repo-authored documentation only (e.g. `AGENTS.md`, `README.md`, `.agents-docs/**`), never use full-width parentheses (`（` `）`). Use half-width parentheses (`(` `)`) with a half-width space before/after when adjacent to a non-whitespace character. This does not apply to generated or third-party reference files under `skills/**/references/**`.
 * ❌ For repo-authored documentation only, never use full-width colons (`：`). Use a half-width colon followed by a half-width space. This does not apply to generated or third-party reference files under `skills/**/references/**`.
 
 ## Shell Pitfalls (prezto defaults)

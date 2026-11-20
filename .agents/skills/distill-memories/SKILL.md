@@ -1,6 +1,6 @@
 ---
 name: distill-memories
-description: Read `docs/JOURNAL.md` and `docs/LTM/` documents, find durable knowledge that belongs in the canonical docs, and update those documents with concise synthesized findings. Targets are `docs/OVERVIEW.md` and the root `ARCHITECTURE.md` (plus `README.md` / a user docs site once one exists). Use when journal or LTM notes have accumulated implementation, system, or user-facing knowledge that should be promoted into the project's canonical overview, architecture, or user reference docs.
+description: Read `.agents-docs/JOURNAL.md` and `.agents-docs/LTM/` documents, find durable knowledge that belongs in the canonical docs, and update those documents with concise synthesized findings. Targets are `.agents-docs/OVERVIEW.md` and the root `ARCHITECTURE.md` (plus `README.md` / a user docs site once one exists). Use when journal or LTM notes have accumulated implementation, system, or user-facing knowledge that should be promoted into the project's canonical overview, architecture, or user reference docs.
 user-invocable: true
 allowed-tools: Bash, Read, Write, Edit, Grep, Glob
 ---
@@ -9,23 +9,23 @@ allowed-tools: Bash, Read, Write, Edit, Grep, Glob
 
 ## Overview
 
-Promote durable facts from `docs/JOURNAL.md` and `docs/LTM/` into the project's canonical documentation, keeping these up to date:
+Promote durable facts from `.agents-docs/JOURNAL.md` and `.agents-docs/LTM/` into the project's canonical documentation, keeping these up to date:
 
-a. `docs/OVERVIEW.md` ... focused on high-level system understanding (for coding agents).
-b. `ARCHITECTURE.md` (repository root) ... focused on structure, subsystems, and technical design. It is human-reader-ready and canonical; `docs/ARCHITECTURE.md` is only a pointer to it.
+a. `.agents-docs/OVERVIEW.md` ... focused on high-level system understanding (for coding agents).
+b. `ARCHITECTURE.md` (repository root) ... focused on structure, subsystems, and technical design. It is human-reader-ready and canonical.
 c. User-facing docs ... `README.md` today; a user docs site once it exists. Update them when a durable change affects what a *user* does: a new or changed CLI flag, env var, stack-config field, adapter, platform, or observable behavior.
 
 ## Sources: JOURNAL and LTM
 
-- `docs/JOURNAL.md` is the append-only log of findings, insights, and code-review history. It holds the **freshest** durable facts, including changes not yet consolidated into LTM. The `good-sleep` / `reconcile-journal-ltm` skills consolidate JOURNAL entries into `docs/LTM/`; distill runs against whatever is present.
-- `docs/LTM/` holds the consolidated, topic-organized reference material (`INDEX.md` is its table of contents).
+- `.agents-docs/JOURNAL.md` is the append-only log of findings, insights, and code-review history. It holds the **freshest** durable facts, including changes not yet consolidated into LTM. The `good-sleep` / `reconcile-journal-ltm` skills consolidate JOURNAL entries into `.agents-docs/LTM/`; distill runs against whatever is present.
+- `.agents-docs/LTM/` holds the consolidated, topic-organized reference material (`INDEX.md` is its table of contents).
 
 Read both. When JOURNAL and LTM overlap, treat LTM as the settled synthesis and JOURNAL as the source of anything newer than the last consolidation. If JOURNAL records a substantial code change that the target docs (including the user docs site) do not yet reflect, that is exactly the gap this skill closes.
 
 ## Read in This Order
 
-1. Read `docs/OVERVIEW.md` and the root `ARCHITECTURE.md` first.
-2. Read `docs/JOURNAL.md` (at least the entries since the last consolidation record) and `docs/LTM/INDEX.md`.
+1. Read `.agents-docs/OVERVIEW.md` and the root `ARCHITECTURE.md` first.
+2. Read `.agents-docs/JOURNAL.md` (at least the entries since the last consolidation record) and `.agents-docs/LTM/INDEX.md`.
 3. Open only the LTM documents that look relevant to the gaps, stale sections, or missing detail you identified in the target docs.
 4. For any candidate fact that is user-facing, open the user-docs-site page it would land on (see the map below) to check what is already documented.
 
@@ -41,7 +41,7 @@ The source of truth for user-facing detail is always the code (`packages/cli/src
 
 For each candidate fact, decide whether it belongs in:
 
-- `docs/OVERVIEW.md`: product scope, major subsystems, deployment model, high-level orientation material.
+- `.agents-docs/OVERVIEW.md`: product scope, major subsystems, deployment model, high-level orientation material.
 - `ARCHITECTURE.md` (repository root): module layout, subsystem boundaries, runtime architecture, data flow, interface contracts, implementation patterns, storage abstractions, and testing or operational constraints that matter to engineers. Keep it human-reader-ready — favor narrative and durable design rationale over fine-grained implementation trivia.
 - the user docs site (user reference): user-observable behavior — CLI flags and commands, env vars, config/spec/chart fields, backends and providers, defaults, and the workflows that exercise them. Frame it for a user doing a task, not for a maintainer reading the code. Internal design rationale stays in `ARCHITECTURE.md`, not here.
 - More than one: a single change often lands in two places (e.g. a new backend belongs in both `ARCHITECTURE.md` design and a `docs/reference` page). Update each in its own register.
@@ -80,6 +80,6 @@ Before finishing:
 4. Keep the documentation style rules in `AGENTS.md`: half-width parentheses and half-width colons (this applies to the user docs site too).
 5. If you changed anything in the user docs site, build the site so the dead-link check passes:
    ```
-   <the site build command recorded in docs/QUALITY_GATE.md>
+   <the site build command recorded in .agents-docs/QUALITY_GATE.md>
    ```
    A clean build validates every internal link and anchor. If the build cannot run locally, say so rather than claiming it passed.

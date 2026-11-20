@@ -7,7 +7,7 @@ allowed-tools: Bash, Read, Write, Edit, Grep, Glob, Agent
 
 # Tackle TODOs: Consolidate and Resolve Open Items
 
-This skill scans the project for all outstanding work items — both from `docs/TODO.md` and from `// TODO` / `// FIXME` comments in source code — builds a consolidated, deduplicated, prioritized list, and then dispatches parallel agents to resolve as many items as possible.
+This skill scans the project for all outstanding work items — both from `.agents-docs/TODO.md` and from `// TODO` / `// FIXME` comments in source code — builds a consolidated, deduplicated, prioritized list, and then dispatches parallel agents to resolve as many items as possible.
 
 **Use this skill when:** you want to make a focused sweep of outstanding TODOs and fix them in bulk.
 
@@ -17,7 +17,7 @@ This skill scans the project for all outstanding work items — both from `docs/
 
 ## Step 0: Collect TODOs from TODO.md
 
-Read `docs/TODO.md` and extract every unchecked `- [ ]` item. Record its area, description, and source.
+Read `.agents-docs/TODO.md` and extract every unchecked `- [ ]` item. Record its area, description, and source.
 
 ## Step 1: Scan Source Code for TODO/FIXME Comments
 
@@ -67,7 +67,7 @@ For each approved work unit, launch an Agent (subagent_type: general-purpose) wi
 1. The specific TODO(s) to address
 2. The files to modify
 3. The expected behaviour
-4. Instructions to run the local gate after making changes: `pnpm typecheck`, `pnpm lint`, and the relevant focused tests (`pnpm --filter @errtraq/<pkg> test`); see `docs/QUALITY_GATE.md`.
+4. Instructions to run the local gate after making changes: `pnpm typecheck`, `pnpm lint`, and the relevant focused tests (`pnpm --filter @errtraq/<pkg> test`); see `.agents-docs/QUALITY_GATE.md`.
 
 Launch as many agents in parallel as there are independent work units, in a single batch.
 
@@ -78,9 +78,9 @@ Launch as many agents in parallel as there are independent work units, in a sing
 After all agents complete:
 
 1. Review each agent's results — check if typecheck, lint, and tests passed.
-2. For successfully resolved items, mark them as `- [x]` in `docs/TODO.md` and remove the corresponding `// TODO` comments from source code.
+2. For successfully resolved items, mark them as `- [x]` in `.agents-docs/TODO.md` and remove the corresponding `// TODO` comments from source code.
 3. For items that could not be resolved, add notes about why and what was attempted.
-4. Append a summary to `docs/JOURNAL.md` documenting what was tackled and the outcomes.
+4. Append a summary to `.agents-docs/JOURNAL.md` documenting what was tackled and the outcomes.
 
 ## Notes
 
