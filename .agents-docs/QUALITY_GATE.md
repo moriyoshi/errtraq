@@ -84,8 +84,16 @@ types and every referenced output path. When deliberately changing output shapes
 
 `pnpm infra:mutate` requires the cached 6.73.0 provider. It verifies unmodified baselines, applies
 each mutation from `scripts/infra-mutations.json` in its own temporary copy, and reports whether
-validation, HCL tests or the output-shape check detected it. Generated-root snapshots and
-validation remain TODO(M2b). Never run `terraform apply` as part of the gate.
+validation, HCL tests or the output-shape check detected it. It also mutates generated roots to
+check detection of missing or misassigned policies, missing bindings or triggers, and an unescaped
+literal. `pnpm infra:validate` additionally builds the generator, generates both AWS stacks and
+six variants (including a fake existing archive to exercise cron), and runs `terraform fmt -check`,
+offline `init -backend=false`, `validate` and a
+mock-provider `terraform test` apply for each at both pinned provider versions. The test compares
+actual function environments, policies, queue and cron triggers, and HTTP outputs against the
+derived deployment view; it checks existing selections create no resources and sensitive values
+do not appear in generated files or non-sensitive outputs. Only Terraform's mock test apply runs;
+never run `terraform apply` as part of the gate.
 
 ## Pick your level
 

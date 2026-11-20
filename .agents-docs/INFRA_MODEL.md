@@ -17,6 +17,8 @@ address is `moduleName(path)`, replacing dots by underscores. Validation rejects
 Selection, purpose and physical keys use lowercase identifiers (`[a-z][a-z0-9_-]*`); output
 names and binding names use `[A-Za-z_][A-Za-z0-9_]*`. The logical topic `archive.project` is
 therefore distinct from an identifier such as `archive_project`.
+The variable name `__proto__` is reserved and rejected before parsing, because the schema
+parser would otherwise silently discard that own property.
 
 A descriptor provides `module` (provider, component, output types and optional
 `sensitiveInputs`), `inputs(config, deployment)`, `resources`, `capabilities`, `bindings`, and
@@ -411,6 +413,7 @@ Its caller supplies the output and module directories, generation-time environme
 map from function IDs to artifact paths relative to the generated root. Both directory paths must
 be POSIX paths, either both absolute or both relative to the same root. Standalone returns a
 `not-applicable` result because it has no Terraform infrastructure. The caller is responsible for
-writing files. M2c must supply actual build locations, generate role-scoped entrypoints and queue
-event-source mappings, and provide runtime secret sources. The CLI integration and validation of
-generated roots are subsequent M2b work.
+writing files. The generated AWS roots are exercised with mock providers at both pinned AWS
+provider versions by `pnpm infra:validate`; this checks their derived bindings, policies and
+triggers without a cloud account. M2c must supply actual build locations, generate role-scoped
+entrypoints and queue event-source mappings, integrate the CLI, and provide runtime secret sources.

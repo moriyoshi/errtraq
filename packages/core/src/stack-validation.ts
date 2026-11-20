@@ -551,6 +551,22 @@ function inspect(input: unknown): {
         },
       ],
     };
+  if (
+    typeof input === "object" &&
+    input !== null &&
+    "variables" in input &&
+    typeof input.variables === "object" &&
+    input.variables !== null &&
+    Object.hasOwn(input.variables, "__proto__")
+  )
+    return {
+      issues: [
+        {
+          path: "variables.__proto__",
+          message: "Reserved identifier __proto__",
+        },
+      ],
+    };
   const parsed = rootSchema.safeParse(input);
   if (!parsed.success)
     return {

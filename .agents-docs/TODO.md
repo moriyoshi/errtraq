@@ -68,4 +68,4 @@ item should be resolved or removed once addressed. Milestone work itself is trac
 - [x] M2b next: strengthen HCL output / policy contracts and add the requested mutation check from item 10. — *source: M2b HCL review A10*
 
 - [ ] M2 / M3: investigate the intermittent missing staged-blob log observed during e2e recovery; determine whether recovery races the consumer deleting an envelope, and verify that the race is safe and correctly logged. — *source: M2b HCL contract validation e2e*
-- [ ] M2: investigate the stack schema dropping an own `__proto__` variable key during parsing even though its identifier is currently accepted; preserve it or reject it explicitly. — *source: M2b generator edge-case test*
+- [x] M2: reject an own `__proto__` variable key before parsing, so it cannot silently disappear. — *source: M2b generator edge-case test*

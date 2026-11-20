@@ -510,3 +510,15 @@ and decode at their use sites. Non-sensitive defaults are also emitted in tfvars
 and per-topic AWS file sets are snapshotted; generating and validating Terraform roots belongs
 to the next slice. A separate edge-case probe found that core parsing silently drops an own
 `__proto__` variable key, which is recorded in TODO for a model fix.
+
+## 2026-11-21 — M2b generated Terraform roots
+
+Terraform rejects an empty JSON block for a labeled block type, so the generator omits empty
+variable and output blocks. The opt-in infra gate now tests generated roots with mock AWS
+providers at both pinned versions. A test-only output file in an isolated copy of the Lambda
+module exposes actual resources for comparison with expectations computed from the deployment
+view; the archive fixture makes the cron checks non-vacuous. Generated-root mutations exercise
+policy assignment, bindings, triggers and escaping. The stack parser rejects an own `__proto__`
+variable key before Zod can silently discard it.
+The sensitive-variable fixture marks its test-only handler input sensitive and supplies a canary
+through `TF_VAR_SECRET`; the JSON fixture uses a decoded variable for module tags.

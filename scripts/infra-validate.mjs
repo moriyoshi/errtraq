@@ -27,6 +27,7 @@ const env = {
   TF_PLUGIN_CACHE_DIR: cache,
   TF_IN_AUTOMATION: "1",
   CHECKPOINT_DISABLE: "1",
+  TF_VAR_SECRET: "errtraq-sensitive-canary",
 };
 function run(args, cwd, offline = false) {
   const commandEnv = { ...env, TF_DATA_DIR: resolve(cwd, ".terraform") };
@@ -57,6 +58,9 @@ function run(args, cwd, offline = false) {
 }
 const observed = {};
 try {
+  const build = spawnSync("pnpm", ["build"], { stdio: "inherit" });
+  if (build.status !== 0) throw new Error("Workspace build failed");
+  const { fixtures, prepareRoot } = await import("./infra-roots.mjs");
   console.log("Checking Terraform module formatting");
   run(["fmt", "-check", "-recursive", root], process.cwd());
   for (const provider of readdirSync(root, { withFileTypes: true }).filter(
@@ -151,6 +155,62 @@ try {
   }
   if (process.env.UPDATE_INFRA_SHAPES === "1")
     writeFileSync(snapshotPath, `${JSON.stringify(observed, null, 2)}\n`);
+  for (const version of ["6.30.0", "6.73.0"]) {
+    for (const name of Object.keys(fixtures)) {
+      const target = prepareRoot(
+        resolve(temporary, `roots-${version}`),
+        name,
+        version,
+      );
+      console.log(
+        `\nValidating generated ${name} with AWS provider ${version}`,
+      );
+      for (const file of readdirSync(target).filter((f) => f.endsWith(".json")))
+        if (
+          readFileSync(resolve(target, file), "utf8").includes(
+            env.TF_VAR_SECRET,
+          )
+        )
+          throw new Error(`Sensitive value leaked into ${name}/${file}`);
+      run(["fmt", "-check"], target);
+      run(
+        [
+          "init",
+          "-backend=false",
+          "-input=false",
+          "-no-color",
+          `-plugin-dir=${cache}`,
+        ],
+        target,
+        true,
+      );
+      run(["validate", "-no-color"], target);
+      const result = run(["test", "-json", "-verbose", "-no-color"], target);
+      const state = result
+        .split("\n")
+        .filter(Boolean)
+        .map((line) => JSON.parse(line))
+        .find((item) => item.type === "test_state")?.test_state;
+      if (!state) throw new Error(`Missing mock state for ${name}`);
+      for (const [key, value] of Object.entries(state.outputs ?? {}))
+        if (
+          !value.sensitive &&
+          JSON.stringify(value.value).includes(env.TF_VAR_SECRET)
+        )
+          throw new Error(`Sensitive value leaked into output ${key}`);
+      if (
+        name === "existing" &&
+        state.root_module.child_modules.some((module) =>
+          ["module.store", "module.queue"].includes(module.address),
+        )
+      )
+        throw new Error("Existing selections unexpectedly created resources");
+      console.log("  derived deployment and sensitive outputs: matched");
+    }
+  }
+  console.log(
+    `Generated roots: ${Object.keys(fixtures).length} variants passed at both pinned provider versions.`,
+  );
 } catch (error) {
   console.error(error);
   process.exitCode = 1;

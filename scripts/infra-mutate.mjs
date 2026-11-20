@@ -33,6 +33,8 @@ if (
 const mutations = JSON.parse(
   readFileSync(resolve("scripts/infra-mutations.json"), "utf8"),
 );
+const moduleMutations = mutations.filter((item) => item.module);
+const rootMutations = mutations.filter((item) => item.root);
 function terraform(args, cwd) {
   const env = {
     ...process.env,
@@ -106,7 +108,12 @@ function runShape(target, component) {
   }
 }
 try {
-  for (const component of [...new Set(mutations.map((item) => item.module))]) {
+  const build = spawnSync("pnpm", ["build"], { stdio: "inherit" });
+  if (build.status !== 0) throw new Error("Workspace build failed");
+  const { prepareRoot } = await import("./infra-roots.mjs");
+  for (const component of [
+    ...new Set(moduleMutations.map((item) => item.module)),
+  ]) {
     const target = prepare(component, `baseline-${component}`);
     const validated = terraform(["validate", "-no-color"], target);
     const tested = terraform(
@@ -123,7 +130,7 @@ try {
     console.log(`baseline ${component}: passed`);
   }
   const failures = [];
-  for (const mutation of mutations) {
+  for (const mutation of moduleMutations) {
     const target = prepare(mutation.module, mutation.id);
     const file = resolve(target, mutation.file);
     const source = readFileSync(file, "utf8");
@@ -146,9 +153,78 @@ try {
     );
     if (!caught.length) failures.push(mutation.id);
   }
+  for (const mutation of rootMutations) {
+    const target = prepareRoot(
+      resolve(temp, mutation.id),
+      mutation.root,
+      version,
+    );
+    const init = terraform(
+      [
+        "init",
+        "-backend=false",
+        "-input=false",
+        "-no-color",
+        `-plugin-dir=${cache}`,
+      ],
+      target,
+    );
+    if (init.status !== 0)
+      throw new Error(`Root init failed: ${init.stdout} ${init.stderr}`);
+    const baseline = terraform(["test", "-no-color"], target);
+    if (baseline.status !== 0)
+      throw new Error(
+        `Root baseline failed: ${baseline.stdout} ${baseline.stderr}`,
+      );
+    const path = resolve(target, "main.tf.json");
+    const main = JSON.parse(readFileSync(path, "utf8"));
+    const platform = main.module.platform;
+    switch (mutation.operation) {
+      case "drop-policy":
+        platform.functions.ingest.policies.pop();
+        break;
+      case "wrong-function-policy":
+        platform.functions.ingest.policies.push(
+          platform.functions.api.policies.pop(),
+        );
+        break;
+      case "drop-binding":
+        delete platform.functions.ingest.environment[
+          Object.keys(platform.functions.ingest.environment)[0]
+        ];
+        break;
+      case "drop-trigger":
+        delete platform.queue_triggers.shared;
+        break;
+      case "unescaped-literal": {
+        const environment = platform.functions.ingest.environment;
+        const key = Object.keys(environment).find(
+          (item) => environment[item] === "https://example.test/$${literal}",
+        );
+        if (!key) throw new Error("Literal mutation target missing");
+        environment[key] = "https://example.test/$" + "{literal}";
+        break;
+      }
+      default:
+        throw new Error(`Unknown root mutation ${mutation.operation}`);
+    }
+    writeFileSync(path, `${JSON.stringify(main, null, 2)}\n`);
+    const validation = terraform(["validate", "-no-color"], target);
+    const tests = terraform(["test", "-no-color"], target);
+    const caught = [
+      validation.status !== 0 ? "validate" : "",
+      tests.status !== 0 ? "tests" : "",
+    ].filter(Boolean);
+    console.log(
+      `${mutation.id}: ${caught.length ? caught.join(", ") : "MISSED"}`,
+    );
+    if (!caught.length) failures.push(mutation.id);
+  }
   if (failures.length)
     throw new Error(`Mutations not detected: ${failures.join(", ")}`);
-  console.log(`All ${mutations.length} mutations detected.`);
+  console.log(
+    `All ${moduleMutations.length} module and ${rootMutations.length} generated-root mutations detected.`,
+  );
 } catch (error) {
   console.error(error);
   process.exitCode = 1;

@@ -138,5 +138,30 @@
     "file": "main.tf",
     "find": "merge(each.value.environment, each.value.secrets)",
     "replace": "merge(each.value.environment, each.value.secrets, { EXTRA = \"injected\" })"
+  },
+  {
+    "id": "root-drop-policy",
+    "root": "shared",
+    "operation": "drop-policy"
+  },
+  {
+    "id": "root-wrong-function-policy",
+    "root": "shared",
+    "operation": "wrong-function-policy"
+  },
+  {
+    "id": "root-drop-binding",
+    "root": "shared",
+    "operation": "drop-binding"
+  },
+  {
+    "id": "root-drop-trigger",
+    "root": "shared",
+    "operation": "drop-trigger"
+  },
+  {
+    "id": "root-unescaped-literal",
+    "root": "existing",
+    "operation": "unescaped-literal"
   }
 ]

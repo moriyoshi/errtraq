@@ -13,7 +13,10 @@ import {
 
 const role = z.enum(FUNCTION_ROLES);
 const name = z.string().regex(/^[a-z][a-z0-9_-]*$/);
-const refName = z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/);
+const refName = z
+  .string()
+  .regex(/^[A-Za-z_][A-Za-z0-9_]*$/)
+  .refine((value) => value !== "__proto__", "Reserved identifier __proto__");
 const outputType: z.ZodType<OutputType> = z.lazy(() =>
   z.union([
     z.enum(["string", "string[]", "json", "json-document", "secret-ref"]),

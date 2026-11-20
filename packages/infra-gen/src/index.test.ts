@@ -8,6 +8,7 @@ import {
   resolveStack,
   type StackConfig,
   stackValue,
+  validateStack,
   variable,
 } from "@errtraq/core";
 import { describe, expect, it } from "vitest";
@@ -51,6 +52,24 @@ function parsed(
   return JSON.parse(file);
 }
 describe("Terraform generator", () => {
+  it("rejects a __proto__ variable instead of silently dropping it", () => {
+    const base = raw(shared);
+    base.variables = Object.fromEntries([
+      ["__proto__", { type: "string", sensitive: false, default: "owned" }],
+    ]);
+    expect(validateStack(base)).toContainEqual({
+      path: "variables.__proto__",
+      message: "Reserved identifier __proto__",
+    });
+    expect(() => resolveStack(base)).toThrow("variables.__proto__");
+  });
+  it("omits empty labeled Terraform blocks", () => {
+    const base = raw(shared);
+    delete base.outputs;
+    const files = terraform(resolveStack(base));
+    expect(parsed(files, "variables.tf.json")).not.toHaveProperty("variable");
+    expect(parsed(files, "outputs.tf.json")).not.toHaveProperty("output");
+  });
   it.each([
     ["shared", shared],
     ["per-topic", perTopic],
