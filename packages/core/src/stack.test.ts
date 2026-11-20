@@ -5,6 +5,7 @@ import {
   env,
   out,
   type PortKind,
+  resolveStack,
   type StackConfig,
   validateStack,
 } from "./index.js";
@@ -42,15 +43,24 @@ const stack = (): StackConfig => ({
       functions: ["ingest", "api", "consumer", "cron"],
     },
   },
-  store: selection("store", { textSearch: false }),
-  queue: selection("queue", { delivery: "push" }),
+  store: selection("store", {
+    textSearch: false,
+    lastSeenRangeOnOtherSort: false,
+    deleteStrategy: "explicit",
+  }),
+  queue: selection("queue", {
+    delivery: "push",
+    maxBytes: 100,
+    delay: false,
+    dlq: false,
+  }),
   blob: selection("blob"),
   kv: selection("kv"),
 });
 describe("stack validation", () => {
   it("accepts a compatible stack and preserves references", () => {
     const value = stack();
-    expect(defineStack(value)).toBe(value);
+    expect(defineStack(value)).toEqual(value);
     expect(env("SECRET")).toEqual({ kind: "env", name: "SECRET" });
     expect(out("url")).toEqual({ kind: "output", name: "url" });
   });
@@ -125,5 +135,115 @@ describe("stack validation", () => {
     ]);
     value.queue.existing = { URL: env("QUEUE_URL"), TOKEN: env("QUEUE_TOKEN") };
     expect(validateStack(value)).toEqual([]);
+  });
+  it("rejects unknown fields and unsafe names", () => {
+    expect(validateStack({ ...stack(), archvie: {} }).length).toBeGreaterThan(
+      0,
+    );
+    expect(
+      validateStack({ ...stack(), name: "../bad" }).length,
+    ).toBeGreaterThan(0);
+  });
+  it("rejects duplicated binding names", () => {
+    const v = stack();
+    v.store.infra.bindings = { SAME: out("a") };
+    v.queue.infra.bindings = { SAME: out("b") };
+    expect(validateStack(v).some((x) => x.path.includes("bindings.SAME"))).toBe(
+      true,
+    );
+  });
+  it("rejects malformed refs", () => {
+    const v = stack();
+    v.store.infra.bindings = { BAD: { kind: "outptu", name: 1 } };
+    expect(validateStack(v).length).toBeGreaterThan(0);
+  });
+  it("requires valid per-kind capabilities", () => {
+    const v = stack();
+    v.queue.manifest.capabilities.delivery = "Pull";
+    delete v.store.manifest.capabilities.deleteStrategy;
+    expect(validateStack(v).map((x) => x.path)).toEqual(
+      expect.arrayContaining([
+        "queue.manifest.capabilities.delivery",
+        "store.manifest.capabilities.deleteStrategy",
+      ]),
+    );
+  });
+  it("checks existing output refs and trigger sources", () => {
+    const v = stack();
+    v.queue.infra.bindings = { URL: out("url") };
+    v.queue.existing = { URL: out("url") };
+    v.queue.infra.triggers = [
+      { fn: "cron", kind: "cron", source: out("url") },
+      { fn: "consumer", kind: "queue", source: "" },
+      { fn: "consumer", kind: "queue", source: out("missing") },
+    ];
+    expect(validateStack(v).length).toBeGreaterThanOrEqual(4);
+  });
+  it("reports asynchronous and throwing schemas", () => {
+    const v = stack();
+    v.store.manifest.configSchema = z
+      .object({ enabled: z.boolean() })
+      .refine(async () => true);
+    expect(validateStack(v).some((x) => x.path === "store.config")).toBe(true);
+    v.store.manifest.configSchema = z.any().transform(() => {
+      throw new Error("boom");
+    });
+    expect(validateStack(v).some((x) => x.path === "store.config")).toBe(true);
+  });
+  it("uses parsed defaults in inputs and returns parsed config", () => {
+    const v = stack();
+    v.store.manifest.configSchema = z.object({
+      n: z.coerce.number().default(7),
+    });
+    v.store.config = {};
+    v.store.infra.inputs = (cfg) => ({ n: (cfg as { n: number }).n });
+    expect(validateStack(v)).toEqual([]);
+    expect(resolveStack(v).store.config).toEqual({ n: 7 });
+    v.store.infra.inputs = () => ({ bad: undefined }) as never;
+    expect(validateStack(v).some((x) => x.path === "store.infra.inputs")).toBe(
+      true,
+    );
+  });
+  it("rejects unknown nested fields and missing or invalid capability variants", () => {
+    const v = stack();
+    const broken = {
+      ...v,
+      queue: { ...v.queue, infra: { ...v.queue.infra, typo: true } },
+    };
+    expect(validateStack(broken).some((x) => x.path === "queue.infra")).toBe(
+      true,
+    );
+    const q = stack();
+    q.queue.manifest.capabilities = {
+      delivery: "push",
+      maxBytes: 0,
+      delay: "yes",
+      dlq: "no",
+    };
+    expect(validateStack(q).map((x) => x.path)).toEqual(
+      expect.arrayContaining([
+        "queue.manifest.capabilities.maxBytes",
+        "queue.manifest.capabilities.delay",
+        "queue.manifest.capabilities.dlq",
+      ]),
+    );
+    const archive = stack();
+    archive.archive = selection("archive", { rowDelete: "bad" });
+    expect(
+      validateStack(archive).some(
+        (x) => x.path === "archive.manifest.capabilities.rowDelete",
+      ),
+    ).toBe(true);
+  });
+  it("allows an existing binding to replace a trigger output", () => {
+    const v = stack();
+    v.queue.infra.bindings = { URL: out("queue_url") };
+    v.queue.existing = { URL: env("QUEUE_URL") };
+    v.queue.infra.triggers.push({
+      fn: "consumer",
+      kind: "queue",
+      source: out("queue_url"),
+    });
+    expect(validateStack(v)).toEqual([]);
   });
 });

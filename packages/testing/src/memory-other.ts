@@ -13,7 +13,7 @@ import type {
 import {
   bytes,
   copy,
-  eventOrder,
+  eventPage,
   FakeClock,
   matchesSubject,
   page,
@@ -35,9 +35,22 @@ export class MemoryBlobStore implements BlobStore {
       throw new Error("Size mismatch");
     this.objects.set(key, { data, contentType: metadata?.contentType });
   }
-  async get(key: string) {
+  async get(
+    key: string,
+    options?: { range?: { offset: number; length?: number } },
+  ) {
     const obj = this.objects.get(key);
-    return obj ? stream(obj.data) : null;
+    if (!obj) return null;
+    const range = options?.range;
+    if (!range) return stream(obj.data);
+    if (range.offset < 0 || (range.length !== undefined && range.length < 0))
+      throw new RangeError("Invalid range");
+    return stream(
+      obj.data.slice(
+        range.offset,
+        range.length === undefined ? undefined : range.offset + range.length,
+      ),
+    );
   }
   async head(key: string) {
     const obj = this.objects.get(key);
@@ -69,6 +82,28 @@ export class MemoryBlobStore implements BlobStore {
 export class MemoryKV implements KV {
   private values = new Map<string, { value: string; expires?: number }>();
   constructor(private clock: Clock = new FakeClock()) {}
+  async increment(
+    key: string,
+    by: number,
+    options?: { ttlSec?: number },
+  ): Promise<number> {
+    const row = this.values.get(key);
+    const now = Date.parse(this.clock.now());
+    const current =
+      row && (row.expires === undefined || row.expires > now) ? row : undefined;
+    const result = Number(current?.value ?? "0") + by;
+    if (!Number.isSafeInteger(result))
+      throw new Error("Value must be an integer");
+    this.values.set(key, {
+      value: String(result),
+      ...(current?.expires !== undefined
+        ? { expires: current.expires }
+        : !current && options?.ttlSec !== undefined
+          ? { expires: now + options.ttlSec * 1000 }
+          : {}),
+    });
+    return result;
+  }
   async get(key: string) {
     const row = this.values.get(key);
     if (!row) return null;
@@ -124,33 +159,36 @@ export class MemoryQueue implements Queue {
     },
   };
   push: NonNullable<Queue["push"]> = {
-    toBatch: (event) => copy(event as Delivery[]),
-    toResponse: (result) => copy(result),
+    handle: async (event, handler) => {
+      const deliveries = event as Delivery[];
+      const ids = new Set(deliveries.map((delivery) => delivery.id));
+      const items = this.rows.filter((row) => ids.has(row.delivery.id));
+      this.rows = this.rows.filter((row) => !ids.has(row.delivery.id));
+      let result: BatchResult = [];
+      try {
+        result = await handler(copy(deliveries));
+      } catch {
+        /* Retry failed invocations. */
+      }
+      for (const item of items) {
+        const action = result.find((r) => r.deliveryId === item.delivery.id);
+        if (action?.action === "ack") continue;
+        item.delivery.attempt++;
+        item.available =
+          Date.parse(this.clock.now()) +
+          (action?.action === "retry" ? (action.delaySec ?? 0) : 0) * 1000;
+        this.rows.push(item);
+      }
+      return result;
+    },
   };
 
-  /** Simulates a platform delivering one message to the push source. */
+  /** Simulates platform selection of one event and invokes the push source. */
   async deliverPush(handler: BatchHandler): Promise<void> {
-    const index = this.rows.findIndex(
-      (item) => item.available <= Date.parse(this.clock.now()),
+    const item = this.rows.find(
+      (row) => row.available <= Date.parse(this.clock.now()),
     );
-    if (index < 0) return;
-    const [item] = this.rows.splice(index, 1);
-    if (!item) return;
-    let result: BatchResult = [];
-    try {
-      result = this.push.toResponse(
-        await handler(this.push.toBatch([item.delivery])),
-      ) as BatchResult;
-    } catch {
-      /* Redeliver failed invocations. */
-    }
-    const action = result.find((r) => r.deliveryId === item.delivery.id);
-    if (action?.action === "ack") return;
-    item.delivery.attempt++;
-    item.available =
-      Date.parse(this.clock.now()) +
-      (action?.action === "retry" ? (action.delaySec ?? 0) : 0) * 1000;
-    this.rows.push(item);
+    if (item) await this.push.handle([item.delivery], handler);
   }
 
   pull: NonNullable<Queue["pull"]> = {
@@ -204,6 +242,10 @@ export class MemoryArchiveStore implements ArchiveStore {
   >();
   private masked = new Set<string>();
   private snapshots = 0;
+  private pending = new Map<
+    string,
+    Promise<{ snapshotId: string; rowCount: number }>
+  >();
   constructor(readonly blobs: BlobStore = new MemoryBlobStore()) {}
   private rowKey(row: StoredEvent) {
     return JSON.stringify([row.projectId, row.eventId]);
@@ -220,19 +262,29 @@ export class MemoryArchiveStore implements ArchiveStore {
         snapshotId: previous.snapshotId,
         rowCount: previous.rowCount,
       };
-    const body = await this.blobs.get(batch.stagedKey);
-    if (!body) throw new Error("Missing staged batch");
-    const rows = JSON.parse(
-      new TextDecoder().decode(await bytes(body)),
-    ) as StoredEvent[];
-    const snapshotId = `snapshot-${++this.snapshots}`;
-    this.batches.set(batch.batchId, {
-      snapshotId,
-      rowCount: rows.length,
-      rows: copy(rows),
-      file: batch.stagedKey,
-    });
-    return { snapshotId, rowCount: rows.length };
+    const inflight = this.pending.get(batch.batchId);
+    if (inflight) return inflight;
+    const write = (async () => {
+      const body = await this.blobs.get(batch.stagedKey);
+      if (!body) throw new Error("Missing staged batch");
+      const rows = JSON.parse(
+        new TextDecoder().decode(await bytes(body)),
+      ) as StoredEvent[];
+      const snapshotId = `snapshot-${++this.snapshots}`;
+      this.batches.set(batch.batchId, {
+        snapshotId,
+        rowCount: rows.length,
+        rows: copy(rows),
+        file: batch.stagedKey,
+      });
+      return { snapshotId, rowCount: rows.length };
+    })();
+    this.pending.set(batch.batchId, write);
+    try {
+      return await write;
+    } finally {
+      this.pending.delete(batch.batchId);
+    }
   }
   async hasBatch(
     batchId: string,
@@ -241,18 +293,15 @@ export class MemoryArchiveStore implements ArchiveStore {
     return this.batches.has(batchId);
   }
   async query(query: Parameters<ArchiveStore["query"]>[0]) {
-    return page(
-      this.rows()
-        .filter(
-          (e) =>
-            e.projectId === query.projectId &&
-            (!query.issueId || e.issueId === query.issueId) &&
-            (!query.from || e.receivedAt >= query.from) &&
-            (!query.to || e.receivedAt < query.to),
-        )
-        .sort(eventOrder),
-      query.cursor,
-      query.limit,
+    return eventPage(
+      this.rows().filter(
+        (e) =>
+          e.projectId === query.projectId &&
+          (!query.issueId || e.issueId === query.issueId) &&
+          (!query.from || e.receivedAt >= query.from) &&
+          (!query.to || e.receivedAt < query.to),
+      ),
+      query,
     );
   }
   async getEvent(

@@ -8,6 +8,8 @@ import type {
   ErasureRequest,
   ErasureStatus,
   EventId,
+  EventPage,
+  EventPosition,
   Issue,
   IssueId,
   IssueStatus,
@@ -33,7 +35,6 @@ export interface IssueQuery {
   sort: "lastSeen" | "firstSeen" | "count";
   cursor?: Cursor;
   limit?: number;
-  tags?: Record<string, string>;
   text?: string;
 }
 
@@ -42,31 +43,40 @@ export interface EventQuery {
   issueId?: IssueId;
   from?: Timestamp;
   to?: Timestamp;
-  cursor?: Cursor;
+  after?: EventPosition;
+  order?: "asc" | "desc";
   limit?: number;
 }
 
 export interface ProjectRepo {
   getOrg(id: OrgId): Promise<Org | null>;
+  /** Lookup organization by its slug. */
+  getOrgBySlug(slug: string): Promise<Org | null>;
   putOrg(org: Org): Promise<void>;
   get(id: ProjectId): Promise<Project | null>;
+  /** Lookup within the given organization. */
+  getProjectBySlug(orgId: OrgId, slug: string): Promise<Project | null>;
   put(project: Project): Promise<void>;
   list(cursor?: Cursor, limit?: number): Promise<Page<Project>>;
   getKey(publicKey: string): Promise<ProjectKey | null>;
   putKey(key: ProjectKey): Promise<void>;
+  /** List keys belonging to a project. */
+  listKeys(projectId: ProjectId): Promise<ProjectKey[]>;
   getTokenByHash(tokenHash: string): Promise<ApiToken | null>;
   putToken(token: ApiToken): Promise<void>;
 }
 
 export interface IssueRepo {
-  /** Atomically creates or bumps an issue. Regression uses receivedAt after resolvedAt;
-   * latest event is the maximum (receivedAt, eventId). */
-  recordOccurrence(
-    occurrence: Occurrence,
-  ): Promise<{ issue: Issue; isNew: boolean; isRegression: boolean }>;
   get(projectId: ProjectId, issueId: IssueId): Promise<Issue | null>;
-  /** Descending sort key, ascending issue ID tie-break; lastSeen is filtered by [from, to). */
+  /** Descending sort key, ascending issue ID tie-break; lastSeen uses [from, to).
+   * Range with a non-lastSeen sort throws UnsupportedQueryError unless supported by capability. */
   list(query: IssueQuery): Promise<Page<Issue>>;
+  /** Subtract removedCount and repoint to newest remaining active event; if none remain, leave the previous pointer. */
+  repairAfterErasure(
+    projectId: ProjectId,
+    issueId: IssueId,
+    removedCount: number,
+  ): Promise<Issue>;
   /** Throws NotFoundError if the project/issue pair is absent. */
   update(
     projectId: ProjectId,
@@ -80,11 +90,9 @@ export interface EventRepo {
     deleteStrategy: "explicit" | "ttl";
   };
 
-  /** Atomically inserts by (projectId, eventId); duplicates leave the row untouched. */
-  put(event: StoredEvent): Promise<{ inserted: boolean }>;
   get(projectId: ProjectId, eventId: EventId): Promise<StoredEvent | null>;
-  /** Ascending (receivedAt, eventId); time filters use [from, to). */
-  listByIssue(query: EventQuery): Promise<Page<StoredEvent>>;
+  /** Exclusive keyset after; order defaults to descending (receivedAt, eventId), range [from, to). */
+  listByIssue(query: EventQuery): Promise<EventPage>;
 
   /** Ascending (receivedAt, eventId); cutoff is exclusive, with cursor and limit for paging. */
   scanOlderThan(
@@ -93,23 +101,47 @@ export interface EventRepo {
     options?: { cursor?: Cursor; limit?: number },
   ): Promise<Page<StoredEvent>>;
   deleteBatch(projectId: ProjectId, ids: EventId[]): Promise<void>;
-  /** Deletes matching events with receivedAt <= before. */
+  /** Deletes at most limit matches with receivedAt <= before; repeat while hasMore. Returns
+   * removed counts per issue and overflow blob keys so callers can clean up and repair. */
   deleteBySubject(
     projectId: ProjectId,
     selector: SubjectSelector,
     before: Timestamp,
-  ): Promise<{ deleted: number; issueIds: IssueId[] }>;
+    limit: number,
+  ): Promise<{
+    deleted: number;
+    hasMore: boolean;
+    issueCounts: Array<{ issueId: IssueId; count: number }>;
+    payloadBlobKeys: string[];
+  }>;
 }
 
 export interface ReleaseRepo {
   get(projectId: ProjectId, id: ReleaseId): Promise<Release | null>;
   put(release: Release): Promise<void>;
+  /** Lookup a release by version within a project. */
+  getReleaseByVersion(
+    projectId: ProjectId,
+    version: string,
+  ): Promise<Release | null>;
   list(
     projectId: ProjectId,
     cursor?: Cursor,
     limit?: number,
   ): Promise<Page<Release>>;
   putBundle(bundle: ArtifactBundle): Promise<void>;
+  /** List bundles for a project and release. */
+  listBundles(
+    projectId: ProjectId,
+    releaseId: ReleaseId,
+    cursor?: Cursor,
+    limit?: number,
+  ): Promise<Page<ArtifactBundle>>;
+  /** Delete a bundle; deleting a missing bundle is a no-op. */
+  deleteBundle(
+    projectId: ProjectId,
+    bundleId: ArtifactBundle["id"],
+  ): Promise<void>;
   findBundleByDebugId(
     projectId: ProjectId,
     debugId: string,
@@ -129,11 +161,13 @@ export interface MetaRepo {
     projectId: ProjectId,
     id: ErasureId,
   ): Promise<ErasureRequest | null>;
-  listErasureRequests(
-    state: ErasureStatus,
-    cursor?: Cursor,
-    limit?: number,
-  ): Promise<Page<ErasureRequest>>;
+  /** Filter by project and/or state; state-only queries support cross-project cron work. */
+  listErasureRequests(options: {
+    projectId?: ProjectId;
+    state?: ErasureStatus;
+    cursor?: Cursor;
+    limit?: number;
+  }): Promise<Page<ErasureRequest>>;
   compareAndSetErasureRequest(
     projectId: ProjectId,
     id: ErasureId,
@@ -143,15 +177,27 @@ export interface MetaRepo {
 }
 
 export interface ActiveStore {
+  /** Atomically insert the event and create/bump the issue; duplicate (projectId, eventId)
+   * changes nothing. Use a SQL transaction, D1 batch, DynamoDB TransactWriteItems with
+   * an event-item condition, or a Firestore transaction. Regression uses receivedAt;
+   * latest event is the maximum (receivedAt, eventId). */
+  recordEvent(
+    occurrence: Occurrence,
+    event: StoredEvent,
+  ): Promise<{
+    inserted: boolean;
+    issue: Issue;
+    isNew: boolean;
+    isRegression: boolean;
+  }>;
   projects: ProjectRepo;
   issues: IssueRepo;
   events: EventRepo;
   releases: ReleaseRepo;
   meta: MetaRepo;
   capabilities: {
-    tagFilter: "any" | "indexed-only";
+    lastSeenRangeOnOtherSort: boolean;
     textSearch: boolean;
-    transactions: boolean;
   };
   migrate(): Promise<void>;
 }
@@ -187,8 +233,8 @@ export interface QueueProducer {
 }
 
 export interface PushSource<E, R = unknown> {
-  toBatch(event: E): Delivery[];
-  toResponse(result: BatchResult): R;
+  /** Converts and handles the platform event, applying per-message ack/retry asynchronously. */
+  handle(event: E, handler: BatchHandler): Promise<R>;
 }
 
 export interface PullSource {
@@ -221,7 +267,11 @@ export interface BlobStore {
     body: Uint8Array | ReadableStream<Uint8Array>,
     metadata?: { contentType?: string; size?: number },
   ): Promise<void>;
-  get(key: string): Promise<ReadableStream<Uint8Array> | null>;
+  /** Optional byte range starts at offset and spans at most length bytes. */
+  get(
+    key: string,
+    options?: { range?: { offset: number; length?: number } },
+  ): Promise<ReadableStream<Uint8Array> | null>;
   head(key: string): Promise<BlobMetadata | null>;
   /** Keys matching prefix in ascending lexicographic order. */
   list(prefix: string, cursor?: Cursor, limit?: number): Promise<Page<string>>;
@@ -240,8 +290,8 @@ export interface ArchiveStore {
     dayRange: [Day, Day];
   }): Promise<{ snapshotId: string; rowCount: number }>;
   hasBatch(batchId: string, dayRange: [Day, Day]): Promise<boolean>;
-  /** Ascending (receivedAt, eventId); time filters use [from, to). */
-  query(query: EventQuery): Promise<Page<StoredEvent>>;
+  /** Same exclusive keyset and ordering as EventRepo.listByIssue. */
+  query(query: EventQuery): Promise<EventPage>;
   getEvent(
     projectId: ProjectId,
     eventId: EventId,
@@ -267,6 +317,12 @@ export interface ArchiveStore {
 }
 
 export interface KV {
+  /** Atomically add by and return the new integer; TTL applies on creation. */
+  increment(
+    key: string,
+    by: number,
+    options?: { ttlSec?: number },
+  ): Promise<number>;
   get(key: string): Promise<string | null>;
   put(key: string, value: string, options?: { ttlSec?: number }): Promise<void>;
   delete(key: string): Promise<void>;

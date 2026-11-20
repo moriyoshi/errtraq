@@ -15,6 +15,11 @@ import {
 import { FakeClock } from "./shared.js";
 
 activeStoreContract(() => new MemoryActiveStore());
+const ttlClock = new FakeClock();
+activeStoreContract(() => new MemoryActiveStore(ttlClock, "ttl"), {
+  clock: ttlClock,
+  advance: (ms) => ttlClock.advance(ms),
+});
 blobStoreContract(() => new MemoryBlobStore());
 const clock = new FakeClock();
 kvContract(() => new MemoryKV(clock), {

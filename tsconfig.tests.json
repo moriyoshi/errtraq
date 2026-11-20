@@ -4,7 +4,14 @@
     "composite": false,
     "declaration": false,
     "declarationMap": false,
-    "noEmit": true
+    "noEmit": true,
+    "lib": ["ES2022", "WebWorker"],
+    "types": [],
+    "baseUrl": ".",
+    "paths": {
+      "@errtraq/core": ["packages/core/src/index.ts"],
+      "@errtraq/testing": ["packages/testing/src/index.ts"]
+    }
   },
   "include": [
     "packages/*/src/**/*.ts",

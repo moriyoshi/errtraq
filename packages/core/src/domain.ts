@@ -3,12 +3,14 @@ export type Brand<T, Name extends string> = T & { readonly __brand: Name };
 
 export type OrgId = Brand<string, "OrgId">;
 
+/** Decimal-digit project identifier, as required by Sentry DSNs. */
 export type ProjectId = Brand<string, "ProjectId">;
 
 export type ProjectKeyId = Brand<string, "ProjectKeyId">;
 
 export type ApiTokenId = Brand<string, "ApiTokenId">;
 
+/** Minted deterministically by core from (projectId, fingerprint). */
 export type IssueId = Brand<string, "IssueId">;
 
 export type EventId = Brand<string, "EventId">;
@@ -19,7 +21,7 @@ export type ArtifactBundleId = Brand<string, "ArtifactBundleId">;
 
 export type ErasureId = Brand<string, "ErasureId">;
 
-/** UTC ISO 8601 instant and ISO calendar day, respectively. */
+/** UTC ISO 8601 with millisecond precision (Date.toISOString()), limited to four-digit years for lexical ordering. */
 export type Timestamp = Brand<string, "Timestamp">;
 
 export type Day = Brand<string, "Day">;
@@ -31,9 +33,15 @@ export interface Page<T> {
   nextCursor: Cursor | null;
 }
 
-export interface FederatedCursor {
-  active: Cursor | null;
-  archive: Cursor | null;
+/** Exclusive key for merging active and archive pages. */
+export interface EventPosition {
+  receivedAt: Timestamp;
+  eventId: EventId;
+}
+
+export interface EventPage {
+  items: StoredEvent[];
+  hasMore: boolean;
 }
 
 export interface Org {
@@ -91,6 +99,7 @@ export interface Issue extends IssueDetails {
 }
 
 export interface Occurrence extends IssueDetails {
+  issueId: IssueId;
   projectId: ProjectId;
   eventId: EventId;
   fingerprint: string;
@@ -110,6 +119,8 @@ export interface StoredEvent {
   tags: Record<string, string>;
   payload: Record<string, unknown>;
   payloadBlobKey?: string;
+  /** Expiry is honored only by stores using the TTL delete strategy. */
+  expiresAt?: Timestamp;
   user?: { id?: string; email?: string; username?: string; ipAddress?: string };
 }
 
@@ -149,8 +160,10 @@ export type ErasureRequest = {
   projectId: ProjectId;
   version: number;
   requestedAt: Timestamp;
-  snapshotId?: string | null;
-  files?: string[];
+  stateChangedAt: Timestamp;
+  maskSnapshotId?: string | null;
+  rewriteSnapshotId?: string | null;
+  filesBlobKey?: string;
 } & (
   | { state: Exclude<ErasureStatus, "done">; selector: SubjectSelector }
   | { state: "done"; selectorHash: string; completedAt: Timestamp }
@@ -171,4 +184,28 @@ export interface ArchiveState {
     maxReceivedAt: Timestamp;
   };
   lease?: { owner: string; until: Timestamp };
+}
+
+/** Validates the canonical UTC millisecond form. */
+export function isTimestamp(value: string): value is Timestamp {
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value))
+    return false;
+  const date = new Date(value);
+  return !Number.isNaN(date.valueOf()) && date.toISOString() === value;
+}
+/** Convert a valid date to the canonical serialized representation. */
+export function toTimestamp(date: Date): Timestamp {
+  const value = date.toISOString();
+  if (!isTimestamp(value))
+    throw new RangeError("Timestamp outside canonical range");
+  return value;
+}
+/** Parse only canonical timestamps. */
+export function parseTimestamp(value: string): Timestamp {
+  if (!isTimestamp(value)) throw new RangeError("Invalid timestamp");
+  return value;
+}
+/** Sentry project IDs contain decimal digits only. */
+export function isProjectId(value: string): value is ProjectId {
+  return /^\d+$/.test(value);
 }

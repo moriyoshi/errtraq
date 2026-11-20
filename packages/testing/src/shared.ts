@@ -1,6 +1,8 @@
 import type {
   Clock,
   Cursor,
+  EventPage,
+  EventQuery,
   IdGen,
   Page,
   StoredEvent,
@@ -86,4 +88,23 @@ export function stream(data: Uint8Array): ReadableStream<Uint8Array> {
       controller.close();
     },
   });
+}
+
+/** Keyset pages remain usable after a federated merge emits only a prefix. */
+export function eventPage(rows: StoredEvent[], query: EventQuery): EventPage {
+  const direction = query.order === "asc" ? 1 : -1;
+  const sorted = rows.sort((a, b) => direction * eventOrder(a, b));
+  const remaining = sorted.filter(
+    (row) =>
+      !query.after ||
+      direction *
+        (row.receivedAt.localeCompare(query.after.receivedAt) ||
+          row.eventId.localeCompare(query.after.eventId)) >
+        0,
+  );
+  const limit = Math.max(1, query.limit ?? 100);
+  return {
+    items: copy(remaining.slice(0, limit)),
+    hasMore: remaining.length > limit,
+  };
 }

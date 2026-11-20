@@ -12,6 +12,8 @@ import {
   type ErasureId,
   type ErasureRequest,
   type EventId,
+  type EventPage,
+  type EventPosition,
   type IssueId,
   type KV,
   type Message,
@@ -36,12 +38,10 @@ export type Factory<T> = () => T | Promise<T>;
 export interface ContractOptions {
   clock?: Clock;
   advance?: (milliseconds: number) => void | Promise<void>;
-  /** A tag key known not to be indexed by the implementation under test. */
-  unindexedTagKey?: string;
   skip?: { ttl?: boolean; delay?: boolean; push?: boolean; pull?: boolean };
 }
-const project = "project" as ProjectId;
-const otherProject = "other" as ProjectId;
+const project = "1" as ProjectId;
+const otherProject = "2" as ProjectId;
 const issueId = "issue" as IssueId;
 const t = (n: number): Timestamp =>
   `2024-01-01T00:00:${String(n).padStart(2, "0")}.000Z` as Timestamp;
@@ -67,6 +67,7 @@ const occurrence = (
   fingerprint = "fp",
 ): Occurrence => ({
   projectId: project,
+  issueId: fingerprint as IssueId,
   eventId: id as EventId,
   fingerprint,
   receivedAt: t(time),
@@ -77,15 +78,40 @@ const occurrence = (
   type: "error",
   metadata: {},
 });
-const erasure = (id: string): ErasureRequest => ({
+const erasure = (
+  id: string,
+): ErasureRequest & { state: "received"; selector: SubjectSelector } => ({
   id: id as ErasureId,
   projectId: project,
   version: 0,
   requestedAt: t(1),
+  stateChangedAt: t(1),
   state: "received",
   selector: { kind: "userId", value: id },
 });
 
+async function record(store: ActiveStore, o: Occurrence, row?: StoredEvent) {
+  return store.recordEvent(
+    o,
+    row ??
+      event(o.eventId, Number(o.receivedAt.slice(17, 19)), {
+        projectId: o.projectId,
+        issueId: o.issueId,
+        receivedAt: o.receivedAt,
+        timestamp: o.timestamp,
+      }),
+  );
+}
+async function seed(store: ActiveStore, e: StoredEvent) {
+  const o = {
+    ...occurrence(e.eventId, Number(e.receivedAt.slice(17, 19)), e.issueId),
+    projectId: e.projectId,
+    issueId: e.issueId,
+    receivedAt: e.receivedAt,
+    timestamp: e.timestamp,
+  };
+  return record(store, o, e);
+}
 async function collect<T>(
   fetch: (
     cursor?: Cursor,
@@ -105,6 +131,25 @@ async function collect<T>(
   return rows;
 }
 
+async function collectEvents(
+  fetch: (after?: EventPosition) => Promise<EventPage>,
+): Promise<StoredEvent[]> {
+  const result: StoredEvent[] = [];
+  let after: EventPosition | undefined;
+  for (;;) {
+    const p = await fetch(after);
+    result.push(...p.items);
+    if (!p.hasMore) return result;
+    const last = p.items.at(-1);
+    if (
+      !last ||
+      (after?.eventId === last.eventId && after.receivedAt === last.receivedAt)
+    )
+      throw new Error("Invalid keyset page");
+    after = { receivedAt: last.receivedAt, eventId: last.eventId };
+  }
+}
+
 export function activeStoreContract(
   factory: Factory<ActiveStore>,
   options: ContractOptions = {},
@@ -113,13 +158,13 @@ export function activeStoreContract(
     it("puts events idempotently by project and event id", async () => {
       const s = await factory();
       const a = event("one", 1);
-      expect(await s.events.put(a)).toEqual({ inserted: true });
-      expect(await s.events.put({ ...a, payload: { changed: true } })).toEqual({
-        inserted: false,
-      });
-      expect(await s.events.put({ ...a, projectId: otherProject })).toEqual({
-        inserted: true,
-      });
+      expect((await seed(s, a)).inserted).toBe(true);
+      expect(
+        (await seed(s, { ...a, payload: { changed: true } })).inserted,
+      ).toBe(false);
+      expect((await seed(s, { ...a, projectId: otherProject })).inserted).toBe(
+        true,
+      );
       expect(await s.events.get(project, a.eventId)).toEqual(a);
       expect(await s.events.get(otherProject, a.eventId)).not.toBeNull();
     });
@@ -127,9 +172,7 @@ export function activeStoreContract(
       const s = await factory();
       const results = await Promise.all(
         Array.from({ length: 40 }, (_, i) =>
-          s.issues.recordOccurrence(
-            occurrence(`e${String(i).padStart(2, "0")}`, i % 10),
-          ),
+          record(s, occurrence(`e${String(i).padStart(2, "0")}`, i % 10)),
         ),
       );
       expect(results.filter((r) => r.isNew)).toHaveLength(1);
@@ -143,13 +186,13 @@ export function activeStoreContract(
         status: "resolved",
         resolvedAt: t(10),
       });
-      const delayed = await s.issues.recordOccurrence({
+      const delayed = await record(s, {
         ...occurrence("old", 9),
         timestamp: t(20),
       });
       expect(delayed.isRegression).toBe(false);
       expect(delayed.issue.status).toBe("resolved");
-      const regression = await s.issues.recordOccurrence({
+      const regression = await record(s, {
         ...occurrence("new", 11),
         timestamp: t(1),
       });
@@ -163,13 +206,54 @@ export function activeStoreContract(
       ).rejects.toBeInstanceOf(NotFoundError);
       expect(regression.issue.lastEventId).toBe("new");
     });
+    it("honors expiry for TTL stores", async () => {
+      const store = await factory();
+      if (
+        store.events.capabilities.deleteStrategy !== "ttl" ||
+        options.skip?.ttl
+      )
+        return;
+      if (!options.clock || !options.advance)
+        throw new Error("TTL store contract needs a controllable clock");
+      const o = occurrence("ttl", 1);
+      const expiresAt = new Date(
+        Date.parse(options.clock.now()) + 1000,
+      ).toISOString() as Timestamp;
+      await record(
+        store,
+        o,
+        event("ttl", 1, { issueId: o.issueId, expiresAt }),
+      );
+      expect(await store.events.get(project, o.eventId)).not.toBeNull();
+      await options.advance(1000);
+      await vi.waitFor(async () =>
+        expect(await store.events.get(project, o.eventId)).toBeNull(),
+      );
+    });
+    it("atomically ignores concurrent duplicate deliveries", async () => {
+      const s = await factory();
+      const o = occurrence("duplicate", 1);
+      const attempts = await Promise.all(
+        Array.from({ length: 25 }, () => record(s, o)),
+      );
+      expect(attempts.filter((r) => r.inserted)).toHaveLength(1);
+      expect((await s.issues.get(project, o.issueId))?.count).toBe(1);
+      await s.issues.update(project, o.issueId, {
+        status: "resolved",
+        resolvedAt: t(2),
+      });
+      const retry = { ...o, receivedAt: t(3), timestamp: t(3) };
+      const duplicate = await record(s, retry);
+      expect(duplicate.inserted).toBe(false);
+      expect(duplicate.isRegression).toBe(false);
+      expect(duplicate.issue.status).toBe("resolved");
+      expect(duplicate.issue.lastSeen).toBe(t(1));
+    });
     it("lists issues sorted and paged without gaps and filters status/time", async () => {
       const s = await factory();
       for (let i = 0; i < 5; i++)
         for (let n = 0; n <= i; n++)
-          await s.issues.recordOccurrence(
-            occurrence(`${i}-${n}`, i + 1, `fp${i}`),
-          );
+          await record(s, occurrence(`${i}-${n}`, i + 1, `fp${i}`));
       const all = await s.issues.list({
         projectId: project,
         sort: "lastSeen",
@@ -224,15 +308,9 @@ export function activeStoreContract(
             text: "needle",
           }),
         ).rejects.toBeInstanceOf(UnsupportedQueryError);
-      if (s.capabilities.tagFilter === "indexed-only")
+      if (!s.capabilities.lastSeenRangeOnOtherSort)
         await expect(
-          s.issues.list({
-            projectId: project,
-            sort: "lastSeen",
-            tags: {
-              [options.unindexedTagKey ?? "unindexed-contract-key"]: "v",
-            },
-          }),
+          s.issues.list({ projectId: project, sort: "count", from: t(1) }),
         ).rejects.toBeInstanceOf(UnsupportedQueryError);
     });
     it("orders and pages issue events, scans exclusively before cutoff with a limit, and deletes only specified ids", async () => {
@@ -244,11 +322,29 @@ export function activeStoreContract(
         event("d", 4),
         event("z", 1, { projectId: otherProject }),
       ])
-        await s.events.put(e);
-      const rows = await collect((cursor) =>
-        s.events.listByIssue({ projectId: project, issueId, limit: 2, cursor }),
+        await seed(s, e);
+      const rows = await collectEvents((after) =>
+        s.events.listByIssue({
+          projectId: project,
+          issueId,
+          limit: 2,
+          after,
+          order: "asc",
+        }),
       );
       expect(rows.map((e) => e.eventId)).toEqual(["a", "b", "c", "d"]);
+      expect(
+        (
+          await collectEvents((after) =>
+            s.events.listByIssue({
+              projectId: project,
+              issueId,
+              after,
+              limit: 2,
+            }),
+          )
+        ).map((e) => e.eventId),
+      ).toEqual(["d", "c", "b", "a"]);
       const firstPage = await s.events.scanOlderThan(project, t(4), {
         limit: 2,
       });
@@ -258,22 +354,23 @@ export function activeStoreContract(
         s.events.scanOlderThan(project, t(4), { cursor, limit: 2 }),
       );
       expect(scanned.map((e) => e.eventId)).toEqual(["a", "b", "c"]);
-      const range = await collect((cursor) =>
+      const range = await collectEvents((after) =>
         s.events.listByIssue({
           projectId: project,
           issueId,
           from: t(2),
           to: t(3),
-          cursor,
+          after,
+          order: "asc",
           limit: 1,
         }),
       );
       expect(range.map((e) => e.eventId)).toEqual(["a", "b"]);
-      const isolated = await collect((cursor) =>
+      const isolated = await collectEvents((after) =>
         s.events.listByIssue({
           projectId: otherProject,
           issueId,
-          cursor,
+          after,
           limit: 1,
         }),
       );
@@ -310,17 +407,36 @@ export function activeStoreContract(
           ipAddress: "subject",
         };
         for (const e of [
-          event("target", 1, { user }),
+          event("target", 1, { user, payloadBlobKey: "overflow" }),
           event("boundary", 2, { user }),
           event("late", 3, { user }),
           event("target", 1, { user, projectId: otherProject }),
         ])
-          await s.events.put(e);
-        const result = await s.events.deleteBySubject(project, selector, t(2));
-        expect(result.deleted).toBe(2);
+          await seed(s, e);
+        const result = await s.events.deleteBySubject(
+          project,
+          selector,
+          t(2),
+          1,
+        );
+        expect(result.deleted).toBe(1);
+        expect(result.hasMore).toBe(true);
+        expect(result.payloadBlobKeys).toEqual(["overflow"]);
+        const next = await s.events.deleteBySubject(project, selector, t(2), 1);
+        expect(next.deleted).toBe(1);
+        expect(next.hasMore).toBe(false);
+        expect(next.issueCounts).toEqual([{ issueId, count: 1 }]);
+        expect(next.payloadBlobKeys).toEqual([]);
         expect(await s.events.get(project, "boundary" as EventId)).toBeNull();
-        expect(result.issueIds).toEqual([issueId]);
+        expect(result.issueCounts).toEqual([{ issueId, count: 1 }]);
+        const repaired = await s.issues.repairAfterErasure(project, issueId, 2);
+        expect(repaired.count).toBe(1);
+        expect(repaired.lastEventId).toBe("late");
         expect(await s.events.get(project, "late" as EventId)).not.toBeNull();
+        await s.events.deleteBatch(project, ["late" as EventId]);
+        const empty = await s.issues.repairAfterErasure(project, issueId, 1);
+        expect(empty.count).toBe(0);
+        expect(empty.lastEventId).toBe("late");
         expect(
           await s.events.get(otherProject, "target" as EventId),
         ).not.toBeNull();
@@ -363,18 +479,40 @@ export function activeStoreContract(
         null,
         request,
       );
+      const transitioned: ErasureRequest = {
+        ...request,
+        version: 1,
+        state: "archive-masked",
+        stateChangedAt: t(2),
+        maskSnapshotId: "mask",
+        rewriteSnapshotId: "rewrite",
+        filesBlobKey: "file-list",
+      };
+      await s.meta.compareAndSetErasureRequest(
+        project,
+        request.id,
+        0,
+        transitioned,
+      );
+      expect(await s.meta.getErasureRequest(project, request.id)).toEqual(
+        transitioned,
+      );
       await expect(
         s.meta.compareAndSetErasureRequest(project, request.id, null, request),
       ).rejects.toBeInstanceOf(VersionConflictError);
       expect(
         (
           await collect((cursor) =>
-            s.meta.listErasureRequests("received", cursor, 2),
+            s.meta.listErasureRequests({
+              state: "archive-masked",
+              cursor,
+              limit: 2,
+            }),
           )
         ).map((r) => r.id),
       ).toContain(request.id);
       expect(
-        (await s.meta.listErasureRequests("archive-masked")).items,
+        (await s.meta.listErasureRequests({ state: "active-purged" })).items,
       ).toHaveLength(0);
     });
     it("pages erasures by state and serializes concurrent erasure transitions", async () => {
@@ -389,15 +527,53 @@ export function activeStoreContract(
           null,
           item,
         );
-      const firstPage = await store.meta.listErasureRequests(
-        "received",
-        undefined,
-        2,
+      const foreign = { ...erasure("foreign"), projectId: otherProject };
+      await store.meta.compareAndSetErasureRequest(
+        otherProject,
+        foreign.id,
+        null,
+        foreign,
       );
+      expect(
+        (
+          await collect((cursor) =>
+            store.meta.listErasureRequests({
+              state: "received",
+              cursor,
+              limit: 2,
+            }),
+          )
+        ).length,
+      ).toBe(5);
+      expect(
+        (await store.meta.listErasureRequests({ projectId: otherProject }))
+          .items,
+      ).toEqual([foreign]);
+      expect(
+        (
+          await collect((cursor) =>
+            store.meta.listErasureRequests({
+              projectId: project,
+              cursor,
+              limit: 2,
+            }),
+          )
+        ).length,
+      ).toBe(4);
+      const firstPage = await store.meta.listErasureRequests({
+        state: "received",
+        projectId: project,
+        limit: 2,
+      });
       expect(firstPage.items.length).toBeLessThanOrEqual(2);
       expect(firstPage.nextCursor).not.toBeNull();
       const listed = await collect((cursor) =>
-        store.meta.listErasureRequests("received", cursor, 2),
+        store.meta.listErasureRequests({
+          state: "received",
+          projectId: project,
+          cursor,
+          limit: 2,
+        }),
       );
       expect(new Set(listed.map((item) => item.id))).toEqual(
         new Set(items.map((item) => item.id)),
@@ -431,9 +607,11 @@ export function activeStoreContract(
       const org = { id: "org" as OrgId, slug: "org", name: "Organization" };
       await store.projects.putOrg(org);
       expect(await store.projects.getOrg(org.id)).toEqual(org);
+      expect(await store.projects.getOrgBySlug(org.slug)).toEqual(org);
+      expect(await store.projects.getOrgBySlug("missing")).toBeNull();
       expect(await store.projects.getOrg("missing" as OrgId)).toBeNull();
       const projects: Project[] = Array.from({ length: 4 }, (_, i) => ({
-        id: `p${i}` as ProjectId,
+        id: `${i + 10}` as ProjectId,
         orgId: org.id,
         slug: `p${i}`,
         name: `Project ${i}`,
@@ -443,6 +621,15 @@ export function activeStoreContract(
       const firstProject = projects[0];
       if (!firstProject) throw new Error("Missing project fixture");
       expect(await store.projects.get(firstProject.id)).toEqual(firstProject);
+      expect(
+        await store.projects.getProjectBySlug(org.id, firstProject.slug),
+      ).toEqual(firstProject);
+      expect(
+        await store.projects.getProjectBySlug(
+          "other" as OrgId,
+          firstProject.slug,
+        ),
+      ).toBeNull();
       expect(await store.projects.get("missing" as ProjectId)).toBeNull();
       const first = await store.projects.list(undefined, 2);
       expect(first.items.length).toBeLessThanOrEqual(2);
@@ -521,21 +708,63 @@ export function activeStoreContract(
       await s.releases.put(release);
       await s.releases.putBundle(bundle);
       expect(await s.projects.getKey("public")).toEqual(key);
+      expect(await s.projects.listKeys(project)).toEqual([key]);
+      expect(await s.projects.listKeys(otherProject)).toEqual([]);
       expect(await s.projects.getTokenByHash("hash")).toEqual(token);
       expect(await s.projects.getTokenByHash("token")).toBeNull();
+      const extraBundle = {
+        ...bundle,
+        id: "bundle-extra" as typeof bundle.id,
+        debugIds: ["extra-debug"],
+      };
+      await s.releases.putBundle(extraBundle);
+      expect(
+        (await s.releases.listBundles(project, release.id, undefined, 1))
+          .nextCursor,
+      ).not.toBeNull();
+      expect(
+        new Set(
+          (
+            await collect((cursor) =>
+              s.releases.listBundles(project, release.id, cursor, 1),
+            )
+          ).map((b) => b.id),
+        ),
+      ).toEqual(new Set([bundle.id, extraBundle.id]));
+      await s.releases.deleteBundle(project, extraBundle.id);
       expect(await s.releases.get(project, release.id)).toEqual(release);
+      expect(
+        await s.releases.getReleaseByVersion(project, release.version),
+      ).toEqual(release);
+      expect(
+        await s.releases.getReleaseByVersion(otherProject, release.version),
+      ).toBeNull();
+      expect(
+        (await s.releases.listBundles(project, release.id, undefined, 1)).items,
+      ).toEqual([bundle]);
+      expect(
+        (await s.releases.listBundles(otherProject, release.id, undefined, 1))
+          .items,
+      ).toEqual([]);
       expect(await s.releases.findBundleByDebugId(project, "debug")).toEqual(
         bundle,
       );
       expect(
         await s.releases.findBundleByDebugId(otherProject, "debug"),
       ).toBeNull();
+      await s.releases.deleteBundle(otherProject, bundle.id);
+      expect(await s.releases.findBundleByDebugId(project, "debug")).toEqual(
+        bundle,
+      );
+      await s.releases.deleteBundle(project, bundle.id);
+      await s.releases.deleteBundle(project, bundle.id);
+      expect(await s.releases.findBundleByDebugId(project, "debug")).toBeNull();
     });
   });
 }
 
 export interface QueueContractOptions extends ContractOptions {
-  /** Drive a platform event through push.toBatch, handler, and push.toResponse. */
+  /** Deliver a platform event to push.handle; the source applies acknowledgements. */
   deliverPush?: (
     queue: Queue,
     handler: (
@@ -759,6 +988,16 @@ export function blobStoreContract(
       if (!body) throw new Error("Missing blob");
       expect(await bytes(body)).toEqual(replacement);
     });
+    it("reads byte ranges", async () => {
+      const b = await factory();
+      await b.put("range", new TextEncoder().encode("abcdef"));
+      const part = await b.get("range", { range: { offset: 2, length: 3 } });
+      if (!part) throw new Error("Missing blob");
+      expect(new TextDecoder().decode(await bytes(part))).toBe("cde");
+      const tail = await b.get("range", { range: { offset: 4 } });
+      if (!tail) throw new Error("Missing blob");
+      expect(new TextDecoder().decode(await bytes(tail))).toBe("ef");
+    });
     it("lists a prefix across all pages without duplicates", async () => {
       const b = await factory();
       for (const key of ["p/3", "p/1", "p/2", "p/4", "other"])
@@ -786,6 +1025,15 @@ export function kvContract(
       await kv.delete("k");
       await kv.delete("k");
       expect(await kv.get("k")).toBeNull();
+    });
+    it("atomically increments in parallel", async () => {
+      const kv = await factory();
+      const results = await Promise.all(
+        Array.from({ length: 50 }, () => kv.increment("counter", 1)),
+      );
+      expect(new Set(results).size).toBe(50);
+      expect(await kv.get("counter")).toBe("50");
+      expect(await kv.increment("counter", -2)).toBe(48);
     });
     it("expires values at TTL without affecting permanent values", async () => {
       if (options.skip?.ttl) return;
@@ -836,17 +1084,28 @@ export function archiveStoreContract(
       const a = await setup();
       expect(await a.hasBatch("unknown", batch.dayRange)).toBe(false);
       expect(await a.hasBatch(batch.batchId, batch.dayRange)).toBe(false);
-      const first = await a.append(batch);
+      const [first, concurrent] = await Promise.all([
+        a.append(batch),
+        a.append(batch),
+      ]);
+      expect(concurrent).toEqual(first);
       expect(first.rowCount).toBe(4);
       expect(await a.hasBatch(batch.batchId, batch.dayRange)).toBe(true);
       expect(await a.append(batch)).toEqual(first);
       expect(
         (
-          await collect((cursor) =>
-            a.query({ projectId: project, limit: 2, cursor }),
+          await collectEvents((after) =>
+            a.query({ projectId: project, limit: 2, after, order: "asc" }),
           )
         ).map((e) => e.eventId),
       ).toEqual(["a", "b", "c", "d"]);
+      expect(
+        (
+          await collectEvents((after) =>
+            a.query({ projectId: project, after, limit: 2 }),
+          )
+        ).map((e) => e.eventId),
+      ).toEqual(["d", "c", "b", "a"]);
     });
     it("filters issue and half-open time ranges and isolates projects", async () => {
       const a = await setup();
@@ -860,14 +1119,15 @@ export function archiveStoreContract(
         event("foreign", 2, { projectId: otherProject }),
       ]);
       await a.append(otherBatch);
-      const rows = await collect((cursor) =>
+      const rows = await collectEvents((after) =>
         a.query({
           projectId: project,
           issueId,
           from: t(2),
           to: t(4),
           limit: 1,
-          cursor,
+          after,
+          order: "asc",
         }),
       );
       expect(rows.map((e) => e.eventId)).toEqual(["a", "b"]);
@@ -899,8 +1159,8 @@ export function archiveStoreContract(
         expect(await a.getEvent(project, "a" as EventId)).toBeNull();
         expect(
           (
-            await collect((cursor) =>
-              a.query({ projectId: project, cursor, limit: 1 }),
+            await collectEvents((after) =>
+              a.query({ projectId: project, after, limit: 1, order: "asc" }),
             )
           ).map((e) => e.eventId),
         ).toEqual(["c", "d"]);
@@ -911,8 +1171,8 @@ export function archiveStoreContract(
         await a.expireSnapshots(t(5));
         expect(
           (
-            await collect((cursor) =>
-              a.query({ projectId: project, cursor, limit: 1 }),
+            await collectEvents((after) =>
+              a.query({ projectId: project, after, limit: 1, order: "asc" }),
             )
           ).map((e) => e.eventId),
         ).toEqual(["c", "d"]);

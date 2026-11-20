@@ -108,3 +108,30 @@ briefly placed in `docs/`; that name stays free for a user-facing docs site.) Sk
 - Repeated archive append of the same batch ID is now required to be safe. Archive suite hooks
   remain responsible for staging each adapter's native batch format; the fake preserves the
   original append result after a physical rewrite.
+
+## 2026-11-21 — M0d: atomic ingestion and M0 review fixes
+
+- Ingest is one atomic `recordEvent` operation; deterministic issue IDs are supplied by core,
+  and duplicate events do not bump or reopen issues. Concrete adapters must implement the
+  operation using their native transaction or atomic batch. The M1 hash and numeric project ID
+  allocation remain future work.
+- Event queries use exclusive `(receivedAt, eventId)` keysets and descending order by default.
+  The same key can resume both active and archive sources after a partial merge; the contract
+  covers interleaved and duplicate events. Erasure is bounded, returns per-issue counts and
+  overflow keys, and issue repair preserves the old pointer when no active event remains.
+- Push sources now own platform-specific async acknowledgement; KV increments and blob byte
+  ranges are port operations. Issue tag filtering is deferred, and non-lastSeen sorts reject
+  lastSeen ranges unless explicitly supported. Canonical timestamps are restricted to four-digit
+  years to preserve chronological string ordering; `toTimestamp` rejects extended-year dates.
+- Stack validation now rejects malformed structures, refs, bindings, capabilities and triggers,
+  catches schema failures, and resolves parsed adapter configurations. Existing bindings can
+  substitute a trigger output only when the descriptor maps that output to a supplied binding.
+  Grants have no source field in the current model; the broader infra redesign is deferred to M2a.
+- Core and HTTP typecheck against WebWorker libraries without automatic Node types. Layering
+  uses a bare-import allowlist and checks adapter and platform boundaries. Tests use development
+  export conditions to load source; production builds use `dist`. A no-dist copy passed typecheck
+  and tests using copied installed dependencies; a fresh offline install was blocked by missing
+  cached tarballs, so registry-backed installation still needs verification in a networked clone.
+- The in-memory active store also runs the shared contracts with the TTL strategy and a fake
+  clock, so event expiry is exercised. Vitest excludes local agent workspaces and pnpm stores
+  to avoid discovering temporary verification copies as additional test suites.
