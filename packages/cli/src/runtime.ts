@@ -2,9 +2,11 @@ import {
   bindingsForRoles,
   type FunctionRole,
   isEnvRef,
+  isInfraRef,
   isOutputRef,
   isStackRef,
   isVariableRef,
+  output,
   type StackConfig,
   selections,
 } from "@errtraq/core";
@@ -99,7 +101,34 @@ export function resolveRuntimeValue(
       throw new Error(
         `Output ${target}.${value.name} is not available in local runtime`,
       );
-    return resolveRuntimeValue(replacement, target, stack, environment);
+    if (isOutputRef(replacement))
+      return resolveRuntimeValue(
+        output(
+          replacement.selection ?? target,
+          replacement.name,
+          ...(replacement.path ?? []),
+          ...(value.path ?? []),
+        ),
+        target,
+        stack,
+        environment,
+      );
+    let result: unknown = replacement;
+    for (const key of value.path ?? []) {
+      if (isInfraRef(result))
+        result = resolveRuntimeValue(result, target, stack, environment);
+      if (
+        !result ||
+        typeof result !== "object" ||
+        Array.isArray(result) ||
+        !Object.hasOwn(result, key)
+      )
+        throw new Error(
+          `Output ${target}.${value.name}.${key} is not available in local runtime`,
+        );
+      result = Object.getOwnPropertyDescriptor(result, key)?.value;
+    }
+    return resolveRuntimeValue(result, target, stack, environment);
   }
   return Object.fromEntries(
     Object.entries(value).map(([key, item]) => [

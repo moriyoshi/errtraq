@@ -393,3 +393,7 @@ Physical function ids are the split role name or `shared`, ordered by the core r
 ## 2026-11-21 — M2a2 step 3 core-owned access
 
 Port requirements and topic routes now belong to core; adapters identify resource purposes, supported capabilities, policy outputs and capability-specific bindings without naming roles. The archive feature activates M4 staging and erasure requirements for the queue consumer and cron roles. The archival worker is a queue consumer; cron also needs staging access when erasure resumes an in-flight archive batch. A capability still has one policy output for all purposes, so separate per-resource least-privilege policies remain A2 work. Standalone startup also recovers staged envelopes by listing and re-enqueueing them; it runs in the single local process and does not introduce cloud role grants.
+
+## 2026-11-21 — M2a2 step 4 keyed outputs
+
+Module outputs can be nested maps, and capability policies are selected by both capability and resource purpose. Bring-your-own resources require only reachable output leaves; unused outputs and keys can be omitted. A keyed lookup into an existing map must be statically inspectable so validation can prove the required key exists; an opaque variable for the entire map cannot establish that guarantee. Cron retains primary blob read and delete for erasure as well as its distinct staging policies, as required by the erasure design.

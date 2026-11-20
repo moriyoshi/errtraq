@@ -4,6 +4,8 @@ import {
   ENVIRONMENT_FEATURES,
   FUNCTION_ROLES,
   type InfraValue,
+  isOutputRef,
+  type OutputType,
   type PortKind,
   REF,
 } from "./stack-model.js";
@@ -11,6 +13,12 @@ import {
 const role = z.enum(FUNCTION_ROLES);
 const name = z.string().regex(/^[a-z][a-z0-9_-]*$/);
 const refName = z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/);
+const outputType: z.ZodType<OutputType> = z.lazy(() =>
+  z.union([
+    z.enum(["string", "string[]", "json", "secret-ref"]),
+    z.strictObject({ map: outputType }),
+  ]),
+);
 const infraValue: z.ZodType<InfraValue> = z.lazy(() =>
   z.union([
     z.custom<InfraValue>(
@@ -58,10 +66,7 @@ const descriptorSchema = z.strictObject({
     provider: name,
     component: name,
     version: z.string().min(1).optional(),
-    outputs: z.record(
-      refName,
-      z.enum(["string", "string[]", "json", "secret-ref"]),
-    ),
+    outputs: z.record(refName, outputType),
   }),
   inputs: z.custom<(config: unknown) => Record<string, InfraValue>>(
     (v) => typeof v === "function",
@@ -76,7 +81,10 @@ const descriptorSchema = z.strictObject({
       platformType: z.string().min(1).optional(),
     }),
   ),
-  capabilities: z.record(name, z.union([refName, z.null()])),
+  capabilities: z.record(
+    name,
+    z.record(name, z.union([z.custom(isOutputRef), z.null()])),
+  ),
   resources: z.record(name, infraValue),
   topics: z
     .strictObject({
@@ -84,7 +92,7 @@ const descriptorSchema = z.strictObject({
       routes: z.record(
         z.string(),
         z.strictObject({
-          physical: z.string().min(1),
+          physical: name,
           producerBinding: refName.optional(),
         }),
       ),

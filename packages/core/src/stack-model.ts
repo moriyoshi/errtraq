@@ -75,6 +75,7 @@ export interface OutputRef {
   readonly [REF]: "output";
   readonly selection?: string;
   readonly name: string;
+  readonly path?: readonly string[];
 }
 export interface StackRef {
   readonly [REF]: "stack";
@@ -126,11 +127,20 @@ export function configReference<T extends z.ZodType>(schema: T) {
     schema,
   ]);
 }
-export const out = (name: string): OutputRef => ({ [REF]: "output", name });
-export const output = (selection: string, name: string): OutputRef => ({
+export const out = (name: string, ...path: string[]): OutputRef => ({
+  [REF]: "output",
+  name,
+  ...(path.length ? { path } : {}),
+});
+export const output = (
+  selection: string,
+  name: string,
+  ...path: string[]
+): OutputRef => ({
   [REF]: "output",
   selection,
   name,
+  ...(path.length ? { path } : {}),
 });
 export const stackValue = (
   name: StackRef["name"],
@@ -170,7 +180,12 @@ export type InfraValue =
   | VariableRef
   | InfraValue[]
   | { [key: string]: InfraValue };
-export type OutputType = "string" | "string[]" | "json" | "secret-ref";
+export type OutputType =
+  | "string"
+  | "string[]"
+  | "json"
+  | "secret-ref"
+  | { map: OutputType };
 export interface ModuleDescriptor {
   provider: string;
   component: string;
@@ -191,7 +206,7 @@ export interface DerivedGrant {
   selection: string;
   capability: string;
   purpose: string;
-  policyOutput?: string;
+  policyOutput?: OutputRef;
 }
 export interface ScopedBinding {
   functionId: string;
@@ -211,7 +226,7 @@ export interface InfraDescriptor<C> {
   inputs(config: C): Record<string, InfraValue>;
   bindings: Binding[];
   /** A null policy means the capability needs no IAM policy on this adapter. */
-  capabilities: Record<string, string | null>;
+  capabilities: Record<string, Record<string, OutputRef | null>>;
   resources: Record<string, InfraValue>;
   topics?: TopicMapping;
 }

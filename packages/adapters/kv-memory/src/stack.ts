@@ -19,7 +19,7 @@ export const infra: InfraDescriptor<KvConfig> = {
   module: { provider: "local", component: "kv-memory", outputs: {} },
   inputs: () => ({}),
   bindings: [],
-  capabilities: { read: null, write: null },
+  capabilities: { read: { primary: null }, write: { primary: null } },
   resources: { primary: "local" },
 };
 export function memoryKv(config: KvConfig = {}): AdapterSelection<KvConfig> {

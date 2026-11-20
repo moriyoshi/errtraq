@@ -80,12 +80,21 @@ export async function assertStackHelper(
       bindings: [],
       capabilities:
         kind === "store"
-          ? { read: null, write: null, delete: null }
+          ? {
+              read: { primary: null },
+              write: { primary: null },
+              delete: { primary: null },
+            }
           : kind === "blob"
-            ? { read: null, write: null, delete: null, list: null }
+            ? {
+                read: { primary: null, staging: null },
+                write: { primary: null, staging: null },
+                delete: { primary: null, staging: null },
+                list: { primary: null, staging: null },
+              }
             : kind === "kv"
-              ? { read: null, write: null }
-              : { produce: null, consume: null },
+              ? { read: { primary: null }, write: { primary: null } }
+              : { produce: { memory: null }, consume: { memory: null } },
       resources:
         kind === "queue"
           ? { memory: "memory" }

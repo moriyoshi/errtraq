@@ -44,6 +44,34 @@ it("resolves existing outputs, scoped environments and typed Terraform variables
   ).toThrow("Invalid stack variable LIST");
 });
 
+it("resolves only the requested key of an existing output map", () => {
+  const stack = {
+    ...local,
+    blob: {
+      ...local.blob,
+      existing: {
+        buckets: { primary: { url: env("PRIMARY") }, unused: env("UNUSED") },
+      },
+    },
+  };
+  expect(
+    resolveRuntimeValue(
+      output("blob", "buckets", "primary", "url"),
+      "store",
+      stack,
+      { PRIMARY: "ok" },
+    ),
+  ).toBe("ok");
+  expect(() =>
+    resolveRuntimeValue(
+      output("blob", "buckets", "missing"),
+      "store",
+      stack,
+      {},
+    ),
+  ).toThrow("not available");
+});
+
 it("rejects local adapters on ephemeral or multi-function compute", () => {
   expect(validateStack(local)).toEqual([]);
   const lambda = {

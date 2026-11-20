@@ -28,7 +28,7 @@ export const infra: InfraDescriptor<QueueConfig> = {
   module: { provider: "local", component: "queue-memory", outputs: {} },
   inputs: () => ({}),
   bindings: [],
-  capabilities: { produce: null, consume: null },
+  capabilities: { produce: { memory: null }, consume: { memory: null } },
   resources: { memory: "memory" },
   topics: {
     mode: "shared",

@@ -20,6 +20,7 @@ import {
   isStackRef,
   isVariableRef,
   type OutputType,
+  output,
   type PhysicalFunction,
   type PlatformConfig,
   REF,
@@ -39,6 +40,17 @@ import {
   requiredCapabilities,
   rootSchema,
 } from "./stack-schema.js";
+
+function outputTypeAt(
+  type: OutputType | undefined,
+  path: readonly string[] = [],
+): OutputType | undefined {
+  for (const _key of path) {
+    if (!type || typeof type !== "object") return undefined;
+    type = type.map;
+  }
+  return type;
+}
 
 interface AccessRequirement {
   selection: string;
@@ -104,7 +116,10 @@ function deriveAccessFor(
             g.purpose === row.purpose,
         )
       ) {
-        const policyOutput = ownValue(sel.infra.capabilities, row.capability);
+        const policyOutput = ownValue(
+          ownValue(sel.infra.capabilities, row.capability),
+          row.purpose,
+        );
         grants.push({
           functionId: fn.id,
           selection: row.selection,
@@ -353,6 +368,8 @@ function inspect(input: unknown): {
     allowRuntime: boolean,
     seen = new Set<object>(),
     configMode = false,
+    reachable = true,
+    seenOutputs = new Set<string>(),
   ) => {
     if (
       value === null ||
@@ -368,7 +385,16 @@ function inspect(input: unknown): {
     seen.add(value);
     if (Array.isArray(value)) {
       value.forEach((item, i) => {
-        checkValue(item, owner, `${path}.${i}`, allowRuntime, seen, configMode);
+        checkValue(
+          item,
+          owner,
+          `${path}.${i}`,
+          allowRuntime,
+          seen,
+          configMode,
+          reachable,
+          seenOutputs,
+        );
       });
       seen.delete(value);
       return;
@@ -396,10 +422,19 @@ function inspect(input: unknown): {
         );
       if (
         isOutputRef(value) &&
-        keys.every((k) => ["name", "selection"].includes(k)) &&
+        keys.every((k) => ["name", "selection", "path"].includes(k)) &&
         typeof value.name === "string" &&
         value.name &&
-        (value.selection === undefined || typeof value.selection === "string")
+        (value.selection === undefined ||
+          typeof value.selection === "string") &&
+        (value.path === undefined ||
+          (Array.isArray(value.path) &&
+            value.path.length > 0 &&
+            value.path.every(
+              (key) =>
+                typeof key === "string" &&
+                /^[A-Za-z_][A-Za-z0-9_-]*$/.test(key),
+            )))
       ) {
         const target = value.selection ?? owner;
         const selected = all.get(target);
@@ -407,10 +442,74 @@ function inspect(input: unknown): {
         else if (!Object.hasOwn(selected.infra.module.outputs, value.name))
           fail(path, `Unknown output ${target}.${value.name}`);
         else if (
-          selected.existing &&
-          !Object.hasOwn(selected.existing, value.name)
+          !outputTypeAt(
+            ownValue(selected.infra.module.outputs, value.name),
+            value.path,
+          )
         )
-          fail(path, `Missing existing output ${target}.${value.name}`);
+          fail(path, `Invalid key path in output ${target}.${value.name}`);
+        else if (reachable && selected.existing) {
+          const label = [target, value.name, ...(value.path ?? [])].join(".");
+          if (seenOutputs.has(label)) {
+            fail(path, `Existing output cycle at ${label}`);
+            seen.delete(value);
+            return;
+          }
+          seenOutputs.add(label);
+          let replacement: unknown = ownValue(selected.existing, value.name);
+          if (replacement === undefined)
+            fail(path, `Missing existing output ${label} needed by ${path}`);
+          else if (isOutputRef(replacement))
+            checkValue(
+              output(
+                replacement.selection ?? target,
+                replacement.name,
+                ...(replacement.path ?? []),
+                ...(value.path ?? []),
+              ),
+              target,
+              `${path} -> ${label}`,
+              false,
+              seen,
+              false,
+              true,
+              seenOutputs,
+            );
+          else {
+            for (const key of value.path ?? []) {
+              if (
+                !replacement ||
+                typeof replacement !== "object" ||
+                Array.isArray(replacement) ||
+                REF in replacement ||
+                !Object.hasOwn(replacement, key)
+              ) {
+                fail(
+                  path,
+                  `Missing existing output key ${label} needed by ${path}`,
+                );
+                replacement = undefined;
+                break;
+              }
+              replacement = Object.getOwnPropertyDescriptor(
+                replacement,
+                key,
+              )?.value;
+            }
+            if (replacement !== undefined)
+              checkValue(
+                replacement,
+                target,
+                `${path} -> ${label}`,
+                false,
+                seen,
+                false,
+                true,
+                seenOutputs,
+              );
+          }
+          seenOutputs.delete(label);
+        }
         if (
           target !== owner &&
           selected &&
@@ -471,7 +570,16 @@ function inspect(input: unknown): {
       } else fail(path, "Invalid reference");
     } else {
       for (const [k, v] of Object.entries(value))
-        checkValue(v, owner, `${path}.${k}`, allowRuntime, seen, configMode);
+        checkValue(
+          v,
+          owner,
+          `${path}.${k}`,
+          allowRuntime,
+          seen,
+          configMode,
+          reachable,
+          seenOutputs,
+        );
     }
     seen.delete(value);
   };
@@ -504,11 +612,28 @@ function inspect(input: unknown): {
     owner: string,
   ): boolean {
     if (isOutputRef(value)) {
-      const actual = ownValue(
-        all.get(value.selection ?? owner)?.infra.module.outputs,
-        value.name,
+      const actual = outputTypeAt(
+        ownValue(
+          all.get(value.selection ?? owner)?.infra.module.outputs,
+          value.name,
+        ),
+        value.path,
       );
-      return !actual || actual === expected;
+      return !actual || JSON.stringify(actual) === JSON.stringify(expected);
+    }
+    if (typeof expected === "object") {
+      if (isVariableRef(value))
+        return ownValue(stack.variables, value.name)?.type === "json";
+      if (
+        !value ||
+        typeof value !== "object" ||
+        Array.isArray(value) ||
+        isInfraRef(value)
+      )
+        return false;
+      return Object.values(value).every((item) =>
+        existingTypeCompatible(item, expected.map, owner),
+      );
     }
     if (isStackRef(value))
       return value.name === "tags"
@@ -592,13 +717,18 @@ function inspect(input: unknown): {
       fail(`${path}.infra.inputs`, String(error));
     }
     if (sel.existing) {
-      for (const name of Object.keys(sel.infra.module.outputs))
-        if (!Object.hasOwn(sel.existing, name))
-          fail(`${path}.existing.${name}`, "Missing existing output");
       for (const [name, val] of Object.entries(sel.existing)) {
         if (!Object.hasOwn(sel.infra.module.outputs, name))
           fail(`${path}.existing.${name}`, "Unknown existing output");
-        checkValue(val, path, `${path}.existing.${name}`, false);
+        checkValue(
+          val,
+          path,
+          `${path}.existing.${name}`,
+          false,
+          new Set(),
+          false,
+          false,
+        );
         const expected = ownValue(sel.infra.module.outputs, name);
         if (expected && !existingTypeCompatible(val, expected, path))
           fail(`${path}.existing.${name}`, `Expected ${expected} output value`);
@@ -620,7 +750,15 @@ function inspect(input: unknown): {
         fail(loc, "Platform binding requires a type");
       if (binding.kind !== "platform" && binding.platformType)
         fail(loc, "Unexpected platform binding type");
-      checkValue(binding.value, path, `${loc}.value`, true);
+      checkValue(
+        binding.value,
+        path,
+        `${loc}.value`,
+        true,
+        new Set(),
+        false,
+        false,
+      );
       if (binding.kind === "env") {
         const value = binding.value;
         const scalar =
@@ -630,9 +768,12 @@ function inspect(input: unknown): {
             ownValue(stack.variables, value.name)?.type === "string") ||
           (isStackRef(value) && value.name !== "tags") ||
           (isOutputRef(value) &&
-            ownValue(
-              all.get(value.selection ?? path)?.infra.module.outputs,
-              value.name,
+            outputTypeAt(
+              ownValue(
+                all.get(value.selection ?? path)?.infra.module.outputs,
+                value.name,
+              ),
+              value.path,
             ) === "string");
         if (!scalar) fail(loc, "Environment binding requires a scalar string");
       }
@@ -642,9 +783,9 @@ function inspect(input: unknown): {
           fail(loc, "Secret binding must be a reference");
         else if (isOutputRef(value)) {
           const target = value.selection ?? path;
-          const outputType = ownValue(
-            all.get(target)?.infra.module.outputs,
-            value.name,
+          const outputType = outputTypeAt(
+            ownValue(all.get(target)?.infra.module.outputs, value.name),
+            value.path,
           );
           if (outputType && outputType !== "secret-ref")
             fail(loc, "Secret output must be declared as secret-ref");
@@ -663,18 +804,37 @@ function inspect(input: unknown): {
           fail(loc, `Unknown binding capability ${capability}`);
     }
     for (const [purpose, resource] of Object.entries(sel.infra.resources))
-      checkValue(resource, path, `${path}.infra.resources.${purpose}`, false);
-    for (const [capability, policyOutput] of Object.entries(
+      checkValue(
+        resource,
+        path,
+        `${path}.infra.resources.${purpose}`,
+        false,
+        new Set(),
+        false,
+        false,
+      );
+    for (const [capability, policies] of Object.entries(
       sel.infra.capabilities,
     )) {
-      if (
-        policyOutput !== null &&
-        ownValue(sel.infra.module.outputs, policyOutput) !== "json"
-      )
-        fail(
-          `${path}.infra.capabilities.${capability}`,
-          "Capability requires a declared JSON policy output",
-        );
+      for (const [purpose, policy] of Object.entries(policies)) {
+        const loc = `${path}.infra.capabilities.${capability}.${purpose}`;
+        if (!Object.hasOwn(sel.infra.resources, purpose))
+          fail(loc, "Unknown policy resource purpose");
+        if (policy) {
+          checkValue(policy, path, loc, false, new Set(), false, false);
+          if (
+            (policy.selection ?? path) !== path ||
+            outputTypeAt(
+              ownValue(sel.infra.module.outputs, policy.name),
+              policy.path,
+            ) !== "json"
+          )
+            fail(
+              loc,
+              "Capability requires a declared JSON policy output from its own module",
+            );
+        }
+      }
     }
   }
   for (const row of accessRequirements(stack, functions.roles)) {
@@ -687,8 +847,21 @@ function inspect(input: unknown): {
         `Role ${row.role} requires ${row.selection} capability ${row.capability}`,
       );
     else if (
+      !Object.hasOwn(
+        ownValue(sel.infra.capabilities, row.capability) ?? {},
+        row.purpose,
+      )
+    )
+      fail(
+        `${loc}.capabilities`,
+        `Role ${row.role} requires ${row.selection} capability ${row.capability} for ${row.purpose}`,
+      );
+    else if (
       platform.authorization === "iam" &&
-      ownValue(sel.infra.capabilities, row.capability) === null
+      ownValue(
+        ownValue(sel.infra.capabilities, row.capability),
+        row.purpose,
+      ) === null
     )
       fail(
         `${loc}.capabilities`,
@@ -699,8 +872,33 @@ function inspect(input: unknown): {
         `${loc}.resources`,
         `Role ${row.role} requires ${row.selection} resource ${row.purpose}`,
       );
+    const resource = ownValue(sel.infra.resources, row.purpose);
+    if (resource !== undefined)
+      checkValue(
+        resource,
+        row.selection,
+        `${loc}.resources.${row.purpose} (role ${row.role})`,
+        false,
+      );
+    const policy = ownValue(
+      ownValue(sel.infra.capabilities, row.capability),
+      row.purpose,
+    );
+    if (platform.authorization === "iam" && policy)
+      checkValue(
+        policy,
+        row.selection,
+        `${loc}.capabilities.${row.capability}.${row.purpose} (role ${row.role})`,
+        false,
+      );
   }
   for (const scoped of deriveAccessFor(stack, groups).bindings) {
+    checkValue(
+      scoped.binding.value,
+      scoped.selection,
+      `${scoped.selection}.infra.bindings.${scoped.binding.name} (function ${scoped.functionId})`,
+      true,
+    );
     const key = `${scoped.functionId}:${scoped.binding.name}`;
     const previous = names.get(key);
     const loc = `${scoped.selection}.infra.bindings`;

@@ -70,20 +70,34 @@ const selection = (kind: PortKind): AdapterSelection => ({
         : [],
     capabilities:
       kind === "queue"
-        ? { produce: "policy", consume: "policy" }
+        ? {
+            produce: { shared: out("policy") },
+            consume: { shared: out("policy") },
+          }
         : kind === "store"
-          ? { read: "policy", write: "policy", delete: "policy" }
+          ? {
+              read: { primary: out("policy") },
+              write: { primary: out("policy") },
+              delete: { primary: out("policy") },
+            }
           : kind === "blob"
-            ? {
-                read: "policy",
-                write: "policy",
-                delete: "policy",
-                list: "policy",
-              }
+            ? Object.fromEntries(
+                ["read", "write", "delete", "list"].map((capability) => [
+                  capability,
+                  { primary: out("policy"), staging: out("policy") },
+                ]),
+              )
             : kind === "kv"
-              ? { read: "policy", write: "policy" }
+              ? {
+                  read: { primary: out("policy") },
+                  write: { primary: out("policy") },
+                }
               : kind === "archive"
-                ? { read: "policy", write: "policy", delete: "policy" }
+                ? {
+                    read: { primary: out("policy") },
+                    write: { primary: out("policy") },
+                    delete: { primary: out("policy") },
+                  }
                 : {},
     resources:
       kind === "queue"
@@ -147,7 +161,179 @@ function topics(v: StackConfig) {
   if (!value) throw new Error("Missing topic mapping");
   return value;
 }
+function keyedQueue(mode: "shared" | "per-topic"): StackConfig {
+  const v = stack();
+  v.archive = selection("archive");
+  v.archive.manifest.capabilities = { rowDelete: "copy-on-write" };
+  const keys =
+    mode === "shared" ? ["shared"] : ["events", "archive", "notifications"];
+  const physical = mode === "shared" ? ["shared", "shared", "shared"] : keys;
+  const [events, archive, notifications] = physical;
+  if (!events || !archive || !notifications) throw new Error("Invalid fixture");
+  v.queue.infra.module.outputs = {
+    queues: { map: { map: "string" } },
+    policies: { map: { map: "json" } },
+    unused: "string",
+  };
+  v.queue.infra.resources = Object.fromEntries(
+    keys.map((key) => [key, out("queues", key, "arn")]),
+  );
+  v.queue.infra.capabilities = {
+    produce: Object.fromEntries(
+      keys.map((key) => [key, out("policies", "produce", key)]),
+    ),
+    consume: Object.fromEntries(
+      keys.map((key) => [key, out("policies", "consume", key)]),
+    ),
+  };
+  v.queue.infra.bindings = keys.map((key) => ({
+    name: `Q_${key.toUpperCase()}`,
+    kind: "env",
+    purpose: key,
+    capabilities: ["produce"],
+    value: out("queues", key, "url"),
+  }));
+  v.queue.infra.topics = {
+    mode,
+    routes: {
+      ingest: {
+        physical: events,
+        producerBinding: `Q_${events.toUpperCase()}`,
+      },
+      "archive.project": {
+        physical: archive,
+        producerBinding: `Q_${archive.toUpperCase()}`,
+      },
+      notifications: {
+        physical: notifications,
+        producerBinding: `Q_${notifications.toUpperCase()}`,
+      },
+    },
+  };
+  return v;
+}
 describe("infrastructure model", () => {
+  it("derives per-resource queue policies and triggers in per-topic and shared modes", () => {
+    const v = keyedQueue("per-topic");
+    expect(validateStack(v)).toEqual([]);
+    expect(deriveTriggers(v).filter((t) => t.kind === "queue")).toHaveLength(3);
+    const grants = deriveAccess(v).grants.filter(
+      (g) => g.selection === "queue",
+    );
+    expect(
+      grants.filter(
+        (g) => g.functionId === "ingest" && g.capability === "produce",
+      ),
+    ).toEqual([
+      {
+        functionId: "ingest",
+        selection: "queue",
+        capability: "produce",
+        purpose: "events",
+        policyOutput: out("policies", "produce", "events"),
+      },
+    ]);
+    expect(
+      grants
+        .filter(
+          (g) => g.functionId === "consumer" && g.capability === "consume",
+        )
+        .map((g) => g.policyOutput),
+    ).toEqual([
+      out("policies", "consume", "events"),
+      out("policies", "consume", "archive"),
+      out("policies", "consume", "notifications"),
+    ]);
+    const shared = keyedQueue("shared");
+    expect(validateStack(shared)).toEqual([]);
+    expect(
+      deriveTriggers(shared).filter((t) => t.kind === "queue"),
+    ).toHaveLength(1);
+  });
+  it("uses the staging policy for cron staging writes, preserving primary erasure access", () => {
+    const v = keyedQueue("shared");
+    v.blob.infra.module.outputs.policies = { map: { map: "json" } };
+    for (const [capability, policies] of Object.entries(
+      v.blob.infra.capabilities,
+    )) {
+      policies.primary = out("policies", capability, "primary");
+      policies.staging = out("policies", capability, "staging");
+    }
+    const grants = deriveAccess(v).grants.filter(
+      (g) => g.selection === "blob" && g.functionId === "cron",
+    );
+    expect(
+      grants.filter((g) => g.capability === "write").map((g) => g.policyOutput),
+    ).toEqual([out("policies", "write", "staging")]);
+    expect(
+      grants.some(
+        (g) =>
+          g.capability === "delete" &&
+          g.purpose === "primary" &&
+          JSON.stringify(g.policyOutput?.path) ===
+            JSON.stringify(["delete", "primary"]),
+      ),
+    ).toBe(true);
+  });
+  it("requires only reachable existing outputs and map keys, naming the requesting role", () => {
+    const v = keyedQueue("per-topic");
+    v.queue.existing = {
+      queues: {
+        events: { arn: "a", url: "a" },
+        archive: { arn: "b", url: "b" },
+        notifications: { arn: "c", url: "c" },
+      },
+      policies: {
+        produce: { events: "{}", archive: "{}", notifications: "{}" },
+        consume: { events: "{}", archive: "{}", notifications: "{}" },
+      },
+    };
+    expect(validateStack(v)).toEqual([]);
+    const completeQueues = v.queue.existing.queues;
+    v.queue.existing.queues = {
+      events: { arn: "a" },
+      archive: { arn: "b", url: "b" },
+      notifications: { arn: "c", url: "c" },
+    };
+    expect(
+      validateStack(v).some(
+        (issue) =>
+          issue.message.includes("queue.queues.events.url") &&
+          issue.message.includes("function ingest"),
+      ),
+    ).toBe(true);
+    v.queue.existing.queues = completeQueues;
+    v.queue.existing.policies = {
+      produce: { archive: "{}", notifications: "{}" },
+      consume: { events: "{}", archive: "{}", notifications: "{}" },
+    };
+    expect(
+      validateStack(v).some(
+        (issue) =>
+          issue.message.includes("queue.policies.produce.events") &&
+          issue.message.includes("role ingest"),
+      ),
+    ).toBe(true);
+  });
+  it("rejects invalid output key paths and non-identifier physical keys", () => {
+    const v = keyedQueue("per-topic");
+    v.queue.infra.resources.events = out("queues", "events", "arn", "extra");
+    expect(
+      validateStack(v).some((issue) =>
+        issue.message.includes("Invalid key path"),
+      ),
+    ).toBe(true);
+    v.queue.infra.resources.events = out("queues", "archive.project", "arn");
+    expect(
+      validateStack(v).some((issue) =>
+        issue.message.includes("Invalid reference"),
+      ),
+    ).toBe(true);
+    topics(v).routes.ingest.physical = "archive.project";
+    expect(
+      validateStack(v).some((issue) => issue.path.includes("physical")),
+    ).toBe(true);
+  });
   it("does not parse transformed configuration a second time", () => {
     const v = stack();
     v.blob.manifest.configSchema = z.object({
@@ -310,12 +496,14 @@ describe("infrastructure model", () => {
       validateStack(v).filter((x) => x.path.includes("inputs")),
     ).toHaveLength(2);
   });
-  it("substitutes existing outputs and requires every declared output", () => {
+  it("substitutes reachable existing outputs", () => {
     const v = stack();
     v.blob.existing = { arn: variable("SECRET") };
     v.store.infra.inputs = () => ({ bucket: output("blob", "arn") });
     expect(
-      validateStack(v).some((x) => x.path === "blob.existing.policy"),
+      validateStack(v).some((x) =>
+        x.message.includes("Missing existing output blob.policy"),
+      ),
     ).toBe(true);
     v.blob.existing.policy = generationEnv("EXTERNAL_POLICY");
     expect(validateStack(v)).toEqual([]);
@@ -432,14 +620,14 @@ describe("infrastructure model", () => {
         x.message.includes("Role ingest requires store capability read"),
       ),
     ).toBe(true);
-    v.store.infra.capabilities.read = "policy";
+    v.store.infra.capabilities.read = { primary: out("policy") };
     const access = deriveAccess(v);
     expect(access.grants).toContainEqual({
       functionId: "ingest",
       selection: "store",
       capability: "read",
       purpose: "primary",
-      policyOutput: "policy",
+      policyOutput: out("policy"),
     });
     expect(
       access.grants.some(
@@ -466,7 +654,7 @@ describe("infrastructure model", () => {
         selection: "blob",
         capability,
         purpose: "staging",
-        policyOutput: "policy",
+        policyOutput: out("policy"),
       });
     }
     expect(access.grants).toContainEqual({
@@ -474,7 +662,7 @@ describe("infrastructure model", () => {
       selection: "blob",
       capability: "write",
       purpose: "staging",
-      policyOutput: "policy",
+      policyOutput: out("policy"),
     });
     expect(
       bindingsForRoles(v, ["cron"]).some(
@@ -501,7 +689,7 @@ describe("infrastructure model", () => {
     );
     expect(grants).toHaveLength(1);
     expect(grants[0]?.functionId).toBe("shared");
-    v.store.infra.capabilities.read = null;
+    v.store.infra.capabilities.read = { primary: null };
     expect(
       validateStack(v).some((issue) =>
         issue.message.includes(
@@ -558,7 +746,7 @@ describe("infrastructure model", () => {
         i.message.includes("Role ingest requires queue capability produce"),
       ),
     ).toBe(true);
-    v.queue.infra.capabilities.produce = "policy";
+    v.queue.infra.capabilities.produce = { shared: out("policy") };
     delete v.queue.infra.capabilities.consume;
     expect(
       validateStack(v).some((i) =>
@@ -577,7 +765,7 @@ describe("infrastructure model", () => {
   });
   it("rejects undefined or non-JSON capability policies and self-output inputs", () => {
     const v = stack();
-    v.store.infra.capabilities = { read: "arn" };
+    v.store.infra.capabilities = { read: { primary: out("arn") } };
     v.store.infra.inputs = () => ({ self: out("arn") });
     expect(
       validateStack(v).some((issue) => issue.message.includes("JSON policy")),
@@ -600,6 +788,10 @@ describe("infrastructure model", () => {
     topics(n).routes.ingest.physical = "one";
     topics(n).routes["archive.project"].physical = "two";
     topics(n).routes.notifications.physical = "three";
+    n.queue.infra.capabilities = {
+      produce: { one: out("policy"), two: out("policy"), three: out("policy") },
+      consume: { one: out("policy"), two: out("policy"), three: out("policy") },
+    };
     n.queue.infra.resources = {
       one: out("arn"),
       two: out("arn"),
@@ -635,6 +827,18 @@ describe("infrastructure model", () => {
     topics(v).routes.notifications = {
       physical: "notifications",
       producerBinding: "NOTIFICATIONS",
+    };
+    v.queue.infra.capabilities = {
+      produce: {
+        events: out("policy"),
+        archive: out("policy"),
+        notifications: out("policy"),
+      },
+      consume: {
+        events: out("policy"),
+        archive: out("policy"),
+        notifications: out("policy"),
+      },
     };
     v.queue.infra.resources = {
       events: out("arn"),
@@ -801,7 +1005,10 @@ describe("infrastructure model", () => {
         value: out("arn"),
       },
     ];
-    v.queue.infra.capabilities = { produce: null, consume: null };
+    v.queue.infra.capabilities = {
+      produce: { shared: null },
+      consume: { shared: null },
+    };
     for (const route of Object.values(topics(v).routes))
       route.producerBinding = "QUEUE";
     expect(validateStack(v)).toEqual([]);
