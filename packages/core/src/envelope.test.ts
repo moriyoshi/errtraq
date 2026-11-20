@@ -47,4 +47,12 @@ describe("Sentry envelope parsing", () => {
     expect(parseDsnKey("Sentry sentry_key=header", "query")).toBe("query");
     expect(parseDsnKey("Bearer nope", null)).toBeNull();
   });
+  it("accepts CRLF blank lines between items", () => {
+    const parsed = parseEnvelope(
+      new TextEncoder().encode(
+        '{}\r\n{"type":"event"}\r\n{}\r\n\r\n{"type":"event"}\r\n{}\r\n',
+      ),
+    );
+    expect(parsed.items).toHaveLength(2);
+  });
 });

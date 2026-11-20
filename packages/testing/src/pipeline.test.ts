@@ -1,11 +1,22 @@
+import { readFile } from "node:fs/promises";
 import {
   type BatchHandler,
   bootstrapProject,
   ConsumerService,
   type Delivery,
+  type EventId,
+  generateApiToken,
+  generateEventId,
+  generatePublicKey,
+  groupEvent,
+  hashApiToken,
   IngestService,
   type Logger,
   type Message,
+  normalizeEvent,
+  parseEnvelope,
+  parseEventPayload,
+  WebCryptoIdGen,
 } from "@errtraq/core";
 import { createIngestApp } from "@errtraq/http";
 import { describe, expect, it, vi } from "vitest";
@@ -71,6 +82,7 @@ async function setup(
     queue: producer,
     kv,
     clock,
+    logger,
     rateLimit: options.rateLimit,
     maxBytes: options.maxBytes,
   });
@@ -148,7 +160,7 @@ describe("in-process ingest pipeline", () => {
       const replay: Delivery = {
         id: "replay",
         topic: "ingest",
-        attempt: 2,
+        attempt: 5,
         message: original,
       };
       c.clock.advance(8 * 24 * 3600 * 1000);
@@ -184,7 +196,7 @@ describe("in-process ingest pipeline", () => {
     const limited = await c.send(body(id(2), "b"));
     expect(limited.status).toBe(429);
     expect(limited.headers.get("retry-after")).toBe("60");
-    expect(limited.headers.get("x-sentry-rate-limits")).toContain("error");
+    expect(limited.headers.get("x-sentry-rate-limits")).toBe("60::project");
     const preflight = await c.app.request(
       `/api/${c.project.project.id}/envelope/`,
       { method: "OPTIONS" },
@@ -331,7 +343,7 @@ describe("in-process ingest pipeline", () => {
   it("rejects inconsistent envelope IDs and unsupported brotli", async () => {
     const c = await setup();
     const mismatch = `${JSON.stringify({ event_id: id(1) })}\n{"type":"event"}\n${JSON.stringify({ event_id: id(2), message: "x" })}\n`;
-    expect((await c.send(mismatch)).status).toBe(400);
+    expect((await c.send(mismatch)).status).toBe(200);
     try {
       new DecompressionStream("br" as CompressionFormat);
     } catch {
@@ -361,26 +373,17 @@ describe("in-process ingest pipeline", () => {
       );
     });
   });
-  it("retains staged data when queue publication succeeds but reports an error", async () => {
+  it("returns retryable failure and removes staged data on publication failure", async () => {
     const c = await setup();
-    const send = c.queue.producer.send.bind(c.queue.producer);
-    vi.spyOn(c.queue.producer, "send").mockImplementationOnce(
-      async (...args) => {
-        await send(...args);
-        throw new Error("ambiguous publish");
-      },
+    vi.spyOn(c.queue.producer, "send").mockRejectedValueOnce(
+      new Error("failure"),
     );
-    expect((await c.send(body(id(9), "ambiguous"))).status).toBe(500);
-    const claim = c.sent[0];
-    if (!claim) throw new Error("Missing claim");
-    await withConsumer(c.queue, c.consumer.handle, async () => {
-      await vi.waitFor(async () =>
-        expect(
-          await c.store.events.get(c.project.project.id, id(9) as never),
-        ).not.toBeNull(),
-      );
-    });
-    expect(c.sent).toHaveLength(1);
+    const response = await c.send(body(id(9), "failure"));
+    expect(response.status).toBe(503);
+    expect(response.headers.get("retry-after")).toBe("1");
+    expect(
+      (await c.blobs.list(`envelopes/${c.project.project.id}/`)).items,
+    ).toEqual([]);
   });
   it("allocates around existing project IDs after the KV counter resets", async () => {
     const c = await setup();
@@ -430,37 +433,17 @@ describe("in-process ingest pipeline", () => {
       });
     });
   });
-  it("drops unsupported-only envelopes and acknowledges later redelivery", async () => {
-    const c = await setup();
+  it("does not stage or rate-limit unsupported-only envelopes", async () => {
+    const c = await setup({ rateLimit: 1 });
     const payload = `${JSON.stringify({ event_id: id(14) })}\n{"type":"transaction"}\n{}\n`;
     expect((await c.send(payload)).status).toBe(200);
-    const message = c.sent[0];
-    if (!message) throw new Error("Missing claim");
-    const delivery: Delivery = {
-      id: "unsupported",
-      topic: "ingest",
-      attempt: 1,
-      message,
-    };
-    expect(await c.consumer.handle([delivery])).toEqual([
-      { deliveryId: "unsupported", action: "ack" },
-    ]);
-    expect(
-      (
-        await c.store.issues.list({
-          projectId: c.project.project.id,
-          sort: "count",
-        })
-      ).items,
-    ).toEqual([]);
-    c.clock.advance(8 * 24 * 3600 * 1000);
-    expect(await c.consumer.handle([delivery])).toEqual([
-      { deliveryId: "unsupported", action: "ack" },
-    ]);
+    expect(c.sent).toHaveLength(0);
     expect(c.logger.info).toHaveBeenCalledWith(
       "Dropped unsupported envelope items",
-      { count: 1 },
+      { types: { transaction: 1 } },
     );
+    expect((await c.blobs.list("envelopes/")).items).toEqual([]);
+    expect((await c.send(body(id(14), "event"))).status).toBe(200);
   });
   it("bounds decompressed input and reports corrupt compression", async () => {
     const c = await setup({ maxBytes: 128 });
@@ -547,5 +530,265 @@ describe("in-process ingest pipeline", () => {
       revokedAt: c.clock.now(),
     });
     expect((await c.send(body(id(16), "x"))).status).toBe(403);
+  });
+  it("runs captured real SDK envelopes through parser, normalizer and pipeline", async () => {
+    const c = await setup();
+    const fixtures = [
+      "sdk-2.envelope",
+      "sdk-3.envelope",
+      "sdk-4.envelope",
+      "sdk-5.envelope",
+      "sdk-6.envelope",
+      "mixed.envelope",
+      "additional-0.envelope",
+    ];
+    for (const name of fixtures) {
+      const bytes = await readFile(
+        new URL(`../fixtures/sentry/${name}`, import.meta.url),
+      );
+      const parsed = parseEnvelope(bytes);
+      for (const item of parsed.items.filter(
+        (item) => item.headers.type === "event",
+      )) {
+        const payload = parseEventPayload(item.payload);
+        expect(
+          (
+            await normalizeEvent(
+              c.project.project.id,
+              id(100) as EventId,
+              c.clock.now(),
+              payload,
+            )
+          ).event.payload,
+        ).toEqual(payload);
+      }
+      const response = await c.app.request(
+        `/api/${c.project.project.id}/envelope?sentry_key=${c.project.key.publicKey}`,
+        { method: "POST", body: bytes },
+      );
+      expect(response.status, name).toBe(200);
+    }
+    await withConsumer(c.queue, c.consumer.handle, async () => {
+      await vi.waitFor(async () =>
+        expect(
+          (
+            await c.store.issues.list({
+              projectId: c.project.project.id,
+              sort: "count",
+            })
+          ).items.length,
+        ).toBeGreaterThanOrEqual(4),
+      );
+    });
+    const compressed = await readFile(
+      new URL("../fixtures/sentry/large.envelope.gz", import.meta.url),
+    );
+    expect(compressed.length).toBeGreaterThan(32768);
+    const before = c.sent.length;
+    expect(
+      (
+        await c.app.request(
+          `/api/${c.project.project.id}/envelope?sentry_key=${c.project.key.publicKey}`,
+          {
+            method: "POST",
+            headers: { "Content-Encoding": "gzip" },
+            body: compressed,
+          },
+        )
+      ).status,
+    ).toBe(200);
+    expect(c.sent).toHaveLength(before + 1);
+    await withConsumer(c.queue, c.consumer.handle, async () => {
+      await vi.waitFor(async () =>
+        expect(
+          (await c.blobs.list(`envelopes/${c.project.project.id}/`)).items,
+        ).toHaveLength(0),
+      );
+    });
+  });
+  it("accepts a header DSN, without slash, and repairs distinct ids for multiple events", async () => {
+    const c = await setup();
+    const h = JSON.stringify({
+      dsn: `https://${c.project.key.publicKey}@example.com/${c.project.project.id}`,
+    });
+    const payload = `${h}\n{"type":"event"}\n{"message":"one"}\n{"type":"event"}\n{"message":"two"}\n`;
+    expect(
+      (
+        await c.app.request(`/api/${c.project.project.id}/envelope`, {
+          method: "POST",
+          body: payload,
+        })
+      ).status,
+    ).toBe(200);
+    await withConsumer(c.queue, c.consumer.handle, async () => {
+      await vi.waitFor(async () =>
+        expect(
+          (
+            await c.store.issues.list({
+              projectId: c.project.project.id,
+              sort: "count",
+            })
+          ).items,
+        ).toHaveLength(2),
+      );
+    });
+    expect(
+      (
+        await c.app.request(
+          `/api/${c.project.project.id}/store?sentry_key=${c.project.key.publicKey}`,
+          { method: "POST", body: '{"message":"legacy"}' },
+        )
+      ).status,
+    ).toBe(200);
+  });
+  it("checks known auth and declared size before reading the body", async () => {
+    const c = await setup();
+    const read = vi.fn();
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        read();
+        controller.enqueue(new Uint8Array([1]));
+        controller.close();
+      },
+    });
+    const request = new Request(
+      `http://localhost/api/${c.project.project.id}/envelope?sentry_key=bad`,
+      { method: "POST", body: stream, duplex: "half" } as RequestInit,
+    );
+    const result = await c.app.fetch(request);
+    expect(result.status).toBe(403);
+    expect(
+      (
+        await c.app.request(
+          `/api/${c.project.project.id}/envelope?sentry_key=${c.project.key.publicKey}`,
+          {
+            method: "POST",
+            headers: { "Content-Length": "99999999" },
+            body: "x",
+          },
+        )
+      ).status,
+    ).toBe(413);
+  });
+  it("uses a bounded missing-blob retry and exposes erasure suppression", async () => {
+    const c = await setup();
+    await c.send(body(id(22), "suppressed"));
+    const message = c.sent[0];
+    if (!message) throw new Error("Missing claim");
+    const delivery = { id: "x", topic: "ingest", attempt: 1, message };
+    const consumer = new ConsumerService({
+      store: c.store,
+      blobs: c.blobs,
+      kv: c.kv,
+      logger: c.logger,
+      shouldSuppress: () => true,
+    });
+    expect((await consumer.handle([delivery]))[0]?.action).toBe("ack");
+    expect(
+      await c.store.events.get(c.project.project.id, id(22) as EventId),
+    ).toBeNull();
+    expect((await consumer.handle([delivery]))[0]?.action).toBe("retry");
+    expect(
+      (await consumer.handle([{ ...delivery, attempt: 5 }]))[0]?.action,
+    ).toBe("ack");
+  });
+  it("generates secure-format keys, event IDs and hashed tokens", async () => {
+    const key = generatePublicKey();
+    expect(key).toMatch(/^[0-9a-f]{32}$/);
+    expect(generatePublicKey()).not.toBe(key);
+    expect(generateEventId()).toMatch(/^[0-9a-f]{32}$/);
+    expect(new WebCryptoIdGen().next()).toMatch(/^[0-9a-f-]{36}$/);
+    const token = generateApiToken();
+    expect(token).toMatch(/^errtraq_[0-9a-f]{64}$/);
+    expect(await hashApiToken(token)).toMatch(/^[0-9a-f]{64}$/);
+    expect(await hashApiToken(token)).not.toBe(token);
+  });
+  it("bootstraps a single organization, project and key under concurrency", async () => {
+    const store = new MemoryActiveStore();
+    const clock = new FakeClock();
+    const kv = new MemoryKV(clock);
+    const options = {
+      store,
+      kv,
+      ids: new WebCryptoIdGen(),
+      orgSlug: "race",
+      projectSlug: "race",
+    };
+    const results = await Promise.all(
+      Array.from({ length: 10 }, () => bootstrapProject(options)),
+    );
+    expect(new Set(results.map((r) => r.org.id)).size).toBe(1);
+    expect(new Set(results.map((r) => r.project.id)).size).toBe(1);
+    expect(new Set(results.map((r) => r.key.publicKey)).size).toBe(1);
+    const first = results[0];
+    if (!first) throw new Error("Missing bootstrap result");
+    expect(await store.projects.listKeys(first.project.id)).toHaveLength(1);
+  });
+  it("reuses one overflow key across failures and does not leave completion markers", async () => {
+    const c = await setup({ overflowBytes: 1 });
+    await c.send(body(id(25), "retry overflow"));
+    const message = c.sent[0];
+    if (!message) throw new Error("Missing claim");
+    const delivery = { id: "overflow", topic: "ingest", attempt: 1, message };
+    const original = c.store.recordEvent.bind(c.store);
+    vi.spyOn(c.store, "recordEvent")
+      .mockRejectedValueOnce(new Error("failure 1"))
+      .mockRejectedValueOnce(new Error("failure 2"))
+      .mockImplementation(original);
+    expect((await c.consumer.handle([delivery]))[0]?.action).toBe("retry");
+    expect((await c.consumer.handle([delivery]))[0]?.action).toBe("retry");
+    expect((await c.consumer.handle([delivery]))[0]?.action).toBe("ack");
+    const keys = (await c.blobs.list(`payloads/${c.project.project.id}/`))
+      .items;
+    expect(keys).toEqual([`payloads/${c.project.project.id}/${id(25)}`]);
+    const claim = message.body as { blobKey: string };
+    expect(
+      await c.kv.get(
+        `ingest-complete:${c.project.project.id}:${claim.blobKey}`,
+      ),
+    ).toBeNull();
+  });
+  it("groups the same SDK error twice separately from a different error", async () => {
+    const c = await setup();
+    const first = parseEnvelope(
+      await readFile(
+        new URL("../fixtures/sentry/sdk-2.envelope", import.meta.url),
+      ),
+    );
+    const other = parseEnvelope(
+      await readFile(
+        new URL("../fixtures/sentry/sdk-3.envelope", import.meta.url),
+      ),
+    );
+    const firstItem = first.items.find((item) => item.headers.type === "event");
+    const otherItem = other.items.find((item) => item.headers.type === "event");
+    if (!firstItem || !otherItem) throw new Error("Missing SDK events");
+    const firstEvent = parseEventPayload(firstItem.payload);
+    const otherEvent = parseEventPayload(otherItem.payload);
+    expect(
+      (await groupEvent(c.project.project.id, firstEvent)).issueId,
+    ).not.toBe((await groupEvent(c.project.project.id, otherEvent)).issueId);
+    await withConsumer(c.queue, c.consumer.handle, async () => {
+      for (const [n, event] of [
+        [30, firstEvent],
+        [31, firstEvent],
+        [32, otherEvent],
+      ] as const) {
+        const payload = `${JSON.stringify({ event_id: id(n) })}\n{"type":"event"}\n${JSON.stringify({ ...event, event_id: id(n) })}\n`;
+        expect((await c.send(payload)).status).toBe(200);
+      }
+      await vi.waitFor(async () =>
+        expect(
+          (
+            await c.store.issues.list({
+              projectId: c.project.project.id,
+              sort: "count",
+            })
+          ).items
+            .map((issue) => issue.count)
+            .sort(),
+        ).toEqual([1, 2]),
+      );
+    });
   });
 });

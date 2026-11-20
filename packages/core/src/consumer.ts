@@ -22,6 +22,10 @@ export interface ConsumerOptions {
   logger: Logger;
   overflowBytes?: number;
   maxEnvelopeBytes?: number;
+  shouldSuppress?: (
+    event: import("./domain.js").StoredEvent,
+  ) => boolean | Promise<boolean>;
+  maxMissingAttempts?: number;
 }
 async function readBounded(
   stream: ReadableStream<Uint8Array>,
@@ -104,39 +108,57 @@ export class ConsumerService {
         continue;
       }
       try {
-        const marker = `ingest-complete:${claim.projectId}:${claim.blobKey}`;
-        if (await this.options.kv.get(marker)) {
-          await this.options.blobs.delete(claim.blobKey);
-          results.push({ deliveryId: delivery.id, action: "ack" });
+        const body = await this.options.blobs.get(claim.blobKey);
+        if (!body) {
+          if (delivery.attempt >= (this.options.maxMissingAttempts ?? 5)) {
+            this.options.logger.error("Staged envelope is missing", {
+              deliveryId: delivery.id,
+              attempt: delivery.attempt,
+            });
+            results.push({ deliveryId: delivery.id, action: "ack" });
+          } else results.push({ deliveryId: delivery.id, action: "retry" });
           continue;
         }
-        const body = await this.options.blobs.get(claim.blobKey);
-        if (!body) throw new Error("Staged envelope is missing");
         const envelope = parseEnvelope(
           await readBounded(body, this.maxEnvelopeBytes + 256),
         );
         let dropped = 0;
+        let eventIndex = 0;
         for (const item of envelope.items) {
           if (item.headers.type !== "event") {
             dropped++;
             continue;
           }
           const payload = parseEventPayload(item.payload);
-          const eventId = normalizeEventId(
-            payload.event_id ??
-              envelope.headers.event_id ??
-              delivery.message.key,
+          const fallbackBytes = await crypto.subtle.digest(
+            "SHA-256",
+            new TextEncoder().encode(`${delivery.message.key}:${eventIndex}`),
           );
-          if (!eventId) throw new InvalidEnvelopeError("Invalid event ID");
+          const fallback = Array.from(
+            new Uint8Array(fallbackBytes).slice(0, 16),
+            (x) => x.toString(16).padStart(2, "0"),
+          ).join("") as EventId;
+          const eventId =
+            normalizeEventId(payload.event_id) ??
+            (eventIndex === 0
+              ? (normalizeEventId(envelope.headers.event_id) ??
+                normalizeEventId(delivery.message.key))
+              : null) ??
+            fallback;
+          eventIndex++;
           const normalized = await normalizeEvent(
             claim.projectId,
             eventId as EventId,
             claim.receivedAt,
             payload,
           );
+          // TODO(M4): consult erasure suppression records before storing queued events.
+          if (await this.options.shouldSuppress?.(normalized.event)) continue;
+          if (await this.options.store.events.get(claim.projectId, eventId))
+            continue;
           let overflowKey: string | undefined;
           if (item.payload.byteLength > this.overflowBytes) {
-            overflowKey = `payloads/${claim.projectId}/${eventId}/${crypto.randomUUID()}`;
+            overflowKey = `payloads/${claim.projectId}/${eventId}`;
             await this.options.blobs.put(overflowKey, item.payload, {
               size: item.payload.length,
               contentType: "application/json",
@@ -144,19 +166,15 @@ export class ConsumerService {
             normalized.event.payload = {};
             normalized.event.payloadBlobKey = overflowKey;
           }
-          const result = await this.options.store.recordEvent(
+          await this.options.store.recordEvent(
             normalized.occurrence,
             normalized.event,
           );
-          if (!result.inserted && overflowKey)
-            await this.options.blobs.delete(overflowKey);
         }
         if (dropped)
           this.options.logger.info("Dropped unsupported envelope items", {
             count: dropped,
           });
-        // Keep completion markers until a queue-retention-aware cleanup exists; late redelivery must remain safe.
-        await this.options.kv.put(marker, "1");
         await this.options.blobs.delete(claim.blobKey);
         results.push({ deliveryId: delivery.id, action: "ack" });
       } catch (error) {
@@ -166,10 +184,6 @@ export class ConsumerService {
             error: error.message,
           });
           try {
-            await this.options.kv.put(
-              `ingest-complete:${claim.projectId}:${claim.blobKey}`,
-              "1",
-            );
             await this.options.blobs.delete(claim.blobKey);
             results.push({ deliveryId: delivery.id, action: "ack" });
           } catch {

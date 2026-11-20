@@ -61,6 +61,8 @@ export interface ProjectRepo {
   list(cursor?: Cursor, limit?: number): Promise<Page<Project>>;
   getKey(publicKey: string): Promise<ProjectKey | null>;
   putKey(key: ProjectKey): Promise<void>;
+  /** Atomically return an existing active key for the project or create and return the supplied key. */
+  getOrCreateActiveKey(key: ProjectKey): Promise<ProjectKey>;
   /** List keys belonging to a project. */
   listKeys(projectId: ProjectId): Promise<ProjectKey[]>;
   getTokenByHash(tokenHash: string): Promise<ApiToken | null>;

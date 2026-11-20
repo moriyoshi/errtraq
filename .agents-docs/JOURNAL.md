@@ -238,3 +238,32 @@ briefly placed in `docs/`; that name stays free for a user-facing docs site.) Sk
 - KV counters accept only decimal safe integers, preserve creation TTL, and opportunistically
   sweep expired entries. Stack-helper tests validate complete stacks and inspect the local import
   graph without loading adapter runtime code. Deferred SQL dialect portability is listed under M3.
+
+## 2026-11-21 — M1f ingest compatibility and recovery
+
+- Event timestamps are accepted within 30 days before receipt or one minute afterward; numeric
+  strings and millisecond values are supported, and offset-less ISO times are UTC. Unknown field
+  values do not poison a valid event. `{{auto}}` user IP is discarded because the app has no
+  trusted client-address source.
+- Grouping namespaces strategies, uses message templates, and includes chained exceptions in
+  order. Titles and culprit/exception metadata are capped at 200 characters. Unidentified later
+  event items derive stable IDs from the claim ID and item ordinal for retry idempotence.
+- Authenticated event envelopes use a fixed-window error budget; unsupported-only envelopes do
+  not consume it. Header DSNs are checked from the first decompressed line before the rest is
+  read. Queue publication failure returns 503 and best-effort deletes the raw object; an ambiguous
+  publish can thus yield a missing claim, which is acknowledged after five attempts. Overflow
+  writes use project/event keys, and existing events are checked before writing duplicate data.
+- Removed completion markers; bounded missing-blob retries make late redelivery terminate.
+  The erasure suppression predicate is an injectable default-allow hook pending M4.
+- Bootstrap handles slug conflicts and uses a new atomic `getOrCreateActiveKey` store operation
+  so concurrent bootstrappers converge on one key. Production keys and tokens use WebCrypto;
+  token storage uses a SHA-256 hash. The SDK fixtures were captured with @sentry/node 11.15,
+  with local user paths replaced by same-length fixture paths; the mixed envelope combines SDK
+  event, session and client-report items. Orphan cleanup and raw-deflate support remain deferred.
+
+## 2026-11-21 — Scrubbing SDK capture fixtures
+
+- SDK envelopes include machine context beyond user paths. A checked-in scrubber neutralizes
+  machine contexts and local identifiers, rebuilds item byte lengths, and derives the gzip fixture
+  from the scrubbed raw envelope. Binary item framing and field types are preserved. A fixture
+  test checks current host, user, and repository identifiers as well as the scrubber's output.

@@ -8,7 +8,6 @@ import {
   type Timestamp,
   toTimestamp,
 } from "./domain.js";
-import { InvalidEnvelopeError } from "./envelope.js";
 
 type Obj = Record<string, unknown>;
 function object(value: unknown): Obj {
@@ -23,7 +22,8 @@ function array(value: unknown): unknown[] {
   return Array.isArray(value) ? value : [];
 }
 function exception(event: Obj): Obj {
-  return object(array(object(event.exception).values).at(-1));
+  const ex = object(event.exception);
+  return object(array(ex.values).at(-1) ?? ex);
 }
 function frames(event: Obj): Obj[] {
   const ex = exception(event);
@@ -32,20 +32,31 @@ function frames(event: Obj): Obj[] {
   const fallback = object(
     threads.find((thread) => thread.crashed === true) ?? threads[0],
   );
-  return array(stack.frames ?? object(fallback.stacktrace).frames).map(object);
+  return array(
+    stack.frames ??
+      object(event.stacktrace).frames ??
+      object(fallback.stacktrace).frames,
+  ).map(object);
 }
 function message(event: Obj): string {
   return (
-    string(event.message) ??
     string(object(event.logentry).formatted) ??
+    string(event.message) ??
     string(object(event.logentry).message) ??
     "<unlabeled event>"
   );
 }
 function defaultGroup(event: Obj): string[] {
+  const chain = array(object(event.exception).values);
+  if (chain.length > 1)
+    return ["chain", ...chain.flatMap((ex) => defaultGroup({ exception: ex }))];
   const ex = exception(event);
   const type = string(ex.type);
-  if (!type) return ["message", message(event)];
+  if (!type)
+    return [
+      "message",
+      string(object(event.logentry).message) ?? message(event),
+    ];
   const all = frames(event);
   const inApp = all.filter((frame) => frame.in_app === true);
   const selected = inApp.length ? inApp : all;
@@ -67,21 +78,26 @@ async function digest(input: string): Promise<string> {
     b.toString(16).padStart(2, "0"),
   ).join("");
 }
-/** Group exception type with in-app module/function frames (all frames if none are in-app),
- * or message when no exception exists. Client fingerprints replace this grouping, with each
- * {{ default }} expanded to those components. SHA-256 of the JSON components is the fingerprint;
- * IssueId is SHA-256 of JSON [projectId, fingerprint], both lower-case hexadecimal. */
+/** Group every exception in chain order, using in-app module/function frames or all frames
+ * when none are in-app. Frameless exceptions use their type; messages use the unformatted
+ * template. Each strategy is namespaced, and custom fingerprints expand {{ default }}.
+ * SHA-256 of JSON components gives the fingerprint; IssueId hashes projectId and fingerprint. */
 export async function groupEvent(
   projectId: ProjectId,
   event: Obj,
 ): Promise<{ fingerprint: string; issueId: IssueId }> {
   const defaults = defaultGroup(event);
-  const custom = array(event.fingerprint);
+  const custom = array(event.fingerprint)
+    .filter((value) => ["string", "number", "boolean"].includes(typeof value))
+    .map(String);
   const parts =
-    custom.length && custom.every((value) => typeof value === "string")
-      ? custom.flatMap((value) =>
-          value === "{{ default }}" ? defaults : [value as string],
-        )
+    custom.length && !(custom.length === 1 && custom[0] === "{{ default }}")
+      ? [
+          "custom",
+          ...custom.flatMap((value) =>
+            value === "{{ default }}" ? defaults : [value],
+          ),
+        ]
       : defaults;
   const fingerprint = await digest(JSON.stringify(parts));
   return {
@@ -96,7 +112,7 @@ export function normalizeEventId(value: unknown): EventId | null {
   const id = value.replaceAll("-", "").toLowerCase();
   return /^[0-9a-f]{32}$/.test(id) ? (id as EventId) : null;
 }
-/** Normalize Sentry fields and promoted columns while retaining the original event payload. */
+/** Normalize fields without dropping a syntactically valid event: odd fields are repaired or discarded. Timestamps outside the 30 days before or one minute after receipt use receivedAt. */
 export async function normalizeEvent(
   projectId: ProjectId,
   eventId: EventId,
@@ -105,62 +121,89 @@ export async function normalizeEvent(
 ): Promise<{ occurrence: Occurrence; event: StoredEvent }> {
   const eventTimestamp = event.timestamp;
   let timestamp = receivedAt;
-  if (eventTimestamp !== undefined) {
-    const ms =
-      typeof eventTimestamp === "number"
-        ? eventTimestamp * 1000
-        : typeof eventTimestamp === "string"
-          ? Date.parse(eventTimestamp)
-          : Number.NaN;
-    if (!Number.isFinite(ms))
-      throw new InvalidEnvelopeError("Invalid event timestamp");
-    try {
-      timestamp = toTimestamp(new Date(ms));
-    } catch {
-      throw new InvalidEnvelopeError("Invalid event timestamp");
-    }
+  let ms = Number.NaN;
+  if (
+    typeof eventTimestamp === "number" ||
+    (typeof eventTimestamp === "string" &&
+      /^-?\d+(?:\.\d+)?$/.test(eventTimestamp))
+  ) {
+    const value = Number(eventTimestamp);
+    ms = Math.abs(value) >= 1e11 ? value : value * 1000;
+  } else if (typeof eventTimestamp === "string") {
+    const value = /^\d{4}-\d\d-\d\dT\d\d:\d\d(?::\d\d(?:\.\d+)?)?$/.test(
+      eventTimestamp,
+    )
+      ? `${eventTimestamp}Z`
+      : eventTimestamp;
+    ms = Date.parse(value);
   }
+  const received = Date.parse(receivedAt);
+  if (
+    Number.isFinite(ms) &&
+    ms >= received - 30 * 86400000 &&
+    ms <= received + 60000
+  )
+    timestamp = toTimestamp(new Date(ms));
   const known: EventLevel[] = ["fatal", "error", "warning", "info", "debug"];
   const rawLevel = string(event.level);
-  const level = known.find((v) => v === rawLevel) ?? "error";
+  const level =
+    rawLevel === "log"
+      ? "info"
+      : rawLevel === "critical"
+        ? "fatal"
+        : (known.find((v) => v === rawLevel) ?? "error");
   const ex = exception(event);
-  const type =
-    string(ex.type) ??
-    (event.logentry || event.message ? "message" : "default");
+  const type = string(ex.type) ?? "default";
   const exValue = string(ex.value);
-  const title = string(ex.type)
+  const titleRaw = string(ex.type)
     ? `${ex.type}${exValue ? `: ${exValue}` : ""}`
     : message(event);
-  const lastFrame =
-    frames(event)
-      .filter((f) => f.in_app === true)
-      .at(-1) ?? frames(event).at(-1);
-  const culprit =
-    string(event.culprit) ??
-    string(lastFrame?.function) ??
-    string(lastFrame?.filename) ??
-    "";
+  const title = titleRaw.split(/\r?\n/, 1)[0]?.slice(0, 200) ?? "";
+  const allFrames = frames(event);
+  const selected = allFrames.filter((f) => f.in_app === true);
+  const usable = (v: unknown) => {
+    const s = string(v);
+    return s && s !== "?" && s !== "<anonymous>" ? s : undefined;
+  };
+  const candidates = [...(selected.length ? selected : allFrames)].reverse();
+  const culprit = (
+    usable(event.culprit) ??
+    candidates
+      .flatMap((f) => [
+        usable(f.function),
+        usable(f.module),
+        usable(f.filename),
+      ])
+      .find(Boolean) ??
+    ""
+  ).slice(0, 200);
   const metadata: Obj = {};
-  if (string(ex.type)) metadata.type = ex.type;
-  if (exValue) metadata.value = exValue;
+  if (string(ex.type)) metadata.type = String(ex.type).slice(0, 200);
+  if (exValue) metadata.value = exValue.slice(0, 200);
   const tags: Record<string, string> = {};
   if (Array.isArray(event.tags)) {
     for (const pair of event.tags)
       if (
         Array.isArray(pair) &&
         typeof pair[0] === "string" &&
-        typeof pair[1] === "string"
+        ["string", "number", "boolean"].includes(typeof pair[1])
       )
-        tags[pair[0]] = pair[1];
+        tags[pair[0]] = String(pair[1]);
   } else
     for (const [key, value] of Object.entries(object(event.tags)))
-      if (typeof value === "string") tags[key] = value;
+      if (["string", "number", "boolean"].includes(typeof value))
+        tags[key] = String(value);
   const rawUser = object(event.user);
   const user = {
-    id: string(rawUser.id),
+    id: ["string", "number", "boolean"].includes(typeof rawUser.id)
+      ? String(rawUser.id)
+      : undefined,
     email: string(rawUser.email),
     username: string(rawUser.username),
-    ipAddress: string(rawUser.ip_address),
+    ipAddress:
+      rawUser.ip_address === "{{auto}}"
+        ? undefined
+        : string(rawUser.ip_address),
   };
   const { fingerprint, issueId } = await groupEvent(projectId, event);
   const occurrence: Occurrence = {

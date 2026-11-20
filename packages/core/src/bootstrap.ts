@@ -7,6 +7,8 @@ import {
   type ProjectKey,
   type ProjectKeyId,
 } from "./domain.js";
+import { ConflictError } from "./errors.js";
+import { generatePublicKey } from "./ids.js";
 import type { ActiveStore, IdGen, KV } from "./ports.js";
 /** Allocate decimal project IDs through the atomic KV counter and create an org, project and key. */
 export async function bootstrapProject(options: {
@@ -25,7 +27,14 @@ export async function bootstrapProject(options: {
       slug: options.orgSlug,
       name: options.orgSlug,
     };
-    await store.projects.putOrg(org);
+    try {
+      await store.projects.putOrg(org);
+    } catch (error) {
+      if (!(error instanceof ConflictError)) throw error;
+      const existing = await store.projects.getOrgBySlug(options.orgSlug);
+      if (!existing) throw error;
+      org = existing;
+    }
   }
   let project = await store.projects.getProjectBySlug(
     org.id,
@@ -44,7 +53,17 @@ export async function bootstrapProject(options: {
       name: options.projectSlug,
       retentionDays: options.retentionDays ?? 30,
     };
-    await store.projects.put(project);
+    try {
+      await store.projects.put(project);
+    } catch (error) {
+      if (!(error instanceof ConflictError)) throw error;
+      const existing = await store.projects.getProjectBySlug(
+        org.id,
+        options.projectSlug,
+      );
+      if (!existing) throw error;
+      project = existing;
+    }
   }
   let key = (await store.projects.listKeys(project.id)).find(
     (item) => !item.revokedAt,
@@ -53,9 +72,9 @@ export async function bootstrapProject(options: {
     key = {
       id: ids.next() as ProjectKeyId,
       projectId: project.id,
-      publicKey: ids.next(),
+      publicKey: generatePublicKey(),
     };
-    await store.projects.putKey(key);
+    key = await store.projects.getOrCreateActiveKey(key);
   }
   return { org, project, key };
 }

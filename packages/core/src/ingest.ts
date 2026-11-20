@@ -16,6 +16,7 @@ import type {
   BlobStore,
   Clock,
   KV,
+  Logger,
   QueueProducer,
 } from "./ports.js";
 
@@ -28,6 +29,7 @@ export interface IngestOptions {
   maxBytes?: number;
   rateLimit?: number;
   rateWindowSec?: number;
+  logger?: Logger;
 }
 export interface IngestRequest {
   projectId: string;
@@ -50,7 +52,7 @@ export class IngestError extends Error {
     super(message);
   }
 }
-/** Authenticate and stage a bounded raw envelope before publishing its claim check. */
+/** Authenticate and stage a bounded raw envelope before publishing its claim check. Error events use a fixed-window rate limit; unsupported-only envelopes do not consume it. */
 export class IngestService {
   readonly maxBytes: number;
   private readonly rateLimit: number;
@@ -69,16 +71,58 @@ export class IngestService {
     )
       throw new RangeError("Invalid ingest limits");
   }
-  async accept(request: IngestRequest): Promise<{ id: EventId }> {
-    if (!isProjectId(request.projectId))
+  async authenticate(projectId: string, publicKey: string | null) {
+    if (!isProjectId(projectId))
       throw new IngestError(400, "Invalid project ID");
-    if (!request.key) throw new IngestError(401, "Missing Sentry key");
-    const key = await this.options.store.projects.getKey(request.key);
-    if (!key || key.revokedAt || key.projectId !== request.projectId)
+    if (!publicKey) throw new IngestError(401, "Missing Sentry key");
+    const key = await this.options.store.projects.getKey(publicKey);
+    if (!key || key.revokedAt || key.projectId !== projectId)
       throw new IngestError(403, "Invalid Sentry key");
+    return key;
+  }
+  async accept(request: IngestRequest): Promise<{ id: EventId }> {
+    const key = await this.authenticate(request.projectId, request.key);
     if (request.body.byteLength > this.maxBytes)
       throw new IngestError(413, "Envelope too large");
     const receivedAt = this.options.clock.now();
+    let raw = request.body;
+    let id: EventId | null = null;
+    let eventCount = request.legacy ? 1 : 0;
+    const discarded: Record<string, number> = {};
+    try {
+      if (request.legacy) {
+        const payload = parseEventPayload(raw);
+        id = normalizeEventId(payload.event_id);
+      } else {
+        const envelope = parseEnvelope(raw);
+        id = normalizeEventId(envelope.headers.event_id);
+        for (const item of envelope.items) {
+          if (item.headers.type !== "event") {
+            const type = String(item.headers.type);
+            discarded[type] = (discarded[type] ?? 0) + 1;
+            continue;
+          }
+          eventCount++;
+          const payload = parseEventPayload(item.payload);
+          id ??= normalizeEventId(payload.event_id);
+        }
+      }
+    } catch (error) {
+      if (error instanceof InvalidEnvelopeError)
+        throw new IngestError(400, error.message);
+      throw error;
+    }
+    id ??= crypto.randomUUID().replaceAll("-", "") as EventId;
+    if (Object.keys(discarded).length)
+      if (this.options.logger)
+        this.options.logger.info("Dropped unsupported envelope items", {
+          types: discarded,
+        });
+      else
+        console.info("Dropped unsupported envelope items", {
+          types: discarded,
+        });
+    if (!eventCount) return { id };
     const bucket = Math.floor(
       Date.parse(receivedAt) / (this.rateWindowSec * 1000),
     );
@@ -97,42 +141,7 @@ export class IngestService {
       );
       throw new IngestError(429, "Rate limit exceeded", seconds);
     }
-    let raw = request.body;
-    let id: EventId | null = null;
-    try {
-      if (request.legacy) {
-        const payload = parseEventPayload(raw);
-        if (
-          payload.event_id !== undefined &&
-          !normalizeEventId(payload.event_id)
-        )
-          throw new InvalidEnvelopeError("Invalid event ID");
-        id = normalizeEventId(payload.event_id);
-      } else {
-        const envelope = parseEnvelope(raw);
-        if (
-          envelope.headers.event_id !== undefined &&
-          !normalizeEventId(envelope.headers.event_id)
-        )
-          throw new InvalidEnvelopeError("Invalid event ID");
-        id = normalizeEventId(envelope.headers.event_id);
-        for (const item of envelope.items) {
-          if (item.headers.type !== "event") continue;
-          const payload = parseEventPayload(item.payload);
-          const payloadId = normalizeEventId(payload.event_id);
-          if (payload.event_id !== undefined && !payloadId)
-            throw new InvalidEnvelopeError("Invalid event ID");
-          if (id && payloadId && id !== payloadId)
-            throw new InvalidEnvelopeError("Envelope and event IDs differ");
-          id ??= payloadId;
-        }
-      }
-    } catch (error) {
-      if (error instanceof InvalidEnvelopeError)
-        throw new IngestError(400, error.message);
-      throw error;
-    }
-    id ??= crypto.randomUUID().replaceAll("-", "") as EventId;
+
     if (request.legacy) raw = wrapStorePayload(raw, id);
     const blobKey = `envelopes/${request.projectId}/${crypto.randomUUID()}`;
     await this.options.blobs.put(blobKey, raw, {
@@ -140,12 +149,20 @@ export class IngestService {
       contentType: "application/x-sentry-envelope",
     });
     const claim: ClaimCheck = {
-      projectId: request.projectId,
+      projectId: request.projectId as ProjectId,
       blobKey,
       receivedAt,
     };
-    // If publication fails ambiguously the staged blob must remain available for a possible delivery.
-    await this.options.queue.send("ingest", [{ key: id, body: claim }]);
+    try {
+      await this.options.queue.send("ingest", [{ key: id, body: claim }]);
+    } catch {
+      try {
+        await this.options.blobs.delete(blobKey);
+      } catch {
+        /* best effort */
+      }
+      throw new IngestError(503, "Queue unavailable", 1);
+    }
     return { id };
   }
 }

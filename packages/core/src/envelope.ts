@@ -37,6 +37,10 @@ export function parseEnvelope(bytes: Uint8Array): Envelope {
   const headers = parseObject(line());
   const items: EnvelopeItem[] = [];
   while (pos < bytes.length) {
+    if (bytes[pos] === 13 && bytes[pos + 1] === 10) {
+      pos += 2;
+      continue;
+    }
     if (bytes[pos] === 10) {
       pos++;
       continue;

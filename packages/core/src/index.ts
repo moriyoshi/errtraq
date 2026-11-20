@@ -4,6 +4,7 @@ export * from "./cursor.js";
 export * from "./domain.js";
 export * from "./envelope.js";
 export * from "./errors.js";
+export * from "./ids.js";
 export * from "./ingest.js";
 export * from "./normalize.js";
 export * from "./ports.js";

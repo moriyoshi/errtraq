@@ -25,6 +25,8 @@ import {
   type OrgId,
   type Project,
   type ProjectId,
+  type ProjectKey,
+  type ProjectKeyId,
   type Queue,
   type Release,
   type ReleaseId,
@@ -834,6 +836,19 @@ export function activeStoreContract(
       ).rejects.toBeInstanceOf(ConflictError);
       await s.projects.putOrg({ ...org, name: "updated" });
       expect((await s.projects.getOrg(org.id))?.name).toBe("updated");
+    });
+    it("atomically creates one initial active project key", async () => {
+      const s = await factory();
+      const candidates: ProjectKey[] = Array.from({ length: 8 }, (_, i) => ({
+        id: `key-${i}` as ProjectKeyId,
+        projectId: project,
+        publicKey: `public-${i}`,
+      }));
+      const results = await Promise.all(
+        candidates.map((key) => s.projects.getOrCreateActiveKey(key)),
+      );
+      expect(new Set(results.map((key) => key.publicKey)).size).toBe(1);
+      expect(await s.projects.listKeys(project)).toHaveLength(1);
     });
     it("looks up keys, hashed tokens, releases and debug ids", async () => {
       const s = await factory();

@@ -13,6 +13,7 @@ import {
   NotFoundError,
   type Page,
   type ProjectId,
+  type ProjectKey,
   pageLimit,
   type StoredEvent,
   UnsupportedQueryError,
@@ -282,6 +283,28 @@ export function createSqlStore({ db, dialect }: SqlStoreOptions): ActiveStore {
           project_id: key.projectId,
           lookup: key.publicKey,
           data: JSON.stringify(key),
+        }),
+      getOrCreateActiveKey: async (key) =>
+        transaction(async (trx) => {
+          const rows = await trx
+            .selectFrom("keys")
+            .select("data")
+            .where("project_id", "=", key.projectId)
+            .execute();
+          const existing = rows
+            .map((row) => decode<ProjectKey>(row.data))
+            .find((row) => !row.revokedAt);
+          if (existing) return existing;
+          await trx
+            .insertInto("keys")
+            .values({
+              pk: key.id,
+              project_id: key.projectId,
+              lookup: key.publicKey,
+              data: JSON.stringify(key),
+            })
+            .execute();
+          return key;
         }),
       listKeys: async (projectId) => {
         const rows = await db

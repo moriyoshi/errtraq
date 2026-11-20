@@ -111,6 +111,15 @@ export class MemoryActiveStore implements ActiveStore {
           this.keys.delete(value);
       this.keys.set(key.publicKey, copy(key));
     },
+    getOrCreateActiveKey: async (key) => {
+      const existing = [...this.keys.values()].find(
+        (row) => row.projectId === key.projectId && !row.revokedAt,
+      );
+      if (existing) return copy(existing);
+      if (this.keys.has(key.publicKey)) throw new ConflictError("Key exists");
+      this.keys.set(key.publicKey, copy(key));
+      return copy(key);
+    },
     listKeys: async (projectId) =>
       copy(
         [...this.keys.values()].filter((key) => key.projectId === projectId),

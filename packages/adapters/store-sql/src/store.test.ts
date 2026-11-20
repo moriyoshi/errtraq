@@ -1,6 +1,7 @@
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { activeStoreContract } from "@errtraq/testing";
+import { bootstrapProject, WebCryptoIdGen } from "@errtraq/core";
+import { activeStoreContract, FakeClock, MemoryKV } from "@errtraq/testing";
 import { Kysely, sql } from "kysely";
 import { afterAll, afterEach, describe, expect, it } from "vitest";
 import { create } from "./index.js";
@@ -235,4 +236,27 @@ it("chunks large event ID lists and respects the deletion limit", async () => {
       ids[2] as import("@errtraq/core").EventId,
     ),
   ).toBeNull();
+});
+
+it("concurrent bootstraps on separate connections converge on one project and key", async () => {
+  const path = join(directory, `bootstrap-${++sequence}.db`);
+  const a = createSqlStore({ db: database(path), dialect: sqliteStoreDialect });
+  const b = createSqlStore({ db: database(path), dialect: sqliteStoreDialect });
+  await a.migrate();
+  await b.migrate();
+  const kv = new MemoryKV(new FakeClock());
+  const options = {
+    kv,
+    ids: new WebCryptoIdGen(),
+    orgSlug: "org",
+    projectSlug: "project",
+  };
+  const [first, second] = await Promise.all([
+    bootstrapProject({ ...options, store: a }),
+    bootstrapProject({ ...options, store: b }),
+  ]);
+  expect(first.org.id).toBe(second.org.id);
+  expect(first.project.id).toBe(second.project.id);
+  expect(first.key.publicKey).toBe(second.key.publicKey);
+  expect(await a.projects.listKeys(first.project.id)).toHaveLength(1);
 });

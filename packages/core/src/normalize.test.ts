@@ -126,6 +126,85 @@ describe("grouping and event normalization", () => {
         (await groupEvent(project, right)).issueId,
     ).toBe(same);
   });
+  it("repairs odd timestamps and fields without dropping events", async () => {
+    for (const timestamp of [null, "garbage", 1e20, 4e12])
+      expect(
+        (await normalizeEvent(project, eventId, now, { timestamp })).event
+          .timestamp,
+      ).toBe(now);
+    for (const timestamp of [
+      "1704067200",
+      1704067200000,
+      "2024-01-01T00:00:00",
+    ])
+      expect(
+        (await normalizeEvent(project, eventId, now, { timestamp })).event
+          .timestamp,
+      ).toBe("2024-01-01T00:00:00.000Z");
+    const result = await normalizeEvent(project, eventId, now, {
+      level: "critical",
+      tags: { n: 5, b: false },
+      user: { id: 42, ip_address: "{{auto}}" },
+      exception: {
+        type: "Error",
+        value: "line\nmore",
+        stacktrace: { frames: [{ function: "?", filename: "good.js" }] },
+      },
+    });
+    expect(result.event).toMatchObject({
+      level: "fatal",
+      tags: { n: "5", b: "false" },
+      user: { id: "42" },
+    });
+    expect(result.event.user?.ipAddress).toBeUndefined();
+    expect(result.occurrence).toMatchObject({
+      title: "Error: line",
+      culprit: "good.js",
+      type: "Error",
+    });
+    expect(
+      (await normalizeEvent(project, eventId, now, { level: "log" })).event
+        .level,
+    ).toBe("info");
+    expect(
+      (await normalizeEvent(project, eventId, now, { level: "unknown" })).event
+        .level,
+    ).toBe("error");
+  });
+  it("groups templates and namespaces custom and chained strategies", async () => {
+    expect(
+      await groupEvent(project, {
+        logentry: { message: "hello %s", formatted: "hello one" },
+      }),
+    ).toEqual(
+      await groupEvent(project, {
+        logentry: { message: "hello %s", formatted: "hello two" },
+      }),
+    );
+    expect(
+      (await groupEvent(project, { exception: { type: "TypeError" } }))
+        .fingerprint,
+    ).not.toBe(
+      (await groupEvent(project, { fingerprint: ["exception", "TypeError"] }))
+        .fingerprint,
+    );
+    expect(await groupEvent(project, { fingerprint: [2, true] })).toEqual(
+      await groupEvent(project, { fingerprint: ["2", "true"] }),
+    );
+    expect(
+      (
+        await groupEvent(project, {
+          exception: { values: [{ type: "First" }, { type: "Last" }] },
+        })
+      ).fingerprint,
+    ).not.toBe(
+      (
+        await groupEvent(project, {
+          exception: { values: [{ type: "Other" }, { type: "Last" }] },
+        })
+      ).fingerprint,
+    );
+  });
   it("falls back to all frames and filename when no frame is in-app", async () => {
     const event = {
       exception: {
@@ -150,8 +229,9 @@ describe("grouping and event normalization", () => {
     expect((await groupEvent(project, event)).issueId).not.toBe(
       (await groupEvent(project, changed)).issueId,
     );
-    await expect(
-      normalizeEvent(project, eventId, now, { timestamp: "not-a-date" }),
-    ).rejects.toThrow();
+    expect(
+      (await normalizeEvent(project, eventId, now, { timestamp: "not-a-date" }))
+        .event.timestamp,
+    ).toBe(now);
   });
 });
