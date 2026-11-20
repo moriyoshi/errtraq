@@ -180,22 +180,27 @@ export interface ModuleDescriptor {
 export interface Binding {
   name: string;
   kind: "env" | "secret" | "platform";
-  roles: FunctionRole[];
+  purpose: string;
+  /** Capabilities that need this binding; omitted means all uses of the purpose. */
+  capabilities?: string[];
   value: InfraValue;
   platformType?: string;
 }
-export interface Grant {
-  role: FunctionRole;
+export interface DerivedGrant {
+  functionId: string;
+  selection: string;
   capability: string;
-  resource: OutputRef;
-  policy: OutputRef;
+  purpose: string;
+  policyOutput?: string;
+}
+export interface ScopedBinding {
+  functionId: string;
+  selection: string;
+  binding: Binding;
 }
 export interface TopicRoute {
   physical: string;
   producerBinding?: string;
-  producers: FunctionRole[];
-  consumer: FunctionRole;
-  resource: InfraValue;
 }
 export interface TopicMapping {
   mode: "shared" | "per-topic";
@@ -205,8 +210,9 @@ export interface InfraDescriptor<C> {
   module: ModuleDescriptor;
   inputs(config: C): Record<string, InfraValue>;
   bindings: Binding[];
-  capabilities: Record<string, string>;
-  grants: Grant[];
+  /** A null policy means the capability needs no IAM policy on this adapter. */
+  capabilities: Record<string, string | null>;
+  resources: Record<string, InfraValue>;
   topics?: TopicMapping;
 }
 export interface CreateContext<

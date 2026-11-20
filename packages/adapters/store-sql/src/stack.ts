@@ -33,8 +33,8 @@ export const infra: InfraDescriptor<SqliteStackConfig> = {
   module: { provider: "local", component: "sqlite", outputs: {} },
   inputs: () => ({}),
   bindings: [],
-  capabilities: {},
-  grants: [],
+  capabilities: { read: null, write: null, delete: null },
+  resources: { primary: "local" },
 };
 export function sqlite(
   config: SqliteStackConfig,

@@ -2,9 +2,11 @@ import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import {
   type AdapterSelection,
+  bindingsForRoles,
   configReference,
   constructionOrder,
   defineStack,
+  deriveAccess,
   deriveTriggers,
   env,
   generationEnv,
@@ -27,13 +29,7 @@ import {
 } from "./index.js";
 
 const roles = ["ingest", "api", "consumer", "cron"] as const;
-const route = (producer: "ingest" | "cron" | "consumer") => ({
-  physical: "shared",
-  producerBinding: "QUEUE_URL",
-  producers: [producer],
-  consumer: "consumer" as const,
-  resource: out("arn"),
-});
+const route = () => ({ physical: "shared", producerBinding: "QUEUE_URL" });
 const selection = (kind: PortKind): AdapterSelection => ({
   manifest: {
     id: kind,
@@ -67,38 +63,40 @@ const selection = (kind: PortKind): AdapterSelection => ({
             {
               name: "QUEUE_URL",
               kind: "env",
-              roles: ["ingest", "cron", "consumer"],
+              purpose: "shared",
               value: out("arn"),
             },
           ]
         : [],
     capabilities:
-      kind === "queue" ? { produce: "policy", consume: "policy" } : {},
-    grants:
       kind === "queue"
-        ? [
-            ...(["ingest", "cron", "consumer"] as const).map((role) => ({
-              role,
-              capability: "produce",
-              resource: out("arn"),
-              policy: out("policy"),
-            })),
-            {
-              role: "consumer",
-              capability: "consume",
-              resource: out("arn"),
-              policy: out("policy"),
-            },
-          ]
-        : [],
+        ? { produce: "policy", consume: "policy" }
+        : kind === "store"
+          ? { read: "policy", write: "policy", delete: "policy" }
+          : kind === "blob"
+            ? {
+                read: "policy",
+                write: "policy",
+                delete: "policy",
+                list: "policy",
+              }
+            : kind === "kv"
+              ? { read: "policy", write: "policy" }
+              : kind === "archive"
+                ? { read: "policy", write: "policy", delete: "policy" }
+                : {},
+    resources:
+      kind === "queue"
+        ? { shared: out("arn") }
+        : { primary: out("arn"), staging: out("arn") },
     ...(kind === "queue"
       ? {
           topics: {
             mode: "shared",
             routes: {
-              ingest: route("ingest"),
-              "archive.project": route("cron"),
-              notifications: route("consumer"),
+              ingest: route(),
+              "archive.project": route(),
+              notifications: route(),
             },
           },
         }
@@ -248,7 +246,12 @@ describe("infrastructure model", () => {
       secret: variable("SECRET"),
     });
     v.store.infra.bindings = [
-      { name: "TOKEN", kind: "secret", roles: ["api"], value: env("TOKEN") },
+      {
+        name: "TOKEN",
+        kind: "secret",
+        purpose: "primary",
+        value: env("TOKEN"),
+      },
     ];
     expect(validateStack(v)).toEqual([]);
     expect(resolveStack(v).store.config).toEqual({ enabled: true });
@@ -346,52 +349,47 @@ describe("infrastructure model", () => {
     v.blob.existing.arn = "external";
     expect(validateStack(v)).toEqual([]);
   });
-  it("detects duplicate bindings by physical function and allows separate functions", () => {
+  it("derives binding scopes and detects duplicate names within a physical function", () => {
     const v = stack();
     v.store.infra.bindings = [
-      { name: "URL", kind: "env", roles: ["ingest"], value: "a" },
+      { name: "DB", kind: "env", purpose: "primary", value: "db" },
     ];
+    expect(
+      bindingsForRoles(v, ["ingest"]).some((x) => x.binding.name === "DB"),
+    ).toBe(true);
+    expect(
+      bindingsForRoles(v, ["cron"]).some((x) => x.binding.name === "DB"),
+    ).toBe(false);
     v.blob.infra.bindings = [
-      { name: "URL", kind: "env", roles: ["api"], value: "b" },
+      { name: "DB", kind: "env", purpose: "primary", value: "blob" },
     ];
-    expect(validateStack(v)).toEqual([]);
-    (v.platform.config as { split: string[] }).split = [];
     expect(
       validateStack(v).some((x) => x.message.includes("Duplicate binding")),
     ).toBe(true);
   });
-  it("validates role scopes, typed platform bindings and grants", () => {
+  it("validates typed platform bindings and resource purposes", () => {
     const v = stack();
     v.store.infra.bindings = [
-      { name: "R2", kind: "platform", roles: ["api"], value: "bucket" },
+      { name: "R2", kind: "platform", purpose: "missing", value: "bucket" },
     ];
-    v.store.infra.grants = [
-      {
-        role: "api",
-        capability: "read",
-        resource: out("arn"),
-        policy: out("policy"),
-      },
-    ];
-    (v.platform.config as { roles: string[] }).roles = [
-      "ingest",
-      "consumer",
-      "cron",
-    ];
-    expect(
-      validateStack(v).some((x) => x.message.includes("does not deploy api")),
-    ).toBe(true);
     expect(
       validateStack(v).some((x) => x.message.includes("requires a type")),
     ).toBe(true);
     expect(
-      validateStack(v).some((x) => x.message.includes("Unknown capability")),
+      validateStack(v).some((x) =>
+        x.message.includes("Unknown binding purpose"),
+      ),
     ).toBe(true);
   });
   it("requires secret bindings to use sensitive or runtime references", () => {
     const v = stack();
     v.store.infra.bindings = [
-      { name: "SECRET", kind: "secret", roles: ["api"], value: "plaintext" },
+      {
+        name: "SECRET",
+        kind: "secret",
+        purpose: "primary",
+        value: "plaintext",
+      },
     ];
     expect(
       validateStack(v).some((x) =>
@@ -402,7 +400,7 @@ describe("infrastructure model", () => {
     v.store.infra.bindings[0] = {
       name: "SECRET",
       kind: "secret",
-      roles: ["api"],
+      purpose: "primary",
       value: variable("PUBLIC"),
     };
     expect(
@@ -412,7 +410,7 @@ describe("infrastructure model", () => {
   it("requires secret output references to be declared as such", () => {
     const v = stack();
     v.store.infra.bindings = [
-      { name: "SECRET", kind: "secret", roles: ["api"], value: out("arn") },
+      { name: "SECRET", kind: "secret", purpose: "primary", value: out("arn") },
     ];
     expect(validateStack(v).some((x) => x.message.includes("secret-ref"))).toBe(
       true,
@@ -421,49 +419,119 @@ describe("infrastructure model", () => {
     v.store.infra.bindings[0] = {
       name: "SECRET",
       kind: "secret",
-      roles: ["api"],
+      purpose: "primary",
       value: out("secret_id"),
     };
     expect(validateStack(v)).toEqual([]);
   });
-  it("validates grant resource and policy output declarations", () => {
+  it("validates required capabilities and derives policies for each physical function", () => {
     const v = stack();
-    v.store.infra.capabilities = { read: "policy" };
-    v.store.infra.grants = [
-      {
-        role: "api",
-        capability: "read",
-        resource: out("arn"),
-        policy: out("missing"),
-      },
-    ];
+    delete v.store.infra.capabilities.read;
     expect(
-      validateStack(v).some((x) => x.message.includes("Unknown output")),
+      validateStack(v).some((x) =>
+        x.message.includes("Role ingest requires store capability read"),
+      ),
     ).toBe(true);
-    const grant = v.store.infra.grants[0];
-    if (!grant) throw new Error("Missing grant");
-    grant.policy = out("policy");
-    expect(validateStack(v)).toEqual([]);
+    v.store.infra.capabilities.read = "policy";
+    const access = deriveAccess(v);
+    expect(access.grants).toContainEqual({
+      functionId: "ingest",
+      selection: "store",
+      capability: "read",
+      purpose: "primary",
+      policyOutput: "policy",
+    });
+    expect(
+      access.grants.some(
+        (x) =>
+          x.functionId === "ingest" &&
+          x.selection === "store" &&
+          x.capability === "write",
+      ),
+    ).toBe(false);
   });
-  it("requires topic coverage, producer paths and one deployed consumer", () => {
+  it("scopes archive staging and erasure access only when archive is selected", () => {
     const v = stack();
-    const routes = topics(v).routes;
-    delete (routes as Partial<typeof routes>).ingest;
+    v.blob.infra.bindings = [
+      { name: "DATA", kind: "env", purpose: "primary", value: "data" },
+      { name: "STAGING", kind: "env", purpose: "staging", value: "stage" },
+    ];
+    expect(bindingsForRoles(v, ["cron"])).toEqual([]);
+    v.archive = selection("archive");
+    v.archive.manifest.capabilities = { rowDelete: "copy-on-write" };
+    const access = deriveAccess(v);
+    for (const capability of ["write", "list"]) {
+      expect(access.grants).toContainEqual({
+        functionId: "cron",
+        selection: "blob",
+        capability,
+        purpose: "staging",
+        policyOutput: "policy",
+      });
+    }
+    expect(access.grants).toContainEqual({
+      functionId: "consumer",
+      selection: "blob",
+      capability: "write",
+      purpose: "staging",
+      policyOutput: "policy",
+    });
+    expect(
+      bindingsForRoles(v, ["cron"]).some(
+        (item) => item.binding.name === "STAGING",
+      ),
+    ).toBe(true);
+    expect(
+      bindingsForRoles(v, ["ingest"]).some(
+        (item) => item.binding.name === "STAGING",
+      ),
+    ).toBe(false);
+    delete v.blob.infra.capabilities.list;
+    expect(
+      validateStack(v).some((issue) =>
+        issue.message.includes("Role cron requires blob capability list"),
+      ),
+    ).toBe(true);
+  });
+  it("merges shared-function grants and requires an IAM policy when appropriate", () => {
+    const v = stack();
+    (v.platform.config as { split: string[] }).split = [];
+    const grants = deriveAccess(v).grants.filter(
+      (item) => item.selection === "store" && item.capability === "read",
+    );
+    expect(grants).toHaveLength(1);
+    expect(grants[0]?.functionId).toBe("shared");
+    v.store.infra.capabilities.read = null;
+    expect(
+      validateStack(v).some((issue) =>
+        issue.message.includes(
+          "Role ingest requires store capability read with an IAM policy",
+        ),
+      ),
+    ).toBe(true);
+  });
+  it("requires topic coverage and the core-owned consumer role", () => {
+    const v = stack();
+    delete (
+      topics(v).routes as Partial<
+        typeof v.queue.infra.topics extends never
+          ? never
+          : Record<string, unknown>
+      >
+    ).ingest;
     expect(
       validateStack(v).some((x) => x.message.includes("Missing topic")),
     ).toBe(true);
-    const n = stack();
-    topics(n).routes.ingest.producers = [];
-    expect(validateStack(n).length).toBeGreaterThan(0);
     const x = stack();
-    topics(x).routes.ingest.consumer = "api";
     (x.platform.config as { roles: string[] }).roles = [
       "ingest",
-      "consumer",
+      "api",
       "cron",
     ];
     expect(
-      validateStack(x).some((i) => i.message.includes("does not deploy api")),
+      validateStack(x).some((i) =>
+        i.message.includes("does not deploy consumer"),
+      ),
     ).toBe(true);
   });
   it("rejects undeclared producer binding names even for local queues", () => {
@@ -475,65 +543,35 @@ describe("infrastructure model", () => {
       ),
     ).toBe(true);
   });
-  it("requires every cloud topic producer and consumer to have matching bindings and grants", () => {
+  it("requires queue capabilities from the core topic routes", () => {
     const v = stack();
-    v.queue.infra.module.provider = "aws";
-    v.queue.infra.bindings = [];
+    delete topics(v).routes.ingest.producerBinding;
     expect(
-      validateStack(v).some((issue) =>
-        issue.message.includes("Missing producer binding"),
+      validateStack(v).some((i) =>
+        i.message.includes("Missing producer binding"),
       ),
     ).toBe(true);
-    const q = v.queue.infra;
-    q.capabilities = { produce: "policy", consume: "policy" };
-    q.bindings = [
-      {
-        name: "QUEUE_URL",
-        kind: "env",
-        roles: ["ingest", "cron", "consumer"],
-        value: out("arn"),
-      },
-    ];
-    q.grants = [
-      ...(["ingest", "cron", "consumer"] as const).map((role) => ({
-        role,
-        capability: "produce",
-        resource: out("arn"),
-        policy: out("policy"),
-      })),
-      {
-        role: "consumer",
-        capability: "consume",
-        resource: out("arn"),
-        policy: out("policy"),
-      },
-    ];
-    for (const route of Object.values(topics(v).routes))
-      route.producerBinding = "QUEUE_URL";
-    expect(validateStack(v)).toEqual([]);
-    q.grants = q.grants.map((grant) => ({
-      ...grant,
-      resource: output("queue", "arn"),
-    }));
-    expect(validateStack(v)).toEqual([]);
-    q.grants = q.grants.filter((grant) => grant.role !== "cron");
+    topics(v).routes.ingest.producerBinding = "QUEUE_URL";
+    delete v.queue.infra.capabilities.produce;
     expect(
-      validateStack(v).some((issue) =>
-        issue.message.includes("lacks a resource grant"),
+      validateStack(v).some((i) =>
+        i.message.includes("Role ingest requires queue capability produce"),
+      ),
+    ).toBe(true);
+    v.queue.infra.capabilities.produce = "policy";
+    delete v.queue.infra.capabilities.consume;
+    expect(
+      validateStack(v).some((i) =>
+        i.message.includes("Role consumer requires queue capability consume"),
       ),
     ).toBe(true);
   });
-  it("requires a single consumer and resource for a shared queue", () => {
+  it("requires a declared resource for each queue route", () => {
     const v = stack();
-    topics(v).routes.ingest.consumer = "api";
+    delete v.queue.infra.resources.shared;
     expect(
-      validateStack(v).some((issue) => issue.message.includes("one consumer")),
-    ).toBe(true);
-    const other = stack();
-    topics(other).routes.ingest.resource = "different";
-    expect(
-      validateStack(other).some((issue) =>
-        issue.message.includes("one resource"),
+      validateStack(v).some((i) =>
+        i.message.includes("Unknown queue resource"),
       ),
     ).toBe(true);
   });
@@ -562,26 +600,85 @@ describe("infrastructure model", () => {
     topics(n).routes.ingest.physical = "one";
     topics(n).routes["archive.project"].physical = "two";
     topics(n).routes.notifications.physical = "three";
-    expect(
-      validateStack(n).some((x) => x.message.includes("distinct resources")),
-    ).toBe(true);
-    n.queue.infra.module.outputs = {
-      one: "string",
-      two: "string",
-      three: "string",
+    n.queue.infra.resources = {
+      one: out("arn"),
+      two: out("arn"),
+      three: out("arn"),
     };
-    topics(n).routes.ingest.resource = out("one");
-    topics(n).routes["archive.project"].resource = out("two");
-    topics(n).routes.notifications.resource = out("three");
-    n.platform.manifest.authorization = "none";
-    n.platform.manifest.compute = "long-lived";
-    (n.platform.config as { split: string[] }).split = [];
-    n.queue.infra.bindings = [];
-    n.queue.infra.capabilities = {};
-    n.queue.infra.grants = [];
     for (const route of Object.values(topics(n).routes))
       delete route.producerBinding;
+    topics(n).routes.ingest.producerBinding = "ONE";
+    topics(n).routes.notifications.producerBinding = "THREE";
+    n.queue.infra.bindings = [
+      {
+        name: "ONE",
+        kind: "env",
+        purpose: "one",
+        capabilities: ["produce"],
+        value: out("arn"),
+      },
+      {
+        name: "THREE",
+        kind: "env",
+        purpose: "three",
+        capabilities: ["produce"],
+        value: out("arn"),
+      },
+    ];
     expect(validateStack(n)).toEqual([]);
+  });
+  it("does not give a queue producer binding to a role that only consumes that queue", () => {
+    const v = stack();
+    topics(v).mode = "per-topic";
+    topics(v).routes.ingest = { physical: "events", producerBinding: "EVENTS" };
+    topics(v).routes["archive.project"] = { physical: "archive" };
+    topics(v).routes.notifications = {
+      physical: "notifications",
+      producerBinding: "NOTIFICATIONS",
+    };
+    v.queue.infra.resources = {
+      events: out("arn"),
+      archive: out("arn"),
+      notifications: out("arn"),
+    };
+    v.queue.infra.bindings = [
+      {
+        name: "EVENTS",
+        kind: "env",
+        purpose: "events",
+        capabilities: ["produce"],
+        value: out("arn"),
+      },
+      {
+        name: "NOTIFICATIONS",
+        kind: "env",
+        purpose: "notifications",
+        capabilities: ["produce"],
+        value: out("arn"),
+      },
+    ];
+    expect(
+      bindingsForRoles(v, ["ingest"]).some(
+        (item) => item.binding.name === "EVENTS",
+      ),
+    ).toBe(true);
+    expect(
+      bindingsForRoles(v, ["consumer"]).some(
+        (item) => item.binding.name === "EVENTS",
+      ),
+    ).toBe(false);
+    v.queue.infra.bindings[0] = {
+      name: "EVENTS",
+      kind: "env",
+      purpose: "events",
+      capabilities: ["consume"],
+      value: out("arn"),
+    };
+    expect(
+      validateStack(v).some((issue) =>
+        issue.message.includes("Producer binding does not support"),
+      ),
+    ).toBe(true);
   });
   it("derives one shared queue trigger and named cron triggers", () => {
     const v = stack();
@@ -592,10 +689,15 @@ describe("infrastructure model", () => {
         physical: "shared",
         role: "consumer",
         resource: out("arn"),
-        topics: ["ingest", "archive.project", "notifications"],
+        topics: ["ingest", "notifications"],
       },
       { kind: "cron", name: "retention", schedule: "15 * * * *", role: "cron" },
     ]);
+    v.archive = selection("archive");
+    v.archive.manifest.capabilities = { rowDelete: "copy-on-write" };
+    expect(deriveTriggers(v)[0]).toMatchObject({
+      topics: ["ingest", "archive.project", "notifications"],
+    });
   });
   it("checks named cron jobs, duplicate routes and deployed roles", () => {
     const v = stack();
@@ -695,12 +797,11 @@ describe("infrastructure model", () => {
         name: "QUEUE",
         kind: "platform",
         platformType: "queue",
-        roles: ["ingest", "cron", "consumer"],
+        purpose: "shared",
         value: out("arn"),
       },
     ];
-    v.queue.infra.grants = [];
-    v.queue.infra.capabilities = {};
+    v.queue.infra.capabilities = { produce: null, consume: null };
     for (const route of Object.values(topics(v).routes))
       route.producerBinding = "QUEUE";
     expect(validateStack(v)).toEqual([]);
@@ -727,9 +828,7 @@ describe("infrastructure model", () => {
     ).toBe(true);
     v.platform.manifest.authorization = "iam";
     expect(
-      validateStack(v).some((i) =>
-        i.message.includes("lacks a resource grant"),
-      ),
+      validateStack(v).some((i) => i.message.includes("with an IAM policy")),
     ).toBe(true);
     v.platform.manifest.authorization = "none";
     expect(
@@ -751,14 +850,14 @@ describe("infrastructure model", () => {
       env("PORT", { valueType: "number" }),
     ]) {
       v.store.infra.bindings = [
-        { name: "VALUE", kind: "env", roles: ["api"], value },
+        { name: "VALUE", kind: "env", purpose: "primary", value },
       ];
       expect(
         validateStack(v).some((i) => i.message.includes("scalar string")),
       ).toBe(true);
     }
     v.store.infra.bindings = [
-      { name: "VALUE", kind: "env", roles: ["api"], value: out("arn") },
+      { name: "VALUE", kind: "env", purpose: "primary", value: out("arn") },
     ];
     expect(validateStack(v)).toEqual([]);
   });

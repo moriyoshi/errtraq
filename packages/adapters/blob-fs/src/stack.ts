@@ -29,8 +29,8 @@ export const infra: InfraDescriptor<BlobStackConfig> = {
   module: { provider: "local", component: "blob-fs", outputs: {} },
   inputs: () => ({}),
   bindings: [],
-  capabilities: {},
-  grants: [],
+  capabilities: { read: null, write: null, delete: null, list: null },
+  resources: { primary: "local", staging: "local" },
 };
 export function fsBlob(
   config: BlobStackConfig,

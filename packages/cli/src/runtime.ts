@@ -1,4 +1,6 @@
 import {
+  bindingsForRoles,
+  type FunctionRole,
   isEnvRef,
   isOutputRef,
   isStackRef,
@@ -6,6 +8,23 @@ import {
   type StackConfig,
   selections,
 } from "@errtraq/core";
+
+/** Only resolve bindings the requested roles actually use. */
+export function resolveRoleBindings(
+  stack: StackConfig,
+  roles: readonly FunctionRole[],
+  selection: string,
+  environment: Record<string, string | undefined>,
+): Record<string, unknown> {
+  return Object.fromEntries(
+    bindingsForRoles(stack, roles)
+      .filter((item) => item.selection === selection)
+      .map(({ binding }) => [
+        binding.name,
+        resolveRuntimeValue(binding.value, selection, stack, environment),
+      ]),
+  );
+}
 
 /** Resolve runtime bindings and existing substitutions without printing their values. */
 export function resolveRuntimeValue(

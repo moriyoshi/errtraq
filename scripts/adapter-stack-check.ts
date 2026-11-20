@@ -78,8 +78,18 @@ export async function assertStackHelper(
       module: { provider: "local", component: kind, outputs: {} },
       inputs: () => ({}),
       bindings: [],
-      capabilities: {},
-      grants: [],
+      capabilities:
+        kind === "store"
+          ? { read: null, write: null, delete: null }
+          : kind === "blob"
+            ? { read: null, write: null, delete: null, list: null }
+            : kind === "kv"
+              ? { read: null, write: null }
+              : { produce: null, consume: null },
+      resources:
+        kind === "queue"
+          ? { memory: "memory" }
+          : { primary: "local", staging: "local" },
       ...(kind === "queue"
         ? {
             topics: {
@@ -87,21 +97,12 @@ export async function assertStackHelper(
               routes: {
                 ingest: {
                   physical: "memory",
-                  producers: ["ingest" as const],
-                  consumer: "consumer" as const,
-                  resource: "memory",
                 },
                 "archive.project": {
                   physical: "memory",
-                  producers: ["cron" as const],
-                  consumer: "consumer" as const,
-                  resource: "memory",
                 },
                 notifications: {
                   physical: "memory",
-                  producers: ["consumer" as const],
-                  consumer: "consumer" as const,
-                  resource: "memory",
                 },
               },
             },

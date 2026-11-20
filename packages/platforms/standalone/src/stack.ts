@@ -78,7 +78,7 @@ export const infra: InfraDescriptor<StandaloneStackConfig> = {
   inputs: () => ({}),
   bindings: [],
   capabilities: {},
-  grants: [],
+  resources: {},
 };
 export function standalone(
   config: StandaloneStackConfig = {},

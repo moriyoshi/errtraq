@@ -28,28 +28,19 @@ export const infra: InfraDescriptor<QueueConfig> = {
   module: { provider: "local", component: "queue-memory", outputs: {} },
   inputs: () => ({}),
   bindings: [],
-  capabilities: {},
-  grants: [],
+  capabilities: { produce: null, consume: null },
+  resources: { memory: "memory" },
   topics: {
     mode: "shared",
     routes: {
       ingest: {
         physical: "memory",
-        producers: ["ingest"],
-        consumer: "consumer",
-        resource: "memory",
       },
       "archive.project": {
         physical: "memory",
-        producers: ["cron"],
-        consumer: "consumer",
-        resource: "memory",
       },
       notifications: {
         physical: "memory",
-        producers: ["consumer"],
-        consumer: "consumer",
-        resource: "memory",
       },
     },
   },

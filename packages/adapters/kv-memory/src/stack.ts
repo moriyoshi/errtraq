@@ -19,8 +19,8 @@ export const infra: InfraDescriptor<KvConfig> = {
   module: { provider: "local", component: "kv-memory", outputs: {} },
   inputs: () => ({}),
   bindings: [],
-  capabilities: {},
-  grants: [],
+  capabilities: { read: null, write: null },
+  resources: { primary: "local" },
 };
 export function memoryKv(config: KvConfig = {}): AdapterSelection<KvConfig> {
   return { manifest, infra, config, runtimeModule: "@errtraq/kv-memory" };

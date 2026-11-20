@@ -8,14 +8,17 @@ import {
   bootstrapProject,
   type CoreTopic,
   constructionOrder,
+  type FunctionRole,
   type KV,
+  type PlatformConfig,
+  physicalFunctions,
   resolveStack,
   type StackConfig,
   selections,
   type TopicRoute,
   WebCryptoIdGen,
 } from "@errtraq/core";
-import { resolveRuntimeValue } from "./runtime.js";
+import { resolveRoleBindings, resolveRuntimeValue } from "./runtime.js";
 import { devToken } from "./token.js";
 
 async function load(
@@ -23,6 +26,7 @@ async function load(
   selection: AdapterSelection,
   stack: StackConfig,
   created: Map<string, unknown>,
+  roles: readonly FunctionRole[],
 ): Promise<unknown> {
   const module: unknown = await import(selection.runtimeModule);
   if (
@@ -39,12 +43,7 @@ async function load(
       return [alias, created.get(target)];
     }),
   );
-  const bindings = Object.fromEntries(
-    selection.infra.bindings.map((binding) => [
-      binding.name,
-      resolveRuntimeValue(binding.value, path, stack, process.env),
-    ]),
-  );
+  const bindings = resolveRoleBindings(stack, roles, path, process.env);
   const topics = Object.fromEntries(
     Object.entries(stack.queue.infra.topics?.routes ?? {}).map(
       ([topic, route]) => [
@@ -99,13 +98,17 @@ export async function main(args: string[]): Promise<void> {
   if (typeof storeConfig.path === "string" && storeConfig.path !== ":memory:")
     await mkdir(dirname(storeConfig.path), { recursive: true });
   const selected = selections(stack);
+  const functions = physicalFunctions(stack.platform.config as PlatformConfig);
+  if (functions.length !== 1)
+    throw new Error("The dev command requires one physical function");
+  const roles = functions[0]?.roles ?? [];
   const created = new Map<string, unknown>();
   let store: (ActiveStore & { close?: () => Promise<void> }) | undefined;
   try {
     for (const path of constructionOrder(stack)) {
       const selection = selected.get(path);
       if (!selection) throw new Error(`Missing selection ${path}`);
-      const adapter = await load(path, selection, stack, created);
+      const adapter = await load(path, selection, stack, created, roles);
       created.set(path, adapter);
       if (path === "store") {
         store = adapter as ActiveStore & { close?: () => Promise<void> };

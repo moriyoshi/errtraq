@@ -9,6 +9,7 @@ import {
   type AdapterSelection,
   type CoreTopic,
   CRON_JOBS,
+  type DerivedGrant,
   FUNCTION_ROLES,
   type FunctionRole,
   type FunctionSettings,
@@ -18,21 +19,143 @@ import {
   isOutputRef,
   isStackRef,
   isVariableRef,
-  type OutputRef,
   type OutputType,
   type PhysicalFunction,
   type PlatformConfig,
   REF,
+  type ScopedBinding,
   type StackConfig,
   type StackValidationIssue,
   TOPICS,
 } from "./stack-model.js";
+import {
+  PORT_REQUIREMENTS,
+  QUEUE_CAPABILITIES,
+  TOPIC_ROUTES,
+} from "./stack-requirements.js";
 import {
   platformConfigSchema,
   platformSchema,
   requiredCapabilities,
   rootSchema,
 } from "./stack-schema.js";
+
+interface AccessRequirement {
+  selection: string;
+  role: FunctionRole;
+  capability: string;
+  purpose: string;
+}
+function accessRequirements(
+  stack: StackConfig,
+  roles: readonly FunctionRole[],
+): AccessRequirement[] {
+  const result: AccessRequirement[] = PORT_REQUIREMENTS.filter(
+    (row) => roles.includes(row.role) && (!row.feature || stack[row.feature]),
+  ).map((row) => ({
+    selection: row.kind,
+    role: row.role,
+    capability: row.capability,
+    purpose: row.purpose,
+  }));
+  const mapping = stack.queue.infra.topics;
+  if (mapping)
+    for (const topic of TOPICS) {
+      const route = TOPIC_ROUTES[topic];
+      if (route.feature && !stack[route.feature]) continue;
+      const physical = mapping.routes[topic]?.physical;
+      if (!physical) continue;
+      for (const role of route.producers)
+        if (roles.includes(role))
+          result.push({
+            selection: "queue",
+            role,
+            capability: QUEUE_CAPABILITIES.producer,
+            purpose: physical,
+          });
+      if (roles.includes(route.consumer))
+        result.push({
+          selection: "queue",
+          role: route.consumer,
+          capability: QUEUE_CAPABILITIES.consumer,
+          purpose: physical,
+        });
+    }
+  return result;
+}
+function deriveAccessFor(
+  stack: StackConfig,
+  functions: PhysicalFunction[],
+): { grants: DerivedGrant[]; bindings: ScopedBinding[] } {
+  const all = selections(stack);
+  const grants: DerivedGrant[] = [];
+  const bindings: ScopedBinding[] = [];
+  for (const fn of functions) {
+    const rows = accessRequirements(stack, fn.roles);
+    for (const row of rows) {
+      const sel = all.get(row.selection);
+      if (!sel) continue;
+      if (
+        !grants.some(
+          (g) =>
+            g.functionId === fn.id &&
+            g.selection === row.selection &&
+            g.capability === row.capability &&
+            g.purpose === row.purpose,
+        )
+      ) {
+        const policyOutput = ownValue(sel.infra.capabilities, row.capability);
+        grants.push({
+          functionId: fn.id,
+          selection: row.selection,
+          capability: row.capability,
+          purpose: row.purpose,
+          ...(policyOutput ? { policyOutput } : {}),
+        });
+      }
+      for (const binding of sel.infra.bindings.filter(
+        (b) =>
+          b.purpose === row.purpose &&
+          (!b.capabilities || b.capabilities.includes(row.capability)),
+      ))
+        if (
+          !bindings.some(
+            (b) =>
+              b.functionId === fn.id &&
+              b.selection === row.selection &&
+              b.binding === binding,
+          )
+        )
+          bindings.push({
+            functionId: fn.id,
+            selection: row.selection,
+            binding,
+          });
+    }
+  }
+  return { grants, bindings };
+}
+/** Access derived from core requirements, grouped by the actual physical functions. */
+export function deriveAccess(input: StackConfig): {
+  grants: DerivedGrant[];
+  bindings: ScopedBinding[];
+} {
+  const stack = resolveStack(input);
+  return deriveAccessFor(
+    stack,
+    physicalFunctions(platformConfigSchema.parse(stack.platform.config)),
+  );
+}
+/** Resolve scopes for only these roles (used by role-specific runtime entrypoints). */
+export function bindingsForRoles(
+  input: StackConfig,
+  roles: readonly FunctionRole[],
+): ScopedBinding[] {
+  const stack = resolveStack(input);
+  return deriveAccessFor(stack, [
+    { id: "runtime", roles: [...roles], settings: {} },
+  ]).bindings;
+}
 
 // A resolved stack has already passed all checks, including potentially transforming
 // adapter schemas. Keep its construction order alongside its identity.
@@ -533,64 +656,57 @@ function inspect(input: unknown): {
         else if (isEnvRef(value) && value.phase !== "runtime")
           fail(loc, "Secret environment reference must resolve at runtime");
       }
-      for (const r of binding.roles) {
-        roleExists(r, loc);
-        const group = groups.findIndex((g) => g.roles.includes(r));
-        const key = `${group}:${binding.name}`;
-        const previous = names.get(key);
-        if (previous && previous !== loc)
-          fail(loc, `Duplicate binding ${binding.name} in function`);
-        else names.set(key, loc);
-      }
+      if (!Object.hasOwn(sel.infra.resources, binding.purpose))
+        fail(loc, `Unknown binding purpose ${binding.purpose}`);
+      for (const capability of binding.capabilities ?? [])
+        if (!Object.hasOwn(sel.infra.capabilities, capability))
+          fail(loc, `Unknown binding capability ${capability}`);
     }
+    for (const [purpose, resource] of Object.entries(sel.infra.resources))
+      checkValue(resource, path, `${path}.infra.resources.${purpose}`, false);
     for (const [capability, policyOutput] of Object.entries(
       sel.infra.capabilities,
     )) {
-      if (ownValue(sel.infra.module.outputs, policyOutput) !== "json")
+      if (
+        policyOutput !== null &&
+        ownValue(sel.infra.module.outputs, policyOutput) !== "json"
+      )
         fail(
           `${path}.infra.capabilities.${capability}`,
           "Capability requires a declared JSON policy output",
         );
     }
-    for (const [i, grant] of sel.infra.grants.entries()) {
-      const loc = `${path}.infra.grants.${i}`;
-      roleExists(grant.role, loc);
-      if (!Object.hasOwn(sel.infra.capabilities, grant.capability))
-        fail(loc, `Unknown capability ${grant.capability}`);
-      for (const [field, v] of [
-        ["resource", grant.resource],
-        ["policy", grant.policy],
-      ] as const) {
-        if (!isOutputRef(v))
-          fail(`${loc}.${field}`, "Grant requires an output reference");
-        else {
-          checkValue(v, path, `${loc}.${field}`, false);
-          const target = v.selection ?? path;
-          const type = all.get(target)?.infra.module.outputs[v.name];
-          if (field === "policy" && target !== path)
-            fail(`${loc}.policy`, "Policy must come from the granting adapter");
-          if (
-            field === "policy" &&
-            sel.infra.capabilities[grant.capability] &&
-            v.name !== sel.infra.capabilities[grant.capability]
-          )
-            fail(`${loc}.policy`, "Policy output does not match capability");
-          if (field === "policy" && type && type !== "json")
-            fail(`${loc}.policy`, "Policy output must be JSON");
-          if (
-            field === "resource" &&
-            type &&
-            type !== "string" &&
-            type !== "string[]" &&
-            type !== "secret-ref"
-          )
-            fail(
-              `${loc}.resource`,
-              "Resource output must be a string or string list",
-            );
-        }
-      }
-    }
+  }
+  for (const row of accessRequirements(stack, functions.roles)) {
+    const sel = all.get(row.selection);
+    if (!sel) continue;
+    const loc = `${row.selection}.infra`;
+    if (!Object.hasOwn(sel.infra.capabilities, row.capability))
+      fail(
+        `${loc}.capabilities`,
+        `Role ${row.role} requires ${row.selection} capability ${row.capability}`,
+      );
+    else if (
+      platform.authorization === "iam" &&
+      ownValue(sel.infra.capabilities, row.capability) === null
+    )
+      fail(
+        `${loc}.capabilities`,
+        `Role ${row.role} requires ${row.selection} capability ${row.capability} with an IAM policy`,
+      );
+    if (!Object.hasOwn(sel.infra.resources, row.purpose))
+      fail(
+        `${loc}.resources`,
+        `Role ${row.role} requires ${row.selection} resource ${row.purpose}`,
+      );
+  }
+  for (const scoped of deriveAccessFor(stack, groups).bindings) {
+    const key = `${scoped.functionId}:${scoped.binding.name}`;
+    const previous = names.get(key);
+    const loc = `${scoped.selection}.infra.bindings`;
+    if (previous)
+      fail(loc, `Duplicate binding ${scoped.binding.name} in function`);
+    else names.set(key, loc);
   }
   const topics = stack.queue.infra.topics;
   if (!topics) fail("queue.infra.topics", "Queue must map core topics");
@@ -605,111 +721,65 @@ function inspect(input: unknown): {
     const physical: string[] = [];
     for (const [topic, route] of Object.entries(topics.routes)) {
       physical.push(route.physical);
-      roleExists(route.consumer, `queue.infra.topics.${topic}.consumer`);
-      for (const producer of route.producers)
-        roleExists(producer, `queue.infra.topics.${topic}.producers`);
-      if (!route.producers.length)
-        fail(`queue.infra.topics.${topic}.producers`, "Missing producer");
-      checkValue(
-        route.resource,
-        "queue",
-        `queue.infra.topics.${topic}.resource`,
-        false,
+      const contract = ownValue(TOPIC_ROUTES, topic);
+      if (contract && (!contract.feature || stack[contract.feature])) {
+        roleExists(contract.consumer, `queue.infra.topics.${topic}.consumer`);
+        for (const producer of contract.producers)
+          roleExists(producer, `queue.infra.topics.${topic}.producer`);
+      }
+      if (!Object.hasOwn(stack.queue.infra.resources, route.physical))
+        fail(
+          `queue.infra.topics.${topic}`,
+          `Unknown queue resource ${route.physical}`,
+        );
+      else if (
+        platform.authorization !== "none" &&
+        !isOutputRef(ownValue(stack.queue.infra.resources, route.physical))
+      )
+        fail(
+          `queue.infra.topics.${topic}`,
+          "Queue resource requires an output reference",
+        );
+      const binding = stack.queue.infra.bindings.find(
+        (item) => item.name === route.producerBinding,
       );
       if (
-        route.producerBinding &&
-        !stack.queue.infra.bindings.some(
-          (binding) => binding.name === route.producerBinding,
-        )
+        platform.authorization !== "none" &&
+        contract &&
+        (!contract.feature || stack[contract.feature]) &&
+        !binding
       )
         fail(
           `queue.infra.topics.${topic}.producerBinding`,
-          "Unknown producer binding",
+          "Missing producer binding",
         );
-      if (platform.authorization !== "none") {
-        const resource = route.resource;
-        const isOutput = isOutputRef(resource);
-        if (!isOutput)
-          fail(
-            `queue.infra.topics.${topic}.resource`,
-            "Cloud topic requires a queue output reference",
-          );
-        const sameResource = (candidate: OutputRef) =>
-          isOutput &&
-          candidate.name === resource.name &&
-          (candidate.selection ?? "queue") === (resource.selection ?? "queue");
-        const binding = stack.queue.infra.bindings.find(
-          (item) => item.name === route.producerBinding,
+      if (
+        route.producerBinding &&
+        (!binding || binding.purpose !== route.physical)
+      )
+        fail(
+          `queue.infra.topics.${topic}.producerBinding`,
+          "Unknown producer binding for queue resource",
         );
-        if (!route.producerBinding || !binding)
-          fail(
-            `queue.infra.topics.${topic}.producerBinding`,
-            "Missing producer binding",
-          );
-        if (
-          platform.authorization === "bindings" &&
-          binding &&
-          binding.kind !== "platform"
-        )
-          fail(
-            `queue.infra.topics.${topic}.producerBinding`,
-            "Binding authorization requires a platform binding",
-          );
-        for (const producer of route.producers) {
-          if (binding && !binding.roles.includes(producer))
-            fail(
-              `queue.infra.topics.${topic}.producerBinding`,
-              `Producer ${producer} lacks the binding`,
-            );
-          if (
-            platform.authorization === "iam" &&
-            !stack.queue.infra.grants.some(
-              (grant) =>
-                grant.role === producer &&
-                grant.capability === "produce" &&
-                sameResource(grant.resource),
-            )
-          )
-            fail(
-              `queue.infra.topics.${topic}.producers`,
-              `Producer ${producer} lacks a resource grant`,
-            );
-        }
-        if (
-          platform.authorization === "iam" &&
-          !stack.queue.infra.grants.some(
-            (grant) =>
-              grant.role === route.consumer &&
-              grant.capability === "consume" &&
-              sameResource(grant.resource),
-          )
-        )
-          fail(
-            `queue.infra.topics.${topic}.consumer`,
-            "Consumer lacks a resource grant",
-          );
-      }
+      if (
+        binding?.capabilities &&
+        !binding.capabilities.includes(QUEUE_CAPABILITIES.producer)
+      )
+        fail(
+          `queue.infra.topics.${topic}.producerBinding`,
+          "Producer binding does not support the producer capability",
+        );
+      if (
+        platform.authorization === "bindings" &&
+        contract &&
+        (!contract.feature || stack[contract.feature]) &&
+        binding?.kind !== "platform"
+      )
+        fail(
+          `queue.infra.topics.${topic}.producerBinding`,
+          "Binding authorization requires a platform binding",
+        );
     }
-    if (
-      topics.mode === "shared" &&
-      new Set(Object.values(topics.routes).map((route) => route.consumer))
-        .size > 1
-    )
-      fail("queue.infra.topics", "A shared queue requires one consumer role");
-    const resourceKey = (value: InfraValue): string => {
-      if (isOutputRef(value))
-        return JSON.stringify([value.selection ?? "queue", value.name]);
-      return JSON.stringify(value);
-    };
-    if (
-      topics.mode === "shared" &&
-      new Set(
-        Object.values(topics.routes).map((route) =>
-          resourceKey(route.resource),
-        ),
-      ).size > 1
-    )
-      fail("queue.infra.topics", "A shared queue requires one resource");
     if (topics.mode === "shared" && new Set(physical).size > 1)
       fail(
         "queue.infra.topics",
@@ -720,15 +790,6 @@ function inspect(input: unknown): {
       new Set(physical).size !== physical.length
     )
       fail("queue.infra.topics", "Per-topic queues must be distinct");
-    if (
-      topics.mode === "per-topic" &&
-      new Set(
-        Object.values(topics.routes).map((route) =>
-          resourceKey(route.resource),
-        ),
-      ).size !== physical.length
-    )
-      fail("queue.infra.topics", "Per-topic queues require distinct resources");
   }
   for (const job of functions.cron) {
     const match = CRON_JOBS.find((j) => j.name === job);
@@ -834,14 +895,16 @@ export function deriveTriggers(input: StackConfig): DerivedTrigger[] {
   if (!mapping) throw new Error("Missing queue mapping");
   const queues = new Map<string, Extract<DerivedTrigger, { kind: "queue" }>>();
   for (const topic of TOPICS) {
+    const contract = TOPIC_ROUTES[topic];
+    if (contract.feature && !stack[contract.feature]) continue;
     const route = mapping.routes[topic];
     let trigger = queues.get(route.physical);
     if (!trigger) {
       trigger = {
         kind: "queue",
         physical: route.physical,
-        role: route.consumer,
-        resource: route.resource,
+        role: TOPIC_ROUTES[topic].consumer,
+        resource: stack.queue.infra.resources[route.physical] ?? null,
         topics: [],
       };
       queues.set(route.physical, trigger);

@@ -8,7 +8,7 @@ import {
 } from "@errtraq/core";
 import { expect, it } from "vitest";
 import local from "../../../stacks/local.js";
-import { resolveRuntimeValue } from "./runtime.js";
+import { resolveRoleBindings, resolveRuntimeValue } from "./runtime.js";
 
 it("resolves existing outputs, scoped environments and typed Terraform variables", () => {
   const stack = {
@@ -118,6 +118,33 @@ it("resolves runtime environment defaults, suffixes and numbers", () => {
       { PORT: "bad" },
     ),
   ).toThrow("Invalid environment variable PORT");
+});
+
+it("resolves only the bindings used by the requested runtime roles", () => {
+  const stack = {
+    ...local,
+    store: {
+      ...local.store,
+      infra: {
+        ...local.store.infra,
+        bindings: [
+          {
+            name: "DB",
+            kind: "env" as const,
+            purpose: "primary",
+            value: env("DB"),
+          },
+        ],
+      },
+    },
+  };
+  expect(resolveRoleBindings(stack, ["cron"], "store", {})).toEqual({});
+  expect(resolveRoleBindings(stack, ["ingest"], "store", { DB: "db" })).toEqual(
+    { DB: "db" },
+  );
+  expect(() => resolveRoleBindings(stack, ["api"], "store", {})).toThrow(
+    "Missing environment variable DB",
+  );
 });
 
 it("resolves provider-qualified stack values using the owning module by default", () => {

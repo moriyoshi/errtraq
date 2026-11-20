@@ -70,20 +70,14 @@ const descriptorSchema = z.strictObject({
     z.strictObject({
       name: refName,
       kind: z.enum(["env", "secret", "platform"]),
-      roles: z.array(role).min(1),
+      purpose: name,
+      capabilities: z.array(name).min(1).optional(),
       value: infraValue,
       platformType: z.string().min(1).optional(),
     }),
   ),
-  capabilities: z.record(name, refName),
-  grants: z.array(
-    z.strictObject({
-      role,
-      capability: name,
-      resource: infraValue,
-      policy: infraValue,
-    }),
-  ),
+  capabilities: z.record(name, z.union([refName, z.null()])),
+  resources: z.record(name, infraValue),
   topics: z
     .strictObject({
       mode: z.enum(["shared", "per-topic"]),
@@ -92,9 +86,6 @@ const descriptorSchema = z.strictObject({
         z.strictObject({
           physical: z.string().min(1),
           producerBinding: refName.optional(),
-          producers: z.array(role).min(1),
-          consumer: role,
-          resource: infraValue,
         }),
       ),
     })
