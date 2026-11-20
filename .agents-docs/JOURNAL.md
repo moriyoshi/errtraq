@@ -190,3 +190,27 @@ briefly placed in `docs/`; that name stays free for a user-facing docs site.) Sk
 - Each stack helper declares the already-present Zod dependency directly. The workspace now
   explicitly permits the already-installed esbuild postinstall; unlike the temporary denial in
   the M1a install attempt, the final frozen offline install runs its local setup successfully.
+
+## 2026-11-21 — M1c ingest pipeline
+
+- Envelope item lengths are bytes, with newline-delimited fallback. Header and event IDs must
+  agree; absent IDs are generated as random 32-digit hex values. Unsupported item types are
+  accepted and logged as dropped. Authentication uses the query key or `X-Sentry-Auth`.
+- Grouping hashes JSON-encoded grouping components with SHA-256, then hashes the project ID
+  and fingerprint to obtain the issue ID. Client fingerprints replace the default grouping and
+  expand `{{ default }}`; exception frames prefer in-app frames, then all frames, then filenames.
+- Defaults are a 1 MiB envelope limit, 60 events per key per 60 seconds, and a 200,000-byte
+  payload overflow threshold. Rate limits use fixed windows and KV atomic increments. Core and
+  HTTP limits are independently configurable and must be kept consistent by the platform.
+- Raw envelopes use unique claim-check keys. A completion marker is written before deleting a
+  staged envelope so redelivery, including unsupported-only envelopes, is acknowledged safely.
+  Markers currently do not expire: cleanup requires a queue-retention policy. Ambiguous queue
+  publication or event-store failures can leave staged or overflow blobs for later cleanup.
+- Malformed events are logged and acknowledged as poison; storage and queue failures retry.
+  Messages for other topics are retried rather than acknowledged by the ingest consumer.
+  Gzip and deflate use Web `DecompressionStream`; Brotli is accepted only if that runtime
+  supports it, and otherwise returns 415. The current Node runtime does not support Brotli there.
+- Bootstrap allocates numeric IDs with KV increment and checks for pre-existing IDs after a KV
+  reset. Lookup-then-put for org/project slugs is not atomic across concurrent bootstrappers;
+  the caller must supply a cryptographically secure IdGen for public keys. Both are tracked for
+  M1d. No core ports or shared adapter contracts changed; the in-process test uses existing fakes.

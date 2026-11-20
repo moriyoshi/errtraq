@@ -10,7 +10,8 @@
     "baseUrl": ".",
     "paths": {
       "@errtraq/core": ["packages/core/src/index.ts"],
-      "@errtraq/testing": ["packages/testing/src/index.ts"]
+      "@errtraq/testing": ["packages/testing/src/index.ts"],
+      "@errtraq/http": ["packages/http/src/index.ts"]
     }
   },
   "include": ["packages/core/src/**/*.ts", "packages/http/src/**/*.ts"]

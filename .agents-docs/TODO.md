@@ -11,7 +11,7 @@ item should be resolved or removed once addressed. Milestone work itself is trac
 - [ ] M3: check whether winterbaume's DynamoDB and SQS coverage is good enough to replace DynamoDB Local and ElasticMQ in the compose file. — *source: JOURNAL 2026-11-21 — Project bootstrap decisions*
 - [ ] M1: define indexed tag-key discovery and issue tag-filter semantics before exposing tag filters through active-store adapters. — *source: JOURNAL 2026-11-21 — M0c: contract harness and memory semantics*
 - [x] M1: design crash-safe coordination of event insertion and issue occurrence updates; an inserted flag alone cannot make both operations atomic. — *source: JOURNAL 2026-11-21 — M0c review: delivery, scan and pagination contracts*
-- [ ] M1: allocate project IDs as decimal-digit strings for Sentry-compatible DSNs. — *source: M0d final review A6*
+- [x] M1: allocate project IDs as decimal-digit strings for Sentry-compatible DSNs. — *source: M0d final review A6*
 - [ ] M2a: redesign infra references and runtime factory wiring so cross-adapter dependencies can be expressed. — *source: M0d final review B*
 - [ ] M2a: expose nested sub-adapter selections so generated entrypoints import only selected engines and catalogs. — *source: M0d final review B*
 - [ ] M2a: model grants with resource and policy outputs. — *source: M0d final review B*
@@ -24,3 +24,6 @@ item should be resolved or removed once addressed. Milestone work itself is trac
 - [ ] M4: prevent stale lease holders overwriting staging batches, using a nonce in staged keys or conditional blob writes. — *source: M0d final review B*
 - [x] M1: `tsconfig.tests.json` type-checks every package with WebWorker libs and no Node types; Node-only adapter and platform packages (for example `store-sql` sqlite, `blob-fs`, `standalone`) need their own lib / types settings without loosening `core` and `http`. — *source: JOURNAL 2026-11-21 — M0 closed: final review, verification and research*
 - [ ] M4: act on `.agents-docs/M4_ICEBERG_SPIKE_RESEARCH.md`: the Athena query engine cannot read v3 tables, winterbaume has no Docker image (compose must run the binary), Lakekeeper needs `sts-enabled: false` against winterbaume, and Cloudflare has no verified in-process write path. Revise the "ArchiveStore" engine list in ARCHITECTURE.md once the hands-on spikes report. — *source: JOURNAL 2026-11-21 — M0 closed: final review, verification and research*
+- [ ] M1d: make concurrent bootstrap of the same organization/project slug safe across processes; the current lookup-then-put sequence is not atomic. Use a cryptographically secure IdGen for DSN keys. — *source: JOURNAL 2026-11-21 — M1c ingest pipeline*
+- [ ] M1d: configure the consumer envelope size limit consistently with the ingest service. — *source: JOURNAL 2026-11-21 — M1c ingest pipeline*
+- [ ] M3: design queue-retention-aware cleanup for ingest completion markers and orphaned staged/overflow blobs after ambiguous failures. — *source: JOURNAL 2026-11-21 — M1c ingest pipeline*
