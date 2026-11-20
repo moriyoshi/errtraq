@@ -51,7 +51,7 @@ export interface ProjectRepo {
   putOrg(org: Org): Promise<void>;
   get(id: ProjectId): Promise<Project | null>;
   put(project: Project): Promise<void>;
-  list(cursor?: Cursor): Promise<Page<Project>>;
+  list(cursor?: Cursor, limit?: number): Promise<Page<Project>>;
   getKey(publicKey: string): Promise<ProjectKey | null>;
   putKey(key: ProjectKey): Promise<void>;
   getTokenByHash(tokenHash: string): Promise<ApiToken | null>;
@@ -59,12 +59,15 @@ export interface ProjectRepo {
 }
 
 export interface IssueRepo {
-  /** Atomically creates or updates the issue. */
+  /** Atomically creates or bumps an issue. Regression uses receivedAt after resolvedAt;
+   * latest event is the maximum (receivedAt, eventId). */
   recordOccurrence(
     occurrence: Occurrence,
   ): Promise<{ issue: Issue; isNew: boolean; isRegression: boolean }>;
   get(projectId: ProjectId, issueId: IssueId): Promise<Issue | null>;
+  /** Descending sort key, ascending issue ID tie-break; lastSeen is filtered by [from, to). */
   list(query: IssueQuery): Promise<Page<Issue>>;
+  /** Throws NotFoundError if the project/issue pair is absent. */
   update(
     projectId: ProjectId,
     issueId: IssueId,
@@ -77,18 +80,20 @@ export interface EventRepo {
     deleteStrategy: "explicit" | "ttl";
   };
 
-  /** Idempotent on (projectId, eventId). */
-  put(event: StoredEvent): Promise<void>;
+  /** Atomically inserts by (projectId, eventId); duplicates leave the row untouched. */
+  put(event: StoredEvent): Promise<{ inserted: boolean }>;
   get(projectId: ProjectId, eventId: EventId): Promise<StoredEvent | null>;
+  /** Ascending (receivedAt, eventId); time filters use [from, to). */
   listByIssue(query: EventQuery): Promise<Page<StoredEvent>>;
 
-  /** Ordered by receivedAt and eventId. Cursor is needed by TTL stores. */
+  /** Ascending (receivedAt, eventId); cutoff is exclusive, with cursor and limit for paging. */
   scanOlderThan(
     projectId: ProjectId,
     cutoff: Timestamp,
     options?: { cursor?: Cursor; limit?: number },
-  ): AsyncIterable<Page<StoredEvent>>;
+  ): Promise<Page<StoredEvent>>;
   deleteBatch(projectId: ProjectId, ids: EventId[]): Promise<void>;
+  /** Deletes matching events with receivedAt <= before. */
   deleteBySubject(
     projectId: ProjectId,
     selector: SubjectSelector,
@@ -99,7 +104,11 @@ export interface EventRepo {
 export interface ReleaseRepo {
   get(projectId: ProjectId, id: ReleaseId): Promise<Release | null>;
   put(release: Release): Promise<void>;
-  list(projectId: ProjectId, cursor?: Cursor): Promise<Page<Release>>;
+  list(
+    projectId: ProjectId,
+    cursor?: Cursor,
+    limit?: number,
+  ): Promise<Page<Release>>;
   putBundle(bundle: ArtifactBundle): Promise<void>;
   findBundleByDebugId(
     projectId: ProjectId,
@@ -107,7 +116,8 @@ export interface ReleaseRepo {
   ): Promise<ArtifactBundle | null>;
 }
 
-/** A null expected version creates a missing record; otherwise it must match exactly. */
+/** CAS creates at version 0 with expected null; updates require next.version = expected + 1.
+ * A missing record or mismatched expected version raises VersionConflictError. */
 export interface MetaRepo {
   getArchiveState(projectId: ProjectId): Promise<ArchiveState | null>;
   compareAndSetArchiveState(
@@ -122,6 +132,7 @@ export interface MetaRepo {
   listErasureRequests(
     state: ErasureStatus,
     cursor?: Cursor,
+    limit?: number,
   ): Promise<Page<ErasureRequest>>;
   compareAndSetErasureRequest(
     projectId: ProjectId,
@@ -154,6 +165,7 @@ export interface Message {
 
 export interface Delivery {
   id: string;
+  topic: Topic;
   message: Message;
   attempt: number;
 }
@@ -211,7 +223,8 @@ export interface BlobStore {
   ): Promise<void>;
   get(key: string): Promise<ReadableStream<Uint8Array> | null>;
   head(key: string): Promise<BlobMetadata | null>;
-  list(prefix: string, cursor?: Cursor): Promise<Page<string>>;
+  /** Keys matching prefix in ascending lexicographic order. */
+  list(prefix: string, cursor?: Cursor, limit?: number): Promise<Page<string>>;
   delete(key: string): Promise<void>;
   presign?(
     key: string,
@@ -220,12 +233,14 @@ export interface BlobStore {
 }
 
 export interface ArchiveStore {
+  /** Repeating a batchId is safe and must not append its rows twice. */
   append(batch: {
     batchId: string;
     stagedKey: string;
     dayRange: [Day, Day];
   }): Promise<{ snapshotId: string; rowCount: number }>;
   hasBatch(batchId: string, dayRange: [Day, Day]): Promise<boolean>;
+  /** Ascending (receivedAt, eventId); time filters use [from, to). */
   query(query: EventQuery): Promise<Page<StoredEvent>>;
   getEvent(
     projectId: ProjectId,

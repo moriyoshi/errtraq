@@ -188,7 +188,14 @@ importers:
 
   packages/infra-gen: {}
 
-  packages/testing: {}
+  packages/testing:
+    dependencies:
+      "@errtraq/core":
+        specifier: workspace:*
+        version: link:../core
+      vitest:
+        specifier: ^5.0.5
+        version: 5.0.5(vite@8.3.4)
 
 packages:
 

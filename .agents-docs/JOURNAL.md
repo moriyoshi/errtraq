@@ -71,3 +71,40 @@ the repository root, unlike cornus where they are under `.agents/docs`. The Code
 treats `.agents/` as read-only, so agents could not append to the journal there. (They were
 briefly placed in `docs/`; that name stays free for a user-facing docs site.) Skills stay under
 `.agents/skills`.
+
+## 2026-11-21 — M0c: contract harness and memory semantics
+
+- Archive adapters own their staged batch encoding and push queues receive platform-specific
+  events, so the reusable suites accept staging and push-delivery hooks. The memory archive
+  uses JSON test batches, not the Parquet format planned for production. Its snapshot expiry
+  is a no-op because it does not retain historical snapshots; the M4 raw-storage erasure
+  and crash-safety checks remain necessary.
+- Issue lists use descending sort with issue ID as a tie-breaker and a half-open time range on
+  `lastSeen`. Event lists and archival scans use ascending `(receivedAt, eventId)`; scan cutoff
+  is exclusive, while subject erasure includes events at the request timestamp. The contract
+  treats a scan limit as a bound on the returned batch.
+- The metadata fake requires an initial version of zero and increments of one; CAS races are
+  tested for archive and erasure records. A resolved issue regresses only for an occurrence
+  whose client timestamp is after `resolvedAt`.
+- `tagFilter: indexed-only` does not identify which tag keys are indexed, and `Issue` has no
+  promoted tags. The fake rejects tag queries; the unsupported-filter test uses an unindexed
+  key. The index and filtering contract needs refinement before M1 adapters expose tag filters.
+- Delay and TTL suites require a controllable clock; tests use an explicit advance hook. Queue
+  push coverage also needs a platform event driver. Vitest is a peer of the testing package
+  because its exported suite factories register Vitest tests.
+- Blob listing and erasure-state listing originally had cursors but no page-size control;
+  optional limits were added to their ports so contract suites can force and verify pagination.
+
+## 2026-11-21 — M0c review: delivery, scan and pagination contracts
+
+- Event insertion returns whether the row was newly inserted, and duplicate inserts preserve
+  the original row. This permits a consumer to detect redelivery, but the insert and issue bump
+  are separate operations: a crash between them still needs an M1 recovery or atomicity design.
+- Regression uses server `receivedAt`, not the client timestamp. The scan port now returns one
+  page per call, with explicit cursor and limit; the port comments document ordering, boundaries,
+  latest-event selection and CAS version rules. Queue deliveries retain their topic.
+- Project and release listings gained optional limits so suites can force multiple pages without
+  relying on a fake-specific default. Blob and erasure listing limits were added earlier in M0c.
+- Repeated archive append of the same batch ID is now required to be safe. Archive suite hooks
+  remain responsible for staging each adapter's native batch format; the fake preserves the
+  original append result after a physical rewrite.

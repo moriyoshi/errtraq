@@ -4,3 +4,7 @@ export class UnsupportedQueryError extends Error {
 export class VersionConflictError extends Error {
   override name = "VersionConflictError";
 }
+
+export class NotFoundError extends Error {
+  override name = "NotFoundError";
+}
