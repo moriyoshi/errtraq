@@ -13,6 +13,21 @@ pnpm e2e
 pnpm e2e --bundle
 ```
 
+For the standalone container, Docker and Node 22.13 or later are required. The generated image
+uses the Node 22 major line, which includes `node:sqlite` without an extra flag:
+
+```sh
+pnpm exec errtraq build --stack stacks/local.ts
+docker build -t errtraq-local dist/local
+docker run --rm -p 127.0.0.1:8787:8787 -v errtraq-data:/data errtraq-local
+pnpm container:check
+```
+
+The Dockerfile explicitly sets `ERRTRAQ_HOST=0.0.0.0` for container networking; outside the
+container the default remains `127.0.0.1`. Data is stored in `/data`, and `/health` is the
+unauthenticated health endpoint. `container:check` skips when Docker is unavailable; otherwise
+it builds an image and runs the SDK e2e on a randomly assigned loopback port.
+
 To build an AWS stack and generate its Terraform root (without applying it):
 
 ```sh

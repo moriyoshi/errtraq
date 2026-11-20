@@ -172,6 +172,7 @@ export function create({
         logger,
       );
       const app = new Hono({ strict: false });
+      app.get("/health", (c) => c.json({ status: "ok" }));
       if (cfg.http.includes("ingest"))
         app.route("/", createIngestApp(ingest, logger));
       if (cfg.http.includes("api"))

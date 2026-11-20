@@ -46,6 +46,7 @@ export const configSchema = baseConfigSchema
 export type StandaloneConfig = z.input<typeof configSchema>;
 const stackConfigSchema = baseConfigSchema
   .extend({
+    host: configReference(z.string().min(1)).default("127.0.0.1"),
     port: portWithReference,
     tokenDirectory: configReference(z.string().min(1)).default(".errtraq"),
   })

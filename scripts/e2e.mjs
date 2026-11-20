@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, rm } from "node:fs/promises";
 import { createServer, request as httpRequest } from "node:http";
 import { connect } from "node:net";
 import { join, resolve } from "node:path";
@@ -13,6 +13,13 @@ const root = resolve(".agents-workspace/tmp");
 await mkdir(root, { recursive: true });
 const directory = await mkdtemp(join(root, "m1g-e2e-"));
 const bundle = process.argv.includes("--bundle");
+const containerIndex = process.argv.indexOf("--container");
+const containerImage =
+  containerIndex < 0 ? undefined : process.argv[containerIndex + 1];
+if (containerIndex >= 0 && !containerImage)
+  throw new Error("--container requires an image");
+const containerName = `errtraq-e2e-${process.pid}-${Date.now()}`;
+if (containerImage) await chmod(directory, 0o777);
 const bundleFile = join(directory, "build", "shared", "index.mjs");
 if (bundle) {
   const built = spawnSync(
@@ -66,18 +73,38 @@ async function start() {
   output = "";
   errors = "";
   child = spawn(
-    process.execPath,
-    bundle
-      ? [bundleFile]
-      : [
-          "--experimental-strip-types",
-          "packages/cli/dist/bin.js",
-          "dev",
-          "--stack",
-          "stacks/local.ts",
-        ],
+    containerImage ? "docker" : process.execPath,
+    containerImage
+      ? [
+          "run",
+          "--rm",
+          "--name",
+          containerName,
+          "-p",
+          "127.0.0.1::8787",
+          "-v",
+          `${directory}:/data`,
+          ...(typeof process.getuid === "function" && process.getuid() !== 0
+            ? ["--user", `${process.getuid()}:${process.getgid()}`]
+            : []),
+          containerImage,
+        ]
+      : bundle
+        ? [bundleFile]
+        : [
+            "--experimental-strip-types",
+            "packages/cli/dist/bin.js",
+            "dev",
+            "--stack",
+            "stacks/local.ts",
+          ],
     {
-      env: { ...process.env, ERRTRAQ_DATA_DIR: directory, ERRTRAQ_PORT: "0" },
+      env: {
+        ...process.env,
+        ERRTRAQ_DATA_DIR: directory,
+        ERRTRAQ_PORT: "0",
+        ERRTRAQ_HOST: "127.0.0.1",
+      },
       stdio: ["ignore", "pipe", "pipe"],
     },
   );
@@ -95,6 +122,41 @@ async function start() {
     token = output.match(/^API token: (.+)$/m)?.[1],
     origin = output.match(/^Listening: (.+)$/m)?.[1];
   assert.ok(dsn && token && origin);
+  if (containerImage) {
+    const port = await waitFor(() => {
+      const result = spawnSync("docker", ["port", containerName, "8787/tcp"], {
+        encoding: "utf8",
+      });
+      return result.status === 0
+        ? result.stdout.trim().match(/:(\d+)$/)?.[1]
+        : undefined;
+    }, "container port mapping");
+    const mappedDsn = new URL(dsn);
+    mappedDsn.hostname = "127.0.0.1";
+    mappedDsn.port = port;
+    const mappedOrigin = `http://127.0.0.1:${port}`;
+    assert.equal((await fetch(`${mappedOrigin}/health`)).status, 200);
+    const healthConfig = spawnSync(
+      "docker",
+      [
+        "inspect",
+        containerName,
+        "--format",
+        "{{json .Config.Healthcheck.Test}}",
+      ],
+      { encoding: "utf8" },
+    );
+    assert.equal(healthConfig.status, 0);
+    const healthCommand = JSON.parse(healthConfig.stdout);
+    assert.equal(healthCommand[0], "CMD-SHELL");
+    const healthRun = spawnSync(
+      "docker",
+      ["exec", containerName, "sh", "-c", healthCommand[1]],
+      { encoding: "utf8" },
+    );
+    assert.equal(healthRun.status, 0, healthRun.stderr);
+    return { dsn: mappedDsn.toString(), token, origin: mappedOrigin };
+  }
   return { dsn, token, origin };
 }
 async function stop(signal = "SIGTERM") {
@@ -102,7 +164,15 @@ async function stop(signal = "SIGTERM") {
   const exit = new Promise((resolveExit) =>
     child.once("exit", (code, sig) => resolveExit({ code, sig })),
   );
-  child.kill(signal);
+  if (containerImage) {
+    const command =
+      signal === "SIGKILL"
+        ? ["kill", containerName]
+        : ["stop", "--time", "7", containerName];
+    const stopped = spawnSync("docker", command, { encoding: "utf8" });
+    if (stopped.status !== 0)
+      throw new Error(`Container stop failed: ${stopped.stderr}`);
+  } else child.kill(signal);
   const result = await withTimeout(exit, 8000, null);
   if (!result) {
     child.kill("SIGKILL");
@@ -391,13 +461,29 @@ try {
   );
   await delay(50);
   const secondExit = new Promise((resolveExit) =>
-    child.once("exit", (_code, signal) => resolveExit(signal)),
+    child.once("exit", (code, signal) => resolveExit({ code, signal })),
   );
-  child.kill("SIGTERM");
+  const terminate = () => {
+    if (containerImage) {
+      const result = spawnSync(
+        "docker",
+        ["kill", "--signal", "SIGTERM", containerName],
+        { encoding: "utf8" },
+      );
+      if (result.status !== 0)
+        throw new Error(`Container signal failed: ${result.stderr}`);
+    } else child.kill("SIGTERM");
+  };
+  terminate();
   await delay(100);
   const began = Date.now();
-  child.kill("SIGTERM");
-  assert.equal(await withTimeout(secondExit, 2000, "timeout"), "SIGTERM");
+  terminate();
+  const secondResult = await withTimeout(secondExit, 2000, null);
+  assert.ok(
+    secondResult &&
+      (secondResult.signal === "SIGTERM" ||
+        (containerImage && secondResult.code === 143)),
+  );
   assert.ok(Date.now() - began < 2000);
   socket2.destroy();
   console.log(
@@ -410,5 +496,7 @@ try {
     child.kill("SIGKILL");
     await new Promise((resolveExit) => child.once("exit", resolveExit));
   }
+  if (containerImage)
+    spawnSync("docker", ["rm", "-f", containerName], { stdio: "ignore" });
   await rm(directory, { recursive: true, force: true });
 }

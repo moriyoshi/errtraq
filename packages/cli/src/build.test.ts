@@ -6,7 +6,8 @@ import {
   symlink,
   writeFile,
 } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { homedir } from "node:os";
+import { join, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import {
   constructDeployedStack,
@@ -20,10 +21,30 @@ import perTopic from "../../../stacks/aws-dynamodb-per-topic.js";
 import local from "../../../stacks/local.js";
 import { buildStack } from "./build.js";
 import { generateInfra } from "./infra.js";
+import { resolveRuntimeValue } from "./runtime.js";
 import { formatValidation } from "./validation.js";
 
 const repo = process.cwd();
 let temp: string;
+async function assertNoLocalPaths(directory: string): Promise<void> {
+  for (const entry of await readdir(directory, { withFileTypes: true })) {
+    const path = join(directory, entry.name);
+    if (entry.isDirectory()) await assertNoLocalPaths(path);
+    else {
+      const bytes = await readFile(path);
+      for (const localPath of [repo, homedir()])
+        if (localPath.length > 1)
+          expect(bytes.includes(Buffer.from(localPath))).toBe(false);
+      if (entry.name.endsWith(".zip"))
+        for (const contents of Object.values(unzipSync(bytes)))
+          for (const localPath of [repo, homedir()])
+            if (localPath.length > 1)
+              expect(
+                Buffer.from(contents).includes(Buffer.from(localPath)),
+              ).toBe(false);
+    }
+  }
+}
 beforeAll(async () => {
   temp = await mkdtemp(resolve(repo, ".agents-workspace/tmp/m2c-test-"));
 }, 30000);
@@ -112,6 +133,7 @@ describe("built stacks", () => {
         output,
         resolve(repo, "stacks", file),
       );
+      await assertNoLocalPaths(output);
       expect(
         await buildStack(stack, repo, output, resolve(repo, "stacks", file)),
       ).toEqual(manifest);
@@ -157,7 +179,10 @@ describe("built stacks", () => {
         ).toEqual(manifest.artifacts[fn.id]);
       }
       const target = join(temp, `terraform-${name}`);
-      await generateInfra(stack, repo, target, output, false);
+      const report = await generateInfra(stack, repo, target, output, false);
+      expect(report).toContain(relative(repo, target));
+      expect(report).not.toContain(repo);
+      await assertNoLocalPaths(target);
       const main = JSON.parse(
         await readFile(join(target, "main.tf.json"), "utf8"),
       );
@@ -181,6 +206,24 @@ describe("built stacks", () => {
   it("builds a standalone Node bundle without AWS adapters", async () => {
     const output = join(temp, "local");
     await buildStack(local, repo, output, resolve(repo, "stacks/local.ts"));
+    await assertNoLocalPaths(output);
+    const dockerfile = await readFile(join(output, "Dockerfile"), "utf8");
+    expect(dockerfile).toContain("FROM node:22-bookworm-slim");
+    expect(dockerfile).toContain(
+      "ENV ERRTRAQ_HOST=0.0.0.0 ERRTRAQ_DATA_DIR=/data",
+    );
+    expect(dockerfile).toContain("USER node");
+    expect(dockerfile).toContain('VOLUME ["/data"]');
+    expect(dockerfile).toContain("HEALTHCHECK");
+    expect(dockerfile).toContain('ENTRYPOINT ["node", "/app/index.mjs"]');
+    expect(
+      resolveRuntimeValue(local.platform.config, "platform", local, {}),
+    ).toMatchObject({ host: "127.0.0.1" });
+    expect(
+      resolveRuntimeValue(local.platform.config, "platform", local, {
+        ERRTRAQ_HOST: "0.0.0.0",
+      }),
+    ).toMatchObject({ host: "0.0.0.0" });
     const meta = JSON.parse(
       await readFile(join(output, "shared/meta.json"), "utf8"),
     ) as { inputs: Record<string, unknown> };
@@ -194,6 +237,14 @@ describe("built stacks", () => {
       "kv-dynamodb",
     ])
       expect(inputs).not.toContain(`packages/adapters/${name}/`);
+    await buildStack(local, repo, output, resolve(repo, "stacks/local.ts"));
+    const manifestPath = join(output, "manifest.json");
+    const oldManifest = JSON.parse(await readFile(manifestPath, "utf8"));
+    delete oldManifest.dockerfile;
+    await writeFile(manifestPath, JSON.stringify(oldManifest));
+    await expect(
+      buildStack(local, repo, output, resolve(repo, "stacks/local.ts")),
+    ).rejects.toThrow("Invalid generated Dockerfile");
   }, 30000);
   it("rejects unowned and outside output directories and missing artifacts", async () => {
     const directory = join(temp, "unowned");
@@ -220,6 +271,19 @@ describe("built stacks", () => {
         false,
       ),
     ).rejects.toThrow("Build manifest not found");
+    try {
+      await generateInfra(
+        shared,
+        repo,
+        join(temp, "missing"),
+        join(temp, "no-build"),
+        false,
+      );
+      throw new Error("Expected a missing build error");
+    } catch (error) {
+      expect(String(error)).not.toContain(repo);
+      expect(String(error)).not.toContain("ENOENT");
+    }
     expect(
       await generateInfra(
         shared,
@@ -238,7 +302,7 @@ describe("built stacks", () => {
         join(temp, "build-shared"),
         false,
       ),
-    ).toContain(`cd '${spaced}' && terraform init`);
+    ).toContain(`cd '${relative(repo, spaced)}' && terraform init`);
     const linked = join(temp, "linked");
     await import("node:fs/promises").then((fs) => fs.mkdir(linked));
     await symlink(
@@ -279,5 +343,24 @@ describe("built stacks", () => {
         false,
       ),
     ).rejects.toThrow("hash mismatch");
+    await rm(artifact);
+    await expect(
+      generateInfra(
+        shared,
+        repo,
+        join(temp, "missing-artifact"),
+        join(temp, "build-shared"),
+        false,
+      ),
+    ).rejects.toThrow("Build artifact missing for ingest");
+    expect(
+      await generateInfra(
+        shared,
+        repo,
+        join(temp, "some-placeholders"),
+        join(temp, "build-shared"),
+        true,
+      ),
+    ).toContain("artifact paths are placeholders");
   });
 });

@@ -34,6 +34,9 @@ describe("standalone platform", () => {
       const server = await platform.start();
       try {
         const base = `http://127.0.0.1:${server.port}`;
+        const health = await fetch(`${base}/health`);
+        expect(health.status).toBe(200);
+        expect(await health.json()).toEqual({ status: "ok" });
         const ingest = await fetch(`${base}/api/1/envelope/`, {
           method: "POST",
         });

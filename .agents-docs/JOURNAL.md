@@ -535,3 +535,17 @@ and uses relative ZIP paths. A standalone bundle statically imports its adapters
 SDK e2e. Generated Terraform output ownership is recorded in a marker, and unowned files and
 symlink escapes are rejected. esbuild 0.28.2 was already in the lockfile and its install script
 was already allowed; fflate 0.8.2 supplies local ZIP creation without a system utility.
+
+## 2026-11-21 — M2 closed: standalone container
+
+The standalone build now writes a Node 22 Dockerfile that runs as the image's non-root user,
+stores data in `/data`, checks `/health`, and explicitly opts into `ERRTRAQ_HOST=0.0.0.0`; the
+local stack defaults to loopback. Docker PID 1 ignores the default disposition of a second
+SIGTERM, so the generated server explicitly exits on a repeated signal in that case. The full
+SDK e2e passed against the image with a random host port, including crash recovery, token rotation
+and bounded shutdown. The image's default user and unflagged `node:sqlite` were checked directly.
+The sandbox blocked Docker's normal buildx state writes, so that run used an isolated Docker
+client configuration and the legacy builder; ordinary Docker configuration remains supported.
+CLI output and build metadata now use repository-relative paths, with regression checks over
+Terraform, manifests, bundle contents and ZIP entries. AWS runtime adapters, deployed secret
+sources and real AWS deployment remain M3 work.

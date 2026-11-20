@@ -51,6 +51,6 @@ module outputs, so the application and its infrastructure cannot drift.
 M0 (ports, stack-config validation, contract suites) and M1 (local standalone stack) are done.
 `errtraq dev --stack stacks/local.ts` runs ingest, consumer, the minimal `/api/0` API and a cron
 timer in one Node process on SQLite, an in-memory queue, filesystem blobs and an in-memory KV;
-`pnpm e2e` drives it with the real `@sentry/node` SDK. M2's infra model, Terraform generator,
-AWS modules, role-scoped build and generation CLI are in place; the standalone container is the
-next M2c slice. AWS runtime adapters remain M3 stubs. See "Milestones" in ARCHITECTURE.md.
+`pnpm e2e` drives it with the real `@sentry/node` SDK. M2 is complete: the infra model,
+Terraform generator, AWS modules, role-scoped build and generation CLI, and standalone container
+are in place. AWS runtime adapters remain M3 stubs. See "Milestones" in ARCHITECTURE.md.

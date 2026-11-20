@@ -45,12 +45,16 @@ Run the opt-in real SDK check on loopback:
 ```sh
 pnpm e2e
 pnpm e2e --bundle               # also exercise the built standalone server
+pnpm container:check            # optional: Docker image and SDK e2e on a random host port
 ```
 
 The script builds the workspace, starts the local CLI on a free loopback port using a temporary
 ignored data directory, sends real `@sentry/node` envelopes, checks grouping, API retrieval,
 regression, gzip replay, overflow, paging, token rotation, restart recovery and shutdown. It uses
 the SDK default transport and integrations and does not require a cloud account.
+`pnpm container:check` skips if Docker is unavailable. With Docker it builds the generated
+non-root Node 22 image, checks its health endpoint, and runs the same e2e against a temporary
+container and data directory. The base image may need to be downloaded on the first run.
 For manual use:
 
 ```sh
@@ -62,8 +66,10 @@ pnpm exec errtraq token rotate --stack stacks/local.ts
 
 Node versions before 22.18 need `NODE_OPTIONS=--experimental-strip-types` to load the TypeScript
 stack file. Local data defaults to the ignored `.errtraq/` directory; set `ERRTRAQ_DATA_DIR` and
-`ERRTRAQ_PORT` to override the data directory and port. The API token is printed at startup and
-persisted in `api-token` under the local data directory with mode 0600. The local stack permits
+`ERRTRAQ_PORT` to override the data directory and port. `ERRTRAQ_HOST` opts into a different
+listen address; it defaults to `127.0.0.1`. The generated container explicitly sets it to
+`0.0.0.0` and uses `/data` as its volume. The API token is printed at startup and persisted in
+`api-token` under the local data directory with mode 0600. The local stack permits
 10,000 event items per minute; the standalone configuration can set or disable this limit.
 
 ## 4. Infra generation (when you touch `infra-gen`, an `infra` descriptor, or `infra/modules`)

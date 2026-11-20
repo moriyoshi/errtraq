@@ -8,6 +8,7 @@ import {
   unlink,
   writeFile,
 } from "node:fs/promises";
+import { homedir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { deriveDeployment, type ResolvedStack } from "@errtraq/core";
 import { generate } from "@errtraq/infra-gen";
@@ -92,10 +93,10 @@ export async function generateInfra(
     manifest = JSON.parse(
       await readFile(join(buildDirectory, "manifest.json"), "utf8"),
     ) as BuildManifest;
-  } catch (error) {
+  } catch {
     if (!allowMissing)
       throw new Error(
-        `Build manifest not found: run errtraq build --stack ... first (${String(error)})`,
+        "Build manifest not found: run errtraq build --stack <file> first",
       );
   }
   if (
@@ -130,10 +131,13 @@ export async function generateInfra(
       bytes = await readFile(full);
     } catch (error) {
       if (
-        !allowMissing ||
         !(error instanceof Error && "code" in error && error.code === "ENOENT")
       )
         throw error;
+      if (!allowMissing)
+        throw new Error(
+          `Build artifact missing for ${fn.id}; run errtraq build first`,
+        );
       artifacts[fn.id] = `build/${fn.id}.zip`;
       placeholders = true;
       continue;
@@ -163,6 +167,14 @@ export async function generateInfra(
     artifactPaths: artifacts,
   });
   if (result.kind !== "terraform") return result.reason;
+  if (
+    Object.values(result.files).some((content) =>
+      [repo, homedir()].some(
+        (path) => path.length > 1 && content.includes(path),
+      ),
+    )
+  )
+    throw new Error("Generated Terraform contains an absolute repository path");
   const target = await safeDirectory(repo, output);
   const entries = await readdir(target);
   let old: string[] = [];
@@ -218,6 +230,7 @@ export async function generateInfra(
     join(target, markerName),
     `${JSON.stringify({ generator: "errtraq", stack: stack.name, files: Object.keys(result.files) }, null, 2)}\n`,
   );
-  const quotedTarget = `'${target.replaceAll("'", "'\\''")}'`;
-  return `Generated Terraform in ${target}\nNext: cd ${quotedTarget} && terraform init && terraform plan${placeholders ? "\nWarning: artifact paths are placeholders." : ""}`;
+  const displayTarget = relative(repo, target).split(sep).join("/");
+  const quotedTarget = `'${displayTarget.replaceAll("'", "'\\''")}'`;
+  return `Generated Terraform in ${displayTarget}\nNext (from repository root): cd ${quotedTarget} && terraform init && terraform plan${placeholders ? "\nWarning: artifact paths are placeholders." : ""}`;
 }

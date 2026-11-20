@@ -9,6 +9,7 @@ export default defineStack({
   name: "local",
   providers: {},
   platform: standalone({
+    host: env("ERRTRAQ_HOST", { defaultValue: "127.0.0.1" }),
     port: env("ERRTRAQ_PORT", { defaultValue: "8787", valueType: "number" }),
     tokenDirectory: env("ERRTRAQ_DATA_DIR", { defaultValue: ".errtraq" }),
     rateLimit: 10000,

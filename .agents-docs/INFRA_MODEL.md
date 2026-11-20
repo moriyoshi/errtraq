@@ -142,8 +142,9 @@ interface BuildArtifact {
 ```
 
 `artifact(functionId)` references that entry; the current Lambda descriptor's `artifact` input
-is the `path` string. The HCL currently fixes handler and runtime and computes
-`filebase64sha256(path)` itself; M2c must ensure its manifest agrees. A non-sensitive stack
+is the `path` string. The HCL accepts handler and runtime inputs and computes
+`filebase64sha256(path)` itself; the current builder requires `index.handler` and `nodejs22.x`
+and the CLI checks that the manifest agrees. A non-sensitive stack
 variable may declare a type-checked literal `default`. M2b emits those defaults in
 `terraform.tfvars.json` (JSON defaults encoded as JSON text because their Terraform type is
 `string`); declarations without defaults are supplied externally. Sensitive defaults are rejected
@@ -418,7 +419,9 @@ provider versions by `pnpm infra:validate`; this checks their derived bindings, 
 triggers without a cloud account. `errtraq build` writes a manifest and role-scoped Lambda ZIPs
 under `dist/<stack>` by default; `errtraq infra generate` verifies their hashes and renders paths
 relative to its output directory. An explicit `--allow-missing-artifacts` permits placeholders.
-Standalone builds a single Node bundle and has no Terraform. Deployed construction first derives
+Standalone builds a single Node bundle and a non-root Node 22 Dockerfile, and has no Terraform.
+The Dockerfile opts into `ERRTRAQ_HOST=0.0.0.0`, stores data in `/data` and probes `/health`;
+ordinary local runs default to loopback. Deployed construction first derives
 `deployedPlan` and then runs `constructDeployedPlan`, preserving the same role and binding scopes
 as `constructDeployedStack` while allowing entrypoints to import only needed adapters. Actual AWS
 runtime adapters and secret sources remain M3 work.

@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-import { resolve } from "node:path";
+import { homedir } from "node:os";
+import { relative, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import { physicalFunctions, resolveStack, selections } from "@errtraq/core";
 import { buildStack } from "./build.js";
@@ -80,7 +81,7 @@ export async function main(args: string[]): Promise<void> {
       );
       const manifest = await buildStack(stack, repo, directory, file);
       console.log(
-        `Built ${stack.name} in ${directory} (${Object.keys(manifest.artifacts).length} deployable artifacts)`,
+        `Built ${stack.name} in ${relative(repo, directory)} (${Object.keys(manifest.artifacts).length} deployable artifacts)`,
       );
     } else
       console.log(
@@ -160,7 +161,13 @@ export async function main(args: string[]): Promise<void> {
     if (!failed) await created.close();
   }
 }
-main(process.argv.slice(2)).catch((error) => {
-  console.error(error instanceof Error ? error.message : String(error));
+main(process.argv.slice(2)).catch(async (error) => {
+  const repo = await repositoryRoot(process.cwd()).catch(() => undefined);
+  let message = error instanceof Error ? error.message : String(error);
+  if (repo)
+    message = message.replaceAll(`${repo}${sep}`, "").replaceAll(repo, ".");
+  const home = homedir();
+  if (home.length > 1) message = message.replaceAll(home, "~");
+  console.error(message);
   process.exitCode = 1;
 });

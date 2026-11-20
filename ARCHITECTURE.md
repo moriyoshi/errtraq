@@ -369,7 +369,7 @@ Every step is idempotent (re-deleting matches nothing; DV snapshot carries
 
 ## Stack configuration + infra abstraction
 
-A stack selects a platform and adapters once for runtime wiring and future infrastructure
+A stack selects a platform and adapters once for runtime wiring and infrastructure
 provisioning. Adapter descriptors declare resources, capability policies, purpose-scoped
 bindings and typed module outputs, including keyed maps. Core owns the role requirements and
 topic routes; validation derives per-function grants and bindings from them. Platform manifests
@@ -385,8 +385,13 @@ only reachable outputs. Validation checks supported capabilities, reference type
 provider metadata, binding scopes and separate module / runtime dependency graphs. Resolved
 stack data is frozen and factories are constructed in dependency order, then closed in reverse
 order. The local platform runs in one process. See [INFRA_MODEL.md](./.agents-docs/INFRA_MODEL.md)
-for the exact types, resolution phases and validated shared and per-topic examples. M2b / M2c
-still own Terraform generation, cloud modules, runtime secret sources and deployable builds.
+for the exact types, resolution phases and validated shared and per-topic examples. The pure
+Terraform generator composes hand-written AWS modules and the CLI validates stacks, emits
+role-scoped Lambda ZIPs and generates roots using their verified artifact manifests. Output files
+use relative paths and marked directories. The standalone build includes a non-root Node 22
+container with a persistent data volume; its explicit container host setting exposes the server
+to the container network while ordinary local runs default to loopback. Runtime AWS adapters,
+deployed secret sources and a real cloud deployment remain M3 work.
 
 ## Milestones
 
@@ -394,8 +399,8 @@ still own Terraform generation, cloud modules, runtime secret sources and deploy
 |---|---|---|
 | **M0** | Workspace scaffold, `core` ports + domain types, stack-config schema, `testing` contract suites, memory fakes | The abstractions |
 | **M1** | Local standalone: `store-sql` (sqlite), `queue-memory`, `blob-fs`, ingest → consumer → issues, minimal API | End-to-end with real Sentry SDKs |
-| **M2** | `infra-gen` + adapter infra descriptors + `validate/build/infra generate`; `platforms/standalone` (Docker) and `platforms/aws-lambda` descriptors | The infra abstraction |
-| **M3** | AWS: `store-dynamodb`, postgres dialect, `queue-sqs`, `blob-s3`, HCL modules, real deploy | First cloud target |
+| **M2** | Completed: infra model, AWS HCL modules and generator; `validate/build/infra generate`, Lambda handler scaffolding and standalone container | The infra abstraction |
+| **M3** | AWS runtime adapters, postgres dialect, deployed secrets and real deployment | First cloud target |
 | **M4** | Archive: REST catalog client, DuckDB engine, archival job, federated query, erasure requests with v3 deletion vectors; Lakekeeper+winterbaume in compose; engine spike | Hot/cold tiering |
 | **M5** | Releases, chunk upload, artifact bundles, JS symbolication | sentry-cli compatibility |
 | **M6** | Cloudflare: Workers platform, d1 dialect, `queue-cf`, R2, R2 Data Catalog | Most constrained runtime |
