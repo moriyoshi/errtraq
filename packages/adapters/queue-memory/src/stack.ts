@@ -15,6 +15,7 @@ export const manifest: AdapterManifest = {
   kind: "queue",
   configSchema,
   runtimes: ["node"],
+  requires: ["long-lived-process", "shared-process-state"],
   capabilities: {
     delivery: "pull",
     maxBytes: QUEUE_MAX_BYTES,

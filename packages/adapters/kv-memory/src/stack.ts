@@ -11,6 +11,7 @@ export const manifest: AdapterManifest<KvConfig> = {
   kind: "kv",
   configSchema,
   runtimes: ["node"],
+  requires: ["long-lived-process", "shared-process-state"],
   capabilities: {},
 };
 // TODO(M2b): provide local module generation semantics.

@@ -17,6 +17,11 @@ export const manifest: AdapterManifest = {
   kind: "store",
   configSchema: stackConfigSchema,
   runtimes: ["node"],
+  requires: [
+    "writable-filesystem",
+    "long-lived-process",
+    "shared-process-state",
+  ],
   capabilities: {
     deleteStrategy: "explicit",
     textSearch: false,

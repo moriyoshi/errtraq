@@ -3,6 +3,7 @@ import {
   generationEnv,
   output,
   stackValue,
+  validateStack,
   variable,
 } from "@errtraq/core";
 import { expect, it } from "vitest";
@@ -41,6 +42,55 @@ it("resolves existing outputs, scoped environments and typed Terraform variables
       TF_VAR_LIST: "secret invalid",
     }),
   ).toThrow("Invalid stack variable LIST");
+});
+
+it("rejects local adapters on ephemeral or multi-function compute", () => {
+  expect(validateStack(local)).toEqual([]);
+  const lambda = {
+    ...local,
+    platform: {
+      ...local.platform,
+      manifest: {
+        ...local.platform.manifest,
+        id: "fake-lambda",
+        compute: "function" as const,
+        authorization: "iam" as const,
+        provides: [],
+      },
+    },
+  };
+  const issues = validateStack(lambda);
+  for (const name of ["store", "queue", "kv", "blob"]) {
+    expect(
+      issues.some((issue) => issue.path === `${name}.manifest.requires`),
+    ).toBe(true);
+  }
+  const multi = {
+    ...lambda,
+    platform: {
+      ...lambda.platform,
+      manifest: {
+        ...lambda.platform.manifest,
+        compute: "long-lived" as const,
+        provides: [...local.platform.manifest.provides],
+      },
+      config: {
+        roles: ["ingest", "api", "consumer", "cron"],
+        split: ["api"],
+        cron: [],
+      },
+    },
+  };
+  const multiIssues = validateStack(multi);
+  for (const name of ["store", "queue", "kv", "blob"]) {
+    expect(
+      multiIssues.some(
+        (issue) =>
+          issue.path === `${name}.manifest.requires` &&
+          issue.message.includes("shared-process-state"),
+      ),
+    ).toBe(true);
+  }
 });
 
 it("resolves runtime environment defaults, suffixes and numbers", () => {

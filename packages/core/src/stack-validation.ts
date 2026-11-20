@@ -9,7 +9,9 @@ import {
   type AdapterSelection,
   type CoreTopic,
   CRON_JOBS,
+  FUNCTION_ROLES,
   type FunctionRole,
+  type FunctionSettings,
   type InfraValue,
   isEnvRef,
   isInfraRef,
@@ -18,6 +20,7 @@ import {
   isVariableRef,
   type OutputRef,
   type OutputType,
+  type PhysicalFunction,
   type PlatformConfig,
   REF,
   type StackConfig,
@@ -90,12 +93,41 @@ export function selections(stack: StackConfig): Map<string, AdapterSelection> {
   }
   return result;
 }
-/** Deterministic physical groups derived only from platform config. */
-export function functionGroups(config: PlatformConfig): FunctionRole[][] {
-  const groups = config.split.map((role) => [role]);
-  const shared = config.roles.filter((role) => !config.split.includes(role));
-  if (shared.length) groups.push(shared);
-  return groups;
+/** Split roles use their role name as id; all remaining roles share id `shared`.
+ * Roles and functions follow FUNCTION_ROLES order, independent of input order.
+ * Disjoint per-role settings merge; different values for the same setting conflict.
+ */
+export function physicalFunctions(config: PlatformConfig): PhysicalFunction[] {
+  if (!platformConfigSchema.safeParse(config).success)
+    throw new Error("Invalid platform function configuration");
+  const roles = FUNCTION_ROLES.filter((role) => config.roles.includes(role));
+  const groups = roles
+    .filter((role) => config.split.includes(role))
+    .map((role) => ({ id: role as string, roles: [role] }));
+  const shared = roles.filter((role) => !config.split.includes(role));
+  if (shared.length) groups.push({ id: "shared", roles: shared });
+  return groups.map(({ id, roles: groupRoles }) => {
+    const settings: FunctionSettings = {};
+    for (const role of groupRoles) {
+      for (const [key, value] of Object.entries(
+        config.settings?.[role] ?? {},
+      )) {
+        const previous = Object.getOwnPropertyDescriptor(settings, key)?.value;
+        if (
+          previous !== undefined &&
+          JSON.stringify(previous) !== JSON.stringify(value)
+        )
+          throw new Error(`Conflicting ${key} settings in function ${id}`);
+        Object.defineProperty(settings, key, {
+          value,
+          enumerable: true,
+          configurable: true,
+          writable: true,
+        });
+      }
+    }
+    return { id, roles: groupRoles, settings };
+  });
 }
 function inspect(input: unknown): {
   issues: StackValidationIssue[];
@@ -386,7 +418,35 @@ function inspect(input: unknown): {
       (!!value && typeof value === "object" && !Array.isArray(value))
     );
   }
-  const groups = functionGroups(functions);
+  let groups: PhysicalFunction[] = [];
+  try {
+    groups = physicalFunctions(functions);
+  } catch (error) {
+    fail("platform.config.settings", String(error));
+  }
+  if (
+    platform.authorization === "none" &&
+    (platform.compute !== "long-lived" || groups.length !== 1)
+  )
+    fail(
+      "platform.manifest.authorization",
+      "No authorization requires a single long-lived process",
+    );
+  for (const [path, sel] of all) {
+    for (const feature of sel.manifest.requires) {
+      if (
+        !platform.provides.includes(feature) ||
+        (feature === "long-lived-process" &&
+          platform.compute !== "long-lived") ||
+        (feature === "shared-process-state" &&
+          (platform.compute !== "long-lived" || groups.length !== 1))
+      )
+        fail(
+          `${path}.manifest.requires`,
+          `Platform does not provide ${feature}`,
+        );
+    }
+  }
   const names = new Map<string, string>();
   for (const [path, sel] of all) {
     // Inspect before parsing as well: a coercion or transform must not hide a
@@ -423,11 +483,36 @@ function inspect(input: unknown): {
     }
     for (const [i, binding] of sel.infra.bindings.entries()) {
       const loc = `${path}.infra.bindings.${i}`;
+      if (!platform.bindingKinds.includes(binding.kind))
+        fail(loc, `Platform does not support ${binding.kind} bindings`);
+      if (
+        platform.reservedBindings.some((pattern) =>
+          pattern.endsWith("*")
+            ? binding.name.startsWith(pattern.slice(0, -1))
+            : binding.name === pattern,
+        )
+      )
+        fail(loc, `Reserved binding name ${binding.name}`);
       if (binding.kind === "platform" && !binding.platformType)
         fail(loc, "Platform binding requires a type");
       if (binding.kind !== "platform" && binding.platformType)
         fail(loc, "Unexpected platform binding type");
       checkValue(binding.value, path, `${loc}.value`, true);
+      if (binding.kind === "env") {
+        const value = binding.value;
+        const scalar =
+          typeof value === "string" ||
+          (isEnvRef(value) && value.valueType === undefined) ||
+          (isVariableRef(value) &&
+            ownValue(stack.variables, value.name)?.type === "string") ||
+          (isStackRef(value) && value.name !== "tags") ||
+          (isOutputRef(value) &&
+            ownValue(
+              all.get(value.selection ?? path)?.infra.module.outputs,
+              value.name,
+            ) === "string");
+        if (!scalar) fail(loc, "Environment binding requires a scalar string");
+      }
       if (binding.kind === "secret") {
         const value = binding.value;
         if (!isOutputRef(value) && !isVariableRef(value) && !isEnvRef(value))
@@ -450,7 +535,7 @@ function inspect(input: unknown): {
       }
       for (const r of binding.roles) {
         roleExists(r, loc);
-        const group = groups.findIndex((g) => g.includes(r));
+        const group = groups.findIndex((g) => g.roles.includes(r));
         const key = `${group}:${binding.name}`;
         const previous = names.get(key);
         if (previous && previous !== loc)
@@ -541,7 +626,7 @@ function inspect(input: unknown): {
           `queue.infra.topics.${topic}.producerBinding`,
           "Unknown producer binding",
         );
-      if (stack.queue.infra.module.provider !== "local") {
+      if (platform.authorization !== "none") {
         const resource = route.resource;
         const isOutput = isOutputRef(resource);
         if (!isOutput)
@@ -561,6 +646,15 @@ function inspect(input: unknown): {
             `queue.infra.topics.${topic}.producerBinding`,
             "Missing producer binding",
           );
+        if (
+          platform.authorization === "bindings" &&
+          binding &&
+          binding.kind !== "platform"
+        )
+          fail(
+            `queue.infra.topics.${topic}.producerBinding`,
+            "Binding authorization requires a platform binding",
+          );
         for (const producer of route.producers) {
           if (binding && !binding.roles.includes(producer))
             fail(
@@ -568,6 +662,7 @@ function inspect(input: unknown): {
               `Producer ${producer} lacks the binding`,
             );
           if (
+            platform.authorization === "iam" &&
             !stack.queue.infra.grants.some(
               (grant) =>
                 grant.role === producer &&
@@ -581,6 +676,7 @@ function inspect(input: unknown): {
             );
         }
         if (
+          platform.authorization === "iam" &&
           !stack.queue.infra.grants.some(
             (grant) =>
               grant.role === route.consumer &&

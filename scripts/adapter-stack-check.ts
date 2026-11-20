@@ -61,6 +61,7 @@ export async function assertStackHelper(
       kind,
       configSchema: schema,
       runtimes: ["node"],
+      requires: [],
       capabilities:
         kind === "store"
           ? {
@@ -109,7 +110,7 @@ export async function assertStackHelper(
     },
     runtimeModule: `dummy-${kind}`,
   });
-  const platform = {
+  const platform: StackConfig["platform"] = {
     ...dummy("kv"),
     manifest: {
       ...dummy("kv").manifest,
@@ -117,6 +118,14 @@ export async function assertStackHelper(
       kind: "platform" as const,
       runtime: "node",
       compute: "long-lived" as const,
+      provides: [
+        "writable-filesystem",
+        "long-lived-process",
+        "shared-process-state",
+      ],
+      authorization: "none" as const,
+      bindingKinds: ["env", "secret"],
+      reservedBindings: [],
       configSchema: schema.transform(() => ({
         roles: ["ingest", "api", "consumer", "cron"],
         split: [],

@@ -17,6 +17,11 @@ export const manifest: AdapterManifest = {
   kind: "blob",
   configSchema: stackConfigSchema,
   runtimes: ["node"],
+  requires: [
+    "writable-filesystem",
+    "long-lived-process",
+    "shared-process-state",
+  ],
   capabilities: {},
 };
 // TODO(M2b): provide local module generation semantics.

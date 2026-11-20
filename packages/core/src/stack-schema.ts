@@ -1,6 +1,7 @@
 import { z } from "zod";
 import {
   type AdapterSelection,
+  ENVIRONMENT_FEATURES,
   FUNCTION_ROLES,
   type InfraValue,
   type PortKind,
@@ -41,11 +42,16 @@ const manifestSchema = z.strictObject({
     z.union([z.string(), z.number(), z.boolean()]),
   ),
   runtimes: z.array(z.string().min(1)).min(1),
+  requires: z.array(z.enum(ENVIRONMENT_FEATURES)),
 });
 export const platformSchema = manifestSchema.extend({
   kind: z.literal("platform"),
   runtime: z.string().min(1),
   compute: z.enum(["function", "long-lived"]),
+  provides: z.array(z.enum(ENVIRONMENT_FEATURES)),
+  authorization: z.enum(["iam", "bindings", "none"]),
+  bindingKinds: z.array(z.enum(["env", "secret", "platform"])),
+  reservedBindings: z.array(z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*\*?$/)),
 });
 const descriptorSchema = z.strictObject({
   module: z.strictObject({
@@ -150,11 +156,14 @@ export const platformConfigSchema = z
     settings: z
       .partialRecord(
         role,
-        z.strictObject({
-          memoryMb: z.number().int().positive().optional(),
-          timeoutSec: z.number().int().positive().optional(),
-          architecture: z.enum(["x86_64", "arm64"]).optional(),
-        }),
+        z
+          .object({
+            // Broad portable sanity limits; a platform schema may impose stricter limits.
+            memoryMb: z.number().int().min(128).max(1048576).optional(),
+            timeoutSec: z.number().int().min(1).max(86400).optional(),
+            architecture: z.enum(["x86_64", "arm64"]).optional(),
+          })
+          .passthrough(),
       )
       .optional(),
     cron: z.array(z.string()),

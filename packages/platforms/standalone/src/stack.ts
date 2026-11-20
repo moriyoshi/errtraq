@@ -59,9 +59,18 @@ export const manifest: PlatformManifest = {
   kind: "platform",
   runtime: "node",
   compute: "long-lived",
+  provides: [
+    "writable-filesystem",
+    "long-lived-process",
+    "shared-process-state",
+  ],
+  authorization: "none",
+  bindingKinds: ["env", "secret"],
+  reservedBindings: [],
   configSchema: stackConfigSchema,
   capabilities: {},
   runtimes: ["node"],
+  requires: [],
 };
 // TODO(M2b): provide local module generation semantics.
 export const infra: InfraDescriptor<StandaloneStackConfig> = {

@@ -7,7 +7,6 @@ import {
   defineStack,
   deriveTriggers,
   env,
-  functionGroups,
   generationEnv,
   isEnvRef,
   isInfraRef,
@@ -17,6 +16,7 @@ import {
   out,
   output,
   type PortKind,
+  physicalFunctions,
   REF,
   resolveStack,
   type StackConfig,
@@ -29,6 +29,7 @@ import {
 const roles = ["ingest", "api", "consumer", "cron"] as const;
 const route = (producer: "ingest" | "cron" | "consumer") => ({
   physical: "shared",
+  producerBinding: "QUEUE_URL",
   producers: [producer],
   consumer: "consumer" as const,
   resource: out("arn"),
@@ -38,6 +39,7 @@ const selection = (kind: PortKind): AdapterSelection => ({
     id: kind,
     kind,
     runtimes: ["node"],
+    requires: [],
     configSchema: z.object({ enabled: z.boolean().default(true) }),
     capabilities:
       kind === "store"
@@ -59,9 +61,36 @@ const selection = (kind: PortKind): AdapterSelection => ({
       outputs: { arn: "string", policy: "json" },
     },
     inputs: () => ({}),
-    bindings: [],
-    capabilities: {},
-    grants: [],
+    bindings:
+      kind === "queue"
+        ? [
+            {
+              name: "QUEUE_URL",
+              kind: "env",
+              roles: ["ingest", "cron", "consumer"],
+              value: out("arn"),
+            },
+          ]
+        : [],
+    capabilities:
+      kind === "queue" ? { produce: "policy", consume: "policy" } : {},
+    grants:
+      kind === "queue"
+        ? [
+            ...(["ingest", "cron", "consumer"] as const).map((role) => ({
+              role,
+              capability: "produce",
+              resource: out("arn"),
+              policy: out("policy"),
+            })),
+            {
+              role: "consumer",
+              capability: "consume",
+              resource: out("arn"),
+              policy: out("policy"),
+            },
+          ]
+        : [],
     ...(kind === "queue"
       ? {
           topics: {
@@ -95,11 +124,17 @@ function stack(): StackConfig {
         kind: "platform",
         runtime: "node",
         compute: "function",
-        configSchema: z.object({
-          roles: z.array(z.enum(roles)),
-          split: z.array(z.enum(roles)),
-          cron: z.array(z.string()),
-        }),
+        provides: [],
+        authorization: "iam",
+        bindingKinds: ["env", "secret"],
+        reservedBindings: [],
+        configSchema: z
+          .object({
+            roles: z.array(z.enum(roles)),
+            split: z.array(z.enum(roles)),
+            cron: z.array(z.string()),
+          })
+          .passthrough(),
       },
       config: { roles: [...roles], split: [...roles], cron: [] },
     },
@@ -139,6 +174,7 @@ describe("infrastructure model", () => {
     expect(Object.isFrozen(v.blob.config)).toBe(false);
   });
   it("distinguishes all reference types from ordinary kind-bearing data", () => {
+    expect(REF).toBe(Symbol.for("@errtraq/infra-reference"));
     expect(isOutputRef(out("id"))).toBe(true);
     expect(isStackRef(stackValue("name"))).toBe(true);
     expect(isEnvRef(env("TOKEN"))).toBe(true);
@@ -442,6 +478,7 @@ describe("infrastructure model", () => {
   it("requires every cloud topic producer and consumer to have matching bindings and grants", () => {
     const v = stack();
     v.queue.infra.module.provider = "aws";
+    v.queue.infra.bindings = [];
     expect(
       validateStack(v).some((issue) =>
         issue.message.includes("Missing producer binding"),
@@ -536,6 +573,14 @@ describe("infrastructure model", () => {
     topics(n).routes.ingest.resource = out("one");
     topics(n).routes["archive.project"].resource = out("two");
     topics(n).routes.notifications.resource = out("three");
+    n.platform.manifest.authorization = "none";
+    n.platform.manifest.compute = "long-lived";
+    (n.platform.config as { split: string[] }).split = [];
+    n.queue.infra.bindings = [];
+    n.queue.infra.capabilities = {};
+    n.queue.infra.grants = [];
+    for (const route of Object.values(topics(n).routes))
+      delete route.producerBinding;
     expect(validateStack(n)).toEqual([]);
   });
   it("derives one shared queue trigger and named cron triggers", () => {
@@ -577,12 +622,145 @@ describe("infrastructure model", () => {
   it("derives split groups and validates role settings", () => {
     const v = stack();
     expect(
-      functionGroups({ roles: [...roles], split: ["ingest"], cron: [] }),
-    ).toEqual([["ingest"], ["api", "consumer", "cron"]]);
+      physicalFunctions({ roles: [...roles], split: ["ingest"], cron: [] }),
+    ).toEqual([
+      { id: "ingest", roles: ["ingest"], settings: {} },
+      { id: "shared", roles: ["api", "consumer", "cron"], settings: {} },
+    ]);
     (v.platform.config as { split: string[] }).split = ["api", "api"];
     expect(validateStack(v).some((x) => x.message.includes("Duplicate"))).toBe(
       true,
     );
+  });
+  it("derives stable physical ids and merges compatible settings", () => {
+    const a = {
+      roles: [...roles],
+      split: ["consumer", "ingest"] as (typeof roles)[number][],
+      cron: [],
+      settings: { api: { memoryMb: 512 }, cron: { timeoutSec: 30 } },
+    };
+    const b = {
+      ...a,
+      roles: [...a.roles].reverse(),
+      split: [...a.split].reverse(),
+    };
+    expect(physicalFunctions(a)).toEqual(physicalFunctions(b));
+    expect(physicalFunctions(a)).toEqual([
+      { id: "ingest", roles: ["ingest"], settings: {} },
+      { id: "consumer", roles: ["consumer"], settings: {} },
+      {
+        id: "shared",
+        roles: ["api", "cron"],
+        settings: { memoryMb: 512, timeoutSec: 30 },
+      },
+    ]);
+    const v = stack();
+    v.platform.config = {
+      roles: [...roles],
+      split: [],
+      cron: [],
+      settings: { ingest: { memoryMb: 128 }, api: { memoryMb: 1024 } },
+    };
+    expect(
+      validateStack(v).some((issue) =>
+        issue.message.includes("Conflicting memoryMb"),
+      ),
+    ).toBe(true);
+  });
+  it("rejects out-of-range common function settings", () => {
+    for (const settings of [
+      { memoryMb: 1 },
+      { memoryMb: 1048577 },
+      { timeoutSec: 0 },
+      { timeoutSec: 100000 },
+    ]) {
+      const v = stack();
+      v.platform.config = {
+        roles: [...roles],
+        split: [],
+        cron: [],
+        settings: { consumer: settings },
+      };
+      expect(
+        validateStack(v).some((issue) => issue.path === "platform.config"),
+      ).toBe(true);
+    }
+  });
+  it("enforces platform authorization, supported binding kinds and reserved names", () => {
+    const v = stack();
+    v.platform.manifest.authorization = "bindings";
+    v.platform.manifest.bindingKinds = ["platform"];
+    v.queue.infra.bindings = [
+      {
+        name: "QUEUE",
+        kind: "platform",
+        platformType: "queue",
+        roles: ["ingest", "cron", "consumer"],
+        value: out("arn"),
+      },
+    ];
+    v.queue.infra.grants = [];
+    v.queue.infra.capabilities = {};
+    for (const route of Object.values(topics(v).routes))
+      route.producerBinding = "QUEUE";
+    expect(validateStack(v)).toEqual([]);
+    v.platform.manifest.bindingKinds = ["env"];
+    expect(
+      validateStack(v).some((i) =>
+        i.message.includes("does not support platform"),
+      ),
+    ).toBe(true);
+    v.platform.manifest.bindingKinds = ["platform"];
+    v.platform.manifest.reservedBindings = ["QUEUE", "AWS_LAMBDA_*"];
+    expect(
+      validateStack(v).some((i) =>
+        i.message.includes("Reserved binding name QUEUE"),
+      ),
+    ).toBe(true);
+    const binding = v.queue.infra.bindings[0];
+    if (!binding) throw new Error("Missing queue binding");
+    binding.name = "AWS_LAMBDA_CUSTOM";
+    expect(
+      validateStack(v).some((i) =>
+        i.message.includes("Reserved binding name AWS_LAMBDA_CUSTOM"),
+      ),
+    ).toBe(true);
+    v.platform.manifest.authorization = "iam";
+    expect(
+      validateStack(v).some((i) =>
+        i.message.includes("lacks a resource grant"),
+      ),
+    ).toBe(true);
+    v.platform.manifest.authorization = "none";
+    expect(
+      validateStack(v).some((i) =>
+        i.message.includes("single long-lived process"),
+      ),
+    ).toBe(true);
+  });
+  it("accepts only scalar strings in environment bindings", () => {
+    const v = stack();
+    v.store.infra.module.outputs.list = "string[]";
+    v.store.infra.module.outputs.json = "json";
+    for (const value of [
+      out("list"),
+      out("json"),
+      ["x"],
+      { nested: "x" },
+      2,
+      env("PORT", { valueType: "number" }),
+    ]) {
+      v.store.infra.bindings = [
+        { name: "VALUE", kind: "env", roles: ["api"], value },
+      ];
+      expect(
+        validateStack(v).some((i) => i.message.includes("scalar string")),
+      ).toBe(true);
+    }
+    v.store.infra.bindings = [
+      { name: "VALUE", kind: "env", roles: ["api"], value: out("arn") },
+    ];
+    expect(validateStack(v)).toEqual([]);
   });
   it("traverses nested adapters and orders dependencies", () => {
     const v = stack();

@@ -29,22 +29,39 @@ export const CRON_JOBS = [
   role: FunctionRole;
 }[]; // TODO(M4): implement handlers.
 export type CapabilityValue = string | number | boolean;
+export const ENVIRONMENT_FEATURES = [
+  "writable-filesystem",
+  "long-lived-process",
+  "shared-process-state",
+] as const;
+export type EnvironmentFeature = (typeof ENVIRONMENT_FEATURES)[number];
 export interface AdapterManifest<C = unknown> {
   id: string;
   kind: PortKind;
   configSchema: z.ZodType<C>;
   capabilities: Record<string, CapabilityValue>;
   runtimes: string[];
+  requires: EnvironmentFeature[];
 }
 export interface PlatformManifest<C = unknown> extends AdapterManifest<C> {
   kind: "platform";
   runtime: string;
   compute: "function" | "long-lived";
+  provides: EnvironmentFeature[];
+  authorization: "iam" | "bindings" | "none";
+  bindingKinds: Binding["kind"][];
+  /** Exact names or prefixes ending in '*'. */
+  reservedBindings: string[];
 }
 export interface FunctionSettings {
   memoryMb?: number;
   timeoutSec?: number;
   architecture?: "x86_64" | "arm64";
+}
+export interface PhysicalFunction {
+  id: string;
+  roles: FunctionRole[];
+  settings: FunctionSettings;
 }
 export interface PlatformConfig {
   roles: FunctionRole[];
@@ -52,7 +69,7 @@ export interface PlatformConfig {
   settings?: Partial<Record<FunctionRole, FunctionSettings>>;
   cron: string[];
 }
-/** A symbol cannot collide with keys in user-provided infrastructure objects. */
+/** In-process reference tag; generators must render references, not JSON-serialize them. */
 export const REF = Symbol.for("@errtraq/infra-reference");
 export interface OutputRef {
   readonly [REF]: "output";
