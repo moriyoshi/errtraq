@@ -70,6 +70,7 @@ export const manifest: PlatformManifest = {
   ],
   authorization: "none",
   bindingKinds: ["env", "secret"],
+  configReferenceKinds: ["env", "variable"],
   reservedBindings: [],
   configSchema: stackConfigSchema,
   capabilities: {},

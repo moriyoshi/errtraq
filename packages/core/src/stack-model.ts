@@ -55,6 +55,8 @@ export interface PlatformManifest<C = unknown> extends AdapterManifest<C> {
   provides: EnvironmentFeature[];
   authorization: "iam" | "bindings" | "none";
   bindingKinds: Binding["kind"][];
+  /** Config reference kinds the platform supplies to runtime; absent means none. */
+  configReferenceKinds?: ("env" | "variable")[];
   /** Exact names or prefixes ending in '*'. */
   reservedBindings: string[];
 }
@@ -101,6 +103,13 @@ export interface VariableRef {
   readonly name: string;
 }
 /** A location supplied by the M2c builder for a physical function. */
+/** Build manifest entry; artifact references render the path, with the remaining fields available to build tooling. */
+export interface BuildArtifact {
+  path: string;
+  handler: string;
+  runtime: string;
+  contentHash: string;
+}
 export interface ArtifactRef {
   readonly [REF]: "artifact";
   readonly functionId: string;
@@ -300,6 +309,8 @@ export type DeploymentTrigger =
       functionId: string;
       physical: string;
       resource: InfraValue;
+      /** Environment binding carrying the runtime event-source identifier. */
+      eventSourceBinding?: string;
       topics: CoreTopic[];
       settings: QueueTriggerSettings;
     }
@@ -382,6 +393,8 @@ export interface StackConfig {
     {
       type: StackVariableType;
       sensitive: boolean;
+      /** Non-sensitive default; JSON values are native objects or arrays. */
+      default?: InfraValue;
     }
   >;
   platform: PlatformSelection;

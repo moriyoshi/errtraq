@@ -2,10 +2,13 @@ import * as blobModule from "@errtraq/blob-s3";
 import { s3Blob } from "@errtraq/blob-s3/stack";
 import {
   artifact,
+  configReference,
   deriveDeployment,
+  env,
   out,
   output,
   validateStack,
+  variable,
 } from "@errtraq/core";
 import * as kvModule from "@errtraq/kv-dynamodb";
 import { dynamoKv } from "@errtraq/kv-dynamodb/stack";
@@ -16,6 +19,7 @@ import { SQS_MAX_BYTES, sqsQueue } from "@errtraq/queue-sqs/stack";
 import * as storeModule from "@errtraq/store-dynamodb";
 import { dynamoStore } from "@errtraq/store-dynamodb/stack";
 import { describe, expect, it } from "vitest";
+import { z } from "zod";
 import { assertSafeStackImports } from "../scripts/adapter-stack-check.js";
 import shared from "./aws-dynamodb.js";
 import perTopic from "./aws-dynamodb-per-topic.js";
@@ -48,6 +52,7 @@ describe("AWS descriptor stacks", () => {
     ]);
     expect(names(byId.consumer?.envBindings ?? [])).toEqual([
       "ERRTRAQ_BLOB_BUCKET",
+      "ERRTRAQ_QUEUE_SOURCE_SHARED",
       "ERRTRAQ_STORE_TABLE",
     ]);
     expect(names(byId.cron?.envBindings ?? [])).toEqual([]);
@@ -104,6 +109,7 @@ describe("AWS descriptor stacks", () => {
         kind: "queue",
         functionId: "consumer",
         physical: "shared",
+        eventSourceBinding: "ERRTRAQ_QUEUE_SOURCE_SHARED",
         resource: output("queue", "queues", "shared", "arn"),
         topics: ["ingest"],
         settings: {
@@ -293,6 +299,31 @@ describe("AWS descriptor stacks", () => {
       },
       queue_triggers: { shared: { batch_size: 5, max_concurrency: 7 } },
     });
+  });
+  it("rejects config references unsupported by the Lambda platform", () => {
+    const base = copyStack(shared);
+    for (const [kind, ref] of [
+      ["env", env("EXTERNAL")],
+      ["variable", variable("EXTERNAL")],
+    ] as const) {
+      const v = {
+        ...base,
+        variables: { EXTERNAL: { type: "string" as const, sensitive: false } },
+        store: {
+          ...base.store,
+          manifest: {
+            ...base.store.manifest,
+            configSchema: z.object({ endpoint: configReference(z.string()) }),
+          },
+          config: { endpoint: ref },
+        },
+      };
+      expect(
+        validateStack(v).some((issue) =>
+          issue.message.includes(`does not support ${kind} config references`),
+        ),
+      ).toBe(true);
+    }
   });
   it("keeps stack helpers free of runtime imports", async () => {
     for (const path of [

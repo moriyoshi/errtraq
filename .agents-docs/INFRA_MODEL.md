@@ -1,15 +1,16 @@
 # Infrastructure model
 
-This document describes the implemented M2a2 model in `packages/core/src/stack-*.ts` and the
-local runtime. Terraform generation, real AWS descriptors and modules, and static entrypoints
-are M2b / M2c work. The example descriptors below are test fixtures, not production adapters.
+This document describes the implemented infrastructure model in `packages/core/src/stack-*.ts`,
+the deployed construction API and the local runtime. AWS descriptors and HCL modules exist;
+Terraform generation, deployable AWS runtime adapters and static entrypoints remain future work.
+The illustrative descriptors below are test fixtures.
 
 ## Selections and descriptors
 
 A `StackConfig` names a platform, store, queue, blob, KV and optional archive, along with
 providers, variables, backend, optional output references and optional capability requirements.
 A selection contains a manifest, `config`, a `runtimeModule`, an `infra` descriptor, optional
-runtime `dependsOn` aliases, optional `children`, and optional `existing` substitutions. Parent
+provider entry, runtime `dependsOn` aliases, `children`, and `existing` substitutions. Parent
 manifests declare `childKinds` for every child alias; a platform cannot be a child. The module
 address is `moduleName(path)`, replacing dots by underscores. Validation rejects collisions.
 Selection, purpose and physical keys use lowercase identifiers (`[a-z][a-z0-9_-]*`); output
@@ -25,7 +26,8 @@ when no IAM policy is needed. Bindings name their resource purpose and may limit
 specific capabilities; they do not list function roles. `module.outputs` supports `string`,
 `string[]`, `json`, `json-document`, `secret-ref`, and recursive `{ map: OutputType }`. `out("queues", key,
 "arn")` selects a key path within the current selection; `output("queue", "queues", key,
-"arn")` names another selection. Map keys are identifiers. The generator must render references
+"arn")` names another selection. Output path keys match `[A-Za-z_][A-Za-z0-9_-]*`; they may
+contain uppercase letters and hyphens. The generator must render references
 rather than JSON-serialize them.
 
 The intended HCL source for a module is `infra/modules/<provider>/<component>`; the future
@@ -42,7 +44,11 @@ platform `provides` use `writable-filesystem`, `long-lived-process`, and
 function. `none` authorization likewise requires one long-lived physical function. IAM requires
 policy outputs for every required capability and purpose; binding authorization requires a
 platform producer binding for active queue routes. Environment bindings must be scalar strings.
-The module provider named `local` does not require provider metadata; other modules do.
+The module provider named `local` does not require provider metadata; other modules do. Child
+bindings go to every function using the parent port, subject to their optional capability filter.
+Child capability policies are granted to functions with the matching parent capability. Each
+child resource must have a binding or capability, and capabilities and filtered bindings without
+an active matching parent requirement are rejected. Child topic mappings are not supported.
 
 The default AWS contract test compares the types and key patterns declared in HCL output
 descriptions with descriptors; opt-in mock-provider tests check actual output shapes. Terraform
@@ -69,8 +75,10 @@ exported guards (`isOutputRef`, `isStackRef`, `isEnvRef`, `isVariableRef`, `isAr
 
 `configReference(schema)` permits that schema's literal values, runtime `env` or `variable`
 references. Validation rejects output, stack, artifact and generation-time references in adapter
-config even if an adapter schema accepts arbitrary values. The CLI resolves config references
-before `create`; individual adapters may then validate their runtime input. A resolved stack is
+config even if an adapter schema accepts arbitrary values. A platform's `configReferenceKinds`
+whitelists the runtime kinds it can supply; absent means none. Standalone supports `env` and
+`variable` from its process environment; Lambda declares none and rejects both until delivery
+is implemented. The runtime resolves supported references before `create`. A resolved stack is
 branded and its copied data objects are deeply frozen, so core does not re-run transforming
 adapter schemas on the original resolved object. A structural copy retains the brand but is not
 cached; validation rejects it with a clear error rather than re-parsing transformed configuration. Shared Zod schema instances and executable functions remain unfrozen; Zod uses
@@ -108,6 +116,34 @@ Core derives one `secretReads` requirement for each function receiving that bind
 `SecretSource` on `CreateContext` is an interface for lazy lookup; no secret-store adapter or
 policy implementation is supplied here.
 
+### Generator inputs and build artifacts
+
+A generator calls each selected descriptor as `inputs(selection.config, deriveDeployment(stack))`
+using the validated stack and renders references according to their phase. It emits Terraform
+provider requirements by source and version and provider configurations per entry. For example,
+`hashicorp/aws` uses `provider "aws"` with `region` and `default_tags { tags = ... }`. A selection
+using `provider: "aws_eu"` must pass `providers = { aws = aws.aws_eu }` to its module; the
+corresponding provider block has `alias = "aws_eu"`. Other provider sources need their own mapping.
+
+M2c supplies a build manifest keyed by physical function id. Core exports its entry shape:
+
+```ts
+interface BuildArtifact {
+  path: string;        // ZIP file for Lambda
+  handler: string;     // Lambda currently requires index.handler
+  runtime: string;     // Lambda module currently requires nodejs22.x
+  contentHash: string; // base64 SHA-256 of the ZIP bytes
+}
+```
+
+`artifact(functionId)` references that entry; the current Lambda descriptor's `artifact` input
+is the `path` string. The HCL currently fixes handler and runtime and computes
+`filebase64sha256(path)` itself; M2c must ensure its manifest agrees. A non-sensitive stack
+variable may declare a type-checked literal `default`. M2b emits those defaults in
+`terraform.tfvars.json` (JSON defaults encoded as JSON text because their Terraform type is
+`string`); declarations without defaults are supplied externally. Sensitive defaults are rejected
+and sensitive values must never be written to tfvars. Runtime `TF_VAR_` overrides defaults.
+
 ## Functions, requirements and triggers
 
 `physicalFunctions(config)` groups deployed roles. Split roles are individual functions named by
@@ -128,7 +164,7 @@ consume. `ingest` is produced by ingest and consumed by consumer. The M4 `notifi
 produced and consumed by consumer and is enabled only by `features.notifications: true`; the M4
 `archive.project` route is enabled when archive is selected, produced by cron and consumer, and
 consumed by consumer. Archive selection adds the marked M4 store, blob staging and primary,
-archive and KV requirements in the table. In particular cron needs staging write/list and also
+archive and KV requirements in the table. In particular cron needs staging read/write/delete/list and also
 primary blob read/delete for erasure. These are model requirements, not implemented M4 handlers.
 
 Core validates that selected adapters support each active role / capability / purpose, derives
@@ -197,6 +233,8 @@ export type DeploymentTrigger =
       functionId: string;
       physical: string;
       resource: InfraValue;
+      /** Environment binding carrying the runtime event-source identifier. */
+      eventSourceBinding?: string;
       topics: CoreTopic[];
       settings: QueueTriggerSettings;
     }
@@ -231,13 +269,23 @@ reachable from active references, derived grants, triggers and scoped bindings. 
 output will require a corresponding supplied value on the next validation. Values that are
 provided are still type-checked. A keyed lookup requires a statically inspectable existing map;
 an opaque variable for the whole map cannot prove a required key is present. External policy
-objects remain the operator's responsibility. This saves unused values at the cost of less
+documents remain the operator's responsibility. Existing queue visibility, DLQ and other trigger
+settings describe a promise about the external queue; core cannot inspect or enforce them. This saves unused values at the cost of less
 future-proof bring-your-own configuration than requiring every output.
 
 Factories receive config, role-scoped bindings and explicit dependencies. Only queues receive
 `topics` and `queueConsumers` (event source, physical queue, topics); platforms may receive named
-`cronJobs`. Constructed adapters may expose `close()`. The CLI builds in dependency order, closes
-in reverse order on failure and shutdown, and supplies root adapters to the platform by port kind.
+`cronJobs`. Constructed adapters may expose `close()`. Local CLI construction builds all selections
+in dependency order and supplies root adapters to the platform by port kind. For deployed functions,
+`constructDeployedStack(stack, functionId, environment, loadModule)` is exported by core for M2c.
+It constructs only required ports, their children and runtime dependencies, reads each scoped binding
+by name, and never resolves output references in runtime bindings. The caller supplies a static
+module loader and calls `close()` on shutdown; failure also closes in reverse construction order.
+For function platforms supporting env bindings, each queue trigger adds an env binding named
+`ERRTRAQ_QUEUE_SOURCE_<physical>` (uppercase, hyphens changed to underscores) to the consumer
+function. Its value is the queue resource reference, resolved by Terraform; runtime uses the
+delivered value as `queueConsumers.eventSource`. Collisions and reserved names fail validation.
+Platforms without env bindings need their own runtime binding mechanism.
 The standalone platform owns migration and bootstrap; its `tokenDirectory` is configured
 independently from the SQLite path. The local stack assigns both from `ERRTRAQ_DATA_DIR`.
 
@@ -245,7 +293,8 @@ independently from the SQLite path. The local stack assigns both from `ERRTRAQ_D
 
 The complete type-checked and validated illustrative fixtures are in
 [`packages/core/src/infra-examples.test.ts`](../packages/core/src/infra-examples.test.ts). Both
-include an illustrative archive selection so all three topics are active. Neither fixture runs an
+include an illustrative archive selection. The per-topic fixture also enables notifications so
+all three topics are active. Neither fixture runs an
 AWS adapter or creates Terraform. This exact excerpt constructs the shared and per-topic stacks:
 
 ```ts
@@ -273,7 +322,10 @@ function exampleStack(mode: "shared" | "per-topic"): StackConfig {
   };
 }
 const shared = defineStack(exampleStack("shared"));
-const perTopic = defineStack(exampleStack("per-topic"));
+const perTopic = defineStack({
+  ...exampleStack("per-topic"),
+  features: { notifications: true },
+});
 ```
 
 ### Shared queue

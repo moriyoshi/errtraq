@@ -53,5 +53,7 @@ item should be resolved or removed once addressed. Milestone work itself is trac
 - [ ] M2c / M3: match the Lambda module contract: ZIP artifacts exposing `index.handler`, EventBridge `{ "job": name }` dispatch, partial SQS batch failures, and lazy Secrets Manager ARN resolution. — *source: M2b step 2*
 - [ ] M3: implement and test the DynamoDB sparse-index and lookup-item layout documented in `infra/modules/aws/README.md`, including eventual-consistency limits and explicit erasure. — *source: M2b step 2*
 
-- [ ] M2b / M2c: address the remaining second-review items N5-N7 and document corrections before generator and build work. — *source: `.agents-workspace/tmp/m2a2-review-fixes.md`*
+- [x] M2b / M2c: address the remaining second-review items N5-N7 and document corrections before generator and build work. — *source: `.agents-workspace/tmp/m2a2-review-fixes.md`*
 - [ ] M2 / M3 / M6: address second-review follow-ups N9 and N12-N15, including Cloudflare binding authorization and runtime limitations. — *source: `.agents-workspace/tmp/m2a2-review-fixes.md`*
+
+- [ ] M2b: emit non-sensitive stack variable defaults into tfvars, encoding JSON defaults as JSON text; never emit sensitive values. Render provider aliases and consume the M2c build artifact manifest. — *source: M2a2 second review*

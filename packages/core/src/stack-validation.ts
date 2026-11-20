@@ -206,6 +206,49 @@ function deriveAccessFor(
             selection: row.selection,
             binding,
           });
+      for (const [childPath, child] of all) {
+        if (!childPath.startsWith(`${row.selection}.`)) continue;
+        const childPolicies = ownValue(
+          child.infra.capabilities,
+          row.capability,
+        );
+        for (const [purpose, policyOutput] of Object.entries(
+          childPolicies ?? {},
+        )) {
+          if (
+            !grants.some(
+              (g) =>
+                g.functionId === fn.id &&
+                g.selection === childPath &&
+                g.capability === row.capability &&
+                g.purpose === purpose,
+            )
+          )
+            grants.push({
+              functionId: fn.id,
+              selection: childPath,
+              capability: row.capability,
+              purpose,
+              ...(policyOutput ? { policyOutput } : {}),
+            });
+        }
+        for (const binding of child.infra.bindings) {
+          if (
+            binding.capabilities &&
+            !binding.capabilities.includes(row.capability)
+          )
+            continue;
+          if (
+            !bindings.some(
+              (b) =>
+                b.functionId === fn.id &&
+                b.selection === childPath &&
+                b.binding === binding,
+            )
+          )
+            bindings.push({ functionId: fn.id, selection: childPath, binding });
+        }
+      }
     }
   }
   return {
@@ -322,6 +365,28 @@ function deploymentFor(
       trigger.topics.push(topic);
     }
     view.triggers.push(...queues.values());
+    if (
+      stack.platform.manifest.compute === "function" &&
+      stack.platform.manifest.bindingKinds.includes("env")
+    ) {
+      for (const trigger of queues.values()) {
+        const name = `ERRTRAQ_QUEUE_SOURCE_${trigger.physical.toUpperCase().replaceAll("-", "_")}`;
+        trigger.eventSourceBinding = name;
+        const fn = view.functions.find(
+          (item) => item.id === trigger.functionId,
+        );
+        fn?.envBindings.push({
+          functionId: trigger.functionId,
+          selection: "queue",
+          binding: {
+            name,
+            kind: "env",
+            purpose: trigger.physical,
+            value: trigger.resource,
+          },
+        });
+      }
+    }
   }
   if (stack.archive)
     for (const job of CRON_JOBS) {
@@ -599,6 +664,47 @@ function inspect(input: unknown): {
         `${path}.provider`,
         "Provider source does not match the module provider family",
       );
+    if (path.includes(".")) {
+      const parentKind = path.split(".")[0];
+      const parentCapabilities = new Set(
+        PORT_REQUIREMENTS.filter((row) => row.kind === parentKind).map(
+          (row) => row.capability,
+        ),
+      );
+      if (parentKind === "queue") {
+        parentCapabilities.add("produce");
+        parentCapabilities.add("consume");
+      }
+      for (const capability of Object.keys(sel.infra.capabilities))
+        if (!parentCapabilities.has(capability))
+          fail(
+            `${path}.infra.capabilities.${capability}`,
+            "Child capability has no parent-port requirement and cannot be delivered",
+          );
+      for (const [index, binding] of sel.infra.bindings.entries())
+        for (const capability of binding.capabilities ?? [])
+          if (!parentCapabilities.has(capability))
+            fail(
+              `${path}.infra.bindings.${index}`,
+              `Child binding capability ${capability} cannot be delivered`,
+            );
+      for (const purpose of Object.keys(sel.infra.resources))
+        if (
+          !sel.infra.bindings.some((binding) => binding.purpose === purpose) &&
+          !Object.values(sel.infra.capabilities).some((policies) =>
+            Object.hasOwn(policies, purpose),
+          )
+        )
+          fail(
+            `${path}.infra.resources.${purpose}`,
+            "Child resource has no binding or capability and cannot be delivered",
+          );
+      if (sel.infra.topics)
+        fail(
+          `${path}.infra.topics`,
+          "Child topic mappings cannot be delivered",
+        );
+    }
     for (const [alias, target] of Object.entries(sel.dependsOn ?? {})) {
       if (!all.has(target))
         fail(`${path}.dependsOn.${alias}`, "Unknown selection");
@@ -697,6 +803,14 @@ function inspect(input: unknown): {
           path,
           "Only runtime environment and variable references are allowed in config",
         );
+      if (
+        configMode &&
+        (isVariableRef(value) || (isEnvRef(value) && value.phase === "runtime"))
+      ) {
+        const kind = isVariableRef(value) ? "variable" : "env";
+        if (!platform.configReferenceKinds?.includes(kind))
+          fail(path, `Platform does not support ${kind} config references`);
+      }
       if (
         isOutputRef(value) &&
         keys.every((k) => ["name", "selection", "path"].includes(k)) &&
@@ -897,6 +1011,43 @@ function inspect(input: unknown): {
     }
     seen.delete(value);
   };
+  for (const [name, declaration] of Object.entries(stack.variables ?? {})) {
+    if (declaration.default === undefined) continue;
+    const value = declaration.default;
+    if (declaration.sensitive)
+      fail(
+        `variables.${name}.default`,
+        "Sensitive variables cannot have stack defaults",
+      );
+    const valid =
+      declaration.type === "string"
+        ? typeof value === "string"
+        : declaration.type === "number"
+          ? typeof value === "number" && Number.isFinite(value)
+          : declaration.type === "bool"
+            ? typeof value === "boolean"
+            : declaration.type === "string[]"
+              ? Array.isArray(value) &&
+                value.every((item) => typeof item === "string")
+              : !!value && typeof value === "object" && !isInfraRef(value);
+    if (!valid)
+      fail(
+        `variables.${name}.default`,
+        `Invalid ${declaration.type} variable default`,
+      );
+    const checkLiteral = (item: InfraValue): void => {
+      if (isInfraRef(item)) {
+        fail(
+          `variables.${name}.default`,
+          "Variable defaults must be literal values",
+        );
+        return;
+      }
+      if (item && typeof item === "object")
+        for (const child of Object.values(item)) checkLiteral(child);
+    };
+    checkLiteral(value);
+  }
   if (stack.backend) {
     checkValue(
       stack.backend.config,
@@ -1040,6 +1191,32 @@ function inspect(input: unknown): {
   }
   // Descriptors cannot alter the data that validation subsequently relies on.
   const deployment = frozenSnapshot(deploymentFor(stack, groups, functions));
+  for (const fn of deployment.functions) {
+    const bindingNames = new Set<string>();
+    for (const item of [
+      ...fn.envBindings,
+      ...fn.secretBindings,
+      ...fn.platformBindings,
+    ]) {
+      if (bindingNames.has(item.binding.name))
+        fail(
+          `platform.functions.${fn.id}`,
+          `Duplicate binding ${item.binding.name} in function`,
+        );
+      bindingNames.add(item.binding.name);
+      if (
+        platform.reservedBindings.some((pattern) =>
+          pattern.endsWith("*")
+            ? item.binding.name.startsWith(pattern.slice(0, -1))
+            : item.binding.name === pattern,
+        )
+      )
+        fail(
+          `platform.functions.${fn.id}`,
+          `Reserved binding name ${item.binding.name}`,
+        );
+    }
+  }
   for (const [name, ref] of Object.entries(stack.outputs ?? {}))
     checkValue(ref, "platform", `outputs.${name}`, false);
   for (const key of Object.keys(stack.queue.infra.topics?.settings ?? {}))
@@ -1051,6 +1228,23 @@ function inspect(input: unknown): {
       fail(`queue.infra.topics.settings.${key}`, "Unknown physical queue");
   for (const trigger of deployment.triggers) {
     if (trigger.kind !== "queue") continue;
+    if (trigger.eventSourceBinding) {
+      const source = trigger.resource;
+      const sourceType = isOutputRef(source)
+        ? outputTypeAt(
+            ownValue(
+              all.get(source.selection ?? "queue")?.infra.module.outputs,
+              source.name,
+            ),
+            source.path,
+          )
+        : undefined;
+      if (!(typeof source === "string" || sourceType === "string"))
+        fail(
+          `queue.infra.resources.${trigger.physical}`,
+          "Queue event-source binding requires a scalar string output",
+        );
+    }
     const setting = trigger.settings;
     if (setting.dlq?.enabled && !stack.queue.manifest.capabilities.dlq)
       fail(
@@ -1340,6 +1534,42 @@ function inspect(input: unknown): {
         row.selection,
         `${loc}.capabilities.${row.capability}.${row.purpose} (role ${row.role})`,
         false,
+      );
+  }
+  const derivedChildren = deriveAccessFor(stack, groups);
+  for (const [path, child] of all) {
+    if (!path.includes(".")) continue;
+    for (const capability of Object.keys(child.infra.capabilities))
+      if (
+        !derivedChildren.grants.some(
+          (grant) =>
+            grant.selection === path && grant.capability === capability,
+        )
+      )
+        fail(
+          `${path}.infra.capabilities.${capability}`,
+          "Child capability has no active parent-role requirement and cannot be delivered",
+        );
+    for (const [index, binding] of child.infra.bindings.entries())
+      if (
+        !derivedChildren.bindings.some(
+          (item) => item.selection === path && item.binding === binding,
+        )
+      )
+        fail(
+          `${path}.infra.bindings.${index}`,
+          "Child binding has no active parent-role requirement and cannot be delivered",
+        );
+  }
+  for (const grant of deriveAccessFor(stack, groups).grants) {
+    if (
+      grant.selection.includes(".") &&
+      platform.authorization === "iam" &&
+      !grant.policyOutput
+    )
+      fail(
+        `${grant.selection}.infra.capabilities.${grant.capability}.${grant.purpose}`,
+        `Child capability for function ${grant.functionId} requires an IAM policy`,
       );
   }
   for (const scoped of deriveAccessFor(stack, groups).bindings) {

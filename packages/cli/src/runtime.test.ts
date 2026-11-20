@@ -266,3 +266,22 @@ it("uses the selection provider alias for unqualified provider values", () => {
     team: "eu",
   });
 });
+
+it("uses non-sensitive stack variable defaults when TF_VAR is absent", () => {
+  const stack = {
+    ...copyStack(local),
+    variables: {
+      DOC: {
+        type: "json" as const,
+        sensitive: false,
+        default: { a: [1, "two"] },
+      },
+    },
+  };
+  expect(resolveRuntimeValue(variable("DOC"), "store", stack, {})).toEqual({
+    a: [1, "two"],
+  });
+  expect(
+    resolveRuntimeValue(variable("DOC"), "store", stack, { TF_VAR_DOC: "[]" }),
+  ).toEqual([]);
+});

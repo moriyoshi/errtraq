@@ -151,6 +151,7 @@ function stack(): StackConfig {
         provides: [],
         authorization: "iam",
         bindingKinds: ["env", "secret"],
+        configReferenceKinds: ["env", "variable"],
         reservedBindings: [],
         configSchema: z
           .object({
@@ -431,6 +432,72 @@ describe("infrastructure model", () => {
     expect(
       deriveAccess(v).grants.some(
         (g) => g.functionId === "consumer" && g.capability === "produce",
+      ),
+    ).toBe(true);
+  });
+  it("accepts typed non-sensitive variable defaults and rejects sensitive or invalid defaults", () => {
+    const v = stack();
+    v.variables = {
+      REGION: { type: "string", sensitive: false, default: "eu-west-1" },
+      DOCUMENT: {
+        type: "json",
+        sensitive: false,
+        default: { enabled: true, items: [1, "a"] },
+      },
+      LIST: { type: "string[]", sensitive: false, default: ["a"] },
+    };
+    expect(validateStack(v)).toEqual([]);
+    v.variables.SECRET = { type: "string", sensitive: true, default: "hidden" };
+    v.variables.REGION = { type: "string", sensitive: false, default: 7 };
+    v.variables.DOCUMENT = {
+      type: "json",
+      sensitive: false,
+      default: { child: variable("REGION") },
+    };
+    const issues = validateStack(v);
+    expect(
+      issues.some(
+        (issue) =>
+          issue.path === "variables.SECRET.default" &&
+          issue.message.includes("Sensitive"),
+      ),
+    ).toBe(true);
+    expect(
+      issues.some(
+        (issue) =>
+          issue.path === "variables.REGION.default" &&
+          issue.message.includes("Invalid"),
+      ),
+    ).toBe(true);
+    expect(
+      issues.some(
+        (issue) =>
+          issue.path === "variables.DOCUMENT.default" &&
+          issue.message.includes("literal"),
+      ),
+    ).toBe(true);
+  });
+  it("requires a string event-source output and catches generated binding collisions", () => {
+    const v = stack();
+    v.queue.infra.module.outputs.bad = "json";
+    v.queue.infra.resources.shared = out("bad");
+    expect(
+      validateStack(v).some((issue) =>
+        issue.message.includes("event-source binding requires"),
+      ),
+    ).toBe(true);
+    v.queue.infra.resources.shared = out("arn");
+    v.store.infra.bindings = [
+      {
+        name: "ERRTRAQ_QUEUE_SOURCE_SHARED",
+        kind: "env",
+        purpose: "primary",
+        value: out("arn"),
+      },
+    ];
+    expect(
+      validateStack(v).some((issue) =>
+        issue.message.includes("Duplicate binding ERRTRAQ_QUEUE_SOURCE_SHARED"),
       ),
     ).toBe(true);
   });
@@ -1480,6 +1547,7 @@ describe("infrastructure model", () => {
         kind: "queue",
         functionId: "consumer",
         physical: "shared",
+        eventSourceBinding: "ERRTRAQ_QUEUE_SOURCE_SHARED",
         role: "consumer",
         resource: output("queue", "arn"),
         settings: {},
@@ -1656,6 +1724,96 @@ describe("infrastructure model", () => {
     ];
     expect(validateStack(v)).toEqual([]);
   });
+  it("delivers archive child bindings, secrets and capability grants to parent users", () => {
+    const v = stack();
+    v.archive = selection("archive");
+    v.archive.manifest.capabilities = { rowDelete: "copy-on-write" };
+    v.archive.manifest.childKinds = { catalog: "catalog", engine: "engine" };
+    const catalog = selection("catalog");
+    catalog.infra.module.outputs.secret = "secret-ref";
+    catalog.infra.resources = { primary: out("arn") };
+    catalog.infra.capabilities = {
+      read: { primary: out("policy") },
+      write: { primary: out("policy") },
+    };
+    catalog.infra.bindings = [
+      {
+        name: "CATALOG_ENDPOINT",
+        kind: "env",
+        purpose: "primary",
+        value: out("arn"),
+      },
+      {
+        name: "CATALOG_SECRET",
+        kind: "secret",
+        purpose: "primary",
+        value: out("secret"),
+      },
+    ];
+    const engine = selection("engine");
+    engine.infra.resources = { primary: out("arn") };
+    engine.infra.capabilities = { write: { primary: out("policy") } };
+    engine.infra.bindings = [
+      {
+        name: "ENGINE_WRITE",
+        kind: "env",
+        purpose: "primary",
+        capabilities: ["write"],
+        value: out("arn"),
+      },
+    ];
+    v.archive.children = { catalog, engine };
+    expect(validateStack(v)).toEqual([]);
+    const view = deriveDeployment(v);
+    const api = view.functions.find((fn) => fn.id === "api");
+    const consumer = view.functions.find((fn) => fn.id === "consumer");
+    expect(api?.envBindings.map((item) => item.binding.name)).toContain(
+      "CATALOG_ENDPOINT",
+    );
+    expect(api?.envBindings.map((item) => item.binding.name)).not.toContain(
+      "ENGINE_WRITE",
+    );
+    expect(consumer?.envBindings.map((item) => item.binding.name)).toContain(
+      "ENGINE_WRITE",
+    );
+    expect(api?.secretReads).toContainEqual({
+      functionId: "api",
+      selection: "archive.catalog",
+      bindingName: "CATALOG_SECRET",
+      identifier: output("archive.catalog", "secret"),
+    });
+    expect(
+      api?.policies.some(
+        (grant) =>
+          grant.selection === "archive.catalog" && grant.capability === "read",
+      ),
+    ).toBe(true);
+    expect(
+      api?.policies.some(
+        (grant) =>
+          grant.selection === "archive.catalog" && grant.capability === "write",
+      ),
+    ).toBe(false);
+    expect(
+      consumer?.policies.some(
+        (grant) =>
+          grant.selection === "archive.engine" && grant.capability === "write",
+      ),
+    ).toBe(true);
+    engine.infra.capabilities = { unsupported: { primary: out("policy") } };
+    expect(
+      validateStack(v).some((issue) =>
+        issue.message.includes("cannot be delivered"),
+      ),
+    ).toBe(true);
+    engine.infra.capabilities = {};
+    engine.infra.bindings = [];
+    expect(
+      validateStack(v).some((issue) =>
+        issue.message.includes("resource has no binding"),
+      ),
+    ).toBe(true);
+  });
   it("traverses nested adapters and orders dependencies", () => {
     const v = stack();
     v.archive = selection("archive");
@@ -1665,6 +1823,8 @@ describe("infrastructure model", () => {
       catalog: selection("catalog"),
       engine: selection("engine"),
     };
+    for (const child of Object.values(v.archive.children))
+      child.infra.resources = {};
     v.archive.dependsOn = { catalog: "archive.catalog", blob: "blob" };
     expect([...selections(v).keys()]).toContain("archive.catalog");
     const order = constructionOrder(v);
@@ -1714,6 +1874,7 @@ describe("infrastructure model", () => {
     child.infra.bindings = [
       { name: "CHILD", kind: "env", purpose: "primary", value: out("arn") },
     ];
+    delete child.infra.resources.staging;
     v.kv.manifest.childKinds = { existing: "kv" };
     v.kv.children = { existing: child };
     expect(validateStack(v)).toEqual([]);

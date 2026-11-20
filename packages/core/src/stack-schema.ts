@@ -75,6 +75,7 @@ export const platformSchema = manifestSchema.extend({
   provides: z.array(z.enum(ENVIRONMENT_FEATURES)),
   authorization: z.enum(["iam", "bindings", "none"]),
   bindingKinds: z.array(z.enum(["env", "secret", "platform"])),
+  configReferenceKinds: z.array(z.enum(["env", "variable"])).optional(),
   reservedBindings: z.array(z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*\*?$/)),
 });
 const descriptorSchema = z.strictObject({
@@ -166,6 +167,7 @@ export const rootSchema = z.strictObject({
       z.strictObject({
         type: z.enum(["string", "number", "bool", "string[]", "json"]),
         sensitive: z.boolean(),
+        default: infraValue.optional(),
       }),
     )
     .optional(),

@@ -445,3 +445,22 @@ credentials come from the backend environment. Function ids already used stable 
 `shared` names; tests now cover split changes. Notifications are inactive unless explicitly
 enabled, and SQS provisions only queues present in the derived active triggers. N5-N7 and the
 remaining documentation review are the next slice; later review items remain in TODO.
+
+## 2026-11-21 — Second infra review, part 2
+
+Child bindings follow the functions requiring their root port; child policies follow matching
+parent capabilities, and child resources, policies or capability-filtered bindings that cannot
+be delivered are rejected. Child secrets retain their own scoped secret-read requirements.
+Function platforms with environment bindings receive an additional queue event-source binding
+per physical trigger. The deployed construction API is exported from core for generated static
+entrypoints: it constructs only required selections and dependencies, consumes binding values
+by name, and closes in reverse order. The local construction path is unchanged. Platforms must
+declare supported config reference kinds; Lambda rejects both runtime environment and variable
+config references until it implements their delivery, while standalone supports both.
+
+The build artifact manifest now has an explicit path, handler, runtime and content hash shape;
+the Lambda module currently consumes the path and calculates the hash itself. Stack variables
+support literal non-sensitive defaults, which the future generator can emit in tfvars; JSON
+defaults must be encoded as text. Existing queue settings remain an operator promise, not an
+inspection of external resources. The root test workspace now directly declares the already-used
+Zod version for AWS config-reference tests; no new runtime dependency was introduced.

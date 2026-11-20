@@ -372,7 +372,9 @@ bindings and typed module outputs, including keyed maps. Core owns the role requ
 topic routes; validation derives per-function grants and bindings from them. Platform manifests
 state their authorization style, binding kinds and runtime environment guarantees. Platform
 config defines role grouping, HTTP exposure and settings; the derived deployment view supplies
-functions, bindings, policies, triggers and build artifact references to descriptor inputs.
+functions, bindings, policies, triggers and build artifact references to descriptor inputs. Child
+selections inherit parent-port access, and deployed functions construct only their required
+adapters using delivered binding names. Platform manifests declare supported config references.
 
 Symbol-tagged references distinguish module outputs, provider values, Terraform variables,
 runtime or generation-time environment values, and build artifacts. Existing resources supply

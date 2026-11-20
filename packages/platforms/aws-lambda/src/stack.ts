@@ -39,6 +39,7 @@ export const manifest: PlatformManifest = {
   provides: ["writable-filesystem"],
   authorization: "iam",
   bindingKinds: ["env", "secret"],
+  configReferenceKinds: [],
   reservedBindings: [
     "_HANDLER",
     "_X_AMZN_TRACE_ID",

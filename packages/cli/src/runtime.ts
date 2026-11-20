@@ -68,8 +68,11 @@ export function resolveRuntimeValue(
   }
   if (isVariableRef(value)) {
     const raw = environment[`TF_VAR_${value.name}`];
-    if (raw === undefined)
+    if (raw === undefined) {
+      const fallback = stack.variables?.[value.name]?.default;
+      if (fallback !== undefined) return fallback;
       throw new Error(`Missing stack variable ${value.name}`);
+    }
     const type = stack.variables?.[value.name]?.type;
     try {
       if (type === "number") {
