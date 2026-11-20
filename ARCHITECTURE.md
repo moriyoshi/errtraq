@@ -1,16 +1,16 @@
-# errtraq — Sentry-compatible, serverless-first issue tracker: architecture plan
+# errtraq architecture
 
 ## Context
 
-Greenfield project (`/Users/moriyoshi/Source/errtraq` is empty, not yet a git repo). Goal: a
-Sentry-SDK-compatible error tracker (like GlitchTip / Bugsink) whose whole stack runs on
-serverless platforms (Lambda, Cloud Run, Cloudflare, Vercel) and also as a local standalone
-process. Storage, queue, archive and compute are all pluggable, and the same stack
-description that selects the runtime adapters also generates the Terraform that provisions them.
+errtraq is a Sentry-SDK-compatible error tracker (in the spirit of GlitchTip and Bugsink) whose
+whole stack runs on serverless platforms (Lambda, Cloud Run, Cloudflare, Vercel) and also as a
+local standalone process. Storage, queue, archive and compute are all pluggable, and the same
+stack description that selects the runtime adapters also generates the Terraform that
+provisions them.
 
-Decisions already made with the user:
+Founding decisions:
 
-- **Language:** TypeScript (only option that runs natively on every listed target).
+- **Language:** TypeScript (the only candidate that runs natively on every listed target).
 - **Iceberg catalog:** talk the **Iceberg REST Catalog** protocol so Lakekeeper works, as do
   S3 Tables / Glue REST / R2 Data Catalog / Polaris.
 - **First cloud targets:** AWS first, then Cloudflare. Local standalone before both.
@@ -19,8 +19,8 @@ Decisions already made with the user:
 - **Sentry scope:** error events + releases/sourcemaps (sentry-cli compatible). Transactions,
   replays, profiles, sessions are accepted and dropped.
 
-What the user wants to see first: the layered service abstractions and the infra abstraction.
-So milestones M0–M2 below are the deliverable of the first implementation round; M3+ is the roadmap.
+The layered service abstractions and the infra abstraction come first: milestones M0 to M2
+below are the first implementation round; M3 onwards is the roadmap.
 
 ## Layering
 
