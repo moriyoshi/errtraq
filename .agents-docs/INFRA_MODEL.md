@@ -23,7 +23,7 @@ for queues `topics`. The second argument is available to every descriptor and is
 key to an `InfraValue`. A capability maps each purpose to its own `OutputRef` policy or `null`
 when no IAM policy is needed. Bindings name their resource purpose and may limit themselves to
 specific capabilities; they do not list function roles. `module.outputs` supports `string`,
-`string[]`, `json`, `secret-ref`, and recursive `{ map: OutputType }`. `out("queues", key,
+`string[]`, `json`, `json-document`, `secret-ref`, and recursive `{ map: OutputType }`. `out("queues", key,
 "arn")` selects a key path within the current selection; `output("queue", "queues", key,
 "arn")` names another selection. Map keys are identifiers. The generator must render references
 rather than JSON-serialize them.
@@ -44,7 +44,10 @@ policy outputs for every required capability and purpose; binding authorization 
 platform producer binding for active queue routes. Environment bindings must be scalar strings.
 The module provider named `local` does not require provider metadata; other modules do.
 
-The model validates reference types and policy output placement, but it does **not** inspect a
+The default AWS contract test compares the types and key patterns declared in HCL output
+descriptions with descriptors; opt-in mock-provider tests check actual output shapes. Terraform
+`validate` alone does not prove an output's type or keys. The model validates reference types
+and policy output placement, but it does **not** inspect a
 policy document or module input to prove that it contains no raw provider IAM or that its policy
 is least privilege. An adapter author and the future HCL module must provide that guarantee.
 
@@ -69,26 +72,33 @@ references. Validation rejects output, stack, artifact and generation-time refer
 config even if an adapter schema accepts arbitrary values. The CLI resolves config references
 before `create`; individual adapters may then validate their runtime input. A resolved stack is
 branded and its copied data objects are deeply frozen, so core does not re-run transforming
-adapter schemas. Shared Zod schema instances and executable functions remain unfrozen; Zod uses
+adapter schemas on the original resolved object. A structural copy retains the brand but is not
+cached; validation rejects it with a clear error rather than re-parsing transformed configuration. Shared Zod schema instances and executable functions remain unfrozen; Zod uses
 lazy initialization. Do not mutate them after resolving.
 
-A `json` output or variable represents a native object or array, not an encoded JSON string or a
-scalar. `TF_VAR_` values enter as strings and the CLI parses JSON into that native value, rejecting
-scalars. `terraformVariableType("json")` returns `any`; M2b must emit a Terraform validation
-that requires an object or array as well. `string[]` maps to `list(string)`. This differs from a
-JSON policy document serialized as text: an existing `json` output must be supplied as native data.
-Capability policy outputs may use `json` for native documents or `string` for serialized documents;
-the AWS modules use `string` because IAM policy inputs expect JSON text. Core checks the declared
-type, not whether a string contains a valid provider policy.
+A `json` output represents a native object or array. A JSON stack variable is supplied as JSON
+text in a Terraform `string` variable and the generator must use `jsondecode(var.name)` where a
+structured value is needed; validate that the decoded value is an object or array. The CLI parses
+the same `TF_VAR_` text with `JSON.parse` and rejects scalars. `terraformVariableType("json")`
+returns `string`; `string[]` maps to `list(string)`. A `json-document` output is JSON-encoded
+text. Policy outputs must use that type, so different IAM policy shapes can coexist in a
+`list(string)`. Existing literal documents must parse as JSON; string variables can supply them
+at deployment. Core cannot prove the contents provide the claimed provider permissions.
 
 Literal strings may contain Terraform template introducers. `terraformLiteral(s)` returns
 `{ value: s, needsEscaping }` without changing the data; `escapeTerraformLiteral(s)` escapes
 both `${` and `%{`. M2b must apply this to every literal string it renders, including nested
-values, and must not escape expressions rendered from reference objects. These helpers do not
+values and object keys, and must not escape expressions rendered from reference objects. Infra
+object keys and provider tag keys are restricted to ASCII letters, digits, underscore, dot,
+slash, colon, at sign, plus, space and hyphen; unsafe keys are rejected before generation. These helpers do not
 perform generation themselves.
 
 Providers are keyed entries with `source`, `version`, optional `region` and `tags`; provider keys
-also act as qualifiers. The entry named `aws` requires a region. Backend values may be literals
+also act as qualifiers. A selection's optional `provider` selects an entry, defaulting to its
+module's provider family; unqualified stack provider values use that same entry. AWS provider
+sources require a region regardless of the entry name. Only `s3` and `local` backends are supported;
+their scalar non-secret metadata keys are allowlisted. Backend credentials must come from the
+backend's own environment, never config values or `generationEnv`. Backend values may be literals
 or `generationEnv`, not Terraform variables or module/runtime references. There is currently no
 separate stack-metadata environment-reference field. Sensitive variables are rejected everywhere
 except module inputs whose top-level names appear in `module.sensitiveInputs`; their handling by
@@ -102,7 +112,10 @@ policy implementation is supplied here.
 
 `physicalFunctions(config)` groups deployed roles. Split roles are individual functions named by
 role; the remaining roles form a function named `shared`, even if only one role remains. Roles
-and functions follow the core role order, independent of input order. Per-role settings in a
+follow the core role order, independent of input order; split functions appear first in that order,
+with `shared` last. Moving a role into or out of `split` changes its function assignment and can
+replace functions; an existing split role always retains its role-name id and the shared id stays
+`shared`. Per-role settings in a
 shared function merge if overlapping values agree; conflicting values fail. Core checks memory
 128 to 1048576 MB and timeout 1 to 86400 seconds. Platform schemas can impose narrower limits
 and accept extra settings such as `cpuMs`. `http` lists deployed roles to expose; only `ingest`
@@ -112,7 +125,7 @@ and `api` have HTTP apps. The standalone platform mounts exactly the configured 
 ingest needs store read, blob write/delete, KV read/write and queue produce; API needs store
 read/write and blob read; consumer needs store read/write and blob read/write/delete and queue
 consume. `ingest` is produced by ingest and consumed by consumer. The M4 `notifications` route is
-produced and consumed by consumer and is currently derived even without archive; the M4
+produced and consumed by consumer and is enabled only by `features.notifications: true`; the M4
 `archive.project` route is enabled when archive is selected, produced by cron and consumer, and
 consumed by consumer. Archive selection adds the marked M4 store, blob staging and primary,
 archive and KV requirements in the table. In particular cron needs staging write/list and also
@@ -336,8 +349,8 @@ future platform / adapter work; this sketch does not establish that they are imp
 
 ## M2b / M2c handoff
 
-M2b must render all reference kinds with their proper phase, escape literals, emit JSON variable
-container validation, render only reachable existing substitutions, materialize per-purpose IAM
+M2b must render all reference kinds with their proper phase, escape literal values and keys, emit
+JSON string variables with decoded container validation, render only reachable existing substitutions, materialize per-purpose IAM
 policies and secret-read permissions, surface stack outputs, and enforce compatible queue and
 function defaults. It must also choose and document local standalone infra semantics. M2c must
 satisfy artifact references with actual build locations, generate role-scoped entrypoints and

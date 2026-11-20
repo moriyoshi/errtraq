@@ -16,7 +16,7 @@ const name = z.string().regex(/^[a-z][a-z0-9_-]*$/);
 const refName = z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/);
 const outputType: z.ZodType<OutputType> = z.lazy(() =>
   z.union([
-    z.enum(["string", "string[]", "json", "secret-ref"]),
+    z.enum(["string", "string[]", "json", "json-document", "secret-ref"]),
     z.strictObject({ map: outputType }),
   ]),
 );
@@ -136,6 +136,7 @@ const selectionSchema: z.ZodType<AdapterSelection> = z.lazy(() =>
     manifest: z.union([platformSchema, manifestSchema]),
     infra: descriptorSchema,
     runtimeModule: z.string().min(1),
+    provider: name.optional(),
     config: z.unknown(),
     dependsOn: z.record(name, z.string().min(1)).optional(),
     children: z.record(name, selectionSchema).optional(),
@@ -174,6 +175,9 @@ export const rootSchema = z.strictObject({
   blob: selectionSchema,
   archive: selectionSchema.optional(),
   kv: selectionSchema,
+  features: z
+    .strictObject({ notifications: z.boolean().optional() })
+    .optional(),
   requirements: z
     .record(
       z.string(),

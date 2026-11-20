@@ -50,3 +50,8 @@ permissions cover only the configured staging prefix. New primary namespaces req
 updates. Abandoned envelopes expire after 14 days by default and archive staging after seven;
 operators must choose retention periods longer than their recovery windows. Neither lifecycle
 rule applies to durable overflow payloads. S3 bucket deletion is deliberately not forced.
+
+Output descriptions carry `errtraq-type` and `errtraq-keys` declarations because HCL output
+blocks have no type constraint. The default TypeScript contract test compares these declarations
+with the descriptors; Terraform mock-provider tests independently check the actual output shapes
+and encoded policy leaves. Keep all three in sync when changing module outputs.

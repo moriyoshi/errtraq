@@ -3,6 +3,9 @@ import { expect, it } from "vitest";
 import local from "../../../stacks/local.js";
 import { constructStack } from "./construction.js";
 
+const copyStack = <T extends object>(value: T): T =>
+  Object.fromEntries(Object.entries(value)) as T;
+
 const roles = ["ingest", "api", "consumer", "cron"] as const;
 const selected = selections(local);
 const pathByModule = new Map(
@@ -40,7 +43,7 @@ it("passes queue mappings only to the queue and closes all instances in reverse 
     {
       eventSource: "memory",
       physical: "memory",
-      topics: ["ingest", "notifications"],
+      topics: ["ingest"],
     },
   ]);
   await built.close();
@@ -74,7 +77,7 @@ it("closes every earlier adapter on a construction failure, even when a close fa
 
 it("passes distinct event sources and topics for per-topic queue consumers", async () => {
   const stack = {
-    ...local,
+    ...copyStack(local),
     queue: {
       ...local.queue,
       infra: {
@@ -109,11 +112,6 @@ it("passes distinct event sources and topics for per-topic queue consumers", asy
   }));
   expect(consumers).toEqual([
     { physical: "events", eventSource: "event-source-a", topics: ["ingest"] },
-    {
-      physical: "notifications",
-      eventSource: "event-source-c",
-      topics: ["notifications"],
-    },
   ]);
   await built.close();
 });

@@ -94,6 +94,18 @@ export function moduleName(path: string): string {
   return path.replaceAll(".", "_");
 }
 
+function featureEnabled(
+  stack: StackConfig,
+  feature?: "archive" | "notifications",
+  milestone?: "M4",
+): boolean {
+  return (
+    (feature === undefined && milestone === undefined) ||
+    (feature === "archive"
+      ? !!stack.archive
+      : feature === "notifications" && stack.features?.notifications === true)
+  );
+}
 interface AccessRequirement {
   selection: string;
   role: FunctionRole;
@@ -105,7 +117,9 @@ function accessRequirements(
   roles: readonly FunctionRole[],
 ): AccessRequirement[] {
   const result: AccessRequirement[] = PORT_REQUIREMENTS.filter(
-    (row) => roles.includes(row.role) && (!row.feature || stack[row.feature]),
+    (row) =>
+      roles.includes(row.role) &&
+      featureEnabled(stack, row.feature, row.milestone),
   ).map((row) => ({
     selection: row.kind,
     role: row.role,
@@ -116,7 +130,7 @@ function accessRequirements(
   if (mapping)
     for (const topic of TOPICS) {
       const route = TOPIC_ROUTES[topic];
-      if (route.feature && !stack[route.feature]) continue;
+      if (!featureEnabled(stack, route.feature, route.milestone)) continue;
       const physical = mapping.routes[topic]?.physical;
       if (!physical) continue;
       for (const role of route.producers)
@@ -283,7 +297,8 @@ function deploymentFor(
     >();
     for (const topic of TOPICS) {
       const contract = TOPIC_ROUTES[topic];
-      if (contract.feature && !stack[contract.feature]) continue;
+      if (!featureEnabled(stack, contract.feature, contract.milestone))
+        continue;
       const route = mapping.routes[topic];
       if (!route) continue;
       const fn = functions.find((item) =>
@@ -352,8 +367,8 @@ export function bindingsForRoles(
 // A resolved stack has already passed all checks, including potentially transforming
 // adapter schemas. Keep its construction order alongside its identity.
 const resolvedOrders = new WeakMap<StackConfig, string[]>();
-declare const resolvedBrand: unique symbol;
-export type ResolvedStack = StackConfig & { readonly [resolvedBrand]: true };
+const resolvedMarker: unique symbol = Symbol.for("@errtraq/resolved-stack");
+export type ResolvedStack = StackConfig & { readonly [resolvedMarker]: true };
 
 // Clone only data objects; schemas are shared, executable objects owned by adapters.
 // Never freeze an input object supplied by the caller.
@@ -412,9 +427,11 @@ export function selections(stack: StackConfig): Map<string, AdapterSelection> {
  * Roles and functions follow FUNCTION_ROLES order, independent of input order.
  * Disjoint per-role settings merge; different values for the same setting conflict.
  */
-export function physicalFunctions(config: PlatformConfig): PhysicalFunction[] {
-  if (!platformConfigSchema.safeParse(config).success)
+export function physicalFunctions(input: unknown): PhysicalFunction[] {
+  const parsed = platformConfigSchema.safeParse(input);
+  if (!parsed.success)
     throw new Error("Invalid platform function configuration");
+  const config = parsed.data;
   const roles = FUNCTION_ROLES.filter((role) => config.roles.includes(role));
   const groups = roles
     .filter((role) => config.split.includes(role))
@@ -449,6 +466,16 @@ function inspect(input: unknown): {
   resolved?: StackConfig;
   order?: string[];
 } {
+  if (typeof input === "object" && input !== null && resolvedMarker in input)
+    return {
+      issues: [
+        {
+          path: "",
+          message:
+            "A resolved stack copy cannot be re-parsed; use the frozen resolved stack or the original input",
+        },
+      ],
+    };
   const tooDeep = excessiveDepth(input, "");
   if (tooDeep !== undefined)
     return {
@@ -477,11 +504,19 @@ function inspect(input: unknown): {
     return { issues };
   }
   const platform = platformParsed.data;
-  if (
-    ownValue(stack.providers, "aws") &&
-    !ownValue(stack.providers, "aws")?.region
-  )
-    fail("providers.aws.region", "Region is required for the AWS provider");
+  for (const [key, provider] of Object.entries(stack.providers ?? {}))
+    if (/(?:^|\/)hashicorp\/aws$/.test(provider.source) && !provider.region)
+      fail(
+        `providers.${key}.region`,
+        "Region is required for the AWS provider",
+      );
+  for (const [provider, entry] of Object.entries(stack.providers ?? {}))
+    for (const key of Object.keys(entry.tags ?? {}))
+      if (!/^[A-Za-z0-9_./:@+ -]+$/.test(key))
+        fail(
+          `providers.${provider}.tags.${key}`,
+          "Unsafe infrastructure object key",
+        );
   const all = selections(stack);
   const moduleNames = new Map<string, string>();
   for (const path of all.keys()) {
@@ -548,9 +583,22 @@ function inspect(input: unknown): {
     }
     if (
       sel.infra.module.provider !== "local" &&
-      !ownValue(stack.providers, sel.infra.module.provider)
+      !ownValue(stack.providers, sel.provider ?? sel.infra.module.provider)
     )
-      fail(`${path}.infra.module.provider`, "Missing provider requirement");
+      fail(`${path}.provider`, "Missing provider requirement");
+    const selectedProvider = ownValue(
+      stack.providers,
+      sel.provider ?? sel.infra.module.provider,
+    );
+    if (
+      sel.infra.module.provider !== "local" &&
+      selectedProvider &&
+      !selectedProvider.source.endsWith(`/${sel.infra.module.provider}`)
+    )
+      fail(
+        `${path}.provider`,
+        "Provider source does not match the module provider family",
+      );
     for (const [alias, target] of Object.entries(sel.dependsOn ?? {})) {
       if (!all.has(target))
         fail(`${path}.dependsOn.${alias}`, "Unknown selection");
@@ -775,7 +823,9 @@ function inspect(input: unknown): {
           fail(path, "Stack name is not provider-qualified");
         if (value.name !== "name") {
           const provider =
-            value.provider ?? all.get(owner)?.infra.module.provider;
+            value.provider ??
+            all.get(owner)?.provider ??
+            all.get(owner)?.infra.module.provider;
           const entry = provider
             ? ownValue(stack.providers, provider)
             : undefined;
@@ -828,7 +878,9 @@ function inspect(input: unknown): {
           );
       } else fail(path, "Invalid reference");
     } else {
-      for (const [k, v] of Object.entries(value))
+      for (const [k, v] of Object.entries(value)) {
+        if (!configMode && !/^[A-Za-z0-9_./:@+ -]+$/.test(k))
+          fail(`${path}.${k}`, "Unsafe infrastructure object key");
         checkValue(
           v,
           owner,
@@ -841,6 +893,7 @@ function inspect(input: unknown): {
           context,
           sensitiveInput,
         );
+      }
     }
     seen.delete(value);
   };
@@ -856,6 +909,30 @@ function inspect(input: unknown): {
       new Set(),
       "backend",
     );
+    const safeBackendKeys: Record<string, readonly string[]> = {
+      s3: [
+        "bucket",
+        "key",
+        "region",
+        "workspace_key_prefix",
+        "use_lockfile",
+        "encrypt",
+        "kms_key_id",
+      ],
+      local: ["path", "workspace_dir"],
+    };
+    const allowedBackendKeys = ownValue(safeBackendKeys, stack.backend.type);
+    if (!allowedBackendKeys)
+      fail(
+        "backend.type",
+        "Unsupported backend; credentials must come from the backend environment",
+      );
+    for (const key of Object.keys(stack.backend.config))
+      if (!allowedBackendKeys?.includes(key))
+        fail(
+          `backend.config.${key}`,
+          "Backend setting is not permitted; credentials must come from the backend environment",
+        );
     const checkBackend = (value: InfraValue, path: string): void => {
       if (Array.isArray(value)) {
         value.forEach((item, index) => {
@@ -865,6 +942,13 @@ function inspect(input: unknown): {
       }
       if (!value || typeof value !== "object") return;
       if (isInfraRef(value)) {
+        if (
+          isEnvRef(value) &&
+          /SECRET|TOKEN|PASSWORD|PRIVATE|CREDENTIAL|ACCESS_KEY|API_KEY/i.test(
+            value.name,
+          )
+        )
+          fail(path, "Backend credential environment references are forbidden");
         if (!isEnvRef(value) || value.phase !== "generate")
           fail(
             path,
@@ -875,7 +959,14 @@ function inspect(input: unknown): {
       for (const [key, item] of Object.entries(value))
         checkBackend(item, `${path}.${key}`);
     };
-    checkBackend(stack.backend.config, "backend.config");
+    for (const [key, value] of Object.entries(stack.backend.config)) {
+      if (value !== null && typeof value === "object" && !isInfraRef(value))
+        fail(
+          `backend.config.${key}`,
+          "Backend metadata settings must be scalar values",
+        );
+      checkBackend(value, `backend.config.${key}`);
+    }
   }
   function existingTypeCompatible(
     value: InfraValue,
@@ -919,11 +1010,21 @@ function inspect(input: unknown): {
         (expected === "string" && type === "string") ||
         (expected === "string[]" && type === "string[]") ||
         (expected === "secret-ref" && type === "string") ||
+        (expected === "json-document" && type === "string") ||
         (expected === "json" && type === "json")
       );
     }
     if (expected === "string" || expected === "secret-ref")
       return typeof value === "string";
+    if (expected === "json-document") {
+      if (typeof value !== "string") return false;
+      try {
+        JSON.parse(value);
+        return true;
+      } catch {
+        return false;
+      }
+    }
     if (expected === "string[]")
       return (
         Array.isArray(value) && value.every((item) => typeof item === "string")
@@ -1176,11 +1277,11 @@ function inspect(input: unknown): {
           );
           if (
             (policy.selection ?? path) !== path ||
-            (policyType !== "json" && policyType !== "string")
+            policyType !== "json-document"
           )
             fail(
               loc,
-              "Capability requires a declared JSON policy or JSON-text string output from its own module",
+              "Capability requires a declared JSON policy document output from its own module",
             );
         }
       }
@@ -1269,7 +1370,10 @@ function inspect(input: unknown): {
     for (const [topic, route] of Object.entries(topics.routes)) {
       physical.push(route.physical);
       const contract = ownValue(TOPIC_ROUTES, topic);
-      if (contract && (!contract.feature || stack[contract.feature])) {
+      if (
+        contract &&
+        featureEnabled(stack, contract.feature, contract.milestone)
+      ) {
         roleExists(contract.consumer, `queue.infra.topics.${topic}.consumer`);
         for (const producer of contract.producers)
           roleExists(producer, `queue.infra.topics.${topic}.producer`);
@@ -1293,7 +1397,7 @@ function inspect(input: unknown): {
       if (
         platform.authorization !== "none" &&
         contract &&
-        (!contract.feature || stack[contract.feature]) &&
+        featureEnabled(stack, contract.feature, contract.milestone) &&
         !binding
       )
         fail(
@@ -1319,7 +1423,7 @@ function inspect(input: unknown): {
       if (
         platform.authorization === "bindings" &&
         contract &&
-        (!contract.feature || stack[contract.feature]) &&
+        featureEnabled(stack, contract.feature, contract.milestone) &&
         binding?.kind !== "platform"
       )
         fail(
@@ -1407,7 +1511,10 @@ export function resolveStack(stack: unknown): ResolvedStack {
     throw new Error(
       `Invalid stack: ${result.issues.map((i) => `${i.path}: ${i.message}`).join("; ")}`,
     );
-  const snapshot = frozenSnapshot(result.resolved) as ResolvedStack;
+  const snapshot = frozenSnapshot({
+    ...result.resolved,
+    [resolvedMarker]: true as const,
+  });
   resolvedOrders.set(snapshot, result.order ?? []);
   return snapshot;
 }

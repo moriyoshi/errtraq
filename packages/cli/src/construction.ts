@@ -1,13 +1,11 @@
 import {
   type AdapterSelection,
   type ConstructedAdapter,
-  type CoreTopic,
   constructionOrder,
   deriveTriggers,
   type FunctionRole,
   type StackConfig,
   selections,
-  type TopicRoute,
 } from "@errtraq/core";
 import { resolveRoleBindings, resolveRuntimeValue } from "./runtime.js";
 
@@ -86,12 +84,7 @@ export async function constructStack(
                     },
                   ],
                 ),
-              ) as Partial<
-                Record<
-                  CoreTopic,
-                  Pick<TopicRoute, "physical" | "producerBinding">
-                >
-              >,
+              ),
               queueConsumers: deriveTriggers(stack)
                 .filter((trigger) => trigger.kind === "queue")
                 .map((trigger) => ({
@@ -128,7 +121,8 @@ export async function constructStack(
       ) {
         if (typeof instance.close !== "function")
           throw new Error(`Invalid close method: ${selection.manifest.id}`);
-        closers.push(instance as ConstructedAdapter);
+        const closeAdapter = instance.close.bind(instance);
+        closers.push({ close: () => closeAdapter() });
       }
       if (selection.manifest.kind === "platform") platform = instance;
     }

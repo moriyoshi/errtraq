@@ -10,7 +10,7 @@ export interface PortRequirement {
   role: FunctionRole;
   capability: string;
   purpose: string;
-  feature?: "archive";
+  feature?: "archive" | "notifications";
   milestone?: "M4";
 }
 /** M1 calls are unconditional; M4 rows model the archive and erasure design. */
@@ -105,7 +105,7 @@ export const TOPIC_ROUTES: Readonly<
       producers: readonly FunctionRole[];
       consumer: FunctionRole;
       milestone?: "M4";
-      feature?: "archive";
+      feature?: "archive" | "notifications";
     }
   >
 > = {
@@ -120,5 +120,6 @@ export const TOPIC_ROUTES: Readonly<
     producers: ["consumer"],
     consumer: "consumer",
     milestone: "M4",
+    feature: "notifications",
   },
 };

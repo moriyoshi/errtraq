@@ -94,7 +94,7 @@ function resource(
       module: {
         provider: "aws",
         component: kind,
-        outputs: { id: "string", policies: { map: { map: "json" } } },
+        outputs: { id: "string", policies: { map: { map: "json-document" } } },
       },
       inputs: () => ({ name: stackValue("name") }),
       resources: Object.fromEntries(
@@ -152,7 +152,7 @@ function queue(mode: "shared" | "per-topic"): AdapterSelection {
       component: "sqs",
       outputs: {
         queues: { map: { map: "string" } },
-        policies: { map: { map: "json" } },
+        policies: { map: { map: "json-document" } },
       },
     },
     inputs: () => ({ name: stackValue("name"), region: stackValue("region") }),
@@ -243,7 +243,10 @@ function exampleStack(mode: "shared" | "per-topic"): StackConfig {
   };
 }
 const shared = defineStack(exampleStack("shared"));
-const perTopic = defineStack(exampleStack("per-topic"));
+const perTopic = defineStack({
+  ...exampleStack("per-topic"),
+  features: { notifications: true },
+});
 
 describe("documented infrastructure examples", () => {
   it("validates a shared AWS queue and one trigger", () => {

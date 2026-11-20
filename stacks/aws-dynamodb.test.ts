@@ -20,6 +20,9 @@ import { assertSafeStackImports } from "../scripts/adapter-stack-check.js";
 import shared from "./aws-dynamodb.js";
 import perTopic from "./aws-dynamodb-per-topic.js";
 
+const copyStack = <T extends object>(value: T): T =>
+  Object.fromEntries(Object.entries(value)) as T;
+
 const names = (items: { binding: { name: string } }[]) =>
   items.map((item) => item.binding.name).sort();
 describe("AWS descriptor stacks", () => {
@@ -45,7 +48,6 @@ describe("AWS descriptor stacks", () => {
     ]);
     expect(names(byId.consumer?.envBindings ?? [])).toEqual([
       "ERRTRAQ_BLOB_BUCKET",
-      "ERRTRAQ_QUEUE_SHARED_URL",
       "ERRTRAQ_STORE_TABLE",
     ]);
     expect(names(byId.cron?.envBindings ?? [])).toEqual([]);
@@ -93,7 +95,6 @@ describe("AWS descriptor stacks", () => {
       "blob:read:primary",
       "blob:write:primary",
       "queue:consume:shared",
-      "queue:produce:shared",
       "store:read:primary",
       "store:write:primary",
     ]);
@@ -104,7 +105,7 @@ describe("AWS descriptor stacks", () => {
         functionId: "consumer",
         physical: "shared",
         resource: output("queue", "queues", "shared", "arn"),
-        topics: ["ingest", "notifications"],
+        topics: ["ingest"],
         settings: {
           visibilityTimeoutSec: 180,
           batchSize: 10,
@@ -139,7 +140,7 @@ describe("AWS descriptor stacks", () => {
     expect(names(ingest?.envBindings ?? [])).not.toContain(
       "ERRTRAQ_QUEUE_NOTIFICATIONS_URL",
     );
-    expect(names(consumer?.envBindings ?? [])).toContain(
+    expect(names(consumer?.envBindings ?? [])).not.toContain(
       "ERRTRAQ_QUEUE_NOTIFICATIONS_URL",
     );
     expect(names(consumer?.envBindings ?? [])).not.toContain(
@@ -157,10 +158,7 @@ describe("AWS descriptor stacks", () => {
             grant.selection === "queue" && grant.capability === "consume",
         )
         .map((grant) => grant.policyOutput),
-    ).toEqual([
-      output("queue", "policies", "consume", "ingest"),
-      output("queue", "policies", "consume", "notifications"),
-    ]);
+    ).toEqual([output("queue", "policies", "consume", "ingest")]);
     expect(
       view.triggers
         .filter((trigger) => trigger.kind === "queue")
@@ -171,15 +169,30 @@ describe("AWS descriptor stacks", () => {
         })),
     ).toEqual([
       { physical: "ingest", functionId: "consumer", topics: ["ingest"] },
-      {
-        physical: "notifications",
-        functionId: "consumer",
-        topics: ["notifications"],
-      },
     ]);
     expect(
       perTopic.queue.infra.topics?.routes["archive.project"].physical,
     ).toBe("archive_project");
+  });
+  it("provisions notification queues only when their feature is enabled", () => {
+    const enabled = {
+      ...copyStack(perTopic),
+      features: { notifications: true },
+    };
+    const view = deriveDeployment(enabled);
+    const inputs = enabled.queue.infra.inputs(enabled.queue.config, view);
+    expect(Object.keys(inputs.physical_queues ?? {})).toEqual([
+      "ingest",
+      "notifications",
+    ]);
+    expect(
+      view.triggers.filter((t) => t.kind === "queue").map((t) => t.physical),
+    ).toEqual(["ingest", "notifications"]);
+    expect(
+      view.functions
+        .find((fn) => fn.id === "consumer")
+        ?.policies.map((grant) => grant.policyOutput),
+    ).toContainEqual(output("queue", "policies", "consume", "notifications"));
   });
   it("publishes honest adapter capabilities, resource policies and AWS bounds", () => {
     expect(SQS_MAX_BYTES).toBe(1_048_576);
@@ -206,12 +219,15 @@ describe("AWS descriptor stacks", () => {
     expect(() =>
       awsLambda({ settings: { consumer: { timeoutSec: 901 } } }),
     ).toThrow();
-    const bad = { ...shared, queue: sqsQueue({ visibilityTimeoutSec: 179 }) };
+    const bad = {
+      ...copyStack(shared),
+      queue: sqsQueue({ visibilityTimeoutSec: 179 }),
+    };
     expect(
       validateStack(bad).some((issue) => issue.message.includes("six times")),
     ).toBe(true);
     const reserved = {
-      ...shared,
+      ...copyStack(shared),
       blob: {
         ...shared.blob,
         infra: {
@@ -235,7 +251,7 @@ describe("AWS descriptor stacks", () => {
   });
   it("carries Lambda settings, grouping, HTTP exposure, and queue options into the view", () => {
     const customized = {
-      ...shared,
+      ...copyStack(shared),
       platform: awsLambda({
         split: ["consumer", "cron"],
         http: ["ingest"],

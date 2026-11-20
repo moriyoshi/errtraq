@@ -10,9 +10,12 @@ import { expect, it } from "vitest";
 import local from "../../../stacks/local.js";
 import { resolveRoleBindings, resolveRuntimeValue } from "./runtime.js";
 
+const copyStack = <T extends object>(value: T): T =>
+  Object.fromEntries(Object.entries(value)) as T;
+
 it("resolves existing outputs, scoped environments and typed Terraform variables", () => {
   const stack = {
-    ...local,
+    ...copyStack(local),
     variables: {
       LIST: { type: "string[]" as const, sensitive: true },
       COUNT: { type: "number" as const, sensitive: false },
@@ -46,7 +49,7 @@ it("resolves existing outputs, scoped environments and typed Terraform variables
 
 it("parses JSON TF_VAR values into native objects or arrays and rejects scalars", () => {
   const stack = {
-    ...local,
+    ...copyStack(local),
     variables: { DOCUMENT: { type: "json" as const, sensitive: false } },
   };
   expect(
@@ -59,6 +62,12 @@ it("parses JSON TF_VAR values into native objects or arrays and rejects scalars"
       TF_VAR_DOCUMENT: "[1,2]",
     }),
   ).toEqual([1, 2]);
+  const literal = ["$", "{aws:username} %{if}"].join("");
+  expect(
+    resolveRuntimeValue(variable("DOCUMENT"), "store", stack, {
+      TF_VAR_DOCUMENT: JSON.stringify({ literal }),
+    }),
+  ).toEqual({ literal });
   for (const value of ['"text"', "null", "3", "not-json"]) {
     expect(() =>
       resolveRuntimeValue(variable("DOCUMENT"), "store", stack, {
@@ -70,7 +79,7 @@ it("parses JSON TF_VAR values into native objects or arrays and rejects scalars"
 
 it("resolves only the requested key of an existing output map", () => {
   const stack = {
-    ...local,
+    ...copyStack(local),
     blob: {
       ...local.blob,
       existing: {
@@ -99,7 +108,7 @@ it("resolves only the requested key of an existing output map", () => {
 it("rejects local adapters on ephemeral or multi-function compute", () => {
   expect(validateStack(local)).toEqual([]);
   const lambda = {
-    ...local,
+    ...copyStack(local),
     platform: {
       ...local.platform,
       manifest: {
@@ -173,7 +182,7 @@ it("resolves runtime environment defaults, suffixes and numbers", () => {
 
 it("resolves only the bindings used by the requested runtime roles", () => {
   const stack = {
-    ...local,
+    ...copyStack(local),
     store: {
       ...local.store,
       infra: {
@@ -200,7 +209,7 @@ it("resolves only the bindings used by the requested runtime roles", () => {
 
 it("resolves provider-qualified stack values using the owning module by default", () => {
   const stack = {
-    ...local,
+    ...copyStack(local),
     providers: {
       aws: {
         source: "hashicorp/aws",
@@ -228,4 +237,32 @@ it("resolves provider-qualified stack values using the owning module by default"
   expect(
     resolveRuntimeValue(stackValue("tags", "cloudflare"), "blob", stack, {}),
   ).toEqual({ owner: "cf" });
+});
+
+it("uses the selection provider alias for unqualified provider values", () => {
+  const stack = {
+    ...copyStack(local),
+    providers: {
+      aws_eu: {
+        source: "hashicorp/aws",
+        version: "~> 6.0",
+        region: "eu-west-1",
+        tags: { team: "eu" },
+      },
+    },
+    blob: {
+      ...local.blob,
+      provider: "aws_eu",
+      infra: {
+        ...local.blob.infra,
+        module: { ...local.blob.infra.module, provider: "aws" },
+      },
+    },
+  };
+  expect(resolveRuntimeValue(stackValue("region"), "blob", stack, {})).toBe(
+    "eu-west-1",
+  );
+  expect(resolveRuntimeValue(stackValue("tags"), "blob", stack, {})).toEqual({
+    team: "eu",
+  });
 });

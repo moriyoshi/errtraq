@@ -8,6 +8,10 @@ run "policies_and_lifecycle" {
     staging_prefix = "archive-staging/"
   }
   assert {
+    condition     = toset(keys(output.policies)) == toset(["read", "write", "delete", "list"]) && alltrue([for policies in values(output.policies) : toset(keys(policies)) == toset(["primary", "staging"]) && alltrue([for policy in values(policies) : can(jsondecode(policy))])])
+    error_message = "Policy output shape and encoded-document leaves must match the descriptor."
+  }
+  assert {
     condition     = jsondecode(output.policies.write.staging).Statement[0].Resource[0] == "${aws_s3_bucket.this.arn}/archive-staging/*"
     error_message = "Staging writes must be limited to the staging prefix."
   }

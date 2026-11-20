@@ -66,7 +66,7 @@ const selection = (kind: PortKind): AdapterSelection => ({
     module: {
       provider: kind === "queue" ? "local" : "aws",
       component: kind,
-      outputs: { arn: "string", policy: "json" },
+      outputs: { arn: "string", policy: "json-document" },
     },
     inputs: () => ({}),
     bindings:
@@ -174,6 +174,7 @@ function topics(v: StackConfig) {
 }
 function keyedQueue(mode: "shared" | "per-topic"): StackConfig {
   const v = stack();
+  v.features = { notifications: true };
   v.archive = selection("archive");
   v.archive.manifest.capabilities = { rowDelete: "copy-on-write" };
   const keys =
@@ -183,7 +184,7 @@ function keyedQueue(mode: "shared" | "per-topic"): StackConfig {
   if (!events || !archive || !notifications) throw new Error("Invalid fixture");
   v.queue.infra.module.outputs = {
     queues: { map: { map: "string" } },
-    policies: { map: { map: "json" } },
+    policies: { map: { map: "json-document" } },
     unused: "string",
   };
   v.queue.infra.resources = Object.fromEntries(
@@ -269,12 +270,17 @@ describe("infrastructure model", () => {
     expect(validateStack(v)).toEqual([]);
   });
   it("requires native JSON objects or arrays for existing JSON outputs", () => {
-    expect(terraformVariableType("json")).toBe("any");
+    expect(terraformVariableType("json")).toBe("string");
     expect(terraformVariableType("string[]")).toBe("list(string)");
     const v = stack();
-    v.blob.existing = { arn: "bucket", policy: { Statement: [] } };
+    v.blob.infra.module.outputs.document = "json";
+    v.blob.existing = {
+      arn: "bucket",
+      policy: "{}",
+      document: { Statement: [] },
+    };
     expect(validateStack(v)).toEqual([]);
-    v.blob.existing.policy = '{"Statement":[]}';
+    v.blob.existing.document = '{"Statement":[]}';
     expect(
       validateStack(v).some((issue) =>
         issue.message.includes("Expected json output value"),
@@ -284,12 +290,147 @@ describe("infrastructure model", () => {
       DOCUMENT: { type: "json", sensitive: false },
       TEXT: { type: "string", sensitive: false },
     };
-    v.blob.existing.policy = variable("DOCUMENT");
+    v.blob.existing.document = variable("DOCUMENT");
     expect(validateStack(v)).toEqual([]);
-    v.blob.existing.policy = variable("TEXT");
+    v.blob.existing.document = variable("TEXT");
     expect(
       validateStack(v).some((issue) =>
         issue.message.includes("Expected json output value"),
+      ),
+    ).toBe(true);
+  });
+  it("requires encoded JSON policy outputs and validates existing JSON text", () => {
+    const v = stack();
+    v.blob.existing = {
+      arn: "bucket",
+      policy: '{"Version":"2012-10-17","Statement":[]}',
+    };
+    expect(validateStack(v)).toEqual([]);
+    v.blob.existing.policy = "not-json";
+    expect(
+      validateStack(v).some((issue) =>
+        issue.message.includes("Expected json-document"),
+      ),
+    ).toBe(true);
+    v.blob.infra.module.outputs.policy = "string";
+    expect(
+      validateStack(v).some((issue) =>
+        issue.message.includes("JSON policy document"),
+      ),
+    ).toBe(true);
+    v.blob.infra.module.outputs.policy = "json";
+    expect(
+      validateStack(v).some((issue) =>
+        issue.message.includes("JSON policy document"),
+      ),
+    ).toBe(true);
+  });
+  it("rejects unsafe infrastructure keys and provider tags", () => {
+    const v = stack();
+    const dangerous = ["$", "{var.attacker}"].join("");
+    v.store.infra.inputs = () => ({ nested: { [dangerous]: "value" } });
+    if (v.providers?.aws) v.providers.aws.tags = { [dangerous]: "value" };
+    const issues = validateStack(v);
+    expect(
+      issues.some(
+        (issue) =>
+          issue.path.startsWith("store.infra.inputs") &&
+          issue.message.includes("Unsafe"),
+      ),
+    ).toBe(true);
+    expect(
+      issues.some(
+        (issue) =>
+          issue.path.startsWith("providers.aws.tags") &&
+          issue.message.includes("Unsafe"),
+      ),
+    ).toBe(true);
+    expect(escapeTerraformLiteral(dangerous)).toBe("$${var.attacker}");
+    expect(escapeTerraformLiteral("%{if enabled}")).toBe("%%{if enabled}");
+  });
+  it("checks AWS provider region by source and resolves selection aliases", () => {
+    const v = stack();
+    v.providers = {
+      ...v.providers,
+      aws_eu: { source: "hashicorp/aws", version: "~> 6.0" },
+    };
+    v.store.provider = "aws_eu";
+    v.store.infra.inputs = () => ({ region: stackValue("region") });
+    expect(
+      validateStack(v).some(
+        (issue) => issue.path === "providers.aws_eu.region",
+      ),
+    ).toBe(true);
+    if (v.providers.aws_eu) v.providers.aws_eu.region = "eu-west-1";
+    expect(validateStack(v)).toEqual([]);
+    if (v.providers.aws_eu) v.providers.aws_eu.source = "other/cloudflare";
+    expect(
+      validateStack(v).some((issue) => issue.path === "store.provider"),
+    ).toBe(true);
+  });
+  it("rejects a spread copy of a resolved stack without re-parsing it", () => {
+    const v = stack();
+    let count = 0;
+    v.blob.manifest.configSchema = z.object({}).transform(() => {
+      count++;
+      return { transformed: true };
+    });
+    const resolved = resolveStack(v);
+    expect(count).toBe(1);
+    const copy = { ...resolved };
+    expect(validateStack(copy)[0]?.message).toContain("resolved stack copy");
+    expect(() => resolveStack(copy)).toThrow("resolved stack copy");
+    expect(count).toBe(1);
+  });
+  it("rejects credentials and unknown backends in backend configuration", () => {
+    const v = stack();
+    v.backend = {
+      type: "s3",
+      config: { bucket: "bucket", key: "state", secret_key: "literal-secret" },
+    };
+    expect(
+      validateStack(v).some(
+        (issue) => issue.path === "backend.config.secret_key",
+      ),
+    ).toBe(true);
+    v.backend.config = {
+      bucket: generationEnv("AWS_SECRET_ACCESS_KEY"),
+      key: "state",
+    };
+    expect(
+      validateStack(v).some((issue) =>
+        issue.message.includes("credential environment"),
+      ),
+    ).toBe(true);
+    v.backend.type = "custom";
+    expect(
+      validateStack(v).some((issue) => issue.path === "backend.type"),
+    ).toBe(true);
+  });
+  it("keeps shared and split role identifiers stable across split changes", () => {
+    const a = physicalFunctions({ roles: [...roles], split: ["ingest"] });
+    const b = physicalFunctions({
+      roles: [...roles],
+      split: ["ingest", "cron"],
+    });
+    expect(a.map((fn) => fn.id)).toEqual(["ingest", "shared"]);
+    expect(b.map((fn) => fn.id)).toEqual(["ingest", "cron", "shared"]);
+  });
+  it("activates notifications only when explicitly enabled", () => {
+    const v = stack();
+    expect(deriveTriggers(v)[0]).toMatchObject({ topics: ["ingest"] });
+    expect(
+      deriveAccess(v).grants.some(
+        (g) => g.functionId === "consumer" && g.capability === "produce",
+      ),
+    ).toBe(false);
+    v.features = { notifications: true };
+    expect(deriveTriggers(v)[0]).toMatchObject({
+      topics: ["ingest", "notifications"],
+    });
+    expect(
+      deriveAccess(v).grants.some(
+        (g) => g.functionId === "consumer" && g.capability === "produce",
       ),
     ).toBe(true);
   });
@@ -605,7 +746,7 @@ describe("infrastructure model", () => {
   });
   it("uses the staging policy for cron staging writes, preserving primary erasure access", () => {
     const v = keyedQueue("shared");
-    v.blob.infra.module.outputs.policies = { map: { map: "json" } };
+    v.blob.infra.module.outputs.policies = { map: { map: "json-document" } };
     for (const [capability, policies] of Object.entries(
       v.blob.infra.capabilities,
     )) {
@@ -637,8 +778,8 @@ describe("infrastructure model", () => {
         notifications: { arn: "c", url: "c" },
       },
       policies: {
-        produce: { events: {}, archive: {}, notifications: {} },
-        consume: { events: {}, archive: {}, notifications: {} },
+        produce: { events: "{}", archive: "{}", notifications: "{}" },
+        consume: { events: "{}", archive: "{}", notifications: "{}" },
       },
     };
     expect(validateStack(v)).toEqual([]);
@@ -657,8 +798,8 @@ describe("infrastructure model", () => {
     ).toBe(true);
     v.queue.existing.queues = completeQueues;
     v.queue.existing.policies = {
-      produce: { archive: {}, notifications: {} },
-      consume: { events: {}, archive: {}, notifications: {} },
+      produce: { archive: "{}", notifications: "{}" },
+      consume: { events: "{}", archive: "{}", notifications: "{}" },
     };
     expect(
       validateStack(v).some(
@@ -868,7 +1009,7 @@ describe("infrastructure model", () => {
         x.message.includes("Missing existing output blob.policy"),
       ),
     ).toBe(true);
-    v.blob.existing.policy = {};
+    v.blob.existing.policy = "{}";
     expect(validateStack(v)).toEqual([]);
     v.blob.existing.arn = out("arn");
     expect(validateStack(v).some((x) => x.message.includes("own output"))).toBe(
@@ -877,14 +1018,14 @@ describe("infrastructure model", () => {
   });
   it("rejects unknown existing output names", () => {
     const v = stack();
-    v.blob.existing = { arn: "a", policy: {}, typo: "x" };
+    v.blob.existing = { arn: "a", policy: "{}", typo: "x" };
     expect(validateStack(v).some((x) => x.path === "blob.existing.typo")).toBe(
       true,
     );
   });
   it("checks existing replacement types and typed variable references", () => {
     const v = stack();
-    v.blob.existing = { arn: 42, policy: {} };
+    v.blob.existing = { arn: 42, policy: "{}" };
     expect(
       validateStack(v).some((issue) =>
         issue.message.includes("Expected string output"),
@@ -1342,13 +1483,13 @@ describe("infrastructure model", () => {
         role: "consumer",
         resource: output("queue", "arn"),
         settings: {},
-        topics: ["ingest", "notifications"],
+        topics: ["ingest"],
       },
     ]);
     v.archive = selection("archive");
     v.archive.manifest.capabilities = { rowDelete: "copy-on-write" };
     expect(deriveTriggers(v)[0]).toMatchObject({
-      topics: ["ingest", "archive.project", "notifications"],
+      topics: ["ingest", "archive.project"],
     });
   });
   it("derives all core cron jobs when the archive and cron role are selected", () => {

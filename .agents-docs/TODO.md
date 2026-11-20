@@ -41,8 +41,8 @@ item should be resolved or removed once addressed. Milestone work itself is trac
 - [x] M2a2: complete the infra model redesign and review items A1-A13, validation items B1-B8, and documentation item C before M2b. — *source: `.agents-workspace/tmp/m2a-review-fixes.md`*
 
 
-- [ ] M2b: render symbol-tagged references by phase, including keyed outputs and build artifacts; escape literal Terraform template introducers with `terraformLiteral` / `escapeTerraformLiteral`, and fail on missing backend generation environment values. — *source: M2a2 review A6 / A8 / A10 and B4*
-- [ ] M2b: emit JSON variables as Terraform `any` with object-or-array validation, matching the native `json` representation and CLI `TF_VAR_` parsing. — *source: M2a2 review B5*
+- [ ] M2b: render symbol-tagged references by phase, including keyed outputs and build artifacts; escape literal Terraform template introducers in values and object keys with `terraformLiteral` / `escapeTerraformLiteral`, and fail on missing backend generation environment values. — *source: M2a2 review A6 / A8 / A10 and B4*
+- [ ] M2b: emit JSON variables as Terraform `string` holding JSON, validate that decoded values are objects or arrays, and wrap structured uses in `jsondecode`, matching CLI `TF_VAR_` parsing. — *source: M2a2 review B5*
 - [ ] M2b: render reachable `existing` substitutions and stack outputs; attach per-resource policy outputs and materialize scoped secret-read requirements. Provider policy contents and absence of raw IAM in module inputs are not statically enforced. — *source: M2a2 review A2 / A4 / A11 and C*
 - [x] M2b: choose queue visibility and consumer timeout defaults that satisfy the six-times rule whenever the queue supports visibility; core checks explicit values only. AWS defaults are 180 and 30 seconds. — *source: M2a2 review A6*
 - [ ] M2c: satisfy each function's artifact reference with the actual build output, create role-scoped entrypoints and queue event-source mappings, and integrate runtime secret sources. — *source: M2a2 review A4 / A6 / A12*
@@ -52,3 +52,6 @@ item should be resolved or removed once addressed. Milestone work itself is trac
 
 - [ ] M2c / M3: match the Lambda module contract: ZIP artifacts exposing `index.handler`, EventBridge `{ "job": name }` dispatch, partial SQS batch failures, and lazy Secrets Manager ARN resolution. — *source: M2b step 2*
 - [ ] M3: implement and test the DynamoDB sparse-index and lookup-item layout documented in `infra/modules/aws/README.md`, including eventual-consistency limits and explicit erasure. — *source: M2b step 2*
+
+- [ ] M2b / M2c: address the remaining second-review items N5-N7 and document corrections before generator and build work. — *source: `.agents-workspace/tmp/m2a2-review-fixes.md`*
+- [ ] M2 / M3 / M6: address second-review follow-ups N9 and N12-N15, including Cloudflare binding authorization and runtime limitations. — *source: `.agents-workspace/tmp/m2a2-review-fixes.md`*

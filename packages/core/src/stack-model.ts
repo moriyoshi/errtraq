@@ -209,9 +209,13 @@ export type StackVariableType =
   | "bool"
   | "string[]"
   | "json";
-/** JSON uses Terraform's `any` constraint plus an object/array validation in M2b. */
+/** JSON variables are JSON text in Terraform and decoded at each structured use. */
 export function terraformVariableType(type: StackVariableType): string {
-  return type === "json" ? "any" : type === "string[]" ? "list(string)" : type;
+  return type === "json"
+    ? "string"
+    : type === "string[]"
+      ? "list(string)"
+      : type;
 }
 export type InfraValue =
   | string
@@ -229,6 +233,7 @@ export type OutputType =
   | "string"
   | "string[]"
   | "json"
+  | "json-document"
   | "secret-ref"
   | { map: OutputType };
 export interface ModuleDescriptor {
@@ -349,6 +354,8 @@ export interface AdapterSelection<C = unknown> {
   manifest: AdapterManifest;
   infra: InfraDescriptor<C>;
   runtimeModule: string;
+  /** Provider entry override; module.provider still identifies the module family. */
+  provider?: string;
   config: unknown;
   dependsOn?: Record<string, string>;
   children?: Record<string, AdapterSelection>;
@@ -383,6 +390,7 @@ export interface StackConfig {
   blob: AdapterSelection;
   archive?: AdapterSelection;
   kv: AdapterSelection;
+  features?: { notifications?: boolean };
   requirements?: Record<string, Record<string, CapabilityValue>>;
 }
 export interface StackValidationIssue {

@@ -95,15 +95,21 @@ function descriptor(config: ResolvedConfig): InfraDescriptor<Config> {
       component: "sqs",
       outputs: {
         queues: { map: { map: "string" } },
-        policies: { map: { map: "string" } },
+        policies: { map: { map: "json-document" } },
       },
     },
-    inputs: () => ({
+    inputs: (_config, deployment) => ({
       name: stackValue("name"),
       region: stackValue("region"),
       tags: stackValue("tags"),
       physical_queues: Object.fromEntries(
-        keys.map((key) => [
+        [
+          ...new Set(
+            deployment.triggers.flatMap((trigger) =>
+              trigger.kind === "queue" ? [trigger.physical] : [],
+            ),
+          ),
+        ].map((key) => [
           key,
           {
             visibility_timeout_sec: config.visibilityTimeoutSec,

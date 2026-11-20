@@ -43,7 +43,9 @@ export function resolveRuntimeValue(
   if (isStackRef(value)) {
     if (value.name === "name") return stack.name;
     const provider =
-      value.provider ?? selections(stack).get(owner)?.infra.module.provider;
+      value.provider ??
+      selections(stack).get(owner)?.provider ??
+      selections(stack).get(owner)?.infra.module.provider;
     const entry =
       provider && Object.hasOwn(stack.providers ?? {}, provider)
         ? stack.providers?.[provider]

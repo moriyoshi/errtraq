@@ -8,6 +8,10 @@ run "store_indexes_and_permissions" {
     purpose = "store"
   }
   assert {
+    condition     = toset(keys(output.policies)) == toset(["read", "write", "delete"]) && alltrue([for policy in values(output.policies) : toset(keys(policy)) == toset(["primary"]) && can(jsondecode(policy.primary))])
+    error_message = "Policy output shape and encoded-document leaves must match the descriptor."
+  }
+  assert {
     condition     = length(aws_dynamodb_table.this.global_secondary_index) == 8 && aws_dynamodb_table.this.deletion_protection_enabled
     error_message = "The store must have its eight indexes and deletion protection."
   }

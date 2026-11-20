@@ -427,3 +427,21 @@ The AWS descriptors define the HCL module contracts before the modules exist. Bo
 The AWS HCL modules consume the descriptor-derived view and produce keyed JSON policy strings. Core now accepts a policy output typed `string` as well as native `json`; it cannot prove that a string is a policy document, so AWS module mock tests verify the intended scopes. Terraform validates isolated copies with its plugin cache under the ignored workspace, and mock-provider tests exercise the resources without cloud access. The current AWS provider emits deprecation warnings for DynamoDB `hash_key` / `range_key`; those attributes retain compatibility across the declared 6.x provider range.
 
 Lambda function URLs use public `NONE` authorization for ordinary Sentry clients and depend on errtraq's application authentication. Secret bindings are Secrets Manager ARNs; customer-managed keys need separate KMS authorization. The module accepts the UTC cron form currently emitted by core, with wildcard weekday, and passes `{ "job": name }` to the future entrypoint. S3 versioning is disabled for object erasure; envelope and staging expiry must exceed operational recovery windows. DynamoDB GSIs are eventually consistent and require M3 to maintain sparse lookup items and their index keys as documented in the AWS module README. PITR backups need an operational erasure policy.
+
+## 2026-11-21 — Second infra review, part 1
+
+IAM policies use the distinct `json-document` output type: literal existing values must be valid
+JSON text and AWS module policy leaves remain serialized strings. JSON stack variables instead
+enter Terraform as strings and require `jsondecode` plus object / array validation at generated
+uses. Terraform JSON templates also evaluate object keys, so infrastructure keys are restricted
+and generators must escape both keys and values. HCL has no output type declarations: output
+descriptions declare contract types and key patterns for the default descriptor check, while
+mock-provider tests verify actual AWS output shapes.
+
+Resolved stack copies retain a marker and are rejected with a clear error instead of re-running
+transforming schemas. Provider aliases are selection-specific and AWS regions are checked by
+provider source. Backend settings are allowlisted non-secret scalar metadata for S3 and local;
+credentials come from the backend environment. Function ids already used stable split-role and
+`shared` names; tests now cover split changes. Notifications are inactive unless explicitly
+enabled, and SQS provisions only queues present in the derived active triggers. N5-N7 and the
+remaining documentation review are the next slice; later review items remain in TODO.

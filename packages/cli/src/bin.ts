@@ -1,12 +1,7 @@
 #!/usr/bin/env node
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import {
-  type PlatformConfig,
-  physicalFunctions,
-  resolveStack,
-  selections,
-} from "@errtraq/core";
+import { physicalFunctions, resolveStack, selections } from "@errtraq/core";
 import { constructStack } from "./construction.js";
 import { devToken } from "./token.js";
 
@@ -55,9 +50,7 @@ export async function main(args: string[]): Promise<void> {
       !path.includes(".") && selection.manifest.kind === "platform",
   )?.[1];
   if (!platformSelection) throw new Error("Missing platform adapter");
-  const functions = physicalFunctions(
-    platformSelection.config as PlatformConfig,
-  );
+  const functions = physicalFunctions(platformSelection.config);
   if (functions.length !== 1)
     throw new Error("The dev command requires one physical function");
   const created = await constructStack(

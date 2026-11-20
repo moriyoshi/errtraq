@@ -11,6 +11,10 @@ run "queues_and_policies" {
     }
   }
   assert {
+    condition     = toset(keys(output.policies)) == toset(["produce", "consume"]) && alltrue([for policies in values(output.policies) : toset(keys(policies)) == toset(keys(output.queues)) && alltrue([for policy in values(policies) : can(jsondecode(policy))])]) && alltrue([for queue in values(output.queues) : toset(keys(queue)) == toset(["arn", "url"])])
+    error_message = "Queue and policy output shapes must match the descriptor."
+  }
+  assert {
     condition     = length(output.queues) == 2 && length(aws_sqs_queue.dlq) == 1 && aws_sqs_queue.queue["notifications"].visibility_timeout_seconds == 270
     error_message = "Each physical queue must retain its own configuration."
   }
