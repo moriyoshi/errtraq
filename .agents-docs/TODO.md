@@ -45,7 +45,8 @@ item should be resolved or removed once addressed. Milestone work itself is trac
 - [x] M2b: emit JSON variables as Terraform `string` holding JSON, validate that decoded values are objects or arrays, and wrap structured uses in `jsondecode`, matching CLI `TF_VAR_` parsing. — *source: M2a2 review B5*
 - [x] M2b: render reachable `existing` substitutions and stack outputs; attach per-resource policy outputs and materialize scoped secret-read requirements. Provider policy contents and absence of raw IAM in module inputs are not statically enforced. — *source: M2a2 review A2 / A4 / A11 and C*
 - [x] M2b: choose queue visibility and consumer timeout defaults that satisfy the six-times rule whenever the queue supports visibility; core checks explicit values only. AWS defaults are 180 and 30 seconds. — *source: M2a2 review A6*
-- [ ] M2c: satisfy each function's artifact reference with the actual build output, create role-scoped entrypoints and queue event-source mappings, and integrate runtime secret sources. — *source: M2a2 review A4 / A6 / A12*
+- [x] M2c: satisfy each function's artifact reference with the actual build output and create role-scoped entrypoints and queue event-source mappings. — *source: M2a2 review A6 / A12*
+- [ ] M3: integrate runtime secret sources for deployed functions. — *source: M2a2 review A4*
 
 - [x] M2b: implement AWS HCL module contracts declared by the Lambda, DynamoDB, SQS and S3 descriptors, including purpose-keyed policy outputs, SQS DLQs and event source mappings, S3 staging prefix permissions, HTTP URLs and scoped secret reads. — *source: M2b step 1*
 - [ ] M3: implement the AWS runtime adapters; enforce the 1 MiB SQS body limit including serialization and envelope overhead, and make DynamoDB explicit deletion honor erasure semantics. — *source: M2b step 1*
@@ -57,7 +58,7 @@ item should be resolved or removed once addressed. Milestone work itself is trac
 - [ ] M2 / M3 / M6: address second-review follow-ups N9 and N12-N15, including Cloudflare binding authorization and runtime limitations. — *source: `.agents-workspace/tmp/m2a2-review-fixes.md`*
 
 - [x] M2b: emit non-sensitive stack variable defaults into tfvars, encoding JSON defaults as JSON text; never emit sensitive values. Render provider aliases and accept artifact paths supplied by the caller. — *source: M2a2 second review*
-- [ ] M2c: connect the build artifact manifest to the generator's per-function artifact path input. — *source: M2a2 second review*
+- [x] M2c: connect the build artifact manifest to the generator's per-function artifact path input. — *source: M2a2 second review*
 
 - [ ] M3: evaluate DynamoDB sortable encodings for numeric counts / timestamps, GSI projection cost, project write sharding, transaction fan-out under 100 items and PITR retention of erased data for up to 35 days. — *source: M2b HCL review section B*
 - [ ] M3: ensure secret identifiers contain the full Secrets Manager ARN including its random suffix, or safely support suffix matching. — *source: M2b HCL review section B*

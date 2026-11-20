@@ -18,7 +18,7 @@ import type {
 export interface ConsumerOptions {
   store: ActiveStore;
   blobs: BlobStore;
-  kv: KV;
+  kv?: KV;
   logger: Logger;
   overflowBytes?: number;
   maxEnvelopeBytes?: number;

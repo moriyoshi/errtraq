@@ -415,5 +415,10 @@ be POSIX paths, either both absolute or both relative to the same root. Standalo
 `not-applicable` result because it has no Terraform infrastructure. The caller is responsible for
 writing files. The generated AWS roots are exercised with mock providers at both pinned AWS
 provider versions by `pnpm infra:validate`; this checks their derived bindings, policies and
-triggers without a cloud account. M2c must supply actual build locations, generate role-scoped
-entrypoints and queue event-source mappings, integrate the CLI, and provide runtime secret sources.
+triggers without a cloud account. `errtraq build` writes a manifest and role-scoped Lambda ZIPs
+under `dist/<stack>` by default; `errtraq infra generate` verifies their hashes and renders paths
+relative to its output directory. An explicit `--allow-missing-artifacts` permits placeholders.
+Standalone builds a single Node bundle and has no Terraform. Deployed construction first derives
+`deployedPlan` and then runs `constructDeployedPlan`, preserving the same role and binding scopes
+as `constructDeployedStack` while allowing entrypoints to import only needed adapters. Actual AWS
+runtime adapters and secret sources remain M3 work.

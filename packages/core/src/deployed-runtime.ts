@@ -1,9 +1,10 @@
 import {
   type ConstructedAdapter,
-  type DeploymentTrigger,
+  type CoreTopic,
   isEnvRef,
   isInfraRef,
   isVariableRef,
+  type PortKind,
   type StackConfig,
 } from "./stack-model.js";
 import {
@@ -23,7 +24,7 @@ export interface DeployedStack {
 
 function configValue(
   value: unknown,
-  stack: StackConfig,
+  stack: Pick<StackConfig, "variables">,
   environment: Readonly<Record<string, string | undefined>>,
 ): unknown {
   if (isEnvRef(value)) {
@@ -88,60 +89,130 @@ function configValue(
   return value;
 }
 
-/** Construct just the adapters used by a physical function, using delivered binding names. */
-export async function constructDeployedStack(
+/** Serializable-by-code construction plan: references in config remain in-process values. */
+export interface DeployedPlan {
+  variables: StackConfig["variables"];
+  selections: {
+    path: string;
+    id: string;
+    kind: PortKind;
+    runtimeModule: string;
+    config: unknown;
+    dependsOn: Record<string, string>;
+    bindings: { name: string; kind: "env" | "secret" | "platform" }[];
+  }[];
+  topics: Partial<
+    Record<CoreTopic, { physical: string; producerBinding?: string }>
+  >;
+  queueConsumers: {
+    physical: string;
+    topics: CoreTopic[];
+    eventSourceBinding: string;
+  }[];
+}
+
+/** Derive everything a function needs before emitting its static entrypoint. */
+export function deployedPlan(
   input: StackConfig,
   functionId: string,
-  environment: Readonly<Record<string, string | undefined>>,
-  loadModule: DeployedModuleLoader,
-): Promise<DeployedStack> {
+): DeployedPlan {
   const stack = resolveStack(input);
   const view = deriveDeployment(stack);
   const fn = view.functions.find((item) => item.id === functionId);
   if (!fn) throw new Error(`Unknown physical function ${functionId}`);
   const selected = selections(stack);
+  const scoped = [
+    ...fn.envBindings,
+    ...fn.secretBindings,
+    ...fn.platformBindings,
+  ];
   const needed = new Set(
     deriveAccess(stack)
       .grants.filter((grant) => grant.functionId === functionId)
       .map((grant) => grant.selection),
   );
-  for (const item of [
-    ...fn.envBindings,
-    ...fn.secretBindings,
-    ...fn.platformBindings,
-  ])
-    needed.add(item.selection);
+  for (const item of scoped) needed.add(item.selection);
   let changed = true;
   while (changed) {
     changed = false;
     for (const path of [...needed]) {
-      for (const [child] of selected) {
+      for (const [child] of selected)
         if (child.startsWith(`${path}.`) && !needed.has(child)) {
           needed.add(child);
           changed = true;
         }
-      }
-      for (const target of Object.values(selected.get(path)?.dependsOn ?? {})) {
+      for (const target of Object.values(selected.get(path)?.dependsOn ?? {}))
         if (!needed.has(target)) {
           needed.add(target);
           changed = true;
         }
-      }
     }
   }
+  const ordered = constructionOrder(stack)
+    .filter((path) => needed.has(path))
+    .map((path) => {
+      const selection = selected.get(path);
+      if (!selection) throw new Error(`Missing selection ${path}`);
+      return {
+        path,
+        id: selection.manifest.id,
+        kind: selection.manifest.kind,
+        runtimeModule: selection.runtimeModule,
+        config: selection.config,
+        dependsOn: selection.dependsOn ?? {},
+        bindings: scoped
+          .filter((item) => item.selection === path)
+          .map(({ binding }) => ({ name: binding.name, kind: binding.kind })),
+      };
+    });
+  const queueTriggers = view.triggers.filter(
+    (trigger) => trigger.kind === "queue",
+  );
+  const topics = Object.fromEntries(
+    queueTriggers.flatMap((trigger) =>
+      trigger.topics.map((topic) => [
+        topic,
+        stack.queue.infra.topics?.routes[topic],
+      ]),
+    ),
+  );
+  const queueConsumers = queueTriggers
+    .filter((trigger) => trigger.functionId === functionId)
+    .map((trigger) => {
+      if (!trigger.eventSourceBinding)
+        throw new Error(`Missing event-source binding for ${trigger.physical}`);
+      return {
+        physical: trigger.physical,
+        topics: trigger.topics,
+        eventSourceBinding: trigger.eventSourceBinding,
+      };
+    });
+  return {
+    variables: stack.variables,
+    selections: ordered,
+    topics,
+    queueConsumers,
+  };
+}
+
+/** Construct only a function's planned selections from delivered binding names. */
+export async function constructDeployedPlan(
+  plan: DeployedPlan,
+  environment: Readonly<Record<string, string | undefined>>,
+  loadModule: DeployedModuleLoader,
+): Promise<DeployedStack> {
   const instances = new Map<string, unknown>();
   const closers: ConstructedAdapter[] = [];
   let closing: Promise<void> | undefined;
   const close = () =>
     (closing ??= (async () => {
       const errors: unknown[] = [];
-      for (const adapter of [...closers].reverse()) {
+      for (const adapter of [...closers].reverse())
         try {
           await adapter.close?.();
         } catch (error) {
           errors.push(error);
         }
-      }
       if (errors.length)
         throw new AggregateError(errors, "Adapter cleanup failed");
     })());
@@ -152,10 +223,7 @@ export async function constructDeployedStack(
     return value;
   };
   try {
-    for (const path of constructionOrder(stack)) {
-      if (!needed.has(path)) continue;
-      const selection = selected.get(path);
-      if (!selection) throw new Error(`Missing selection ${path}`);
+    for (const selection of plan.selections) {
       const module = await loadModule(selection.runtimeModule);
       if (
         !module ||
@@ -163,70 +231,51 @@ export async function constructDeployedStack(
         !("create" in module) ||
         typeof module.create !== "function"
       )
-        throw new Error(`Invalid adapter: ${selection.manifest.id}`);
-      const scoped = [
-        ...fn.envBindings,
-        ...fn.secretBindings,
-        ...fn.platformBindings,
-      ].filter((item) => item.selection === path);
-      if (scoped.some((item) => item.binding.kind === "platform"))
+        throw new Error(`Invalid adapter: ${selection.id}`);
+      if (selection.bindings.some((binding) => binding.kind === "platform"))
         throw new Error(
           "Platform bindings require a platform-specific deployed runtime",
         );
       const bindings = Object.fromEntries(
-        scoped.map((item) => [item.binding.name, delivered(item.binding.name)]),
+        selection.bindings.map((binding) => [
+          binding.name,
+          delivered(binding.name),
+        ]),
       );
       const dependencies = Object.fromEntries(
-        Object.entries(selection.dependsOn ?? {}).map(([alias, target]) => {
+        Object.entries(selection.dependsOn).map(([alias, target]) => {
           if (!instances.has(target))
             throw new Error(`Missing runtime dependency ${target}`);
           return [alias, instances.get(target)];
         }),
       );
-      const triggers = view.triggers.filter(
-        (trigger): trigger is Extract<DeploymentTrigger, { kind: "queue" }> =>
-          trigger.kind === "queue" && trigger.functionId === functionId,
-      );
       const queueContext =
-        selection.manifest.kind === "queue"
+        selection.kind === "queue"
           ? {
-              topics: Object.fromEntries(
-                view.triggers.flatMap((trigger) =>
-                  trigger.kind === "queue"
-                    ? trigger.topics.map((topic) => [
-                        topic,
-                        stack.queue.infra.topics?.routes[topic],
-                      ])
-                    : [],
-                ),
+              topics: plan.topics,
+              queueConsumers: plan.queueConsumers.map(
+                ({ physical, topics, eventSourceBinding }) => ({
+                  physical,
+                  topics,
+                  eventSource: delivered(eventSourceBinding),
+                }),
               ),
-              queueConsumers: triggers.map((trigger) => {
-                if (!trigger.eventSourceBinding)
-                  throw new Error(
-                    `Missing event-source binding for ${trigger.physical}`,
-                  );
-                return {
-                  physical: trigger.physical,
-                  topics: trigger.topics,
-                  eventSource: delivered(trigger.eventSourceBinding),
-                };
-              }),
             }
           : {};
       const instance: unknown = await module.create({
-        config: configValue(selection.config, stack, environment),
+        config: configValue(selection.config, plan, environment),
         bindings,
         dependencies,
         ...queueContext,
       });
-      instances.set(path, instance);
+      instances.set(selection.path, instance);
       if (
         instance &&
         (typeof instance === "object" || typeof instance === "function") &&
         "close" in instance
       ) {
         if (typeof instance.close !== "function")
-          throw new Error(`Invalid close method: ${selection.manifest.id}`);
+          throw new Error(`Invalid close method: ${selection.id}`);
         const closeAdapter = instance.close.bind(instance);
         closers.push({ close: () => closeAdapter() });
       }
@@ -243,4 +292,18 @@ export async function constructDeployedStack(
     }
     throw error;
   }
+}
+
+/** Construct just the adapters used by a physical function, using delivered binding names. */
+export function constructDeployedStack(
+  input: StackConfig,
+  functionId: string,
+  environment: Readonly<Record<string, string | undefined>>,
+  loadModule: DeployedModuleLoader,
+): Promise<DeployedStack> {
+  return constructDeployedPlan(
+    deployedPlan(input, functionId),
+    environment,
+    loadModule,
+  );
 }

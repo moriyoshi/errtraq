@@ -17,12 +17,15 @@
     "node": ">=22"
   },
   "dependencies": {
-    "@errtraq/core": "workspace:*",
-    "@errtraq/store-sql": "workspace:*",
-    "@errtraq/queue-memory": "workspace:*",
     "@errtraq/blob-fs": "workspace:*",
+    "@errtraq/core": "workspace:*",
+    "@errtraq/infra-gen": "workspace:*",
     "@errtraq/kv-memory": "workspace:*",
-    "@errtraq/platform-standalone": "workspace:*"
+    "@errtraq/platform-standalone": "workspace:*",
+    "@errtraq/queue-memory": "workspace:*",
+    "@errtraq/store-sql": "workspace:*",
+    "esbuild": "0.28.2",
+    "fflate": "0.8.2"
   },
   "bin": {
     "errtraq": "./dist/bin.js"

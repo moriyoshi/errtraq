@@ -2,8 +2,11 @@
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { physicalFunctions, resolveStack, selections } from "@errtraq/core";
+import { buildStack } from "./build.js";
 import { constructStack } from "./construction.js";
+import { generateInfra, repositoryRoot, safeDirectory } from "./infra.js";
 import { devToken } from "./token.js";
+import { formatValidation } from "./validation.js";
 
 interface DevPlatform {
   prepare(
@@ -25,24 +28,72 @@ function isDevPlatform(value: unknown): value is DevPlatform {
 export async function main(args: string[]): Promise<void> {
   const [command, ...initial] = args;
   const rotate = command === "token" && initial[0] === "rotate";
-  const rest = rotate ? initial.slice(1) : initial;
-  const at = rest.indexOf("--stack");
+  const infra = command === "infra" && initial[0] === "generate";
+  const rest = rotate || infra ? initial.slice(1) : initial;
   if (
-    (!["dev", "validate"].includes(command ?? "") && !rotate) ||
-    at < 0 ||
-    !rest[at + 1] ||
-    rest.length !== 2
+    !rotate &&
+    !infra &&
+    !["dev", "validate", "build"].includes(command ?? "")
   )
     throw new Error(
-      "Usage: errtraq <dev|validate|token rotate> --stack <file>",
+      "Usage: errtraq <dev|validate|build|infra generate|token rotate> --stack <file> [--out dir]",
     );
-  const file = resolve(rest[at + 1]);
+  const options: Record<string, string> = {};
+  let allowMissing = false;
+  for (let i = 0; i < rest.length; i++) {
+    const flag = rest[i];
+    if (flag === "--allow-missing-artifacts" && infra) {
+      allowMissing = true;
+      continue;
+    }
+    if (
+      !flag ||
+      !["--stack", "--out", "--build-dir"].includes(flag) ||
+      !rest[i + 1] ||
+      options[flag]
+    )
+      throw new Error("Invalid command arguments");
+    options[flag] = rest[++i] ?? "";
+  }
+  if (
+    !options["--stack"] ||
+    (options["--out"] && !(infra || command === "build")) ||
+    (options["--build-dir"] && !infra)
+  )
+    throw new Error("Invalid command arguments: --stack is required");
+  const file = resolve(options["--stack"]);
   const imported: unknown = await import(pathToFileURL(file).href);
   if (!imported || typeof imported !== "object" || !("default" in imported))
     throw new Error("Stack must export a default configuration");
   const stack = resolveStack(imported.default);
   if (command === "validate") {
-    console.log(`Valid stack: ${stack.name}`);
+    console.log(formatValidation(stack));
+    return;
+  }
+  if (command === "build" || infra) {
+    const repo = await repositoryRoot(process.cwd());
+    const defaultBuild = resolve(repo, "dist", stack.name);
+    if (command === "build") {
+      const directory = await safeDirectory(
+        repo,
+        resolve(options["--out"] ?? defaultBuild),
+      );
+      const manifest = await buildStack(stack, repo, directory, file);
+      console.log(
+        `Built ${stack.name} in ${directory} (${Object.keys(manifest.artifacts).length} deployable artifacts)`,
+      );
+    } else
+      console.log(
+        await generateInfra(
+          stack,
+          repo,
+          resolve(
+            options["--out"] ?? resolve(repo, "infra/generated", stack.name),
+          ),
+          resolve(options["--build-dir"] ?? defaultBuild),
+          allowMissing,
+        ),
+      );
     return;
   }
   const platformSelection = [...selections(stack)].find(

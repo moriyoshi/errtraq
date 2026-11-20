@@ -12,6 +12,24 @@ import * as Sentry from "@sentry/node";
 const root = resolve(".agents-workspace/tmp");
 await mkdir(root, { recursive: true });
 const directory = await mkdtemp(join(root, "m1g-e2e-"));
+const bundle = process.argv.includes("--bundle");
+const bundleFile = join(directory, "build", "shared", "index.mjs");
+if (bundle) {
+  const built = spawnSync(
+    process.execPath,
+    [
+      "packages/cli/dist/bin.js",
+      "build",
+      "--stack",
+      "stacks/local.ts",
+      "--out",
+      join(directory, "build"),
+    ],
+    { encoding: "utf8" },
+  );
+  if (built.status !== 0)
+    throw new Error(`Bundle build failed: ${built.stderr}`);
+}
 const delay = (ms) => new Promise((r) => setTimeout(r, ms));
 async function withTimeout(promise, ms, fallback) {
   let timer;
@@ -49,13 +67,15 @@ async function start() {
   errors = "";
   child = spawn(
     process.execPath,
-    [
-      "--experimental-strip-types",
-      "packages/cli/dist/bin.js",
-      "dev",
-      "--stack",
-      "stacks/local.ts",
-    ],
+    bundle
+      ? [bundleFile]
+      : [
+          "--experimental-strip-types",
+          "packages/cli/dist/bin.js",
+          "dev",
+          "--stack",
+          "stacks/local.ts",
+        ],
     {
       env: { ...process.env, ERRTRAQ_DATA_DIR: directory, ERRTRAQ_PORT: "0" },
       stdio: ["ignore", "pipe", "pipe"],

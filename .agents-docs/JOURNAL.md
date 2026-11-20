@@ -522,3 +522,16 @@ policy assignment, bindings, triggers and escaping. The stack parser rejects an 
 variable key before Zod can silently discard it.
 The sensitive-variable fixture marks its test-only handler input sensitive and supplies a canary
 through `TF_VAR_SECRET`; the JSON fixture uses a decoded variable for module tags.
+
+## 2026-11-21 — M2c build and CLI
+
+Deployed construction now derives a compact plan before bundling, so a Lambda entrypoint imports
+only the runtime adapters its roles require while preserving binding and queue-source scopes.
+The Lambda handler factory lives at the `./handler` subpath to keep the adapter's root export
+triple intact. The current consumer does not use KV, so its unused KV option is optional; AWS
+cron job implementations and runtime adapters still belong to M3 / M4. The build emits ZIPs
+with `index.mjs`, per-function manifests and a stack manifest; generation verifies their hashes
+and uses relative ZIP paths. A standalone bundle statically imports its adapters and passes the
+SDK e2e. Generated Terraform output ownership is recorded in a marker, and unowned files and
+symlink escapes are rejected. esbuild 0.28.2 was already in the lockfile and its install script
+was already allowed; fflate 0.8.2 supplies local ZIP creation without a system utility.

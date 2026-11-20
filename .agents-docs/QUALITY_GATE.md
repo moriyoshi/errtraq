@@ -44,6 +44,7 @@ Run the opt-in real SDK check on loopback:
 
 ```sh
 pnpm e2e
+pnpm e2e --bundle               # also exercise the built standalone server
 ```
 
 The script builds the workspace, starts the local CLI on a free loopback port using a temporary
@@ -66,6 +67,11 @@ persisted in `api-token` under the local data directory with mode 0600. The loca
 10,000 event items per minute; the standalone configuration can set or disable this limit.
 
 ## 4. Infra generation (when you touch `infra-gen`, an `infra` descriptor, or `infra/modules`)
+
+For a deployed stack, `pnpm exec errtraq build --stack stacks/aws-dynamodb.ts` builds ZIPs and
+`pnpm exec errtraq infra generate --stack stacks/aws-dynamodb.ts` renders their paths and verifies
+their hashes. Generation writes only inside the repository and requires an empty or marked output
+directory. AWS runtime adapters are still M3 stubs.
 
 ```sh
 pnpm infra:validate

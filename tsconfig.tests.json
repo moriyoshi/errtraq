@@ -47,6 +47,9 @@
       "@errtraq/platform-aws-lambda": [
         "packages/platforms/aws-lambda/src/index.ts"
       ],
+      "@errtraq/platform-aws-lambda/handler": [
+        "packages/platforms/aws-lambda/src/handler.ts"
+      ],
       "@errtraq/platform-aws-lambda/stack": [
         "packages/platforms/aws-lambda/src/stack.ts"
       ]
