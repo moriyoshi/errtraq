@@ -348,7 +348,11 @@ importers:
         specifier: ^4.13.19
         version: 4.13.19
 
-  packages/infra-gen: {}
+  packages/infra-gen:
+    dependencies:
+      '@errtraq/core':
+        specifier: workspace:*
+        version: link:../core
 
   packages/platforms/aws-lambda:
     dependencies:

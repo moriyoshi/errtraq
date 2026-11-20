@@ -499,3 +499,14 @@ first checks unmodified baselines and uses isolated temporary copies. Provider i
 Terraform's cache environment variable removed to avoid installing the mirror into itself. A
 run with unreachable HTTP proxies verified that cached provider versions do not need registry
 access. Initial cache misses still download the pinned version through the normal registry path.
+
+## 2026-11-21 — M2b Terraform JSON generator
+
+The generator is pure: callers supply both directory locations, generation-time values and
+per-function relative artifact paths. Standalone returns an explicit not-applicable result.
+Terraform JSON provider aliases and module metadata are emitted as literal references, while
+ordinary strings and keys are escaped as Terraform templates; JSON variables remain strings
+and decode at their use sites. Non-sensitive defaults are also emitted in tfvars. The shared
+and per-topic AWS file sets are snapshotted; generating and validating Terraform roots belongs
+to the next slice. A separate edge-case probe found that core parsing silently drops an own
+`__proto__` variable key, which is recorded in TODO for a model fix.

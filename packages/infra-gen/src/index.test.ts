@@ -1,5 +1,360 @@
-import { expect, it } from "vitest";
+import {
+  artifact,
+  env,
+  generationEnv,
+  out,
+  output,
+  type ResolvedStack,
+  resolveStack,
+  type StackConfig,
+  stackValue,
+  variable,
+} from "@errtraq/core";
+import { describe, expect, it } from "vitest";
+import shared from "../../../stacks/aws-dynamodb.js";
+import perTopic from "../../../stacks/aws-dynamodb-per-topic.js";
+import local from "../../../stacks/local.js";
+import {
+  type GenerateOptions,
+  generate,
+  relativeModuleSource,
+  renderInfraValue,
+} from "./index.js";
 
-it("has a buildable entry point", async () => {
-  await expect(import("./index.js")).resolves.toBeDefined();
+const options: GenerateOptions = {
+  outputDirectory: "infra/generated/example",
+  modulesDirectory: "infra/modules",
+  generationEnv: {},
+  artifactPaths: Object.fromEntries(
+    ["ingest", "api", "consumer", "cron", "shared"].map((id) => [
+      id,
+      `build/${id}.zip`,
+    ]),
+  ),
+};
+const raw = (stack: StackConfig): StackConfig =>
+  Object.fromEntries(Object.entries(stack)) as StackConfig;
+function terraform(
+  stack: ResolvedStack,
+  opts = options,
+): Record<string, string> {
+  const result = generate(stack, opts);
+  if (result.kind !== "terraform") throw new Error(result.reason);
+  return result.files;
+}
+function parsed(
+  files: Record<string, string>,
+  name: string,
+): Record<string, unknown> {
+  const file = files[name];
+  if (!file) throw new Error(`missing ${name}`);
+  return JSON.parse(file);
+}
+describe("Terraform generator", () => {
+  it.each([
+    ["shared", shared],
+    ["per-topic", perTopic],
+  ] as const)("renders the full %s stack deterministically", (_name, stack) => {
+    const files = terraform(stack);
+    expect(terraform(stack)).toEqual(files);
+    expect(files).toMatchSnapshot();
+    for (const content of Object.values(files)) {
+      const object = JSON.parse(content);
+      expect(object["//"]).toContain(stack.name);
+      expect(content).not.toContain(process.cwd());
+    }
+  });
+  it("explains standalone has no Terraform", () => {
+    expect(generate(local, options)).toEqual({
+      kind: "not-applicable",
+      reason: expect.stringContaining("no Terraform"),
+    });
+  });
+  it("resolves module paths without consulting the working directory", () => {
+    expect(
+      relativeModuleSource(
+        "infra/generated/stack",
+        "infra/modules",
+        "aws",
+        "sqs",
+      ),
+    ).toBe("../../modules/aws/sqs");
+    expect(
+      relativeModuleSource("/repo/out", "/repo/infra/modules", "aws", "s3"),
+    ).toBe("../infra/modules/aws/s3");
+    expect(relativeModuleSource(".", ".modules", "aws", "s3")).toBe(
+      "./.modules/aws/s3",
+    );
+    expect(() =>
+      relativeModuleSource("/repo/out", "infra/modules", "aws", "s3"),
+    ).toThrow("same path root");
+  });
+  it("renders qualified, keyed, stack and artifact references", () => {
+    expect(
+      renderInfraValue(
+        out("queues", "ingest", "arn"),
+        "queue",
+        perTopic,
+        options,
+      ),
+    ).toBe(["$", '{module.queue.queues["ingest"]["arn"]}'].join(""));
+    expect(
+      renderInfraValue(output("blob", "bucket_name"), "store", shared, options),
+    ).toBe(["$", "{module.blob.bucket_name}"].join(""));
+    expect(renderInfraValue(stackValue("name"), "store", shared, options)).toBe(
+      "aws-dynamodb",
+    );
+    expect(
+      renderInfraValue(stackValue("protection"), "store", shared, options),
+    ).toBe("production");
+    expect(
+      renderInfraValue(stackValue("region"), "store", shared, options),
+    ).toBe("us-east-1");
+    expect(
+      renderInfraValue(stackValue("tags"), "store", shared, options),
+    ).toEqual({ app: "errtraq" });
+    expect(
+      renderInfraValue(artifact("ingest"), "platform", shared, options),
+    ).toBe("build/ingest.zip");
+    expect(() =>
+      renderInfraValue(artifact("missing"), "platform", shared, options),
+    ).toThrow("Missing artifact path");
+    expect(() =>
+      renderInfraValue(env("RUNTIME"), "store", shared, options),
+    ).toThrow("Runtime environment");
+  });
+  it("escapes literal values and object keys without escaping generated expressions", () => {
+    const literal = ["$", "{aws:username}"].join("");
+    expect(
+      renderInfraValue(
+        {
+          [literal]: `x ${literal} %{ if }`,
+          reference: output("blob", "bucket_name"),
+        },
+        "store",
+        shared,
+        options,
+      ),
+    ).toEqual({
+      [["$$", "{aws:username}"].join("")]: `x $${literal} %%{ if }`,
+      reference: ["$", "{module.blob.bucket_name}"].join(""),
+    });
+  });
+  it("uses generation environment values only for backend references", () => {
+    const base = raw(shared);
+    base.backend = {
+      type: "s3",
+      config: { bucket: generationEnv("STATE_BUCKET"), key: "state.tfstate" },
+    };
+    const resolved = resolveStack(base);
+    expect(() => terraform(resolved)).toThrow(
+      "Missing generation environment STATE_BUCKET",
+    );
+    const marker = ["$", "{literal}"].join("");
+    const files = terraform(resolved, {
+      ...options,
+      generationEnv: { STATE_BUCKET: `bucket-${marker}` },
+    });
+    expect(parsed(files, "backend.tf.json")).toMatchObject({
+      terraform: {
+        backend: { s3: { bucket: `bucket-$${marker}`, key: "state.tfstate" } },
+      },
+    });
+  });
+  it("renders JSON variables with jsondecode and emits only non-sensitive defaults", () => {
+    const base = raw(shared);
+    const canary = "SENSITIVE-VALUE-MUST-NOT-BE-EMITTED";
+    base.variables = {
+      DOC: {
+        type: "json",
+        sensitive: false,
+        default: { z: [1, "two"], a: "text" },
+      },
+      TEXT: {
+        type: "string",
+        sensitive: false,
+        default: ["$", "{literal}"].join(""),
+      },
+      SECRET: { type: "string", sensitive: true },
+    };
+    const original = base.store;
+    base.store = {
+      ...original,
+      infra: {
+        ...original.infra,
+        module: { ...original.infra.module, sensitiveInputs: ["credential"] },
+        inputs: (config, view) => ({
+          ...original.infra.inputs(config, view),
+          document: variable("DOC"),
+          credential: variable("SECRET"),
+        }),
+      },
+    };
+    const files = terraform(resolveStack(base), {
+      ...options,
+      generationEnv: { SECRET: canary },
+    });
+    expect(Object.values(files).join("\n")).not.toContain(canary);
+    const variables = parsed(files, "variables.tf.json");
+    expect(variables).toMatchObject({
+      variable: {
+        DOC: { type: "string", default: '{"a":"text","z":[1,"two"]}' },
+        SECRET: { type: "string", sensitive: true },
+      },
+    });
+    expect(files["variables.tf.json"]).toContain("jsondecode(var.DOC)");
+    expect(files["main.tf.json"]).toContain(
+      ["$", "{jsondecode(var.DOC)}"].join(""),
+    );
+    expect(parsed(files, "terraform.tfvars.json")).toMatchObject({
+      DOC: '{"a":"text","z":[1,"two"]}',
+      TEXT: ["$", "{literal}"].join(""),
+    });
+    expect(files["terraform.tfvars.json"]).not.toContain("SECRET");
+  });
+  it("substitutes existing keyed queue outputs without emitting its module", () => {
+    const base = raw(shared);
+    const policy = '{"Version":"2012-10-17","Statement":[]}';
+    base.queue = {
+      ...base.queue,
+      existing: {
+        queues: { shared: { arn: "arn:existing", url: "https://existing" } },
+        policies: { produce: { shared: policy }, consume: { shared: policy } },
+      },
+    };
+    const files = terraform(resolveStack(base));
+    const main = parsed(files, "main.tf.json");
+    expect(main).toMatchObject({
+      module: {
+        platform: { queue_triggers: { shared: { resource: "arn:existing" } } },
+      },
+    });
+    expect(files["main.tf.json"]).toContain("https://existing");
+    expect(files["main.tf.json"]).not.toContain("module.queue.");
+    expect(main.module).not.toHaveProperty("queue");
+  });
+  it("resolves existing output aliases and non-sensitive variables recursively", () => {
+    const base = raw(shared);
+    base.variables = { QUEUE_URL: { type: "string", sensitive: false } };
+    const policy = '{"Version":"2012-10-17","Statement":[]}';
+    base.queue = {
+      ...base.queue,
+      existing: {
+        queues: {
+          shared: {
+            arn: output("blob", "bucket_arn"),
+            url: variable("QUEUE_URL"),
+          },
+        },
+        policies: { produce: { shared: policy }, consume: { shared: policy } },
+      },
+    };
+    const files = terraform(resolveStack(base));
+    const main = parsed(files, "main.tf.json");
+    expect(main).toMatchObject({
+      module: {
+        platform: {
+          queue_triggers: {
+            shared: { resource: ["$", "{module.blob.bucket_arn}"].join("") },
+          },
+        },
+      },
+    });
+    expect(files["main.tf.json"]).toContain(["$", "{var.QUEUE_URL}"].join(""));
+    expect(main.module).not.toHaveProperty("queue");
+  });
+  it("escapes provider values and resolves explicitly qualified providers", () => {
+    const base = raw(shared);
+    const literal = ["$", "{var.user}"].join("");
+    base.providers = {
+      ...base.providers,
+      aws_eu: {
+        source: "hashicorp/aws",
+        version: ">= 6.30.0, < 7.0",
+        region: "eu-west-1",
+        tags: { note: literal },
+      },
+    };
+    const resolved = resolveStack(base);
+    expect(
+      renderInfraValue(
+        stackValue("region", "aws_eu"),
+        "store",
+        resolved,
+        options,
+      ),
+    ).toBe("eu-west-1");
+    expect(
+      renderInfraValue(
+        stackValue("tags", "aws_eu"),
+        "store",
+        resolved,
+        options,
+      ),
+    ).toEqual({ note: `$${literal}` });
+    expect(terraform(resolved)["providers.tf.json"]).toContain(`$${literal}`);
+  });
+  it("rejects Terraform module metadata collisions and missing artifacts", () => {
+    const base = raw(shared);
+    const original = base.store;
+    base.store = {
+      ...original,
+      infra: { ...original.infra, inputs: () => ({ source: "override" }) },
+    };
+    expect(() => terraform(resolveStack(base))).toThrow(
+      "conflicts with Terraform metadata",
+    );
+    expect(() => terraform(shared, { ...options, artifactPaths: {} })).toThrow(
+      "Missing artifact path",
+    );
+  });
+  it("uses aliases and nested selection module addresses", () => {
+    const base = raw(shared);
+    base.providers = {
+      ...base.providers,
+      aws_eu: {
+        source: "hashicorp/aws",
+        version: ">= 6.30.0, < 7.0",
+        region: "eu-west-1",
+        tags: { team: "eu" },
+      },
+    };
+    const child = {
+      ...base.store,
+      manifest: { ...base.store.manifest, kind: "catalog" as const },
+      infra: {
+        ...base.store.infra,
+        bindings: [],
+        capabilities: {},
+        resources: {},
+        inputs: () => ({ name: stackValue("name") }),
+      },
+    };
+    base.store = {
+      ...base.store,
+      provider: "aws_eu",
+      manifest: { ...base.store.manifest, childKinds: { catalog: "catalog" } },
+      children: { catalog: child },
+    };
+    const files = terraform(resolveStack(base));
+    expect(parsed(files, "main.tf.json")).toMatchObject({
+      module: {
+        store: { providers: { aws: "aws.aws_eu" }, tags: { team: "eu" } },
+        store_catalog: { source: "../../modules/aws/dynamodb" },
+      },
+    });
+    expect(parsed(files, "providers.tf.json")).toMatchObject({
+      provider: {
+        aws: [
+          { region: "us-east-1" },
+          { alias: "aws_eu", region: "eu-west-1" },
+        ],
+      },
+      terraform: {
+        required_providers: {
+          aws: { source: "hashicorp/aws", version: ">= 6.30.0, < 7.0" },
+        },
+      },
+    });
+  });
 });

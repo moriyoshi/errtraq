@@ -41,9 +41,9 @@ item should be resolved or removed once addressed. Milestone work itself is trac
 - [x] M2a2: complete the infra model redesign and review items A1-A13, validation items B1-B8, and documentation item C before M2b. — *source: `.agents-workspace/tmp/m2a-review-fixes.md`*
 
 
-- [ ] M2b: render symbol-tagged references by phase, including keyed outputs and build artifacts; escape literal Terraform template introducers in values and object keys with `terraformLiteral` / `escapeTerraformLiteral`, and fail on missing backend generation environment values. — *source: M2a2 review A6 / A8 / A10 and B4*
-- [ ] M2b: emit JSON variables as Terraform `string` holding JSON, validate that decoded values are objects or arrays, and wrap structured uses in `jsondecode`, matching CLI `TF_VAR_` parsing. — *source: M2a2 review B5*
-- [ ] M2b: render reachable `existing` substitutions and stack outputs; attach per-resource policy outputs and materialize scoped secret-read requirements. Provider policy contents and absence of raw IAM in module inputs are not statically enforced. — *source: M2a2 review A2 / A4 / A11 and C*
+- [x] M2b: render symbol-tagged references by phase, including keyed outputs and build artifacts; escape literal Terraform template introducers in values and object keys with `terraformLiteral` / `escapeTerraformLiteral`, and fail on missing backend generation environment values. — *source: M2a2 review A6 / A8 / A10 and B4*
+- [x] M2b: emit JSON variables as Terraform `string` holding JSON, validate that decoded values are objects or arrays, and wrap structured uses in `jsondecode`, matching CLI `TF_VAR_` parsing. — *source: M2a2 review B5*
+- [x] M2b: render reachable `existing` substitutions and stack outputs; attach per-resource policy outputs and materialize scoped secret-read requirements. Provider policy contents and absence of raw IAM in module inputs are not statically enforced. — *source: M2a2 review A2 / A4 / A11 and C*
 - [x] M2b: choose queue visibility and consumer timeout defaults that satisfy the six-times rule whenever the queue supports visibility; core checks explicit values only. AWS defaults are 180 and 30 seconds. — *source: M2a2 review A6*
 - [ ] M2c: satisfy each function's artifact reference with the actual build output, create role-scoped entrypoints and queue event-source mappings, and integrate runtime secret sources. — *source: M2a2 review A4 / A6 / A12*
 
@@ -56,7 +56,8 @@ item should be resolved or removed once addressed. Milestone work itself is trac
 - [x] M2b / M2c: address the remaining second-review items N5-N7 and document corrections before generator and build work. — *source: `.agents-workspace/tmp/m2a2-review-fixes.md`*
 - [ ] M2 / M3 / M6: address second-review follow-ups N9 and N12-N15, including Cloudflare binding authorization and runtime limitations. — *source: `.agents-workspace/tmp/m2a2-review-fixes.md`*
 
-- [ ] M2b: emit non-sensitive stack variable defaults into tfvars, encoding JSON defaults as JSON text; never emit sensitive values. Render provider aliases and consume the M2c build artifact manifest. — *source: M2a2 second review*
+- [x] M2b: emit non-sensitive stack variable defaults into tfvars, encoding JSON defaults as JSON text; never emit sensitive values. Render provider aliases and accept artifact paths supplied by the caller. — *source: M2a2 second review*
+- [ ] M2c: connect the build artifact manifest to the generator's per-function artifact path input. — *source: M2a2 second review*
 
 - [ ] M3: evaluate DynamoDB sortable encodings for numeric counts / timestamps, GSI projection cost, project write sharding, transaction fan-out under 100 items and PITR retention of erased data for up to 35 days. — *source: M2b HCL review section B*
 - [ ] M3: ensure secret identifiers contain the full Secrets Manager ARN including its random suffix, or safely support suffix matching. — *source: M2b HCL review section B*
@@ -65,3 +66,6 @@ item should be resolved or removed once addressed. Milestone work itself is trac
 - [ ] M3 / M4: delete overflow payloads when their corresponding events are retained, archived or erased; a fixed bucket lifecycle would violate per-project retention. — *source: M2b HCL review A9*
 - [ ] M2c / M3: avoid duplicate Lambda Function URL and ingest app CORS headers, and support S3-based deployment for ZIPs too large for direct upload. — *source: M2b HCL review A8*
 - [x] M2b next: strengthen HCL output / policy contracts and add the requested mutation check from item 10. — *source: M2b HCL review A10*
+
+- [ ] M2 / M3: investigate the intermittent missing staged-blob log observed during e2e recovery; determine whether recovery races the consumer deleting an envelope, and verify that the race is safe and correctly logged. — *source: M2b HCL contract validation e2e*
+- [ ] M2: investigate the stack schema dropping an own `__proto__` variable key during parsing even though its identifier is currently accepted; preserve it or reject it explicitly. — *source: M2b generator edge-case test*
