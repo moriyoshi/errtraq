@@ -1,0 +1,25 @@
+{
+  "name": "@errtraq/platform-standalone",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "development": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=22.13"
+  },
+  "dependencies": {
+    "@errtraq/core": "workspace:*",
+    "@errtraq/http": "workspace:*",
+    "@hono/node-server": "^2.1.9",
+    "hono": "^4.13.19"
+  }
+}

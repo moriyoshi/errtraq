@@ -14,5 +14,9 @@
   ],
   "engines": {
     "node": ">=22"
+  },
+  "dependencies": {
+    "@errtraq/core": "workspace:*",
+    "hono": "^4.13.19"
   }
 }

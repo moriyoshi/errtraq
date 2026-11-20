@@ -1,0 +1,25 @@
+{
+  "name": "@errtraq/kv-memory",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "development": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=22.13"
+  },
+  "dependencies": {
+    "@errtraq/core": "workspace:*"
+  },
+  "devDependencies": {
+    "@errtraq/testing": "workspace:*"
+  }
+}
