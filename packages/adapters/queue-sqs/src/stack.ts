@@ -15,6 +15,8 @@ export { SQS_MAX_BYTES } from "./constants.js";
 
 import { SQS_MAX_BYTES } from "./constants.js";
 export const configSchema = z.strictObject({
+  requestTimeoutMs: z.number().int().min(1).max(300000).optional(),
+  overallTimeoutMs: z.number().int().min(1).max(300000).optional(),
   mode: z.enum(["shared", "per-topic"]).default("shared"),
   visibilityTimeoutSec: z.number().int().min(1).max(43200).default(180),
   batchSize: z.number().int().min(1).max(10).default(10),

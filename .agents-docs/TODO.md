@@ -6,6 +6,10 @@ item should be resolved or removed once addressed. Milestone work itself is trac
 
 ## Open Items
 
+- [ ] M3h: verify actual SQS throttling status and error codes, U+FFFE / U+FFFF rejection, 1 MiB message-size support, receive-count increments and DLQ redrive timing against AWS. — *source: M3c2 review section B*
+- [ ] M3h: capture scrubbed real Lambda SQS, function URL and EventBridge events as fixtures. — *source: M3c2 review section B*
+- [ ] M3 / M6: FIFO queues are unsupported by the SQS adapter; evaluate FIFO only if a stack requires it. — *source: M3c2 review section B*
+
 - [ ] M3h: verify DynamoDB conditional update atomicity, expiry-reset races, overflow guards and TTL retention against real AWS; Winterbaume evaluates conditions separately from its write. — *source: M3d emulator finding*
 
 - [ ] M3h: verify real S3 behavior for unsigned payloads over HTTP, URL-encoded listing spaces and plus signs, 403-versus-missing under the scoped read policy, and multipart-abort permissions. — *source: M3b review section B*

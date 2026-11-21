@@ -70,9 +70,9 @@ BlobStore contract rejects empty keys, keys over 1,024 UTF-8 bytes, control char
 bucket probe: S3 does not provide the error code in that response, and a probe may require
 additional permissions. A GET 404 with `NoSuchBucket` raises `BlobBucketNotFoundError`.
 The adapter rejects a non-advancing listing rather than silently returning repeated cursors.
-The adapter applies a 10-second per-attempt request timeout and 30-second response-body idle
-timeout by default, configurable with `requestTimeoutMs` and `bodyIdleTimeoutMs` (1 to 300,000
-milliseconds). Retries use full jitter with a 500 ms base and honor `Retry-After`; an expired
+The adapter applies a 10-second per-attempt timeout, a 25-second overall deadline, and a
+30-second response-body idle timeout by default, configurable with `requestTimeoutMs`,
+`overallTimeoutMs` and `bodyIdleTimeoutMs` (1 to 300,000 milliseconds). Retries use full jitter with a 500 ms base and honor `Retry-After`; an expired
 token is retried once with refreshed credentials. Runtime list and key operations are limited to
 the prefixes of the delivered primary and staging bindings; recovery lists `envelopes/`.
 
@@ -109,3 +109,5 @@ GetItem assertion verifies that logical expiration does not depend on physical d
 KV uses consistent GetItem reads, conditional UpdateItem with atomic ADD, PutItem and
 DeleteItem. Winterbaume checks UpdateItem conditions separately from its backend write; see
 [WINTERBAUME_GAPS.md](./WINTERBAUME_GAPS.md) for what the emulator cannot prove.
+
+The SQS adapter supports standard queues only; FIFO queues are not implemented.

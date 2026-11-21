@@ -1,4 +1,4 @@
-import { signAwsRequest } from "@errtraq/aws-signing";
+import { AwsRequestError, awsRequest } from "@errtraq/aws-signing";
 import type { Clock, CreateContext, KV } from "@errtraq/core";
 import {
   InvalidCounterError,
@@ -24,18 +24,14 @@ const obj = (value: unknown): Data | undefined =>
     : undefined;
 const decimal = (value: string): boolean =>
   /^-?\d+$/.test(value) && Number.isSafeInteger(Number(value));
-const throttled = new Set([
-  "ProvisionedThroughputExceededException",
-  "ThrottlingException",
-  "RequestLimitExceeded",
-  "Throttling",
-]);
 export interface DynamoKVOptions {
   table: string;
   region: string;
   environment: Environment;
   endpoint?: string;
   requestTimeoutMs?: number;
+  overallTimeoutMs?: number;
+  signal?: AbortSignal;
   clock?: Clock;
   fetch?: typeof fetch;
   sleep?: (ms: number) => Promise<void>;
@@ -44,9 +40,6 @@ export interface DynamoKVOptions {
 /** Numeric counter and original string are updated together under a revision condition. */
 export class DynamoKV implements KV {
   private readonly endpoint: string;
-  private readonly fetcher: typeof fetch;
-  private readonly timeout: number;
-  private readonly sleep: (ms: number) => Promise<void>;
   constructor(private readonly options: DynamoKVOptions) {
     if (!options.table || !options.region)
       throw new Error("DynamoDB table and region are required");
@@ -64,24 +57,6 @@ export class DynamoKV implements KV {
     )
       throw new Error("Invalid DynamoDB endpoint");
     this.endpoint = url.origin;
-    this.fetcher = (options.fetch ?? globalThis.fetch).bind(globalThis);
-    this.timeout = options.requestTimeoutMs ?? 10000;
-    if (
-      !Number.isInteger(this.timeout) ||
-      this.timeout < 1 ||
-      this.timeout > 300000
-    )
-      throw new RangeError("Invalid DynamoDB timeout");
-    this.sleep =
-      options.sleep ??
-      (async (ms) => {
-        let left = ms;
-        do {
-          const step = Math.min(left, 2147483647);
-          await new Promise((resolve) => setTimeout(resolve, step));
-          left -= step;
-        } while (left > 0);
-      });
   }
   private now(): number {
     const time = this.options.clock
@@ -117,142 +92,55 @@ export class DynamoKV implements KV {
     return { ms, seconds: Math.ceil(ms / 1000) };
   }
   private async request(action: string, input: Data): Promise<Data> {
-    const body = JSON.stringify(input);
-    let expired = false,
-      ambiguous = false;
-    for (let attempt = 0; attempt < 4; attempt++) {
-      const env = this.options.environment;
-      const accessKeyId = env.AWS_ACCESS_KEY_ID,
-        secretAccessKey = env.AWS_SECRET_ACCESS_KEY;
-      if (!accessKeyId || !secretAccessKey)
-        throw new KVAccessDeniedError("DynamoDB credentials are missing");
-      const signed = await signAwsRequest({
-        url: `${this.endpoint}/`,
-        method: "POST",
-        body,
+    try {
+      const response = await awsRequest({
         service: "dynamodb",
         region: this.options.region,
-        accessKeyId,
-        secretAccessKey,
-        ...(env.AWS_SESSION_TOKEN
-          ? { sessionToken: env.AWS_SESSION_TOKEN }
-          : {}),
+        url: `${this.endpoint}/`,
+        method: "POST",
+        body: JSON.stringify(input),
+        protocol: "json",
         headers: {
           "content-type": "application/x-amz-json-1.0",
           "x-amz-target": `DynamoDB_20120810.${action}`,
         },
+        credentials: () => ({
+          accessKeyId: this.options.environment.AWS_ACCESS_KEY_ID ?? "",
+          secretAccessKey: this.options.environment.AWS_SECRET_ACCESS_KEY ?? "",
+          sessionToken: this.options.environment.AWS_SESSION_TOKEN,
+        }),
+        fetch: this.options.fetch,
+        sleep: this.options.sleep,
+        random: this.options.random,
+        requestTimeoutMs: this.options.requestTimeoutMs,
+        overallTimeoutMs: this.options.overallTimeoutMs,
+        signal: this.options.signal,
       });
-      const abort = new AbortController();
-      let timer: ReturnType<typeof setTimeout> | undefined;
-      let response: Response, text: string;
-      try {
-        ({ response, text } = await Promise.race([
-          (async () => {
-            const response = await this.fetcher(signed.url, {
-              method: "POST",
-              body,
-              headers: signed.headers,
-              signal: abort.signal,
-              redirect: "manual",
-            });
-            return { response, text: await response.text() };
-          })(),
-          new Promise<never>((_, reject) => {
-            timer = setTimeout(() => {
-              reject(new KVUnavailableError("DynamoDB request timed out"));
-              abort.abort();
-            }, this.timeout);
-          }),
-        ]));
-      } catch {
-        abort.abort();
-        ambiguous = true;
-        if (attempt === 3)
-          throw new KVUnavailableError(
-            `DynamoDB ${action} unavailable`,
-            undefined,
-            true,
-          );
-        await this.sleep(
-          Math.floor(
-            (this.options.random ?? Math.random)() * 500 * 2 ** attempt,
-          ),
-        );
-        continue;
-      } finally {
-        if (timer !== undefined) clearTimeout(timer);
-      }
-      let parsed: Data = {};
-      try {
-        parsed = obj(JSON.parse(text)) ?? {};
-      } catch {
-        if (response.ok)
-          throw new KVError(`Invalid DynamoDB ${action} response`);
-      }
-      if (response.ok) return parsed;
-      const raw =
-        typeof parsed.__type === "string"
-          ? parsed.__type
-          : typeof parsed.code === "string"
-            ? parsed.code
-            : (response.headers.get("x-amzn-errortype") ?? "");
-      const candidate = raw.split("#").at(-1)?.split(":").at(-1) || "";
-      const sensitive = [
-        env.AWS_ACCESS_KEY_ID,
-        env.AWS_SECRET_ACCESS_KEY,
-        env.AWS_SESSION_TOKEN,
-      ].filter((value): value is string => !!value);
-      const code =
-        /^[A-Za-z][A-Za-z0-9]{0,127}$/.test(candidate) &&
-        !sensitive.some((value) => candidate.includes(value))
-          ? candidate
-          : undefined;
-      if (code === "ExpiredTokenException" || code === "ExpiredToken") {
-        if (!expired) {
-          expired = true;
-          attempt--;
-          continue;
-        }
-      }
+      return (await response.json()) as Data;
+    } catch (error) {
+      if (!(error instanceof AwsRequestError)) throw error;
+      const args = [error.message, error.code, error.ambiguous] as const;
+      let mapped: KVError;
       if (
-        (response.status === 429 ||
-          response.status >= 500 ||
-          (code && throttled.has(code))) &&
-        attempt < 3
-      ) {
-        if (response.status >= 500) ambiguous = true;
-        const after = response.headers.get("retry-after");
-        const seconds =
-          after && /^\d+$/.test(after)
-            ? Math.min(Number(after) * 1000, Number.MAX_SAFE_INTEGER)
-            : after
-              ? Math.max(0, Date.parse(after) - Date.now())
-              : 0;
-        await this.sleep(
-          Math.max(
-            Number.isFinite(seconds) ? seconds : 0,
-            Math.floor(
-              (this.options.random ?? Math.random)() * 500 * 2 ** attempt,
-            ),
-          ),
-        );
-        continue;
-      }
-      const message = `DynamoDB ${action} failed (${response.status}${code ? `, ${code}` : ""})`;
-      if ((code && throttled.has(code)) || response.status === 429)
-        throw new KVThrottledError(message, code, ambiguous);
-      if (response.status === 403 || code === "AccessDeniedException")
-        throw new KVAccessDeniedError(message, code, ambiguous);
-      if (response.status >= 500)
-        throw new KVUnavailableError(message, code, true);
-      throw new KVError(message, code, ambiguous);
+        error.code === "CredentialsUnavailable" ||
+        error.status === 403 ||
+        error.code === "AccessDeniedException"
+      )
+        mapped = new KVAccessDeniedError(...args);
+      else if (
+        error.retryable &&
+        error.status !== undefined &&
+        error.status < 500
+      )
+        mapped = new KVThrottledError(...args);
+      else if (error.retryable || error.code === "Timeout")
+        mapped = new KVUnavailableError(...args);
+      else mapped = new KVError(...args);
+      Object.defineProperty(mapped, "cause", { value: error });
+      throw mapped;
     }
-    throw new KVUnavailableError(
-      `DynamoDB ${action} unavailable`,
-      undefined,
-      true,
-    );
   }
+
   private async read(key: string): Promise<Row | undefined> {
     const result = await this.request("GetItem", {
       TableName: this.options.table,
@@ -438,6 +326,7 @@ export function create({
     environment,
     endpoint: config.endpoint ?? environment.AWS_ENDPOINT_URL_DYNAMODB,
     requestTimeoutMs: config.requestTimeoutMs,
+    overallTimeoutMs: config.overallTimeoutMs,
     clock:
       typeof bindings.clock === "object" &&
       bindings.clock !== null &&

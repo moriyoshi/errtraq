@@ -1,4 +1,4 @@
-import { signAwsRequest } from "@errtraq/aws-signing";
+import { awsBackoffMs, awsRequest } from "@errtraq/aws-signing";
 import type {
   BatchHandler,
   CreateContext,
@@ -53,6 +53,10 @@ export interface SqsOptions {
   endpoint?: string;
   fetch?: typeof fetch;
   sleep?: (ms: number) => Promise<void>;
+  random?: () => number;
+  requestTimeoutMs?: number;
+  overallTimeoutMs?: number;
+  signal?: AbortSignal;
 }
 export class SqsQueue implements Queue<SqsEvent, SqsResponse> {
   readonly capabilities = {
@@ -61,7 +65,6 @@ export class SqsQueue implements Queue<SqsEvent, SqsResponse> {
     delay: true,
     dlq: true,
   };
-  private readonly fetcher: typeof fetch;
   private readonly sleep: (ms: number) => Promise<void>;
   private readonly endpoint: string;
   constructor(private readonly options: SqsOptions) {
@@ -80,7 +83,6 @@ export class SqsQueue implements Queue<SqsEvent, SqsResponse> {
     )
       throw new Error("Invalid SQS endpoint");
     this.endpoint = endpoint.origin;
-    this.fetcher = (options.fetch ?? globalThis.fetch).bind(globalThis);
     this.sleep =
       options.sleep ??
       ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
@@ -89,58 +91,35 @@ export class SqsQueue implements Queue<SqsEvent, SqsResponse> {
     action: string,
     input: RecordValue,
   ): Promise<RecordValue> {
-    const body = JSON.stringify(input);
-    for (let attempt = 0; attempt < 4; attempt++) {
-      const env = this.options.environment;
-      const accessKeyId = env.AWS_ACCESS_KEY_ID,
-        secretAccessKey = env.AWS_SECRET_ACCESS_KEY;
-      if (!accessKeyId || !secretAccessKey)
-        throw new Error("SQS credentials are missing");
-      const signed = await signAwsRequest({
-        url: `${this.endpoint}/`,
-        method: "POST",
-        body,
-        service: "sqs",
-        region: this.options.region,
-        accessKeyId,
-        secretAccessKey,
-        ...(env.AWS_SESSION_TOKEN
-          ? { sessionToken: env.AWS_SESSION_TOKEN }
-          : {}),
-        headers: {
-          "content-type": "application/x-amz-json-1.0",
-          "x-amz-target": `AmazonSQS.${action}`,
-        },
-      });
-      let response: Response;
-      try {
-        response = await this.fetcher(signed.url, {
-          method: "POST",
-          body,
-          headers: signed.headers,
-          redirect: "manual",
-        });
-      } catch (error) {
-        if (attempt === 3) throw error;
-        await this.sleep(50 * 2 ** attempt);
-        continue;
-      }
-      if ((response.status === 429 || response.status >= 500) && attempt < 3) {
-        await response.body?.cancel();
-        await this.sleep(50 * 2 ** attempt);
-        continue;
-      }
-      if (!response.ok) {
-        await response.body?.cancel();
-        throw new Error(`SQS ${action} failed (${response.status})`);
-      }
-      const result: unknown = await response.json();
-      const parsed = object(result);
-      if (!parsed) throw new Error(`Invalid SQS ${action} response`);
-      return parsed;
-    }
-    throw new Error(`SQS ${action} retry limit reached`);
+    const response = await awsRequest({
+      service: "sqs",
+      region: this.options.region,
+      url: `${this.endpoint}/`,
+      method: "POST",
+      body: JSON.stringify(input),
+      protocol: "json",
+      headers: {
+        "content-type": "application/x-amz-json-1.0",
+        "x-amz-target": `AmazonSQS.${action}`,
+      },
+      credentials: () => ({
+        accessKeyId: this.options.environment.AWS_ACCESS_KEY_ID ?? "",
+        secretAccessKey: this.options.environment.AWS_SECRET_ACCESS_KEY ?? "",
+        sessionToken: this.options.environment.AWS_SESSION_TOKEN,
+      }),
+      fetch: this.options.fetch,
+      sleep: this.options.sleep,
+      random: this.options.random,
+      requestTimeoutMs: this.options.requestTimeoutMs,
+      overallTimeoutMs: this.options.overallTimeoutMs,
+      signal: this.options.signal,
+    });
+    const parsed: unknown = await response.json();
+    const result = object(parsed);
+    if (!result) throw new Error(`Invalid SQS ${action} response`);
+    return result;
   }
+
   producer: Queue["producer"] = {
     send: async (topic, messages, options) => {
       const route = this.options.topics[topic];
@@ -200,7 +179,7 @@ export class SqsQueue implements Queue<SqsEvent, SqsResponse> {
             throw new Error("Incomplete SQS batch response");
           pending = pending.filter((entry) => !byId.get(entry.Id));
           if (pending.length && attempt < 3)
-            await this.sleep(50 * 2 ** attempt);
+            await this.sleep(awsBackoffMs(attempt, this.options.random));
         }
         if (pending.length)
           throw new Error("SQS batch entries exhausted retries");
@@ -323,7 +302,6 @@ export function create({
   queueConsumers = [],
   environment = {},
 }: CreateContext<Config, Record<string, unknown>>): SqsQueue {
-  void config; // The stack parser validates config before runtime construction.
   const region = environment.AWS_REGION ?? environment.AWS_DEFAULT_REGION;
   if (!region) throw new Error("Missing SQS region (AWS_REGION)");
   return new SqsQueue({
@@ -333,5 +311,7 @@ export function create({
     topics,
     consumers: queueConsumers,
     endpoint: environment.AWS_ENDPOINT_URL_SQS,
+    requestTimeoutMs: config.requestTimeoutMs,
+    overallTimeoutMs: config.overallTimeoutMs,
   });
 }

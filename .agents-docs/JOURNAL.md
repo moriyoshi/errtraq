@@ -735,3 +735,16 @@ integration while the existing validation gate continues to cover both provider 
   The native ADD result lets the 50-way contract pass, but conditional-update races,
   expiry resets and safe-integer boundaries need real DynamoDB verification. The injected
   future clock demonstrates logical TTL expiration while the physical item remains.
+
+## 2026-11-21 — M3c2 shared AWS requests
+
+- `aws-signing` now owns the signed HTTP request path used by S3, SQS and DynamoDB KV. It
+  provides 10-second per-attempt and 25-second overall defaults, abort, full-jitter retries,
+  Retry-After and one refreshed-credentials retry for ExpiredToken. Service error codes
+  from JSON and S3 XML become typed request errors; S3 and KV retain their port-specific
+  errors. Runtime schemas can override both request and overall budgets.
+- S3 continues streaming response bodies with an idle timeout and hashes in-memory payloads.
+  KV preserves its ambiguous-update safeguards when a retried conditional update fails.
+  The AWS IAM ListUsers and AWS signing-suite get-vanilla vectors are asserted centrally.
+- This turn covers review item 1; items 2 through 8 remain for the next turn. SQS FIFO is
+  unsupported and real AWS behavior / scrubbed event fixtures remain M3h follow-ups.

@@ -1,4 +1,8 @@
-import { signAwsRequest } from "@errtraq/aws-signing";
+import {
+  AwsRequestError,
+  awsRequest,
+  signAwsRequest,
+} from "@errtraq/aws-signing";
 import type {
   BlobMetadata,
   BlobStore,
@@ -39,6 +43,8 @@ export interface S3Options {
   sleep?: (ms: number) => Promise<void>;
   random?: () => number;
   requestTimeoutMs?: number;
+  overallTimeoutMs?: number;
+  signal?: AbortSignal;
   bodyIdleTimeoutMs?: number;
   allowedPrefixes?: readonly string[];
 }
@@ -122,69 +128,9 @@ function checkedStream(
     },
   });
 }
-function withIdleTimeout(
-  body: ReadableStream<Uint8Array>,
-  timeoutMs: number,
-  abort: () => void,
-): ReadableStream<Uint8Array> {
-  const reader = body.getReader();
-  let closed = false;
-  const release = () => {
-    if (!closed) {
-      closed = true;
-      reader.releaseLock();
-    }
-  };
-  return new ReadableStream({
-    async pull(controller) {
-      let timer: ReturnType<typeof setTimeout> | undefined;
-      try {
-        const item = await Promise.race([
-          reader.read(),
-          new Promise<never>((_, reject) => {
-            timer = setTimeout(() => {
-              reject(new BlobUnavailableError("S3 response body idle timeout"));
-              abort();
-            }, timeoutMs);
-          }),
-        ]);
-        if (item.done) {
-          release();
-          controller.close();
-        } else controller.enqueue(item.value);
-      } catch (error) {
-        abort();
-        void reader
-          .cancel(error)
-          .catch(() => {})
-          .finally(release);
-        controller.error(error);
-      } finally {
-        if (timer !== undefined) clearTimeout(timer);
-      }
-    },
-    async cancel(reason) {
-      try {
-        await reader.cancel(reason);
-      } finally {
-        abort();
-        release();
-      }
-    },
-  });
-}
-function retryAfter(value: string | null): number {
-  if (!value) return 0;
-  if (/^\d+(?:\.\d+)?$/.test(value))
-    return Math.min(Number(value) * 1000, Number.MAX_SAFE_INTEGER);
-  const date = Date.parse(value);
-  return Number.isFinite(date) ? Math.max(0, date - Date.now()) : 0;
-}
 /** S3-compatible BlobStore. Streams are uploaded in bounded multipart chunks. */
 export class S3BlobStore implements BlobStore {
   private readonly endpoint: URL;
-  private readonly fetcher: typeof fetch;
-  private readonly sleep: (ms: number) => Promise<void>;
   private readonly requestTimeoutMs: number;
   private readonly bodyIdleTimeoutMs: number;
   private readonly allowedPrefixes: readonly string[];
@@ -202,7 +148,6 @@ export class S3BlobStore implements BlobStore {
       this.endpoint.hash
     )
       throw new Error("Invalid S3 endpoint");
-    this.fetcher = (options.fetch ?? globalThis.fetch).bind(globalThis);
     this.requestTimeoutMs = options.requestTimeoutMs ?? 10_000;
     this.bodyIdleTimeoutMs = options.bodyIdleTimeoutMs ?? 30_000;
     if (
@@ -212,16 +157,6 @@ export class S3BlobStore implements BlobStore {
     )
       throw new RangeError("Invalid S3 timeout");
     this.allowedPrefixes = options.allowedPrefixes ?? [];
-    this.sleep =
-      options.sleep ??
-      (async (ms) => {
-        let remaining = ms;
-        do {
-          const duration = Math.min(remaining, 2_147_483_647);
-          await new Promise((resolve) => setTimeout(resolve, duration));
-          remaining -= duration;
-        } while (remaining > 0);
-      });
   }
   private checkKey(key: string): void {
     validateBlobKey(key);
@@ -251,8 +186,6 @@ export class S3BlobStore implements BlobStore {
     headers: HeadersInit = {},
     body?: Uint8Array | string,
   ): Promise<Response> {
-    let last: unknown;
-    let refreshed = false;
     const requestHeaders = new Headers(headers);
     if (body !== undefined) {
       const bytes =
@@ -268,117 +201,38 @@ export class S3BlobStore implements BlobStore {
         ).join(""),
       );
     }
-    for (let attempt = 0; attempt < 4; attempt++) {
-      const credentials = await this.options.credentials();
-      if (!credentials.accessKeyId || !credentials.secretAccessKey)
-        throw new Error("S3 credentials are missing");
-      const signed = await signS3Request({
-        method,
-        url: url.toString(),
-        headers: requestHeaders,
-        body: body as BodyInit | undefined,
-        ...credentials,
+    try {
+      return await awsRequest({
         service: "s3",
         region: this.options.region,
+        url: url.toString(),
+        method,
+        headers: requestHeaders,
+        body,
+        credentials: this.options.credentials,
+        protocol: "s3",
+        allowHttpErrors: true,
+        fetch: this.options.fetch,
+        sleep: this.options.sleep,
+        random: this.options.random,
+        requestTimeoutMs: this.requestTimeoutMs,
+        bodyIdleTimeoutMs: this.bodyIdleTimeoutMs,
+        overallTimeoutMs: this.options.overallTimeoutMs,
+        signal: this.options.signal,
+        mapBodyError: (error) =>
+          new BlobUnavailableError(error.message, error.code),
       });
-      const abort = new AbortController();
-      let timer: ReturnType<typeof setTimeout> | undefined;
-      let response: Response;
-      try {
-        response = await Promise.race([
-          this.fetcher(signed.url, {
-            method,
-            headers: signed.headers,
-            body: body as BodyInit | undefined,
-            redirect: "manual",
-            signal: abort.signal,
-          }),
-          new Promise<never>((_, reject) => {
-            timer = setTimeout(() => {
-              abort.abort();
-              reject(new BlobUnavailableError("S3 request timeout"));
-            }, this.requestTimeoutMs);
-          }),
-        ]);
-      } catch (error) {
-        abort.abort();
-        last = error;
-        if (attempt === 3)
-          throw error instanceof BlobUnavailableError
-            ? error
-            : new BlobUnavailableError(`S3 request failed: ${String(error)}`);
-        await this.sleep(
-          Math.floor(
-            (this.options.random ?? Math.random)() * 500 * 2 ** attempt,
-          ),
-        );
-        continue;
-      } finally {
-        if (timer !== undefined) clearTimeout(timer);
-      }
-      if (response.body)
-        response = new Response(
-          withIdleTimeout(response.body, this.bodyIdleTimeoutMs, () =>
-            abort.abort(),
-          ),
-          {
-            status: response.status,
-            statusText: response.statusText,
-            headers: response.headers,
-          },
-        );
-      if ((response.status === 400 || response.status === 403) && !refreshed) {
-        const text = await response.text();
-        const headerCode = response.headers.get("x-amz-error-code");
-        let code = headerCode;
-        try {
-          if (text) {
-            const value = record(parseXml(text).Error).Code;
-            if (typeof value === "string") code = value;
-          }
-        } catch {
-          /* Preserve unparseable response for the caller. */
-        }
-        if (code === "ExpiredToken") {
-          refreshed = true;
-          attempt--;
-          continue;
-        }
-        response = new Response(text || null, {
-          status: response.status,
-          statusText: response.statusText,
-          headers: response.headers,
-        });
-      }
-      if ((response.status === 429 || response.status >= 500) && attempt < 3) {
-        const delay = Math.max(
-          retryAfter(response.headers.get("retry-after")),
-          Math.floor(
-            (this.options.random ?? Math.random)() * 500 * 2 ** attempt,
-          ),
-        );
-        await response.body?.cancel();
-        await this.sleep(delay);
-        continue;
-      }
-      return response;
+    } catch (error) {
+      if (error instanceof AwsRequestError)
+        throw new BlobUnavailableError(error.message, error.code);
+      throw error;
     }
-    throw last;
   }
 
   private async error(response: Response, action: string): Promise<BlobError> {
     const status = response.status;
-    let code: string | undefined =
-      response.headers.get("x-amz-error-code") ?? undefined;
-    try {
-      const text = await response.text();
-      if (text) {
-        const value = record(parseXml(text).Error).Code;
-        if (typeof value === "string") code = value;
-      }
-    } catch {
-      /* HEAD responses and non-XML errors may not have a body. */
-    }
+    const code = response.headers.get("x-amz-error-code") ?? undefined;
+    await response.body?.cancel();
     return this.providerError(status, action, code);
   }
   private providerError(
@@ -799,6 +653,7 @@ export function create({
     endpoint: config.endpoint ?? value("AWS_ENDPOINT_URL_S3"),
     forcePathStyle: config.forcePathStyle,
     requestTimeoutMs: config.requestTimeoutMs,
+    overallTimeoutMs: config.overallTimeoutMs,
     bodyIdleTimeoutMs: config.bodyIdleTimeoutMs,
     allowedPrefixes: [
       ...(typeof bindings.ERRTRAQ_BLOB_BUCKET === "string"

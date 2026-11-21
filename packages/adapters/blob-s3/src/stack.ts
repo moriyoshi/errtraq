@@ -12,6 +12,7 @@ export const configSchema = z.strictObject({
   endpoint: z.url().optional(),
   forcePathStyle: z.boolean().optional(),
   requestTimeoutMs: z.number().int().min(1).max(300000).optional(),
+  overallTimeoutMs: z.number().int().min(1).max(300000).optional(),
   bodyIdleTimeoutMs: z.number().int().min(1).max(300000).optional(),
 });
 export type Config = z.input<typeof configSchema>;

@@ -47,6 +47,48 @@ const response = (data: unknown) =>
   });
 
 describe("SQS producer", () => {
+  it("uses full jitter for retryable per-entry failures", async () => {
+    const waits: number[] = [];
+    let calls = 0;
+    const q = new SqsQueue({
+      region: "us-east-1",
+      environment: env,
+      bindings: { URL: "https://example.test/queue" },
+      topics: { ingest: { physical: "shared", producerBinding: "URL" } },
+      consumers: [],
+      random: () => 0.5,
+      sleep: async (ms) => {
+        waits.push(ms);
+      },
+      fetch: async () =>
+        ++calls === 1
+          ? response({ Failed: [{ Id: "0", SenderFault: false }] })
+          : response({ Successful: [{ Id: "0" }] }),
+    });
+    await q.producer.send("ingest", [{ key: "a", body: 1 }]);
+    expect(waits).toEqual([250]);
+  });
+  it("retries HTTP 400 throttling and exposes typed malformed-response errors", async () => {
+    let calls = 0;
+    const q = make(async () =>
+      ++calls === 1
+        ? new Response(JSON.stringify({ __type: "com.aws#RequestThrottled" }), {
+            status: 400,
+          })
+        : response({ Successful: [{ Id: "0" }] }),
+    );
+    await q.producer.send("ingest", [{ key: "a", body: 1 }]);
+    expect(calls).toBe(2);
+    await expect(
+      make(async () => new Response("not json")).producer.send("ingest", [
+        { key: "a", body: 1 },
+      ]),
+    ).rejects.toMatchObject({
+      name: "AwsRequestError",
+      service: "sqs",
+      code: "InvalidResponse",
+    });
+  });
   it("splits batches at the byte limit and carries the topic and delay", async () => {
     const batches: {
       MessageBody: string;
