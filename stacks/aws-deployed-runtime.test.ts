@@ -3,7 +3,7 @@ import {
   deriveDeployment,
   output,
 } from "@errtraq/core";
-import { create as createSqs } from "@errtraq/queue-sqs";
+import { create as createSqs } from "@errtraq/queue-sqs/runtime";
 import { describe, expect, it, vi } from "vitest";
 import shared from "./aws-dynamodb.js";
 import perTopic from "./aws-dynamodb-per-topic.js";
@@ -43,7 +43,7 @@ describe.each([shared, perTopic])("deployed runtime: $name", (stack) => {
         "ingest",
         environment,
         async (module) =>
-          module === "@errtraq/queue-sqs"
+          module === "@errtraq/queue-sqs/runtime"
             ? { create: createSqs }
             : { create: () => ({}) },
       );
@@ -112,18 +112,19 @@ describe.each([shared, perTopic])("deployed runtime: $name", (stack) => {
       "store",
     ]);
     expect(calls.map((item) => item.module).sort()).toEqual([
-      "@errtraq/blob-s3",
+      "@errtraq/blob-s3/runtime",
       "@errtraq/kv-dynamodb",
-      "@errtraq/queue-sqs",
+      "@errtraq/queue-sqs/runtime",
       "@errtraq/store-dynamodb",
     ]);
     expect(reads.sort()).toEqual(Object.keys(values).sort());
     expect(
-      calls.find((item) => item.module === "@errtraq/blob-s3")?.context
+      calls.find((item) => item.module === "@errtraq/blob-s3/runtime")?.context
         .environment,
     ).toBe(environment);
     expect(
-      calls.find((item) => item.module === "@errtraq/queue-sqs")?.context,
+      calls.find((item) => item.module === "@errtraq/queue-sqs/runtime")
+        ?.context,
     ).toMatchObject({
       bindings: { [queueName]: "queue-url" },
       queueConsumers: [],
@@ -148,7 +149,7 @@ describe.each([shared, perTopic])("deployed runtime: $name", (stack) => {
       environment,
       async (module) => ({
         create(context: Record<string, unknown>) {
-          if (module === "@errtraq/queue-sqs") queueContext = context;
+          if (module === "@errtraq/queue-sqs/runtime") queueContext = context;
           return {};
         },
       }),

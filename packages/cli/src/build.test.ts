@@ -301,6 +301,10 @@ describe("built stacks", () => {
           await readFile(join(directory, "meta.json"), "utf8"),
         ) as { inputs: Record<string, unknown> };
         const inputs = Object.keys(meta.inputs).join("\n");
+        expect(inputs).not.toContain("packages/adapters/blob-s3/src/stack.ts");
+        expect(inputs).not.toContain(
+          "packages/adapters/queue-sqs/src/stack.ts",
+        );
         for (const localAdapter of [
           "store-sql",
           "queue-memory",
@@ -309,8 +313,8 @@ describe("built stacks", () => {
         ])
           expect(inputs).not.toContain(`packages/adapters/${localAdapter}/`);
         const selected = new Set(
-          deployedPlan(stack, fn.id).selections.map((item) =>
-            item.runtimeModule.split("/").at(-1),
+          deployedPlan(stack, fn.id).selections.map(
+            (item) => item.runtimeModule.split("/")[1],
           ),
         );
         for (const adapter of [

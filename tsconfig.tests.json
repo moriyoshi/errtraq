@@ -53,7 +53,12 @@
       "@errtraq/platform-aws-lambda/stack": [
         "packages/platforms/aws-lambda/src/stack.ts"
       ],
-      "@errtraq/aws-signing": ["packages/aws-signing/src/index.ts"]
+      "@errtraq/aws-signing": ["packages/aws-signing/src/index.ts"],
+      "@errtraq/blob-s3/runtime": ["packages/adapters/blob-s3/src/runtime.ts"],
+      "@errtraq/queue-sqs/runtime": [
+        "packages/adapters/queue-sqs/src/runtime.ts"
+      ],
+      "@errtraq/core/blob": ["packages/core/src/blob.ts"]
     }
   },
   "include": ["packages/core/src/**/*.ts", "packages/http/src/**/*.ts"]

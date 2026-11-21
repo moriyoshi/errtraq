@@ -11,6 +11,8 @@ export const configSchema = z.strictObject({
   region: z.string().min(1).optional(),
   endpoint: z.url().optional(),
   forcePathStyle: z.boolean().optional(),
+  requestTimeoutMs: z.number().int().min(1).max(300000).optional(),
+  bodyIdleTimeoutMs: z.number().int().min(1).max(300000).optional(),
 });
 export type Config = z.input<typeof configSchema>;
 export const manifest: AdapterManifest = {
@@ -79,5 +81,5 @@ export const infra: InfraDescriptor<Config> = {
   ],
 };
 export function s3Blob(config: Config = {}): AdapterSelection<Config> {
-  return { manifest, infra, config, runtimeModule: "@errtraq/blob-s3" };
+  return { manifest, infra, config, runtimeModule: "@errtraq/blob-s3/runtime" };
 }

@@ -11,7 +11,9 @@ import {
 import { z } from "zod";
 
 // SQS counts the entire encoded message body; M3 must include its envelope overhead.
-export const SQS_MAX_BYTES = 1_048_576;
+export { SQS_MAX_BYTES } from "./constants.js";
+
+import { SQS_MAX_BYTES } from "./constants.js";
 export const configSchema = z.strictObject({
   mode: z.enum(["shared", "per-topic"]).default("shared"),
   visibilityTimeoutSec: z.number().int().min(1).max(43200).default(180),
@@ -143,6 +145,6 @@ export function sqsQueue(config: Config = {}): AdapterSelection<Config> {
     manifest,
     infra: descriptor(parsed),
     config: parsed,
-    runtimeModule: "@errtraq/queue-sqs",
+    runtimeModule: "@errtraq/queue-sqs/runtime",
   };
 }

@@ -27,6 +27,7 @@ async function makeStore() {
   const bucket = `errtraq-${randomUUID().replaceAll("-", "")}`;
   await bucketRequest(bucket, "PUT");
   const store = new S3BlobStore({
+    allowedPrefixes: [""],
     bucket,
     endpoint,
     region: "us-east-1",

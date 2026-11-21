@@ -703,3 +703,18 @@ integration while the existing validation gate continues to cover both provider 
   upload and failed abort both surface in an AggregateError; lifecycle is the backstop.
 - Review items 6 to 10 remain for the next turn. The 403-versus-missing behavior, multipart
   authorization, payload mode and URL-encoded plus behavior still require real AWS verification.
+
+## 2026-11-21 — M3b2 S3 review, items 6 to 10
+
+- S3 requests use a 10-second header timeout and 30-second body idle timeout by default,
+  configurable per stack. Bounded retries use full jitter with a 500 ms base and respect
+  Retry-After. One ExpiredToken response triggers a fresh credential lookup and retry.
+- In-memory request bodies carry signed x-amz-content-sha256 hashes; multipart buffering
+  remains bounded. URL-encoded list keys decode form-style plus as space, while %2B is plus.
+- AWS S3 and SQS stack helpers point at runtime-only package subpaths. A small core blob
+  subpath avoids pulling the Zod-bearing stack barrel into S3 runtime bundles. Dedicated
+  esbuild metafile tests guard both adapters; whole Lambda bundles may still contain Zod
+  from unrelated core or handler imports.
+- Delivered blob bindings define primary and staging access in code. List prefixes and keys
+  must stay within those purposes, and the staging prefix binding is required and checked.
+  The staged-envelope recovery job already lists the permitted envelopes/ prefix.

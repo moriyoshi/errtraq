@@ -1,23 +1,25 @@
 import { signAwsRequest } from "@errtraq/aws-signing";
+import type {
+  BlobMetadata,
+  BlobStore,
+  CreateContext,
+  Cursor,
+} from "@errtraq/core";
 import {
   BlobAccessDeniedError,
   BlobBucketNotFoundError,
   BlobCorruptError,
   BlobError,
   BlobInvalidKeyError,
-  type BlobMetadata,
   BlobPreconditionError,
-  type BlobStore,
   BlobThrottledError,
   BlobUnavailableError,
-  type CreateContext,
-  type Cursor,
   decodeCursor,
   encodeCursor,
   InvalidCursorError,
   pageLimit,
   validateBlobKey,
-} from "@errtraq/core";
+} from "@errtraq/core/blob";
 import { XMLParser, XMLValidator } from "fast-xml-parser";
 import type { Config } from "./stack.js";
 
@@ -35,6 +37,10 @@ export interface S3Options {
   credentials: CredentialsProvider;
   fetch?: typeof fetch;
   sleep?: (ms: number) => Promise<void>;
+  random?: () => number;
+  requestTimeoutMs?: number;
+  bodyIdleTimeoutMs?: number;
+  allowedPrefixes?: readonly string[];
 }
 export const signS3Request = signAwsRequest;
 function compareUtf8(a: string, b: string): number {
@@ -116,11 +122,72 @@ function checkedStream(
     },
   });
 }
+function withIdleTimeout(
+  body: ReadableStream<Uint8Array>,
+  timeoutMs: number,
+  abort: () => void,
+): ReadableStream<Uint8Array> {
+  const reader = body.getReader();
+  let closed = false;
+  const release = () => {
+    if (!closed) {
+      closed = true;
+      reader.releaseLock();
+    }
+  };
+  return new ReadableStream({
+    async pull(controller) {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        const item = await Promise.race([
+          reader.read(),
+          new Promise<never>((_, reject) => {
+            timer = setTimeout(() => {
+              reject(new BlobUnavailableError("S3 response body idle timeout"));
+              abort();
+            }, timeoutMs);
+          }),
+        ]);
+        if (item.done) {
+          release();
+          controller.close();
+        } else controller.enqueue(item.value);
+      } catch (error) {
+        abort();
+        void reader
+          .cancel(error)
+          .catch(() => {})
+          .finally(release);
+        controller.error(error);
+      } finally {
+        if (timer !== undefined) clearTimeout(timer);
+      }
+    },
+    async cancel(reason) {
+      try {
+        await reader.cancel(reason);
+      } finally {
+        abort();
+        release();
+      }
+    },
+  });
+}
+function retryAfter(value: string | null): number {
+  if (!value) return 0;
+  if (/^\d+(?:\.\d+)?$/.test(value))
+    return Math.min(Number(value) * 1000, Number.MAX_SAFE_INTEGER);
+  const date = Date.parse(value);
+  return Number.isFinite(date) ? Math.max(0, date - Date.now()) : 0;
+}
 /** S3-compatible BlobStore. Streams are uploaded in bounded multipart chunks. */
 export class S3BlobStore implements BlobStore {
   private readonly endpoint: URL;
   private readonly fetcher: typeof fetch;
   private readonly sleep: (ms: number) => Promise<void>;
+  private readonly requestTimeoutMs: number;
+  private readonly bodyIdleTimeoutMs: number;
+  private readonly allowedPrefixes: readonly string[];
   constructor(private readonly options: S3Options) {
     if (!options.bucket || !options.region)
       throw new Error("S3 bucket and region are required");
@@ -136,12 +203,35 @@ export class S3BlobStore implements BlobStore {
     )
       throw new Error("Invalid S3 endpoint");
     this.fetcher = (options.fetch ?? globalThis.fetch).bind(globalThis);
+    this.requestTimeoutMs = options.requestTimeoutMs ?? 10_000;
+    this.bodyIdleTimeoutMs = options.bodyIdleTimeoutMs ?? 30_000;
+    if (
+      ![this.requestTimeoutMs, this.bodyIdleTimeoutMs].every(
+        (value) => Number.isInteger(value) && value > 0 && value <= 300_000,
+      )
+    )
+      throw new RangeError("Invalid S3 timeout");
+    this.allowedPrefixes = options.allowedPrefixes ?? [];
     this.sleep =
       options.sleep ??
-      ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
+      (async (ms) => {
+        let remaining = ms;
+        do {
+          const duration = Math.min(remaining, 2_147_483_647);
+          await new Promise((resolve) => setTimeout(resolve, duration));
+          remaining -= duration;
+        } while (remaining > 0);
+      });
+  }
+  private checkKey(key: string): void {
+    validateBlobKey(key);
+    if (!this.allowedPrefixes.some((prefix) => key.startsWith(prefix)))
+      throw new BlobAccessDeniedError(
+        "S3 key is outside delivered blob purposes",
+      );
   }
   private url(key?: string, query?: Record<string, string>): URL {
-    if (key !== undefined) validateBlobKey(key);
+    if (key !== undefined) this.checkKey(key);
     const url = new URL(this.endpoint);
     const base = url.pathname.replace(/\/$/, "");
     const bucket = encodeURIComponent(this.options.bucket);
@@ -162,6 +252,22 @@ export class S3BlobStore implements BlobStore {
     body?: Uint8Array | string,
   ): Promise<Response> {
     let last: unknown;
+    let refreshed = false;
+    const requestHeaders = new Headers(headers);
+    if (body !== undefined) {
+      const bytes =
+        typeof body === "string" ? new TextEncoder().encode(body) : body;
+      const digest = await crypto.subtle.digest(
+        "SHA-256",
+        bytes as Uint8Array<ArrayBuffer>,
+      );
+      requestHeaders.set(
+        "x-amz-content-sha256",
+        Array.from(new Uint8Array(digest), (byte) =>
+          byte.toString(16).padStart(2, "0"),
+        ).join(""),
+      );
+    }
     for (let attempt = 0; attempt < 4; attempt++) {
       const credentials = await this.options.credentials();
       if (!credentials.accessKeyId || !credentials.secretAccessKey)
@@ -169,37 +275,97 @@ export class S3BlobStore implements BlobStore {
       const signed = await signS3Request({
         method,
         url: url.toString(),
-        headers,
+        headers: requestHeaders,
         body: body as BodyInit | undefined,
         ...credentials,
         service: "s3",
         region: this.options.region,
       });
+      const abort = new AbortController();
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      let response: Response;
       try {
-        const response = await this.fetcher(signed.url, {
-          method,
-          headers: signed.headers,
-          body: body as BodyInit | undefined,
-          redirect: "manual",
-        });
-        if (
-          (response.status === 429 || response.status >= 500) &&
-          attempt < 3
-        ) {
-          await response.body?.cancel();
-          await this.sleep(50 * 2 ** attempt);
-          continue;
-        }
-        return response;
+        response = await Promise.race([
+          this.fetcher(signed.url, {
+            method,
+            headers: signed.headers,
+            body: body as BodyInit | undefined,
+            redirect: "manual",
+            signal: abort.signal,
+          }),
+          new Promise<never>((_, reject) => {
+            timer = setTimeout(() => {
+              abort.abort();
+              reject(new BlobUnavailableError("S3 request timeout"));
+            }, this.requestTimeoutMs);
+          }),
+        ]);
       } catch (error) {
+        abort.abort();
         last = error;
         if (attempt === 3)
-          throw new BlobUnavailableError(`S3 request failed: ${String(error)}`);
-        await this.sleep(50 * 2 ** attempt);
+          throw error instanceof BlobUnavailableError
+            ? error
+            : new BlobUnavailableError(`S3 request failed: ${String(error)}`);
+        await this.sleep(
+          Math.floor(
+            (this.options.random ?? Math.random)() * 500 * 2 ** attempt,
+          ),
+        );
+        continue;
+      } finally {
+        if (timer !== undefined) clearTimeout(timer);
       }
+      if (response.body)
+        response = new Response(
+          withIdleTimeout(response.body, this.bodyIdleTimeoutMs, () =>
+            abort.abort(),
+          ),
+          {
+            status: response.status,
+            statusText: response.statusText,
+            headers: response.headers,
+          },
+        );
+      if ((response.status === 400 || response.status === 403) && !refreshed) {
+        const text = await response.text();
+        const headerCode = response.headers.get("x-amz-error-code");
+        let code = headerCode;
+        try {
+          if (text) {
+            const value = record(parseXml(text).Error).Code;
+            if (typeof value === "string") code = value;
+          }
+        } catch {
+          /* Preserve unparseable response for the caller. */
+        }
+        if (code === "ExpiredToken") {
+          refreshed = true;
+          attempt--;
+          continue;
+        }
+        response = new Response(text || null, {
+          status: response.status,
+          statusText: response.statusText,
+          headers: response.headers,
+        });
+      }
+      if ((response.status === 429 || response.status >= 500) && attempt < 3) {
+        const delay = Math.max(
+          retryAfter(response.headers.get("retry-after")),
+          Math.floor(
+            (this.options.random ?? Math.random)() * 500 * 2 ** attempt,
+          ),
+        );
+        await response.body?.cancel();
+        await this.sleep(delay);
+        continue;
+      }
+      return response;
     }
     throw last;
   }
+
   private async error(response: Response, action: string): Promise<BlobError> {
     const status = response.status;
     let code: string | undefined =
@@ -290,7 +456,7 @@ export class S3BlobStore implements BlobStore {
       await response.body?.cancel();
       return;
     }
-    validateBlobKey(key);
+    this.checkKey(key);
     const reader = body.getReader();
     let uploadId: string | undefined;
     const parts: string[] = [];
@@ -505,7 +671,7 @@ export class S3BlobStore implements BlobStore {
         throw new BlobCorruptError("Invalid S3 listing key");
       if (data.EncodingType !== "url") return key;
       try {
-        return decodeURIComponent(key);
+        return decodeURIComponent(key.replaceAll("+", " "));
       } catch {
         throw new BlobCorruptError("Invalid encoded S3 key");
       }
@@ -513,6 +679,10 @@ export class S3BlobStore implements BlobStore {
     return { keys, truncated: data.IsTruncated === "true" };
   }
   async list(prefix: string, cursor?: Cursor, limit?: number) {
+    if (!this.allowedPrefixes.some((allowed) => prefix.startsWith(allowed)))
+      throw new BlobAccessDeniedError(
+        "S3 list prefix is outside delivered blob purposes",
+      );
     const size = pageLimit(limit),
       scope = JSON.stringify(["blob", prefix]),
       decoded = decodeCursor(cursor, scope);
@@ -595,6 +765,27 @@ export function create({
     bindings.ERRTRAQ_BLOB_BUCKET ?? bindings.ERRTRAQ_STAGING_BUCKET;
   if (typeof bucket !== "string" || !bucket)
     throw new Error("Missing S3 bucket binding");
+  if (
+    typeof bindings.ERRTRAQ_BLOB_BUCKET === "string" &&
+    typeof bindings.ERRTRAQ_STAGING_BUCKET === "string" &&
+    bindings.ERRTRAQ_BLOB_BUCKET !== bindings.ERRTRAQ_STAGING_BUCKET
+  )
+    throw new Error("S3 purpose bindings must share the same bucket");
+  if (
+    typeof bindings.ERRTRAQ_STAGING_BUCKET === "string" &&
+    (typeof bindings.ERRTRAQ_STAGING_PREFIX !== "string" ||
+      !bindings.ERRTRAQ_STAGING_PREFIX)
+  )
+    throw new Error("Missing S3 staging prefix binding");
+  if (
+    typeof bindings.ERRTRAQ_STAGING_BUCKET === "string" &&
+    (typeof bindings.ERRTRAQ_STAGING_PREFIX !== "string" ||
+      !/^[a-zA-Z0-9_-]+\/$/.test(bindings.ERRTRAQ_STAGING_PREFIX) ||
+      ["envelopes/", "payloads/", "artifacts/"].includes(
+        bindings.ERRTRAQ_STAGING_PREFIX,
+      ))
+  )
+    throw new Error("Invalid S3 staging prefix binding");
   const value = (name: string): string | undefined => {
     const binding = bindings[name];
     return typeof binding === "string" ? binding : environment[name];
@@ -607,6 +798,18 @@ export function create({
     region,
     endpoint: config.endpoint ?? value("AWS_ENDPOINT_URL_S3"),
     forcePathStyle: config.forcePathStyle,
+    requestTimeoutMs: config.requestTimeoutMs,
+    bodyIdleTimeoutMs: config.bodyIdleTimeoutMs,
+    allowedPrefixes: [
+      ...(typeof bindings.ERRTRAQ_BLOB_BUCKET === "string"
+        ? ["envelopes/", "payloads/", "artifacts/"]
+        : []),
+      ...(typeof bindings.ERRTRAQ_STAGING_BUCKET === "string" &&
+      typeof bindings.ERRTRAQ_STAGING_PREFIX === "string" &&
+      bindings.ERRTRAQ_STAGING_PREFIX
+        ? [bindings.ERRTRAQ_STAGING_PREFIX]
+        : []),
+    ],
     credentials: () => {
       const sessionToken = value("AWS_SESSION_TOKEN");
       return {

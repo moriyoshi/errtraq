@@ -5,7 +5,8 @@ import type {
   Delivery,
   Queue,
 } from "@errtraq/core";
-import { type Config, configSchema, SQS_MAX_BYTES } from "./stack.js";
+import { SQS_MAX_BYTES } from "./constants.js";
+import type { Config } from "./stack.js";
 
 type Route = { physical: string; producerBinding?: string };
 type ConsumerRoute = {
@@ -322,7 +323,7 @@ export function create({
   queueConsumers = [],
   environment = {},
 }: CreateContext<Config, Record<string, unknown>>): SqsQueue {
-  configSchema.parse(config);
+  void config; // The stack parser validates config before runtime construction.
   const region = environment.AWS_REGION ?? environment.AWS_DEFAULT_REGION;
   if (!region) throw new Error("Missing SQS region (AWS_REGION)");
   return new SqsQueue({

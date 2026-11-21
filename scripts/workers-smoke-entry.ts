@@ -7,6 +7,7 @@ export default {
       AWS_SECRET_ACCESS_KEY: "fixture",
     };
     const blob = new S3BlobStore({
+      allowedPrefixes: [""],
       bucket: "bucket",
       region: "us-east-1",
       endpoint: env.ENDPOINT,

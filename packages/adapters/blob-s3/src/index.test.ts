@@ -16,6 +16,7 @@ import { S3BlobStore, signS3Request } from "./runtime.js";
 const creds = { accessKeyId: "test-access", secretAccessKey: "test-secret" };
 function store(fetcher: typeof fetch) {
   return new S3BlobStore({
+    allowedPrefixes: [""],
     bucket: "bucket",
     region: "us-east-1",
     endpoint: "https://storage.example.test",
@@ -73,6 +74,7 @@ describe("S3 request signing", () => {
         new Response(null, { status: 204 }),
     );
     const s3 = new S3BlobStore({
+      allowedPrefixes: [""],
       bucket: "bucket",
       region: "us-east-1",
       credentials: () => ({ ...creds, sessionToken: `token-${++n}` }),
@@ -108,11 +110,11 @@ describe("S3 request signing", () => {
         dependencies: {},
         environment: process.env,
       });
-      await s3.delete("a");
+      await s3.delete("envelopes/a");
       vi.stubEnv("AWS_ACCESS_KEY_ID", "key-two");
       vi.stubEnv("AWS_SECRET_ACCESS_KEY", "secret-two");
       vi.stubEnv("AWS_SESSION_TOKEN", "token-two");
-      await s3.delete("b");
+      await s3.delete("envelopes/b");
       expect(headers[0]?.get("authorization")).toContain("Credential=key-one/");
       expect(headers[1]?.get("authorization")).toContain("Credential=key-two/");
       expect(headers[1]?.get("x-amz-security-token")).toBe("token-two");
@@ -138,7 +140,7 @@ describe("S3 request signing", () => {
         },
         dependencies: {},
       });
-      await s3.delete("key");
+      await s3.delete("envelopes/key");
       expect(requests[0]?.get("authorization")).toContain(
         "Credential=worker-key/",
       );
@@ -155,6 +157,7 @@ describe("S3 request signing", () => {
     };
     await store(request).delete("a b/c");
     await new S3BlobStore({
+      allowedPrefixes: [""],
       bucket: "bucket",
       region: "us-east-1",
       endpoint: "https://storage.example.test",
@@ -169,6 +172,294 @@ describe("S3 request signing", () => {
 });
 
 describe("S3 error handling and streaming", () => {
+  it("times out and aborts each stalled request attempt", async () => {
+    const signals: AbortSignal[] = [];
+    const s3 = new S3BlobStore({
+      allowedPrefixes: [""],
+      bucket: "b",
+      region: "us-east-1",
+      credentials: () => creds,
+      requestTimeoutMs: 10,
+      random: () => 0,
+      sleep: async () => {},
+      fetch: async (_url, init) => {
+        const signal = init?.signal;
+        if (signal) signals.push(signal);
+        return await new Promise<Response>((_, reject) =>
+          signal?.addEventListener("abort", () => reject(new Error("aborted"))),
+        );
+      },
+    });
+    await expect(s3.get("a")).rejects.toBeInstanceOf(BlobUnavailableError);
+    expect(signals).toHaveLength(4);
+    expect(signals.every((signal) => signal.aborted)).toBe(true);
+  });
+  it("times out and aborts an idle response body", async () => {
+    let aborted = false;
+    const s3 = new S3BlobStore({
+      allowedPrefixes: [""],
+      bucket: "b",
+      region: "us-east-1",
+      credentials: () => creds,
+      bodyIdleTimeoutMs: 10,
+      fetch: async (_url, init) => {
+        init?.signal?.addEventListener("abort", () => {
+          aborted = true;
+        });
+        return new Response(
+          new ReadableStream({
+            pull() {
+              return new Promise(() => {});
+            },
+          }),
+        );
+      },
+    });
+    const body = await s3.get("a");
+    await expect(new Response(body).arrayBuffer()).rejects.toBeInstanceOf(
+      BlobUnavailableError,
+    );
+    expect(aborted).toBe(true);
+  });
+  it("uses full jitter and honors Retry-After", async () => {
+    const waits: number[] = [];
+    let calls = 0;
+    const s3 = new S3BlobStore({
+      allowedPrefixes: [""],
+      bucket: "b",
+      region: "us-east-1",
+      credentials: () => creds,
+      random: () => 0.4,
+      sleep: async (ms) => {
+        waits.push(ms);
+      },
+      fetch: async () => {
+        calls++;
+        return calls === 1
+          ? new Response(null, { status: 503, headers: { "retry-after": "2" } })
+          : calls === 2
+            ? new Response(null, { status: 429 })
+            : new Response(null, { status: 204 });
+      },
+    });
+    await s3.delete("a");
+    expect(waits).toEqual([2000, 400]);
+  });
+  it("honors an HTTP-date Retry-After", async () => {
+    const now = vi.spyOn(Date, "now").mockReturnValue(1_700_000_000_000);
+    const waits: number[] = [];
+    let calls = 0;
+    try {
+      const s3 = new S3BlobStore({
+        allowedPrefixes: [""],
+        bucket: "b",
+        region: "us-east-1",
+        credentials: () => creds,
+        random: () => 0,
+        sleep: async (ms) => {
+          waits.push(ms);
+        },
+        fetch: async () =>
+          ++calls === 1
+            ? new Response(null, {
+                status: 503,
+                headers: {
+                  "retry-after": new Date(1_700_000_003_000).toUTCString(),
+                },
+              })
+            : new Response(null, { status: 204 }),
+      });
+      await s3.delete("a");
+      expect(waits).toEqual([3000]);
+    } finally {
+      now.mockRestore();
+    }
+  });
+  it("does not shorten a long Retry-After to the timer maximum", async () => {
+    const waits: number[] = [];
+    let calls = 0;
+    const s3 = new S3BlobStore({
+      allowedPrefixes: [""],
+      bucket: "b",
+      region: "us-east-1",
+      credentials: () => creds,
+      random: () => 0,
+      sleep: async (ms) => {
+        waits.push(ms);
+      },
+      fetch: async () =>
+        ++calls === 1
+          ? new Response(null, {
+              status: 503,
+              headers: { "retry-after": "3000000" },
+            })
+          : new Response(null, { status: 204 }),
+    });
+    await s3.delete("a");
+    expect(waits).toEqual([3_000_000_000]);
+  });
+  it("refreshes credentials once for ExpiredToken and preserves the second error", async () => {
+    const auth: string[] = [];
+    let credentials = 0;
+    const s3 = new S3BlobStore({
+      allowedPrefixes: [""],
+      bucket: "b",
+      region: "us-east-1",
+      credentials: () => ({
+        accessKeyId: `key-${++credentials}`,
+        secretAccessKey: "secret",
+      }),
+      fetch: async (_url, init) => {
+        auth.push(new Headers(init?.headers).get("authorization") ?? "");
+        return new Response("<Error><Code>ExpiredToken</Code></Error>", {
+          status: 403,
+        });
+      },
+    });
+    await expect(s3.delete("a")).rejects.toMatchObject({
+      providerCode: "ExpiredToken",
+    });
+    expect(auth).toHaveLength(2);
+    expect(auth[0]).toContain("Credential=key-1/");
+    expect(auth[1]).toContain("Credential=key-2/");
+  });
+  it("uses signed SHA-256 payload hashes on byte puts and multipart parts", async () => {
+    const hashes: string[] = [];
+    const s3 = store(async (url, init) => {
+      const headers = new Headers(init?.headers);
+      if (init?.method === "PUT") {
+        const body = init.body as Uint8Array;
+        const digest = await crypto.subtle.digest(
+          "SHA-256",
+          body as Uint8Array<ArrayBuffer>,
+        );
+        const actual = Array.from(new Uint8Array(digest), (b) =>
+          b.toString(16).padStart(2, "0"),
+        ).join("");
+        expect(headers.get("x-amz-content-sha256")).toBe(actual);
+        expect(headers.get("authorization")).toContain("x-amz-content-sha256");
+        hashes.push(actual);
+        return new Response(null, { headers: { etag: '"etag"' } });
+      }
+      if (String(url).includes("uploads="))
+        return new Response(
+          "<InitiateMultipartUploadResult><UploadId>u</UploadId></InitiateMultipartUploadResult>",
+        );
+      return new Response(
+        "<CompleteMultipartUploadResult><ETag>ok</ETag></CompleteMultipartUploadResult>",
+      );
+    });
+    await s3.put("a", new Uint8Array([1, 2, 3]));
+    await s3.put(
+      "a",
+      new ReadableStream({
+        start(c) {
+          c.enqueue(new Uint8Array(5 * 1024 * 1024 + 1));
+          c.close();
+        },
+      }),
+    );
+    expect(hashes).toHaveLength(3);
+  });
+  it("decodes S3 form-style spaces and encoded literal plus signs", async () => {
+    const response =
+      "<ListBucketResult><EncodingType>url</EncodingType><IsTruncated>false</IsTruncated><Contents><Key>p%2Fa+b</Key></Contents><Contents><Key>p%2Fa%2Bb</Key></Contents></ListBucketResult>";
+    expect(
+      (await store(async () => new Response(response)).list("p/")).items,
+    ).toEqual(["p/a b", "p/a+b"]);
+  });
+  it("limits operations to delivered primary and staging purposes", async () => {
+    const calls: string[] = [];
+    vi.stubGlobal("fetch", async (url: unknown) => {
+      calls.push(String(url));
+      return new Response(
+        "<ListBucketResult><IsTruncated>false</IsTruncated></ListBucketResult>",
+      );
+    });
+    try {
+      const base = {
+        config: { region: "us-east-1" },
+        dependencies: {},
+        environment: { AWS_ACCESS_KEY_ID: "a", AWS_SECRET_ACCESS_KEY: "b" },
+      };
+      const primary = create({
+        ...base,
+        bindings: { ERRTRAQ_BLOB_BUCKET: "bucket" },
+      });
+      await expect(primary.list("")).rejects.toBeInstanceOf(
+        BlobAccessDeniedError,
+      );
+      await expect(primary.delete("archive-staging/a")).rejects.toBeInstanceOf(
+        BlobAccessDeniedError,
+      );
+      await primary.list("envelopes/");
+      const staging = create({
+        ...base,
+        bindings: {
+          ERRTRAQ_STAGING_BUCKET: "bucket",
+          ERRTRAQ_STAGING_PREFIX: "archive-staging/",
+        },
+      });
+      await expect(staging.list("envelopes/")).rejects.toBeInstanceOf(
+        BlobAccessDeniedError,
+      );
+      await expect(
+        staging.delete("archive-staging-evil/a"),
+      ).rejects.toBeInstanceOf(BlobAccessDeniedError);
+      await staging.list("archive-staging/");
+      await staging.put("archive-staging/item", new Uint8Array([1]));
+      const both = create({
+        ...base,
+        bindings: {
+          ERRTRAQ_BLOB_BUCKET: "bucket",
+          ERRTRAQ_STAGING_BUCKET: "bucket",
+          ERRTRAQ_STAGING_PREFIX: "archive-staging/",
+        },
+      });
+      await both.list("archive-staging/");
+      expect(calls).toHaveLength(4);
+      expect(() =>
+        create({ ...base, bindings: { ERRTRAQ_STAGING_BUCKET: "bucket" } }),
+      ).toThrow("prefix");
+      expect(() =>
+        create({
+          ...base,
+          bindings: {
+            ERRTRAQ_STAGING_BUCKET: "bucket",
+            ERRTRAQ_STAGING_PREFIX: "archive-staging",
+          },
+        }),
+      ).toThrow("prefix");
+      expect(() =>
+        create({
+          ...base,
+          bindings: {
+            ERRTRAQ_BLOB_BUCKET: "one",
+            ERRTRAQ_STAGING_BUCKET: "two",
+            ERRTRAQ_STAGING_PREFIX: "archive-staging/",
+          },
+        }),
+      ).toThrow("same bucket");
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+  it("denies unconfigured runtime purposes before making a request", async () => {
+    const request = vi.fn();
+    const s3 = new S3BlobStore({
+      bucket: "bucket",
+      region: "us-east-1",
+      credentials: () => creds,
+      fetch: request,
+    });
+    await expect(s3.list("envelopes/")).rejects.toBeInstanceOf(
+      BlobAccessDeniedError,
+    );
+    await expect(s3.delete("envelopes/key")).rejects.toBeInstanceOf(
+      BlobAccessDeniedError,
+    );
+    expect(request).not.toHaveBeenCalled();
+  });
   it("cancels a response body and releases its reader", async () => {
     let canceled = false;
     const stream = new ReadableStream<Uint8Array>({
@@ -350,17 +641,19 @@ describe("S3 error handling and streaming", () => {
       return new Response(null, { status: count < 4 ? 503 : 204 });
     };
     const s3 = new S3BlobStore({
+      allowedPrefixes: [""],
       bucket: "bucket",
       region: "us-east-1",
       credentials: () => creds,
       fetch: request,
+      random: () => 0.5,
       sleep: async (ms) => {
         waits.push(ms);
       },
     });
     await s3.delete("x");
     expect(count).toBe(4);
-    expect(waits).toEqual([50, 100, 200]);
+    expect(waits).toEqual([250, 500, 1000]);
     count = 0;
     const always: typeof fetch = async () => {
       count++;
@@ -490,6 +783,7 @@ describe("S3 error handling and streaming", () => {
   });
   it("presigns with the temporary session token", async () => {
     const s3 = new S3BlobStore({
+      allowedPrefixes: [""],
       bucket: "bucket",
       region: "us-east-1",
       credentials: () => ({ ...creds, sessionToken: "token" }),

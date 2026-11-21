@@ -13,6 +13,11 @@
       "development": "./src/stack.ts",
       "types": "./dist/stack.d.ts",
       "import": "./dist/stack.js"
+    },
+    "./runtime": {
+      "development": "./src/runtime.ts",
+      "types": "./dist/runtime.d.ts",
+      "import": "./dist/runtime.js"
     }
   },
   "files": [

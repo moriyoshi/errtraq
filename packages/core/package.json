@@ -8,6 +8,11 @@
       "development": "./src/index.ts",
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./blob": {
+      "development": "./src/blob.ts",
+      "types": "./dist/blob.d.ts",
+      "import": "./dist/blob.js"
     }
   },
   "files": [
