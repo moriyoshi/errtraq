@@ -6,6 +6,7 @@ item should be resolved or removed once addressed. Milestone work itself is trac
 
 ## Open Items
 
+- [ ] M3a2: finish the local real-provider generated-root harness: API assertions, repeat-plan and stack-change checks, destroy checks, and explicit handling of the emulator gaps in `WINTERBAUME_GAPS.md`. The initial module and root support probes are complete. — *source: M3a2 provider probe*
 - [ ] M4 spike: confirm DuckDB iceberg-extension appends through a REST catalog against Lakekeeper and S3 Tables, and what Cloudflare Workers can do against R2 Data Catalog. — *source: JOURNAL 2026-11-21 — Project bootstrap decisions*
 - [ ] M4 spike: determine which engines can write and honor Iceberg v3 deletion vectors through a REST catalog; decide whether the native committer is needed. — *source: JOURNAL 2026-11-21 — Project bootstrap decisions*
 - [x] M3: probe Winterbaume DynamoDB and SQS against the planned adapter operations; no tested gap requires DynamoDB Local or ElasticMQ. Continue checking the real adapter contract suites in M3. — *source: JOURNAL 2026-11-21 — Project bootstrap decisions; M3a probes*

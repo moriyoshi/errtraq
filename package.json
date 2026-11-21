@@ -16,7 +16,8 @@
     "infra:mutate": "node scripts/infra-mutate.mjs",
     "container:check": "node scripts/container-check.mjs",
     "aws-emulator:install": "node scripts/aws-emulated/install.mjs",
-    "test:aws-emulated": "node scripts/aws-emulated/run.mjs"
+    "test:aws-emulated": "node scripts/aws-emulated/run.mjs",
+    "infra:probe-emulated": "node scripts/aws-emulated/probe-terraform.mjs"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.15",

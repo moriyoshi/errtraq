@@ -625,3 +625,14 @@ the existing M3 recovery-race investigation remains open and no cause is assumed
 - The harness derives the table and queue shape from the Terraform modules and checks
   namespace cleanup. Basic Terraform control-plane create/read/delete probes pass, but they
   do not prove a generated root applies; M3a2 will exercise the provider's full workflow.
+
+## 2026-11-21 — M3a2 real-provider support probe
+
+The AWS provider can create the DynamoDB, SQS and Lambda module fixtures against pinned
+Winterbaume with both tested provider versions. The S3 lifecycle waiter and generated root
+hit the bounded apply timeout because lifecycle minimum-object-size metadata is not returned.
+More seriously, table deletion protection is discarded, and several Lambda permissions,
+partial-batch and EventBridge retry settings disappear on API readback. Invoke returns a
+fixed response without executing the ZIP. The precise requests, observed responses and
+limitations are recorded in `WINTERBAUME_GAPS.md`; mocks still test the module contracts.
+The complete API-asserting generated-root apply workflow remains the next M3a2 turn.

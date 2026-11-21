@@ -107,6 +107,22 @@ pinned version. Mock output values are reduced to shapes and compared with the c
 types and every referenced output path. When deliberately changing output shapes, run
 `UPDATE_INFRA_SHAPES=1 pnpm infra:validate` and review the snapshot diff.
 
+The opt-in real-provider support inventory for the pinned local Winterbaume server is:
+
+```sh
+pnpm aws-emulator:install   # one-time verified build, if absent
+pnpm infra:validate         # fills the two pinned provider versions if needed
+pnpm infra:probe-emulated   # local Terraform applies; reports observed failures as inventory
+```
+
+The probe copies no changes into modules or generated roots, writes the provider override
+and Terraform data into a new ignored directory, and uses the shared provider cache only as
+an offline read-only plugin directory. It uses dummy credentials, routes AWS endpoints to
+loopback, blocks other HTTP(S) destinations and stops the in-memory server on completion.
+It probes module and generated-root applies with both pinned provider versions; an apply may
+time out after 90 seconds. This is an inventory command, not a passing integration gate or
+proof of the complete M3a2 workflow. See [WINTERBAUME_GAPS.md](./WINTERBAUME_GAPS.md).
+
 `pnpm infra:mutate` requires the cached 6.73.0 provider. It verifies unmodified baselines, applies
 each mutation from `scripts/infra-mutations.json` in its own temporary copy, and reports whether
 validation, HCL tests or the output-shape check detected it. It also mutates generated roots to
