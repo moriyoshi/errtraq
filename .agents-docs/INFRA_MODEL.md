@@ -211,6 +211,51 @@ triggers are derived only for active topics, one per physical queue. Cron trigge
 the core cron registry: known M4 placeholders log that they are not implemented, and unknown or
 missing job names log an error and return without retrying.
 
+### Planned grouped recording (M3 design; not yet represented by the types below)
+
+The issue-keyed stage is a proposed change to this model, not a capability of the current
+implementation. Add stack `recordMode: "direct" | "grouped"` and a `record` function role.
+Stack helpers explicitly default standalone to direct and AWS Lambda/SQS to grouped; validation
+must reject a grouped stack that lacks per-key serial delivery, a deployed record role, the
+batched store operation, or any required binding, policy or trigger. Direct mode does not activate
+`record`, its queue, trigger or grants. Do not silently downgrade a grouped stack.
+
+The future core-owned route and requirement rows are (other current rows remain as above):
+
+| Condition | Role | Port / topic | Required capabilities / scope |
+| --- | --- | --- | --- |
+| direct | consumer | store, blob, queue | Existing ingest consumption and store read/write, blob read/write/delete; no `record` producer. |
+| grouped | consumer | queue `record` | Produce to the record physical queue; continue ingest consumption and blob read/write/delete for claim checks. Keep any actual normalization reads as needed; remove store write unless another active requirement needs it. |
+| grouped | record | queue `record` | Consume from the record physical queue. |
+| grouped | record | store | Read/write for duplicate checks and atomic batches, with policies attached only to the functions receiving this role. |
+| grouped | record | primary blob | Read/list for normalized-record claim checks and overflow reads where actually used; delete only if the record handler owns the corresponding cleanup. |
+
+The descriptor declares grouping per *physical queue*, because the same adapter must support a
+standard ingest queue and FIFO record queue simultaneously. Logical `record` has its own valid
+physical key (for example `record`) and queue even when standard topics are shared. Shared mode
+maps compatible standard topics to one physical queue; per-topic mode maps them separately.
+Derivation must not coalesce FIFO and standard queues, policies, bindings, event-source mappings
+or DLQs. Only enabled topics and their functions receive resources and grants. The queue runtime
+mapping retains event-source identifier -> physical queue -> topics and adds its delivery kind;
+producer bindings and per-resource produce/consume policies cover exactly the derived resources.
+The record role becomes an ordinary physical-function role subject to split/settings/conflict and
+artifact rules. Cron recovery and bundle cleanup stay separately activated by their actual jobs.
+
+The SQS module needs typed per-queue FIFO settings, `.fifo` names for record and its FIFO DLQ,
+content-based deduplication off, `DeduplicationScope = messageGroup` and
+`FifoThroughputLimit = perMessageGroupId` for high-throughput mode, redrive, encryption and the
+same least-privilege per-queue policy shapes. The Lambda module gets a mapping for each derived
+queue; its normal FIFO mapping uses batch size <=10 and `ReportBatchItemFailures`; validate its
+visibility against the receiving **record function** timeout with the existing six-times safety
+factor. A FIFO queue cannot use per-message delay; apply any retry delay via visibility changes,
+without releasing later messages in the group. Reject impossible mode/settings combinations.
+Add module and generated-root shape/security contracts, mutation entries, standard+FIFO and split
+variants, and real-provider emulated apply checks. Probe Winterbaume FIFO send/receive ordering,
+deduplication, visibility, redrive and Terraform resource attributes first; name unimplemented or
+incorrect behavior as emulator gaps instead of weakening production HCL. Real AWS is required for
+FIFO ordering under load, visibility-expiry overlap, DLQ/redrive, IAM enforcement and throughput.
+[The implementation plan](./ISSUE_KEYED_QUEUE_PLAN.md) tracks those checks and rollout.
+
 For the exact view passed to `inputs`, the following declarations are copied from
 `stack-model.ts` (the referenced `ArtifactRef`, `Binding`, `InfraValue` and `OutputRef` are also
 in that file):

@@ -113,7 +113,9 @@ interface ReleaseRepo {
 - A bundle manifest is a JSON array of distinct debug IDs, with a SHA-256 digest of the UTF-8 JSON
   array sorted in byte order. Manifest blob keys are immutable and must never be reused. Cleanup
   claims an expired pending bundle, clears markers, deletes the manifest and finalizes the claim;
-  interrupted cleanup remains resumable. SQL schema version 4 marks legacy bundles active.
+  interrupted cleanup remains resumable. Pending bundle items and manifest chunks have no TTL;
+  cleanup cron is required and operators must monitor its age and failures. SQL schema version 4
+  marks legacy bundles active.
 - An issue count is accepted event insertions ever recorded; deletion, retention and erasure do
   not decrement it. Event cursors advance by the last examined source key, even for an empty
   page, while the federation `after` boundary remains separate.
@@ -140,18 +142,19 @@ interface ReleaseRepo {
 
 ### Queue — unify push and pull delivery
 ```ts
-interface Message  { key: string; body: unknown }                    // key = idempotency key (the eventId for event messages)
+interface Message  { key: string; body: unknown; groupKey?: string } // proposed grouped mode; key = eventId
 interface Delivery { id: string; topic: Topic; message: Message; attempt: number }
 interface QueueProducer { send(topic: Topic, msgs: Message[], opts?: { delaySec?: number }): Promise<void>; }
 type BatchHandler = (batch: Delivery[]) => Promise<BatchResult>;   // per-delivery ack | retry(delaySec)
 interface PushSource<E, R> { handle(platformEvent: E, handler: BatchHandler): Promise<R>; }   // SQS event, CF MessageBatch, Pub/Sub push, Cloud Tasks HTTP
 interface PullSource { run(handler: BatchHandler, signal: AbortSignal): Promise<void>; }      // memory, Redis streams, NATS JetStream, Service Bus
-interface Queue { producer: QueueProducer; pull?: PullSource; push?: PushSource; capabilities: { delivery: 'push' | 'pull' | 'both'; maxBytes: number; delay: boolean; dlq: boolean } }
+interface Queue { producer: QueueProducer; pull?: PullSource; push?: PushSource; capabilities: { delivery: 'push' | 'pull' | 'both'; maxBytes: number; delay: boolean; dlq: boolean; grouping: 'per-key-serial' | 'none' /* proposed */ } }
 ```
 - A push source owns the whole platform round trip (`handle`), because acknowledging is
   platform-specific and asynchronous: SQS retry delay is a `ChangeMessageVisibility` call,
   Cloudflare Queues ack / retry are methods on the original batch.
-- Semantics contract: at-least-once, unordered; handlers are idempotent on the message key.
+- Current semantics: at-least-once, unordered; handlers are idempotent on the message key.
+  The proposed grouped-delivery semantics and their visibility-timeout limits are specified below.
 - Push sources are driven by the platform entrypoint; pull sources need a long-lived process
   (standalone / container). Stack validation rejects pull-only queue + function-only compute.
 - **Claim-check**: ingest writes the raw envelope to BlobStore and enqueues a small reference,
@@ -212,11 +215,100 @@ CF Cron Triggers, Cloud Scheduler) or an in-process timer on the standalone plat
 2. **Consumer** — parse envelope items; drop unsupported item types; normalize event;
    symbolicate JS frames (debug-ID lookup → artifact bundle in BlobStore → `@jridgewell/trace-mapping`);
    compute grouping hash (client `fingerprint` → exception type + in-app frames → message fallback);
-   one atomic `store.recordEvent(occurrence, event)` (a redelivered event returns `inserted: false` and is dropped); emit `issue.created` / `issue.regressed` to a notifications topic.
+   in current direct mode call atomic `store.recordEvent(occurrence, event)` (a redelivered event returns `inserted: false` and is dropped). The proposed grouped mode hands normalized records to the issue-keyed stage below; notifications remain a future feature.
 3. **API app** — Sentry-compatible subset under `/api/0/`: what sentry-cli needs (auth token
    check, chunk-upload, artifact bundle assemble, releases CRUD/finalize/deploys) plus
    issue/event list/get/update for a later UI.
 4. **Cron** — archival, retention of raw envelopes, release-artifact GC.
+
+### Planned issue-keyed record stage (M3, not implemented)
+
+`recordMode` is a stack-level setting: `direct` retains the current consumer write path;
+`grouped` adds a `record` topic, produced by the normalizing consumer and consumed by a new
+`record` role. The separate role permits independent scaling, grants and timeouts; it can share
+a physical function through the normal split configuration. Standalone examples default to direct;
+Lambda + SQS examples default to grouped. These are explicit stack-helper defaults, not a hidden
+platform inference. Validation rejects grouped mode unless the record queue declares grouped
+delivery, the record role is deployed, the active store supports the operation, and all record
+bindings, policies, triggers and limits are available. It never silently falls back to direct.
+
+```ts
+// Proposed additions; packages/core/src/ports.ts still describes the current implementation.
+interface Message { key: string; body: unknown; groupKey?: string }
+type QueueGrouping = "none" | "per-key-serial";
+interface RecordInput { occurrence: Occurrence; event: StoredEvent }
+interface RecordResult { inserted: boolean; issue: Issue; isNew: boolean; isRegression: boolean }
+interface ActiveStore {
+  capabilities: { /* existing fields */ recordEvents: boolean };
+  recordEvent(occurrence: Occurrence, event: StoredEvent): Promise<RecordResult>;
+  recordEvents(group: readonly RecordInput[]): Promise<readonly RecordResult[]>;
+}
+```
+
+In grouped mode each message contains a versioned `RecordInput`, including `payloadBlobKey` when
+present; `key` is the event ID and `groupKey` is the deterministic issue ID, already hashed from
+project ID and fingerprint. The consumer writes overflow payloads before publishing. It checks
+the entire serialized message against the adapter limit, including envelope overhead: the 200,000
+byte raw-payload threshold alone does not bound normalized metadata or JSON expansion. If needed,
+it writes the complete normalized record to a uniquely keyed durable blob and queues a bounded
+claim check. Publish failures retry the original envelope; it is deleted and acknowledged only
+after every record has been accepted. Earlier accepted records can be resent, so both publishing
+and recording are idempotent. Claim-check retention and cleanup must cover queue retention, DLQ,
+redrive and retries; a producer cannot delete data merely because it sent the reference.
+
+`per-key-serial` means an adapter delivers accepted messages in queue acceptance order within a
+key and does not intentionally dispatch a second live batch for that key until the first is
+settled or its visibility lease expires. Different keys may proceed concurrently, and a batch
+may contain several keys. This is **at-least-once**, not a lock: an expired visibility lease,
+crash, redelivery, overlapping producers or manual redrive can cause concurrent work and retries.
+A producer cannot infer an order across independent senders before the queue accepts their sends;
+received timestamps, in particular, need not be in queue order. Database conditional writes,
+per-event deduplication and transaction retries remain required. Tests cover lease expiry and
+redelivery as well as serial batches while the lease is valid.
+
+SQS uses a distinct FIFO physical queue and FIFO DLQ for `record` even in shared mode. Its
+`MessageGroupId` is the issue ID and `MessageDeduplicationId` is the event ID, with per-message-
+group deduplication scope; the five-minute filter is an optimization, never the idempotency
+boundary. FIFO producer batching must handle partial send success without assuming failed entries
+were enqueued before later accepted entries; the guaranteed order is the order SQS accepts.
+Lambda uses a separate event source mapping, `ReportBatchItemFailures`, batch size at most 10 in
+this design, and serial processing within a group. The memory queue implements the same contract;
+queues without grouping may use direct mode, but grouped mode fails validation.
+
+The record handler partitions a received batch by group, validates each ordered group, and invokes
+`recordEvents` on a bounded same-issue group. Split an oversized multi-record group into ordered,
+contiguous transactions before writing; a single record that cannot fit is a poison record. A successful group transaction atomically commits
+all its new events and its one issue update; it returns one result per input in order, including
+no-op duplicates. If a poison record can be identified before the transaction, process only the
+valid prefix, then return that record **and all later unprocessed FIFO records** as failures.
+A transaction failure fails the whole attempted group; no later same-group record is acknowledged.
+The poison record retries and eventually moves to its FIFO DLQ after `maxReceiveCount`; only then
+can later records progress. Its removal creates an intentional gap in recorded order; redrive may
+place it after later records, and operators must inspect and redrive it. If a failure cannot be
+attributed to one record, fail the entire affected group rather than guessing. Lambda's FIFO
+guidance requires returning all failed and unprocessed records after the first failure in the
+invocation; mixed groups must follow that conservative rule too. [AWS partial-batch guidance](https://docs.aws.amazon.com/lambda/latest/dg/services-sqs-errorhandling.html).
+
+`recordEvents` accepts 1..10 inputs for the initial portable contract, all with the same project,
+issue and fingerprint, matching occurrence/event identity and receivedAt. Reject invalid inputs
+and an oversized transaction before any mutation. The whole group of new records commits or none
+does; duplicates within the batch and records already committed are no-ops. Per-input results
+are in input order: only the first occurrence of a newly committed ID is inserted; `isNew` and
+`isRegression` belong to the first newly inserted event causing those transitions in input order.
+The returned issue is the committed post-group issue (or the actual stored issue for a duplicate
+belonging to another issue); a subsequent concurrent update can make a post-commit read newer.
+A duplicate-only group performs no issue mutation. Consumers may retry ambiguous commits and must
+not emit duplicate side effects. A reliable notification outbox is future work, so notifications
+must not be advertised as exactly-once. While an adapter is being migrated, `capabilities.recordEvents` is false and the operation throws
+`UnsupportedQueryError`; grouped-stack validation rejects it. SQLite, Postgres, the memory fake
+and DynamoDB must all eventually advertise true and satisfy the same shared contract; the detailed transaction design is in
+[the DynamoDB design](.agents-docs/DYNAMODB_DESIGN.md).
+
+This reduces contention in the ordinary lease-valid path, not as an absolute correctness guarantee.
+Switching modes or remapping queues requires pausing producers, draining both old queues and in-flight
+work, and resuming only one mode; mixed old and new consumers or an operator writing directly can
+otherwise contend. See [the implementation plan](.agents-docs/ISSUE_KEYED_QUEUE_PLAN.md) for the
+staged rollout, cost assumptions and unconfirmed AWS/emulator behavior.
 
 ## Archival job (moving events from the active store to Iceberg)
 

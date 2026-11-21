@@ -1,7 +1,7 @@
 # DynamoDB active-store design (M3e step 1c)
 
-Status: approved direction with the decisions and open correctness questions below. The stage 1
-shared contracts and table infrastructure are implemented; the DynamoDB runtime remains a stub.
+Status: approved direction with the decisions and open correctness questions below. The stage 1 shared contracts, table infrastructure and DynamoDB runtime are implemented;
+grouped stage 2 is a design for future implementation.
 `ports.ts` and ARCHITECTURE.md describe the current public contracts. The default erasure-index design is independent
 of DynamoDB: see [SUBJECT_INDEX_DESIGN.md](./SUBJECT_INDEX_DESIGN.md). No port operation uses
 DynamoDB `Scan` or a filtered full-table scan.
@@ -175,30 +175,61 @@ Real AWS must test the precise final expressions, bounded retries and hot-index 
 
 ### Batched transaction (stage 2)
 
-`recordEvents` takes one bounded homogeneous `(project, issue, fingerprint)` group and returns
-one outcome per input in deterministic input order. The group is **all-or-nothing for all new
-event/issue mutations**, including one issue `ADD count N` and pointer if new; input duplicates
-and IDs already committed are no-ops. Reject malformed or too-large groups before writes: up
-to 99 event items minus an issue-creation pointer and, when enabled, a fence action, with <=100
-actions, <=4 MiB combined and <=400 KiB/item. The consumer explicitly divides larger inputs
-into separate issue groups before calling; separate groups are not one global transaction.
+The owner selected queue-first grouping: the `record` role receives a FIFO group after the
+consumer has normalized an event. With a live visibility lease, one issue has at most one record
+batch being processed; an expired lease, a mode transition, redrive, an API update or an external
+writer can still overlap. FIFO does not replace transaction isolation or the count preimage guard.
+The public contract starts at 1..10 inputs per same `(project, issue, fingerprint)` group; Lambda
+FIFO currently uses at most 10 per group. Every input's occurrence/event IDs, issue and receivedAt
+must match. The queue handler validates group key against the computed issue ID and rejects an
+oversized group before calling the store. The future port is:
 
-Do not pre-read each event in batch mode: conditional event puts and ordered transaction
-cancellation reasons identify existing or racing duplicate IDs; remove them and retry the
-remaining **entire** new-ID group, preserving outcomes. Read the issue to choose one branch,
-compute count key for `c+N`, and guard count c; recompute on conflicts. Exactly one first new
-member gets `isNew`, and the first member in input order whose receivedAt causes a valid
-regression gets `isRegression`. If conditions cannot be resolved within the bound, fail the
-whole group retryably; do not claim some of that group's new items committed. SQL sqlite and
-Postgres implement the group in one DB transaction and the memory fake atomically applies it.
-The shared contract tests group atomicity; adapter-level fault injection covers ambiguous
-network outcomes / caller retries across separately committed groups.
+```ts
+interface RecordInput { occurrence: Occurrence; event: StoredEvent }
+interface RecordResult { inserted: boolean; issue: Issue; isNew: boolean; isRegression: boolean }
+recordEvents(group: readonly RecordInput[]): Promise<readonly RecordResult[]>;
+```
+
+The group is atomic for **all new event and issue mutations**. Results correspond to input order;
+repeated IDs inside a batch and IDs already committed are no-ops. Only the first copy of a newly
+inserted ID has `inserted: true`; exactly the first inserted member that creates the issue gets
+`isNew`, and the first member in input order causing a resolved-to-unresolved transition gets
+`isRegression`. Each inserted result may return the post-group issue; an existing duplicate that
+belongs to another issue returns that actual stored issue, as `recordEvent` does. All duplicates
+means no issue mutation. A post-commit read can reflect a later concurrent update. A failed call
+commits none of its **new** events unless the response was ambiguous; retry the entire group and
+reconcile via event deduplication. There is no promise of partial group commits or exactly-once
+external notifications.
+
+Collapse repeated input IDs first, preserving input order and tracking every result position.
+Read the issue strongly and construct one `TransactWriteItems`: conditional event puts for each
+remaining candidate, one issue update with atomic `ADD count N`, exact count sort key computed
+from guarded count preimage, firstSeen minimum, lastSeen/latest maximum by `(receivedAt,eventId)`,
+and the input-order regression transition; add the strong issue-ID pointer only on creation.
+With M4 erasure enabled, add the applicable fence check. Validate the 400 KiB item and 4 MiB
+transaction limits and 100 unique-action ceiling; 10 event puts plus issue, optional pointer and
+fence fit the action ceiling, but byte limits still require checking. A FIFO batch can contain
+several groups; each group is a separate transaction, not a global all-or-nothing batch.
+
+Do not pre-read every event in the normal batch path. On cancellation, inspect the ordered reason
+for **each** conditional event put, strongly read existing event/issue images as needed, remove
+confirmed duplicates, recompute the group and issue branch, and retry all remaining new items as
+one transaction. A competing writer can insert a candidate during this process; the event and
+count guards catch it and cause another retry. A new client request token is required whenever
+transaction parameters change; an identical ambiguous request uses the same token. Retry boundedly
+with jitter, including throttling and transaction conflicts, and return a retryable error on
+exhaustion. Guard conditions on status/resolution prevent a concurrent API update being overwritten.
+Tests inject conflict, duplicate races, ambiguous commit and API resolution; SQL sqlite/Postgres
+and the memory fake implement the same atomic contract. The FIFO path reduces routine contention;
+only the datastore enforces correctness when leases expire or the deployment has overlapping modes.
+
 
 ### Bundle lifecycle (stage 1)
 
 No 48-debug-ID cap. Store the full immutable debug-ID manifest in BlobStore under a stable
-bundle key. Persist a pending bundle with manifest key, expected count/digest and numeric TTL;
-write conditional debug-ID ownership markers in idempotent chunks, each with a pending TTL.
+bundle key. Persist a pending bundle with manifest key and expected count/digest; pending bundle
+items and manifest chunks have **no TTL**. Write conditional debug-ID ownership markers in
+idempotent chunks, each with a pending TTL.
 Verify every expected marker strongly, and clear marker TTLs in bounded chunks before a final
 conditional activation of the bundle. `findBundleByDebugId` reads marker then bundle and returns
 only an active matching owner. A retry repeats chunks/verification; conflicts with another
@@ -206,7 +237,8 @@ owner fail clearly. Keep bounded manifest chunk items under the bundle base-tabl
 and enumerate them with strongly consistent queries; the store does not depend on BlobStore
 and never relies on an eventually consistent index to enumerate marker ownership. Create each
 chunk atomically with its marker writes so interruption leaves a complete recovery record.
-Clean abandoned pending bundles/markers before allowing metadata and manifest to expire. On
+A required scheduled cleanup claims expired pending bundles and removes owned markers, chunks and
+the manifest; monitor oldest pending age, failures and backlog. On
 delete, make the bundle unavailable first, then remove its markers in resumable chunks. Do not hide the TTL-clearing crash gap
 identified above, or promise atomic replacement of thousands of markers without a protocol;
 concurrent replacement/ownership and cleanup must be tested. The required blob and store
@@ -267,7 +299,8 @@ the domain's ISO `StoredEvent.expiresAt` string. The KV table keeps its existing
 an event can have a retention + margin TTL backstop; with archival, set the numeric TTL only
 after the archive batch is durably committed, because a fixed margin cannot prove the
 no-delete-before-commit invariant during an unbounded outage. Pending bundle and debug markers
-use `ttlEpoch`, subject to the activation caveat above; permanent/active markers have no TTL.
+use `ttlEpoch`, subject to the activation caveat above; pending bundle items and manifest chunks never have TTL,
+and permanent/active markers have no TTL. Cleanup cron is required and must be monitored.
 PITR/backups can retain deleted bytes until their retention expires.
 
 The module defines the 11 string-key schemas listed above with `KEYS_ONLY` projections, uses
@@ -317,7 +350,7 @@ $0.125/million RRU; actual prices/region, item sizes, failed requests and GSI si
 Baseline listed write+read+delete+storage/PITR is ~$342.06. + optional counter ~$22.50 before
 object-store traffic, index storage, issue creation, Lambda, queue, blobs, archive, network,
 read-after-commit, retries and free tier. Actual GSI transactional accounting must be measured.
-The storm's observed ~2.7 **transaction attempts/event** includes failures that can consume
+The earlier unguarded experiment's ~2.7 **transaction attempts/event** includes failures that can consume
 capacity; it does **not** mean exactly 2.7x the whole bill, because failure stage/size/index
 updates differ. Measure per-action consumed units and p99 with the final count guard. Batch of
 10 gives a theoretical 66 WRU / 10 events (40 event TX + 2 issue TX + 20 event-GSI + 4 issue
@@ -355,11 +388,11 @@ Postgres and memory fakes must honor the capability and changed shared contracts
 say count is all-time and subject erasure is not yet available. Verify migration versions and
 both Terraform provider versions; no Scan.
 
-**Stage 2 (M3).** Add `recordEvents(group: readonly RecordInput[]): Promise<readonly
-RecordResult[]>`, the all-or-nothing bounded per-issue-group semantics above, and mode config.
-`recordEvent` remains. Implement SQL sqlite/Postgres and memory plus DynamoDB, update consumer
-batch grouping and shared atomicity/duplicate/regression tests; use adapter-level fault
-injection for partial progress across separate groups. Explicitly enforce transaction size.
+**Stage 2 (M3).** Implement the queue-first record stage and the 1..10-input `recordEvents`
+contract above, with direct/grouped stack configuration. `recordEvent` remains. Implement SQL
+sqlite/Postgres, memory and DynamoDB; add grouped queue and retry/visibility tests, partial-failure
+tests, and shared atomicity/duplicate/regression contracts. Explicitly enforce transaction size.
+See [the per-turn plan](./ISSUE_KEYED_QUEUE_PLAN.md).
 
 **Stage 3 (M3).** Core rate checks on KV, stack defaults/project overrides, per-project new
 issue cap, fail-open by default and fail-retry option, API-visible per-window dropped count;

@@ -1011,3 +1011,18 @@ and its already-documented crash-reclamation limitation remain. M3g staged recov
 not started in this turn.
 The stress harness counted all rejected operations together; an earlier run showed the first
 rejection was the retryable contention-limit error, but it did not classify every rejection.
+
+## 2026-11-21 — Issue-keyed recording design
+
+The owner selected a second issue-keyed queue and batched recording for hot issues, and no TTL
+for pending bundle metadata or manifest chunks; scheduled, monitored cleanup is required. The
+proposed `record` role uses a dedicated FIFO queue even in shared-queue mode, while direct mode
+remains available. FIFO serializes normal delivery within a visibility lease, but it is not a
+fence against expired leases, retries, mode transitions or other writers; datastore conditions
+and idempotency remain essential. Lambda FIFO failures require returning unprocessed records after
+the first failure, and DLQ redrive can change the effective processing order.
+
+The design conservatively uses non-provisioned Lambda FIFO batches of at most ten. AWS's current
+SQS Lambda guide also describes larger total batches with provisioned pollers while its parameter
+page still states a ten-record maximum; per-group size and this newer mode need real AWS testing.
+The cost and throughput examples and implementation turns are in ISSUE_KEYED_QUEUE_PLAN.md.

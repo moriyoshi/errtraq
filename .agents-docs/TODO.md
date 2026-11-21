@@ -8,8 +8,8 @@ item should be resolved or removed once addressed. Milestone work itself is trac
 
 - [ ] M3e: add the event and issue `ttlEpoch` backstops from the DynamoDB design; explicit retention deletes remain primary. The ingest role's read policy also grants table-wide `GetItem`: restricting it with `dynamodb:LeadingKeys` requires a separate capability policy because the current read output is shared with roles that query the whole table. — *source: store review section C*
 - [ ] M3e: define an index backfill for bundle records created before the release and expiry index keys were added; existing records are not automatically reindexed. — *source: store review section C*
-- [ ] M3e: resolve whether pending bundle and manifest TTL may bound resumable cleanup or whether a durable recovery record is required before adding that TTL backstop. — *source: store review section C / ARCHITECTURE.md bundle cleanup guarantee*
-- [ ] M3e: the 500 ms jitter cap alone did not eliminate hot-issue exhaustion: a DynamoDB Local run with 500 simultaneous, same-timestamp events used 58.55 transaction attempts per event and 213 operations failed; the sampled failure was the 80-attempt contention limit. Reassess retry budget and admission control alongside the real-DynamoDB measurements before relying on this load. — *source: store review section B*
+- [x] M3e: resolve the pending bundle and manifest TTL decision: no TTL; scheduled, monitored cleanup is required. — *source: owner decision after store review*
+- [ ] M3e: the 500 ms jitter cap alone did not eliminate hot-issue exhaustion: a DynamoDB Local run with 500 simultaneous, same-timestamp events used 58.55 transaction attempts per event and 213 operations failed; the sampled failure was the 80-attempt contention limit. Implement the selected issue-keyed queue and batched recording; repeat this measurement and verify the retry policy on real DynamoDB before relying on this load. — *source: store review section B*
 - [x] M3f2 part 2: add the RDS IAM policy module and contract / mutation tests, Lambda VPC configuration and ENI grants, and Postgres-on-Lambda generated-root and emulator coverage. — *source: M3f2 part 1*
 - [ ] M3f2: file the Winterbaume Lambda VPC readback gap upstream and remove the emulator-only override when the fix is pinned. — *source: M3f2 part 2*
 - [ ] M3h: verify real Lambda-to-RDS/Aurora IAM authentication, the Lambda runtime CA bundle and hostname verification, new connections after 15 minutes, and RDS Proxy IAM/TLS behavior and permissions; verify VPC attachment, ENI role permissions and service reachability through the selected NAT or endpoints. — *source: M3f2*
@@ -22,7 +22,7 @@ item should be resolved or removed once addressed. Milestone work itself is trac
 
 - [ ] M3h: verify actual SQS throttling status and error codes, U+FFFE / U+FFFF rejection, 1 MiB message-size support, receive-count increments and DLQ redrive timing against AWS. — *source: M3c2 review section B*
 - [ ] M3h: capture scrubbed real Lambda SQS, function URL and EventBridge events as fixtures. — *source: M3c2 review section B*
-- [ ] M3 / M6: FIFO queues are unsupported by the SQS adapter; evaluate FIFO only if a stack requires it. — *source: M3c2 review section B*
+- [ ] M3: implement SQS FIFO grouped delivery for the issue-keyed record stage, as planned in `.agents-docs/ISSUE_KEYED_QUEUE_PLAN.md`. — *source: owner queue-first decision*
 
 - [ ] M3h: verify DynamoDB conditional update atomicity, expiry-reset races, overflow guards and TTL retention against real AWS; Winterbaume evaluates conditions separately from its write. — *source: M3d emulator finding*
 
@@ -81,4 +81,4 @@ item should be resolved or removed once addressed. Milestone work itself is trac
 - [ ] M3: reduce Lambda bundle size; current bundles include most of core and Zod. — *source: M2 final review section B*
 - [x] M3: test SQS partial-batch failures with real-shaped AWS events. — *source: M2 final review section B; resolved in M3c*
 - [ ] M3: test EventBridge event handling against real AWS event shapes. — *source: M2 final review section B*
-- [ ] M3 (store-dynamodb): the exact count sort key's preimage guard is the hot-issue contention point. 40 concurrent writers on one issue take about 9.9 transaction attempts per event on DynamoDB Local (the design review measured about 2.7 without that guard). Options: a numeric count sort key updated with `SET countSort = countSort + :one` (no preimage) with the issue id as a second key attribute of a multi-attribute GSI key; coalesced count-sort refresh; or rely on batched mode (stage 2) for hot issues. Measure on real DynamoDB in M3h before choosing. — *source: orchestrator review of M3e stage 1 step E*
+- [ ] M3 / M3h (store-dynamodb): implement the owner-selected issue-keyed FIFO stage and batched `recordEvents` to reduce count-preimage contention, then measure 200 / 500 writers through that path on DynamoDB Local and real AWS. — *source: owner queue-first decision*
