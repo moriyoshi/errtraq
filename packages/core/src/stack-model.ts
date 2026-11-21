@@ -52,6 +52,8 @@ export interface PlatformManifest<C = unknown> extends AdapterManifest<C> {
   kind: "platform";
   runtime: string;
   compute: "function" | "long-lived";
+  /** Maximum stack name length accepted by this platform's infrastructure. */
+  maxStackNameLength?: number;
   provides: EnvironmentFeature[];
   authorization: "iam" | "bindings" | "none";
   bindingKinds: Binding["kind"][];

@@ -53,7 +53,7 @@ ignored data directory, sends real `@sentry/node` envelopes, checks grouping, AP
 regression, gzip replay, overflow, paging, token rotation, restart recovery and shutdown. It uses
 the SDK default transport and integrations and does not require a cloud account.
 `pnpm container:check` skips if Docker is unavailable. With Docker it builds the generated
-non-root Node 22 image, checks its health endpoint, and runs the same e2e against a temporary
+non-root Node 22.23 image, checks its health endpoint, and runs the same e2e against a temporary
 container and data directory under the repository's ignored workspace. The Docker daemon must be
 able to mount that path (with Colima, keep the repository under the user's home directory). The
 base image may need to be downloaded on the first run. Bind-mounted data must be writable by the

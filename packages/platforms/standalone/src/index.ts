@@ -263,7 +263,12 @@ export function create({
         await stop();
         throw new Error("Unexpected server address");
       }
-      return { host: address.address, port: address.port, close: stop };
+      return {
+        host: address.address,
+        port: address.port,
+        publicUrl: cfg.publicUrl,
+        close: stop,
+      };
     },
   };
 }

@@ -23,7 +23,7 @@ describe("standalone platform", () => {
         idle: async () => true,
       });
       const platform = create(
-        { port: 0, http: [...http] },
+        { port: 0, http: [...http], publicUrl: "https://errors.example" },
         {
           store: new MemoryActiveStore(),
           blob: new MemoryBlobStore(),
@@ -33,6 +33,7 @@ describe("standalone platform", () => {
       );
       const server = await platform.start();
       try {
+        expect(server.publicUrl).toBe("https://errors.example");
         const base = `http://127.0.0.1:${server.port}`;
         const health = await fetch(`${base}/health`);
         expect(health.status).toBe(200);
@@ -50,6 +51,18 @@ describe("standalone platform", () => {
   });
   it("defaults to loopback and rejects unsupported jobs before starting", async () => {
     expect(configSchema.parse({}).host).toBe("127.0.0.1");
+    expect(
+      configSchema.parse({ publicUrl: "https://errors.example" }).publicUrl,
+    ).toBe("https://errors.example");
+    expect(
+      configSchema.safeParse({
+        publicUrl: "https://user:password@errors.example",
+      }).success,
+    ).toBe(false);
+    expect(
+      configSchema.safeParse({ publicUrl: "https://errors.example/path" })
+        .success,
+    ).toBe(false);
     expect(configSchema.safeParse({ split: ["api"] }).success).toBe(false);
     expect(configSchema.safeParse({ roles: ["api"] }).success).toBe(false);
     expect(standalone().manifest).toMatchObject({

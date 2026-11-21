@@ -218,7 +218,7 @@ export async function constructDeployedPlan(
     })());
   const delivered = (name: string): string => {
     const value = environment[name];
-    if (value === undefined)
+    if (value === undefined || value.length === 0)
       throw new Error(`Missing deployed binding ${name}`);
     return value;
   };

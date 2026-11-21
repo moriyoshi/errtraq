@@ -18,9 +18,10 @@ import {
   containsLocalPath,
   deployedPlan,
   deriveDeployment,
+  resolveStack,
 } from "@errtraq/core";
 import { unzipSync } from "fflate";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import shared from "../../../stacks/aws-dynamodb.js";
 import perTopic from "../../../stacks/aws-dynamodb-per-topic.js";
 import local from "../../../stacks/local.js";
@@ -63,6 +64,93 @@ afterAll(async () => {
   if (temp) await rm(temp, { recursive: true, force: true });
 });
 describe("built stacks", () => {
+  it("generated Lambda entry retries a failed cold start and shares concurrent initialization", async () => {
+    const moduleFile = join(temp, "fake-runtime.ts");
+    await writeFile(
+      moduleFile,
+      `export async function create(){ const state=globalThis.__m2dInit; state.calls++; if(state.fail){state.fail=false; throw new Error("temporary construction failure");} await new Promise(resolve=>setTimeout(resolve,10)); return {}; }`,
+    );
+    const specifier = `./${relative(repo, moduleFile).split("\\").join("/")}`;
+    const raw = Object.fromEntries(Object.entries(shared));
+    const stack = resolveStack({
+      ...raw,
+      blob: { ...shared.blob, runtimeModule: specifier },
+      queue: { ...shared.queue, runtimeModule: specifier },
+    });
+    const output = join(temp, "cold-start");
+    await buildStack(
+      stack,
+      repo,
+      output,
+      resolve(repo, "stacks/aws-dynamodb.ts"),
+    );
+    const fn = deriveDeployment(stack).functions.find(
+      (item) => item.id === "cron",
+    );
+    if (!fn) throw new Error("missing cron function");
+    for (const binding of fn.envBindings)
+      vi.stubEnv(binding.binding.name, "configured");
+    const warnings = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const state = { calls: 0, fail: true };
+      Object.assign(globalThis, { __m2dInit: state });
+      const url = pathToFileURL(join(output, "cron/index.mjs")).href;
+      const entry = await import(`${url}?retry`);
+      await expect(entry.handler({ job: "retention" })).rejects.toThrow(
+        "temporary construction failure",
+      );
+      await expect(
+        entry.handler({ job: "retention" }),
+      ).resolves.toBeUndefined();
+      expect(state.calls).toBe(3);
+      state.calls = 0;
+      const concurrent = await import(`${url}?concurrent`);
+      await Promise.all(
+        Array.from({ length: 5 }, () =>
+          concurrent.handler({ job: "retention" }),
+        ),
+      );
+      expect(state.calls).toBe(2);
+    } finally {
+      warnings.mockRestore();
+      vi.unstubAllEnvs();
+      Reflect.deleteProperty(globalThis, "__m2dInit");
+    }
+  }, 30000);
+  it("removes previously owned function directories when split settings change", async () => {
+    const output = join(temp, "split-changes");
+    const raw = Object.fromEntries(Object.entries(shared));
+    const combined = resolveStack({
+      ...raw,
+      platform: {
+        ...shared.platform,
+        config: {
+          ...(shared.platform.config as Record<string, unknown>),
+          split: [],
+        },
+      },
+    });
+    const stackFile = resolve(repo, "stacks/aws-dynamodb.ts");
+    await buildStack(shared, repo, output, stackFile);
+    await buildStack(combined, repo, output, stackFile);
+    expect((await readdir(output)).sort()).toEqual(["manifest.json", "shared"]);
+    await buildStack(shared, repo, output, stackFile);
+    await buildStack(shared, repo, output, stackFile);
+    expect((await readdir(output)).sort()).toEqual([
+      "api",
+      "consumer",
+      "cron",
+      "ingest",
+      "manifest.json",
+    ]);
+    await writeFile(join(output, "api", "personal.txt"), "keep");
+    await expect(buildStack(combined, repo, output, stackFile)).rejects.toThrow(
+      "api/personal.txt",
+    );
+    expect(await readFile(join(output, "api", "personal.txt"), "utf8")).toBe(
+      "keep",
+    );
+  }, 30000);
   it("builds and checks Sentry fixtures from a copied src/app checkout", async () => {
     const scratch = await mkdtemp(join(await realpath("/tmp"), "errtraq-m2d-"));
     const copy = join(scratch, "src", "app");
@@ -307,7 +395,7 @@ describe("built stacks", () => {
     await buildStack(local, repo, output, resolve(repo, "stacks/local.ts"));
     await assertNoLocalPaths(output);
     const dockerfile = await readFile(join(output, "Dockerfile"), "utf8");
-    expect(dockerfile).toContain("FROM node:22-bookworm-slim");
+    expect(dockerfile).toContain("FROM node:22.23-bookworm-slim");
     expect(dockerfile).toContain(
       "ENV ERRTRAQ_HOST=0.0.0.0 ERRTRAQ_DATA_DIR=/data",
     );

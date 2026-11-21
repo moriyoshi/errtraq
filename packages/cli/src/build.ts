@@ -1,5 +1,12 @@
 import { createHash } from "node:crypto";
-import { lstat, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import {
+  lstat,
+  mkdir,
+  readdir,
+  readFile,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { homedir } from "node:os";
 import { isAbsolute, join, relative, sep } from "node:path";
 import {
@@ -65,11 +72,12 @@ export async function buildStack(
   output = await safeDirectory(repo, output);
   const entries = await readdir(output);
   if (entries.length) {
-    if (
-      !entries.includes("manifest.json") ||
-      (await lstat(join(output, "manifest.json"))).isSymbolicLink()
-    )
-      throw new Error("Build output is not empty and has no build manifest");
+    if (!entries.includes("manifest.json"))
+      throw new Error(
+        `Build output is not empty and has no build manifest: ${entries.join(", ")}`,
+      );
+    if ((await lstat(join(output, "manifest.json"))).isSymbolicLink())
+      throw new Error("Invalid build manifest: manifest.json");
     const previous = JSON.parse(
       await readFile(join(output, "manifest.json"), "utf8"),
     ) as BuildManifest;
@@ -77,10 +85,10 @@ export async function buildStack(
       previous.stack !== stack.name ||
       previous.platform !== stack.platform.manifest.id
     )
-      throw new Error("Build output belongs to another stack");
-    const allowedFunctions = new Set([
+      throw new Error("Build output belongs to another stack: manifest.json");
+    const previousFunctions = new Set([
       ...Object.keys(previous.artifacts ?? {}),
-      ...view.functions.map((fn) => fn.id),
+      ...(previous.platform === "standalone" ? ["shared"] : []),
     ]);
     if (
       entries.includes("Dockerfile") &&
@@ -89,22 +97,23 @@ export async function buildStack(
         (await lstat(join(output, "Dockerfile"))).isSymbolicLink())
     )
       throw new Error("Invalid generated Dockerfile");
-    if (
-      entries.some(
-        (entry) =>
-          entry !== "manifest.json" &&
-          entry !== "Dockerfile" &&
-          !allowedFunctions.has(entry),
-      )
-    )
-      throw new Error("Build output contains files not owned by the build");
+    const unexpected = entries.filter(
+      (entry) =>
+        entry !== "manifest.json" &&
+        entry !== "Dockerfile" &&
+        !previousFunctions.has(entry),
+    );
+    if (unexpected.length)
+      throw new Error(
+        `Build output contains files not owned by the build: ${unexpected.join(", ")}`,
+      );
     for (const entry of entries.filter(
       (name) => name !== "manifest.json" && name !== "Dockerfile",
     )) {
       const path = join(output, entry);
       const stat = await lstat(path);
       if (!stat.isDirectory() || stat.isSymbolicLink())
-        throw new Error("Invalid build output directory");
+        throw new Error(`Invalid build output directory: ${entry}`);
       for (const file of await readdir(path)) {
         if (
           !["index.mjs", "meta.json", "bundle.zip", "manifest.json"].includes(
@@ -112,9 +121,15 @@ export async function buildStack(
           ) ||
           (await lstat(join(path, file))).isSymbolicLink()
         )
-          throw new Error("Build output contains files not owned by the build");
+          throw new Error(
+            `Build output contains files not owned by the build: ${entry}/${file}`,
+          );
       }
     }
+    const current = new Set(view.functions.map((fn) => fn.id));
+    for (const entry of entries)
+      if (previousFunctions.has(entry) && !current.has(entry))
+        await rm(join(output, entry), { recursive: true });
   }
   for (const fn of view.functions) {
     let entry: string;
@@ -134,7 +149,7 @@ export async function buildStack(
           .filter((item) => !item.path.includes("."))
           .map((item) => [item.kind, item.path]),
       );
-      entry = `${imports}\nimport { constructDeployedPlan, env, variable } from "@errtraq/core";\nimport { createHandler } from "@errtraq/platform-aws-lambda/handler";\nconst plan=${sourceValue(plan)}; const modules={${modules}}; const kinds=${JSON.stringify(kinds)};\nlet initialized; async function getHandler(){ return initialized ??= (async()=>{ const built=await constructDeployedPlan(plan,process.env, async (name)=>{ if(!Object.hasOwn(modules,name)) throw new Error("Unknown module "+name); return modules[name]; }); const adapters=Object.fromEntries(Object.entries(kinds).map(([kind,path])=>[kind,built.instances.get(path)])); return createHandler({roles:${JSON.stringify(fn.roles)},http:${JSON.stringify(fn.http)},adapters}); })(); }\nexport async function handler(event){return (await getHandler())(event);}\n`;
+      entry = `${imports}\nimport { constructDeployedPlan, createCronHandler, env, variable } from "@errtraq/core";\nimport { createHandler, retryableInitialization } from "@errtraq/platform-aws-lambda/handler";\nconst plan=${sourceValue(plan)}; const modules={${modules}}; const kinds=${JSON.stringify(kinds)};\nconst getHandler=retryableInitialization(async()=>{ const built=await constructDeployedPlan(plan,process.env, async (name)=>{ if(!Object.hasOwn(modules,name)) throw new Error("Unknown module "+name); return modules[name]; }); try { const adapters=Object.fromEntries(Object.entries(kinds).map(([kind,path])=>[kind,built.instances.get(path)])); const cronHandler=createCronHandler({warn:(message,fields)=>console.warn(message,fields??{}),error:(message,fields)=>console.error(message,fields??{})}); return createHandler({roles:${JSON.stringify(fn.roles)},http:${JSON.stringify(fn.http)},adapters,cronHandler}); } catch(error) { try { await built.close(); } catch(cleanup) { throw new AggregateError([error,cleanup],"Handler creation and cleanup failed"); } throw error; } });\nexport async function handler(event){return (await getHandler())(event);}\n`;
     } else if (stack.platform.manifest.id === "standalone") {
       const localImport = (path: string) => {
         const location = relative(repo, path).split(sep).join("/");
@@ -158,7 +173,7 @@ export async function buildStack(
       const modules = specs
         .map((spec, index) => `${JSON.stringify(spec)}:m${index}`)
         .join(",");
-      entry = `${imports}\nimport stack from ${JSON.stringify(localImport(stackFile))};\nimport {constructStack} from "./packages/cli/src/construction.ts";\nimport {devToken} from "./packages/cli/src/token.ts";\nconst modules={${modules}};\nconst built=await constructStack(stack,${JSON.stringify(fn.roles)},process.env,async(name)=>{if(!Object.hasOwn(modules,name)) throw new Error("Unknown module "+name); return modules[name];});\nconst project=await built.platform.prepare(false,devToken); const server=await built.platform.start();\nconsole.log("DSN: http://"+project.publicKey+"@"+server.host+":"+server.port+"/"+project.projectId); console.log("API token: "+project.token); console.log("Listening: http://"+server.host+":"+server.port);\nlet stopping=false;
+      entry = `${imports}\nimport stack from ${JSON.stringify(localImport(stackFile))};\nimport {constructStack} from "./packages/cli/src/construction.ts";\nimport {devToken} from "./packages/cli/src/token.ts";\nimport {dsnOrigin} from "./packages/cli/src/address.ts";\nconst modules={${modules}};\nconst built=await constructStack(stack,${JSON.stringify(fn.roles)},process.env,async(name)=>{if(!Object.hasOwn(modules,name)) throw new Error("Unknown module "+name); return modules[name];});\nconst project=await built.platform.prepare(false,devToken); const server=await built.platform.start();\nconst destination=dsnOrigin(server.host,server.port,server.publicUrl); if(destination.fallback) console.log("Note: DSN uses localhost; use your public host for remote clients."); const dsn=new URL(destination.origin); dsn.username=project.publicKey; dsn.pathname="/"+project.projectId; console.log("DSN: "+dsn.toString()); console.log("API token: "+project.token); console.log("Listening: http://"+server.host+":"+server.port);\nlet stopping=false;
 for(const signal of ["SIGTERM","SIGINT"]) process.on(signal,()=>{if(stopping){if(process.pid===1) process.exit(signal==="SIGTERM"?143:130); process.removeAllListeners(signal); process.kill(process.pid,signal); return;} stopping=true; void server.close().then(()=>built.close()).catch((error)=>{console.error(error);process.exitCode=1;});});`;
     } else
       throw new Error(
@@ -232,7 +247,7 @@ for(const signal of ["SIGTERM","SIGINT"]) process.on(signal,()=>{if(stopping){if
     const id = view.functions[0]?.id;
     if (!id || view.functions.length !== 1)
       throw new Error("Standalone requires one function");
-    const dockerfile = `FROM node:22-bookworm-slim\nWORKDIR /app\nRUN mkdir -p /data && chown node:node /data\nCOPY --chown=node:node ${id}/index.mjs /app/index.mjs\n# Explicitly opt in to listening on the container network.\nENV ERRTRAQ_HOST=0.0.0.0 ERRTRAQ_DATA_DIR=/data\nUSER node\nVOLUME ["/data"]\nEXPOSE 8787\nHEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 CMD node -e "fetch('http://127.0.0.1:'+(process.env.ERRTRAQ_PORT||'8787')+'/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"\nENTRYPOINT ["node", "/app/index.mjs"]\n`;
+    const dockerfile = `FROM node:22.23-bookworm-slim\nWORKDIR /app\nRUN mkdir -p /data && chown node:node /data\nCOPY --chown=node:node ${id}/index.mjs /app/index.mjs\n# Explicitly opt in to listening on the container network.\nENV ERRTRAQ_HOST=0.0.0.0 ERRTRAQ_DATA_DIR=/data\nUSER node\nVOLUME ["/data"]\nEXPOSE 8787\nHEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 CMD node -e "fetch('http://127.0.0.1:'+(process.env.ERRTRAQ_PORT||'8787')+'/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"\nENTRYPOINT ["node", "/app/index.mjs"]\n`;
     await writeFile(join(output, "Dockerfile"), dockerfile);
     manifest.dockerfile = "Dockerfile";
   }

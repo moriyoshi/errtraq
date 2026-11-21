@@ -46,6 +46,7 @@ export const manifest: PlatformManifest = {
   requires: [],
   runtime: "node",
   compute: "function",
+  maxStackNameLength: 40,
   provides: ["writable-filesystem"],
   authorization: "iam",
   bindingKinds: ["env", "secret"],

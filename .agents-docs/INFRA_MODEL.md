@@ -40,11 +40,12 @@ version constraints live in stack provider entries, while module resources live 
 Manifests declare runtime compatibility and required environment features. Store capabilities
 include text search, range support and delete strategy; queue capabilities include delivery,
 size, delay, DLQ and `visibilityTimeout`. Platform manifests declare `runtime`, `compute`,
-`authorization` (`iam`, `bindings`, or `none`), supported `bindingKinds`, reserved exact names
+`authorization` (`iam`, `bindings`, or `none`), an optional `maxStackNameLength`, supported `bindingKinds`, reserved exact names
 or prefix patterns ending in `*`, and provided environment features. Adapter `requires` and
 platform `provides` use `writable-filesystem`, `long-lived-process`, and
 `shared-process-state`. The last requires a declared guarantee and one long-lived physical
-function. `none` authorization likewise requires one long-lived physical function. IAM requires
+function. AWS Lambda declares a 40-character stack-name limit, checked before generation.
+`none` authorization likewise requires one long-lived physical function. IAM requires
 policy outputs for every required capability and purpose; binding authorization requires a
 platform producer binding for active queue routes. Environment bindings must be scalar strings.
 The module provider named `local` does not require provider metadata; other modules do. Child
@@ -182,7 +183,9 @@ produce `SecretReadRequirement` entries. `deriveAccess`, `bindingsForRoles`, `de
 and `deriveTriggers` expose these derivations. Queue routes map all core topics to physical
 keys; per-topic mode requires distinct physical queues, shared mode one physical queue. Queue
 triggers are derived only for active topics, one per physical queue. Cron triggers come from
-`CRON_JOBS` when archive is selected and the cron role is deployed; the handlers remain M4 TODOs.
+`CRON_JOBS` when archive is selected and the cron role is deployed. Generated Lambda entries use
+the core cron registry: known M4 placeholders log that they are not implemented, and unknown or
+missing job names log an error and return without retrying.
 
 For the exact view passed to `inputs`, the following declarations are copied from
 `stack-model.ts` (the referenced `ArtifactRef`, `Binding`, `InfraValue` and `OutputRef` are also
@@ -293,7 +296,7 @@ Factories receive config, role-scoped bindings and explicit dependencies. Only q
 in dependency order and supplies root adapters to the platform by port kind. For deployed functions,
 `constructDeployedStack(stack, functionId, environment, loadModule)` is exported by core for M2c.
 It constructs only required ports, their children and runtime dependencies, reads each scoped binding
-by name, and never resolves output references in runtime bindings. The caller supplies a static
+by name, rejects missing or empty binding values, and never resolves output references in runtime bindings. The caller supplies a static
 module loader and calls `close()` on shutdown; failure also closes in reverse construction order.
 For function platforms supporting env bindings, each queue trigger adds an env binding named
 `ERRTRAQ_QUEUE_SOURCE_<physical>` (uppercase, hyphens changed to underscores) to the consumer
@@ -427,7 +430,9 @@ under `dist/<stack>` by default; `errtraq infra generate` verifies their hashes 
 relative to its output directory. An explicit `--allow-missing-artifacts` permits placeholders.
 Standalone builds a single Node bundle and a non-root Node 22 Dockerfile, and has no Terraform.
 The Dockerfile opts into `ERRTRAQ_HOST=0.0.0.0`, stores data in `/data` and probes `/health`;
-ordinary local runs default to loopback. Deployed construction first derives
+ordinary local runs default to loopback. Standalone's optional `publicUrl` config selects the
+printed DSN's public HTTP(S) origin; otherwise a wildcard listener uses localhost with a note.
+Deployed construction first derives
 `deployedPlan` and then runs `constructDeployedPlan`, preserving the same role and binding scopes
 as `constructDeployedStack` while allowing entrypoints to import only needed adapters. Actual AWS
 runtime adapters and secret sources remain M3 work.

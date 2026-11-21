@@ -585,6 +585,14 @@ function inspect(input: unknown): {
     return { issues };
   }
   const platform = platformParsed.data;
+  if (
+    platform.maxStackNameLength !== undefined &&
+    stack.name.length > platform.maxStackNameLength
+  )
+    fail(
+      "name",
+      `Stack name exceeds ${platform.maxStackNameLength} characters allowed by platform ${platform.id}`,
+    );
   for (const [key, provider] of Object.entries(stack.providers ?? {}))
     if (/(?:^|\/)hashicorp\/aws$/.test(provider.source) && !provider.region)
       fail(

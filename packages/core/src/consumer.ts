@@ -6,6 +6,7 @@ import {
   parseEventPayload,
 } from "./envelope.js";
 import type { ClaimCheck } from "./ingest.js";
+import { redactLogText } from "./log-redaction.js";
 import { normalizeEvent, normalizeEventId } from "./normalize.js";
 import type {
   ActiveStore,
@@ -181,7 +182,7 @@ export class ConsumerService {
         if (error instanceof InvalidEnvelopeError) {
           this.options.logger.error("Dropping invalid envelope", {
             deliveryId: delivery.id,
-            error: error.message,
+            error: redactLogText(error.message),
           });
           try {
             await this.options.blobs.delete(claim.blobKey);
@@ -192,7 +193,7 @@ export class ConsumerService {
         } else {
           this.options.logger.error("Ingest delivery failed", {
             deliveryId: delivery.id,
-            error: String(error),
+            error: redactLogText(String(error)),
           });
           results.push({ deliveryId: delivery.id, action: "retry" });
         }

@@ -317,6 +317,26 @@ describe("in-process ingest pipeline", () => {
     ]);
     expect(c.logger.error).toHaveBeenCalled();
   });
+  it("redacts credentials from failed consumer delivery logs", async () => {
+    const c = await setup();
+    await c.send(body(id(1), "test"));
+    const message = c.sent[0];
+    if (!message) throw new Error("missing claim");
+    vi.spyOn(c.blobs, "get").mockRejectedValue(
+      new Error(
+        "Authorization: Bearer tok123 password=secret123 https://user:pass@example.test/path",
+      ),
+    );
+    expect(
+      await c.consumer.handle([
+        { id: "d", topic: "ingest", attempt: 1, message },
+      ]),
+    ).toEqual([{ deliveryId: "d", action: "retry" }]);
+    const logged = JSON.stringify(vi.mocked(c.logger.error).mock.calls);
+    for (const secret of ["tok123", "secret123", "user:pass"])
+      expect(logged).not.toContain(secret);
+    expect(logged).toContain("[redacted]");
+  });
   it("bootstraps numeric projects idempotently", async () => {
     const c = await setup();
     const again = await bootstrapProject({

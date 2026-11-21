@@ -123,6 +123,8 @@ async function start() {
     origin = output.match(/^Listening: (.+)$/m)?.[1];
   assert.ok(dsn && token && origin);
   if (containerImage) {
+    assert.equal(new URL(dsn).hostname, "localhost");
+    assert.ok(output.includes("Note: DSN uses localhost"));
     const port = await waitFor(() => {
       const result = spawnSync("docker", ["port", containerName, "8787/tcp"], {
         encoding: "utf8",

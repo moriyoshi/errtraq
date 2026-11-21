@@ -8,6 +8,21 @@ import shared from "./aws-dynamodb.js";
 import perTopic from "./aws-dynamodb-per-topic.js";
 
 describe.each([shared, perTopic])("deployed runtime: $name", (stack) => {
+  it("rejects an empty deployed binding", async () => {
+    const fn = deriveDeployment(stack).functions.find(
+      (item) => item.id === "ingest",
+    );
+    if (!fn) throw new Error("missing ingest function");
+    const env = Object.fromEntries(
+      fn.envBindings.map(({ binding }) => [binding.name, "ok"]),
+    );
+    env.ERRTRAQ_STORE_TABLE = "";
+    await expect(
+      constructDeployedStack(stack, "ingest", env, async () => ({
+        create: () => ({}),
+      })),
+    ).rejects.toThrow("Missing deployed binding ERRTRAQ_STORE_TABLE");
+  });
   it("constructs only ingest adapters and reads only their delivered bindings", async () => {
     const calls: { module: string; context: Record<string, unknown> }[] = [];
     const reads: string[] = [];

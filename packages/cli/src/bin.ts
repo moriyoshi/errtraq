@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { relative, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import { physicalFunctions, resolveStack, selections } from "@errtraq/core";
+import { buildSummary, dsnHost, dsnOrigin } from "./address.js";
 import { buildStack } from "./build.js";
 import { constructStack } from "./construction.js";
 import { generateInfra, repositoryRoot, safeDirectory } from "./infra.js";
@@ -15,7 +16,12 @@ interface DevPlatform {
     rotate: boolean,
     tokenManager: typeof devToken,
   ): Promise<{ token: string; publicKey: string; projectId: string }>;
-  start(): Promise<{ host: string; port: number; close(): Promise<void> }>;
+  start(): Promise<{
+    host: string;
+    port: number;
+    publicUrl?: string;
+    close(): Promise<void>;
+  }>;
 }
 function isDevPlatform(value: unknown): value is DevPlatform {
   return (
@@ -83,7 +89,12 @@ export async function main(args: string[]): Promise<void> {
       );
       const manifest = await buildStack(stack, repo, directory, file);
       console.log(
-        `Built ${stack.name} in ${relative(repo, directory)} (${Object.keys(manifest.artifacts).length} deployable artifacts)`,
+        buildSummary(
+          stack.name,
+          relative(repo, directory),
+          manifest.platform,
+          Object.keys(manifest.artifacts).length,
+        ),
       );
     } else
       console.log(
@@ -124,12 +135,16 @@ export async function main(args: string[]): Promise<void> {
       return;
     }
     const server = await platform.start();
-    const urlHost = server.host.includes(":")
-      ? `[${server.host}]`
-      : server.host;
-    console.log(
-      `DSN: http://${project.publicKey}@${urlHost}:${server.port}/${project.projectId}`,
-    );
+    const urlHost = dsnHost(server.host);
+    const destination = dsnOrigin(server.host, server.port, server.publicUrl);
+    if (destination.fallback)
+      console.log(
+        "Note: DSN uses localhost; use your public host for remote clients.",
+      );
+    const dsn = new URL(destination.origin);
+    dsn.username = project.publicKey;
+    dsn.pathname = `/${project.projectId}`;
+    console.log(`DSN: ${dsn.toString()}`);
     console.log(`API token: ${token}`);
     console.log(`Listening: http://${urlHost}:${server.port}`);
     await new Promise<void>((done) => {

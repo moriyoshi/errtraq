@@ -146,6 +146,10 @@ export function createIngestApp(
     return c.json({ detail: "Internal server error", requestId }, 500);
   });
   app.use("*", async (c, next) => {
+    if (
+      !/^\/api\/[^/]+\/(?:envelope|store)\/?$/.test(new URL(c.req.url).pathname)
+    )
+      return next();
     await next();
     c.header("Access-Control-Allow-Origin", "*");
     c.header("Access-Control-Allow-Methods", "POST, OPTIONS");
@@ -158,7 +162,13 @@ export function createIngestApp(
       "X-Sentry-Error, X-Sentry-Rate-Limits, Retry-After",
     );
   });
-  app.options("*", (c) => c.body(null, 204));
+  for (const route of [
+    "/api/:projectId/envelope",
+    "/api/:projectId/envelope/",
+    "/api/:projectId/store",
+    "/api/:projectId/store/",
+  ])
+    app.options(route, (c) => c.body(null, 204));
   const handler = (legacy: boolean) => async (c: import("hono").Context) => {
     try {
       let key = parseDsnKey(

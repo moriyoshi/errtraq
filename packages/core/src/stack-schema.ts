@@ -74,6 +74,7 @@ const manifestSchema = z.strictObject({
 export const platformSchema = manifestSchema.extend({
   kind: z.literal("platform"),
   runtime: z.string().min(1),
+  maxStackNameLength: z.number().int().positive().optional(),
   compute: z.enum(["function", "long-lived"]),
   provides: z.array(z.enum(ENVIRONMENT_FEATURES)),
   authorization: z.enum(["iam", "bindings", "none"]),

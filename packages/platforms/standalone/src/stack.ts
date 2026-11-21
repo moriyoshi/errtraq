@@ -6,8 +6,27 @@ import {
 } from "@errtraq/core";
 import { z } from "zod";
 
+const publicUrl = z
+  .string()
+  .url()
+  .refine((value) => {
+    try {
+      const url = new URL(value);
+      return (
+        ["http:", "https:"].includes(url.protocol) &&
+        !url.username &&
+        !url.password &&
+        url.pathname === "/" &&
+        !url.search &&
+        !url.hash
+      );
+    } catch {
+      return false;
+    }
+  }, "Public URL must be an HTTP(S) origin without credentials");
 const baseConfigSchema = z.strictObject({
   host: z.string().min(1).default("127.0.0.1"),
+  publicUrl: publicUrl.optional(),
   port: z.number().int().min(0).max(65535).default(8787),
   tokenDirectory: z.string().min(1).default(".errtraq"),
   rateLimit: z.number().int().positive().nullable().default(60),
@@ -47,6 +66,7 @@ export type StandaloneConfig = z.input<typeof configSchema>;
 const stackConfigSchema = baseConfigSchema
   .extend({
     host: configReference(z.string().min(1)).default("127.0.0.1"),
+    publicUrl: configReference(publicUrl).optional(),
     port: portWithReference,
     tokenDirectory: configReference(z.string().min(1)).default(".errtraq"),
   })

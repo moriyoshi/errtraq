@@ -32,6 +32,30 @@ const copyStack = <T extends object>(value: T): T =>
 const names = (items: { binding: { name: string } }[]) =>
   items.map((item) => item.binding.name).sort();
 describe("AWS descriptor stacks", () => {
+  it("checks the platform-declared stack name limit before generation", () => {
+    expect(
+      validateStack({ ...copyStack(shared), name: "a".repeat(40) }),
+    ).toEqual([]);
+    expect(
+      validateStack({ ...copyStack(shared), name: "a".repeat(41) }),
+    ).toContainEqual({
+      path: "name",
+      message:
+        "Stack name exceeds 40 characters allowed by platform aws-lambda",
+    });
+    const smaller = {
+      ...copyStack(shared),
+      name: "sixsix",
+      platform: {
+        ...shared.platform,
+        manifest: { ...shared.platform.manifest, maxStackNameLength: 5 },
+      },
+    };
+    expect(validateStack(smaller)).toContainEqual({
+      path: "name",
+      message: "Stack name exceeds 5 characters allowed by platform aws-lambda",
+    });
+  });
   it("derives functions, scoped bindings, policies, and a shared trigger", () => {
     expect(validateStack(shared)).toEqual([]);
     const view = deriveDeployment(shared);

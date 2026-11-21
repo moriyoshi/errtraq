@@ -566,3 +566,20 @@ lint and all tests before any build; M2d items 5-8 and the full final gate remai
 The supported tooling range is `^22.18.0 || >=23.6.0`: Node 23.0 through 23.5 predate default
 TypeScript stripping even though they are newer than 22.18. Package engines, documentation and
 the CLI's preflight use the same range.
+
+## 2026-11-21 — M2d completed: M2 review closed
+
+Builds remove only stale function directories owned by the previous manifest, and report foreign
+paths rather than overwriting them. Lambda initialization is shared across concurrent invocations
+but resets after failure; generated entries now use the core cron registry, acknowledging unknown
+or missing names and logging M4 placeholders as unimplemented. Platform manifests can declare a
+stack-name limit, deployed bindings reject empty values, and consumer and HTTP failures share
+credential-pattern redaction. Ingest CORS is limited to ingest routes. Standalone DSNs use an
+optional public origin or localhost for wildcard listeners; build output names the bundle and
+Dockerfile. The Node container base is pinned to the 22.23 minor, with bump instructions in the
+README. M2's final review is closed: the fresh-export gate passed before build, both e2e modes,
+mock Terraform validation and mutation checks passed, and the container e2e passed with an
+isolated Docker client configuration. AWS runtime adapters, deployed secrets and real cloud
+deployment remain M3 work; cron implementations remain M4 work.
+The source e2e passed with a recurring `Skipping unreadable blob` / `ENOENT` log in one run;
+the existing M3 recovery-race investigation remains open and no cause is assumed.
