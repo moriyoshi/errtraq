@@ -460,8 +460,12 @@ function deploymentFor(
       }
     }
   }
-  if (stack.archive)
-    for (const job of CRON_JOBS) {
+  for (const job of CRON_JOBS) {
+    if (
+      (job.name === "staged-recovery" &&
+        stack.platform.manifest.compute === "function") ||
+      (job.name !== "staged-recovery" && stack.archive)
+    ) {
       const fn = functions.find((item) => item.roles.includes(job.role));
       if (fn)
         view.triggers.push({
@@ -471,6 +475,7 @@ function deploymentFor(
           schedule: job.schedule,
         });
     }
+  }
   return view;
 }
 export function deriveDeployment(input: StackConfig): DeploymentView {

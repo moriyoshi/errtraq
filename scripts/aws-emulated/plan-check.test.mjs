@@ -29,6 +29,28 @@ describe("repeat-plan gap filtering", () => {
     plan.resource_changes[0].change.after.id = "changed";
     expect(() => assertRepeatPlan(plan, gaps)).toThrow();
   });
+  it("requires the named EventBridge tag exception", () => {
+    const plan = {
+      resource_changes: [
+        {
+          address: "rule",
+          mode: "managed",
+          type: "aws_cloudwatch_event_rule",
+          change: {
+            actions: ["update"],
+            before: { tags_all: {} },
+            after: { tags_all: { app: "errtraq" } },
+          },
+        },
+      ],
+    };
+    expect(() => assertRepeatPlan(plan, {}, { app: "errtraq" })).toThrow(
+      "Undeclared",
+    );
+    expect([
+      ...assertRepeatPlan(plan, { "tags-eventbridge": {} }, { app: "errtraq" }),
+    ]).toEqual(["tags-eventbridge"]);
+  });
   it("rejects replacements and undocumented changes", () => {
     const plan = {
       resource_changes: [

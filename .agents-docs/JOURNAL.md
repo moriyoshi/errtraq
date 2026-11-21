@@ -1088,3 +1088,27 @@ must survive queue retention and redrive; their cleanup remains a TODO.
 Lambda + SQS defaults to grouped recording and adds a record function alongside split consumers;
 standalone remains direct unless explicitly configured with the record role. Neither mode emits
 notifications yet. Terraform validation uses the real derived grants and both queue triggers.
+
+
+## 2026-11-22 — Grouped pipeline measurement and recovery cron
+
+DynamoDB Local with four concurrent memory-queue workers and 40 background events drained 200
+hot-issue events in 4.26 seconds and 500 in 9.48 seconds. Both runs had one transaction per hot
+event, zero retries and maximum observed same-group concurrency one; four workers were active.
+The memory queue dispatches one message per invocation, so this measures serialized single-item
+writes, not SQS FIFO batching or AWS throughput. The earlier pre-batched store test achieved
+0.10 transactions per event; effective Lambda batch sizes require real AWS measurement.
+
+Lambda schedules staged-envelope recovery every five minutes and ignores staged keys younger
+than ten minutes. Recovery messages identify themselves so a message racing successful deletion
+of the staged object can be acknowledged without a misleading missing-blob error. The earlier
+`Skipping unreadable blob` / `ENOENT` is a separate filesystem startup scan race: a file can
+disappear between directory enumeration and opening. Missing files are skipped quietly while
+corruption and other read errors still produce warnings.
+
+Winterbaume also drops EventBridge rule default tags on readback, causing a repeat-plan
+`tags_all` diff. The emulator apply checks and reports this as the named `tags-eventbridge`
+exception; the issue has not been filed upstream. Real AWS must verify tag persistence.
+
+A final rerun measured 3.96 seconds for 200 and 9.80 seconds for 500; both again had one
+transaction per hot event, no retries and maximum same-group concurrency one.

@@ -224,3 +224,23 @@ it("dispatches known cron jobs and acknowledges unknown or missing jobs", async 
   await expect(fallback("invalid")).resolves.toBeUndefined();
   expect(logger.error).toHaveBeenCalledTimes(4);
 });
+
+it("executes staged-envelope recovery through its delivered blob and queue adapters", async () => {
+  const blobs = new MemoryBlobStore();
+  const queue = new MemoryQueue();
+  const send = vi.spyOn(queue.producer, "send");
+  const key =
+    "envelopes/1/2020-01-01T00%3A00%3A00.000Z/00000000000000000000000000000001";
+  await blobs.put(key, new TextEncoder().encode("staged"));
+  const handler = createHandler({
+    roles: ["cron"],
+    http: [],
+    adapters: { blob: blobs, queue },
+  });
+  await handler({ job: "staged-recovery" });
+  expect(send).toHaveBeenCalledWith("ingest", [
+    expect.objectContaining({
+      body: expect.objectContaining({ blobKey: key, recovered: true }),
+    }),
+  ]);
+});

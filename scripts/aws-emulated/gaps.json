@@ -38,5 +38,10 @@
     "heading": "FIFO settings and delivery are incomplete",
     "effect": "test FIFO creation and deduplication only; exclude unsupported settings and ordering assertions",
     "issue": null
+  },
+  "tags-eventbridge": {
+    "heading": "EventBridge rule tag readback is incomplete",
+    "effect": "exclude EventBridge rule tags_all drift from repeat-plan comparison",
+    "issue": null
   }
 }

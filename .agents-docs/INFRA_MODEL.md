@@ -207,17 +207,17 @@ produce `SecretReadRequirement` entries. `deriveAccess`, `bindingsForRoles`, `de
 and `deriveTriggers` expose these derivations. Queue routes map all core topics to physical
 keys; per-topic mode requires distinct physical queues, shared mode one physical queue. Queue
 triggers are derived only for active topics, one per physical queue. Cron triggers come from
-`CRON_JOBS` when archive is selected and the cron role is deployed. Generated Lambda entries use
-the core cron registry: known M4 placeholders log that they are not implemented, and unknown or
-missing job names log an error and return without retrying.
+`CRON_JOBS`: Lambda schedules staged-envelope recovery every five minutes whenever the cron role
+is deployed, and schedules the M4 jobs when archive is selected. Recovery skips newly staged
+objects for ten minutes, then republishes old claims; a recovered claim whose blob has since been
+deleted is acknowledged because the successful consumer deletes only after its durable handoff.
+Known M4 placeholders log that they are not implemented, and unknown jobs log an error.
 
-### Grouped recording (M3; model implemented, runtime stage planned)
+### Grouped recording (M3)
 
-Core now models stack `recordMode: "direct" | "grouped"` and a `record` function role; the
-record handler remains future work; SQS FIFO, SQLite, Postgres and DynamoDB
-now implement their respective parts. An
-omitted mode currently defaults to direct for every stack. Future stack helpers will explicitly
-default standalone to direct and AWS Lambda/SQS to grouped; validation
+Core models stack `recordMode: "direct" | "grouped"` and a `record` function role; SQS FIFO,
+SQLite, Postgres and DynamoDB implement their respective parts. An omitted mode defaults to
+grouped for AWS Lambda/SQS and direct for standalone; validation
 must reject a grouped stack that lacks per-key serial delivery, a deployed record role, the
 batched store operation, or any required binding, policy or trigger. Direct mode does not activate
 `record`, its queue, trigger or grants. Do not silently downgrade a grouped stack.
@@ -245,7 +245,7 @@ The SQS runtime exposes `physicalQueues` capabilities by physical key: FIFO uses
 accept delay. FIFO producer batches never contain two entries from the same group, avoiding
 reordering if an earlier entry fails while a later entry succeeds.
 The record role becomes an ordinary physical-function role subject to split/settings/conflict and
-artifact rules. Cron recovery and bundle cleanup stay separately activated by their actual jobs.
+artifact rules. Bundle cleanup remains a future scheduled job.
 
 The SQS module has typed per-queue FIFO settings, `.fifo` names for record and its FIFO DLQ,
 content-based deduplication off, `DeduplicationScope = messageGroup` and
@@ -380,7 +380,7 @@ function. Its value is the queue resource reference, resolved by Terraform; runt
 delivered value as `queueConsumers.eventSource`. Collisions and reserved names fail validation.
 Platforms without env bindings need their own runtime binding mechanism.
 Deployed and local construction reject active queue topics with no implemented consumer handler;
-currently only `ingest` is implemented. Lambda DLQ receive counts must cover the consumer
+`ingest` and grouped `record` are implemented. Lambda DLQ receive counts must cover the consumer
 missing-claim limit (currently five attempts).
 The standalone platform owns migration and bootstrap; its `tokenDirectory` is configured
 independently from the SQLite path. The local stack assigns both from `ERRTRAQ_DATA_DIR`.

@@ -101,6 +101,7 @@ export class FsBlobStore implements BlobStore {
     logger: Pick<Logger, "warn"> = {
       warn: (message, fields) => console.warn(message, fields),
     },
+    openForScan: typeof open = open,
   ) {
     const { root } = configSchema.parse(config);
     this.root = (async () => {
@@ -118,16 +119,17 @@ export class FsBlobStore implements BlobStore {
           continue;
         let file: FileHandle | undefined;
         try {
-          file = await open(path, noFollow);
+          file = await openForScan(path, noFollow);
           const { header } = await readHeader(file);
           if (hashKey(header.key) !== entry.name)
             throw new BlobCorruptError("Blob key mismatch");
           this.keys.push(header.key);
         } catch (error) {
-          logger.warn("Skipping unreadable blob", {
-            path,
-            error: String(error),
-          });
+          if (!missing(error))
+            logger.warn("Skipping unreadable blob", {
+              path,
+              error: String(error),
+            });
         } finally {
           await file?.close();
         }

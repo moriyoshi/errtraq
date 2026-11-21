@@ -31,6 +31,7 @@ export type RoutedTopic = (typeof TOPICS)[number];
 /** Visibility must cover six consumer timeouts, allowing for retries and delays. */
 export const QUEUE_VISIBILITY_FACTOR = 6;
 export const CRON_JOBS = [
+  { name: "staged-recovery", schedule: "*/5 * * * *", role: "cron" },
   { name: "archive-planner", schedule: "0 * * * *", role: "cron" },
   { name: "retention", schedule: "15 * * * *", role: "cron" },
   { name: "erasure-worker", schedule: "*/5 * * * *", role: "cron" },

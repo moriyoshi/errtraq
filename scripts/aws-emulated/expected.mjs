@@ -25,6 +25,7 @@ export function capabilityPolicy(grant, resources) {
     const actions = {
       read: ["dynamodb:GetItem", "dynamodb:BatchGetItem", "dynamodb:Query"],
       write: ["dynamodb:PutItem", "dynamodb:UpdateItem", "dynamodb:GetItem"],
+      "metadata-delete": ["dynamodb:DeleteItem"],
       delete:
         selection === "kv"
           ? ["dynamodb:DeleteItem"]
@@ -38,14 +39,34 @@ export function capabilityPolicy(grant, resources) {
         capability === "read" && selection === "store"
           ? [arn, ...indexNames.map((name) => `${arn}/index/${name}`)]
           : [arn],
-        capability === "delete" && selection === "store"
+        capability === "metadata-delete" && selection === "store"
           ? {
               Condition: {
-                "ForAllValues:StringLike": { "dynamodb:LeadingKeys": ["EV|*"] },
+                "ForAllValues:StringLike": {
+                  "dynamodb:LeadingKeys": [
+                    "ORGSLUG|*",
+                    "PROJECTSLUG|*",
+                    "TOKEN|*",
+                    "RELEASE|*",
+                    "KEY|*",
+                    "KEYID|*",
+                    "DEBUG|*",
+                    "BUNDLE|*",
+                  ],
+                },
                 Null: { "dynamodb:LeadingKeys": "false" },
               },
             }
-          : {},
+          : capability === "delete" && selection === "store"
+            ? {
+                Condition: {
+                  "ForAllValues:StringLike": {
+                    "dynamodb:LeadingKeys": ["EV|*"],
+                  },
+                  Null: { "dynamodb:LeadingKeys": "false" },
+                },
+              }
+            : {},
       ),
     ];
   } else if (selection === "queue") {

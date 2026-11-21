@@ -94,13 +94,16 @@ export async function verifyDeployment(c, stack, view, account) {
   resources.blob = `arn:aws:s3:::${buckets[0]}`;
   const triggers = view.triggers.filter((trigger) => trigger.kind === "queue");
   for (const trigger of triggers) {
-    const queueName = `${name}-${trigger.physical}`;
+    const fifo = trigger.physical === "record";
+    const queueName = `${name}-${trigger.physical}${fifo ? ".fifo" : ""}`;
     const { QueueUrl } = await c.sqs("GetQueueUrl", { QueueName: queueName });
     const { Attributes } = await c.sqs("GetQueueAttributes", {
       QueueUrl,
       AttributeNames: ["All"],
     });
-    const dlq = await c.sqs("GetQueueUrl", { QueueName: `${queueName}-dlq` });
+    const dlq = await c.sqs("GetQueueUrl", {
+      QueueName: `${name}-${trigger.physical}-dlq${fifo ? ".fifo" : ""}`,
+    });
     const dead = await c.sqs("GetQueueAttributes", {
       QueueUrl: dlq.QueueUrl,
       AttributeNames: ["All"],
@@ -123,8 +126,8 @@ export async function verifyDeployment(c, stack, view, account) {
     QueueNamePrefix: `${name}-`,
   });
   const expectedQueueNames = triggers.flatMap((trigger) => [
-    `${name}-${trigger.physical}`,
-    `${name}-${trigger.physical}-dlq`,
+    `${name}-${trigger.physical}${trigger.physical === "record" ? ".fifo" : ""}`,
+    `${name}-${trigger.physical}-dlq${trigger.physical === "record" ? ".fifo" : ""}`,
   ]);
   assert.deepEqual(
     sorted((queueListing.QueueUrls ?? []).map((url) => url.split("/").at(-1))),

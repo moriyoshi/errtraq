@@ -12,7 +12,7 @@ import { join } from "node:path";
 import { BlobCorruptError, BlobInvalidKeyError } from "@errtraq/core";
 import { blobStoreContract } from "@errtraq/testing";
 import { afterAll, expect, it, vi } from "vitest";
-import { create as createAdapter } from "./index.js";
+import { create as createAdapter, FsBlobStore } from "./index.js";
 
 const create = (
   config: Parameters<typeof createAdapter>[0]["config"] = {} as Parameters<
@@ -103,4 +103,17 @@ it("cleans stale temp files and accepts a symlinked configured root", async () =
   await b.put("key", new TextEncoder().encode("value"));
   await expect(stat(stale)).rejects.toMatchObject({ code: "ENOENT" });
   expect((await b.list("")).items).toEqual(["key"]);
+});
+
+it("ignores a file removed between directory scan and opening it", async () => {
+  const root = join(directory, "scan-delete-race");
+  const first = create({ root });
+  await first.put("gone", new Uint8Array([1]));
+  const log = vi.fn();
+  const reopened = new FsBlobStore({ root }, { warn: log }, async () => {
+    const error = Object.assign(new Error("deleted"), { code: "ENOENT" });
+    throw error;
+  });
+  expect((await reopened.list("")).items).toEqual([]);
+  expect(log).not.toHaveBeenCalled();
 });

@@ -1,8 +1,13 @@
 import { randomUUID } from "node:crypto";
 import { signAwsRequest } from "@errtraq/aws-signing";
-import { bootstrapDeployed, hashApiToken } from "@errtraq/core";
+import { bootstrapDeployed, hashApiToken, RecordHandler } from "@errtraq/core";
 import { bundleDebugIdsDigest } from "@errtraq/core/store";
-import { activeStoreContract, MemoryKV } from "@errtraq/testing";
+import {
+  activeStoreContract,
+  MemoryBlobStore,
+  MemoryKV,
+  MemoryQueue,
+} from "@errtraq/testing";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { DynamoStore } from "./runtime.js";
 
@@ -91,6 +96,138 @@ describe.skipIf(!endpoint)("DynamoDB store emulator", () => {
       await api("DeleteTable", { TableName: table });
   });
   activeStoreContract(makeStore);
+  it("measures grouped queue contention end to end on DynamoDB Local", async () => {
+    for (const total of [200, 500]) {
+      const store = await makeStore();
+      const request = DynamoStore.prototype.request.bind(store);
+      let hotTransactions = 0,
+        allTransactions = 0,
+        complete = 0,
+        failures = 0;
+      vi.spyOn(store, "request").mockImplementation(async (action, input) => {
+        if (action === "TransactWriteItems") {
+          allTransactions++;
+          if (JSON.stringify(input).includes("IS|31!|")) hotTransactions++;
+        }
+        return request(action, input);
+      });
+      const queue = new MemoryQueue();
+      const logger = { debug() {}, info() {}, warn() {}, error() {} };
+      const record = new RecordHandler({
+        store,
+        blobs: new MemoryBlobStore(),
+        logger,
+      });
+      const active = new Map<string, number>();
+      let maximum = 0,
+        maxWorkers = 0,
+        workersActive = 0;
+      const stop = new AbortController();
+      const handler: import("@errtraq/core").BatchHandler = async (batch) => {
+        const group = batch[0]?.message.groupKey ?? "missing";
+        const count = (active.get(group) ?? 0) + 1;
+        active.set(group, count);
+        maximum = Math.max(maximum, count);
+        maxWorkers = Math.max(maxWorkers, ++workersActive);
+        try {
+          const result = await record.handle(batch);
+          complete += result.filter((x) => x.action === "ack").length;
+          failures += result.filter((x) => x.action !== "ack").length;
+          return result;
+        } finally {
+          active.set(group, count - 1);
+          workersActive--;
+        }
+      };
+      const background = 40;
+      const timestamp = "2025-01-01T00:00:00.000Z";
+      for (let i = 0; i < total; i++) {
+        const eventId = i.toString(16).padStart(32, "0");
+        const common = {
+          projectId: "1",
+          issueId: "hot",
+          eventId,
+          timestamp,
+          receivedAt: timestamp,
+        };
+        await queue.producer.send("record", [
+          {
+            key: eventId,
+            groupKey: "hot",
+            body: {
+              version: 1,
+              occurrence: {
+                ...common,
+                fingerprint: "hot",
+                title: "test",
+                culprit: "",
+                level: "error",
+                type: "error",
+                metadata: {},
+              },
+              event: { ...common, level: "error", tags: {}, payload: {} },
+            },
+          },
+        ]);
+        if (i < background) {
+          const other = {
+            ...common,
+            projectId: "2",
+            issueId: `other-${i % 8}`,
+            eventId: (i + 10000).toString(16).padStart(32, "0"),
+          };
+          await queue.producer.send("record", [
+            {
+              key: other.eventId,
+              groupKey: other.issueId,
+              body: {
+                version: 1,
+                occurrence: {
+                  ...other,
+                  fingerprint: other.issueId,
+                  title: "test",
+                  culprit: "",
+                  level: "error",
+                  type: "error",
+                  metadata: {},
+                },
+                event: { ...other, level: "error", tags: {}, payload: {} },
+              },
+            },
+          ]);
+        }
+      }
+      const start = performance.now();
+      const workers = Array.from({ length: 4 }, () =>
+        queue.pull.run(handler, stop.signal),
+      );
+      try {
+        const deadline = Date.now() + 120000;
+        while (complete < total + background && Date.now() < deadline)
+          await new Promise((resolve) => setTimeout(resolve, 20));
+        expect(complete).toBe(total + background);
+      } finally {
+        stop.abort();
+        await Promise.all(workers);
+      }
+      const elapsed = (performance.now() - start) / 1000;
+      expect(failures).toBe(0);
+      expect(maximum).toBe(1);
+      expect(maxWorkers).toBeGreaterThan(1);
+      expect(hotTransactions).toBeGreaterThanOrEqual(total);
+      expect(
+        (
+          await store.issues.get(
+            "1" as import("@errtraq/core").ProjectId,
+            "hot" as import("@errtraq/core").IssueId,
+          )
+        )?.count,
+      ).toBe(total);
+      console.log(
+        `GROUPED QUEUE END-TO-END: hot=${total}, background=${background}, hot transactions=${hotTransactions}, all transactions=${allTransactions}, hot transactions/event=${(hotTransactions / total).toFixed(2)}, max group concurrency=${maximum}, max workers=${maxWorkers}, drain=${elapsed.toFixed(2)}s, retries=${failures}`,
+      );
+    }
+  }, 240000);
   it("measures issue-grouped writes on DynamoDB Local", async () => {
     for (const total of [200, 500]) {
       const store = await makeStore();

@@ -684,7 +684,7 @@ describe("infrastructure model", () => {
     });
     expect(
       view.triggers.filter((trigger) => trigger.kind === "cron"),
-    ).toHaveLength(3);
+    ).toHaveLength(4);
     expect(
       view.triggers
         .filter((trigger) => trigger.kind === "cron")
@@ -991,7 +991,7 @@ describe("infrastructure model", () => {
     expect(resolved.blob.config).toEqual({ n: 5 });
     expect(resolveStack(resolved)).toBe(resolved);
     expect(constructionOrder(resolved)).toContain("blob");
-    expect(deriveTriggers(resolved)).toHaveLength(1);
+    expect(deriveTriggers(resolved)).toHaveLength(2);
     expect(validateStack(resolved)).toEqual([]);
     expect(Object.isFrozen(resolved)).toBe(true);
     expect(Object.isFrozen(resolved.blob.config)).toBe(true);
@@ -1671,6 +1671,13 @@ describe("infrastructure model", () => {
         settings: {},
         topics: ["ingest"],
       },
+      {
+        kind: "cron",
+        functionId: "cron",
+        role: "cron",
+        name: "staged-recovery",
+        schedule: "*/5 * * * *",
+      },
     ]);
     v.archive = selection("archive");
     v.archive.manifest.capabilities = { rowDelete: "copy-on-write" };
@@ -1682,12 +1689,12 @@ describe("infrastructure model", () => {
     const v = stack();
     expect(
       deriveTriggers(v).filter((trigger) => trigger.kind === "cron"),
-    ).toEqual([]);
+    ).toHaveLength(1);
     v.archive = selection("archive");
     v.archive.manifest.capabilities = { rowDelete: "copy-on-write" };
     expect(
       deriveTriggers(v).filter((trigger) => trigger.kind === "cron"),
-    ).toHaveLength(3);
+    ).toHaveLength(4);
     (v.platform.config as { roles: string[] }).roles = [
       "ingest",
       "api",

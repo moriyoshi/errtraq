@@ -1014,6 +1014,79 @@ describe("in-process ingest pipeline", () => {
       );
     });
   });
+  it("acknowledges a recovery claim when the concurrent consumer has already deleted its blob", async () => {
+    const c = await setup();
+    expect((await c.send(body(id(76), "race"))).status).toBe(200);
+    const message = c.sent[0];
+    if (!message) throw new Error("missing claim");
+    const recovered: Message[] = [];
+    const producer = {
+      send: async (_topic: string, messages: Message[]) => {
+        recovered.push(...messages);
+      },
+    };
+    expect(
+      await recoverStagedEnvelopes(c.blobs, producer, c.logger, {
+        now: c.clock.now(),
+        minimumAgeMs: 600000,
+      }),
+    ).toBe(0);
+    expect(await recoverStagedEnvelopes(c.blobs, producer)).toBe(1);
+    const original: Delivery = {
+      id: "original",
+      topic: "ingest",
+      attempt: 1,
+      message,
+    };
+    expect((await c.consumer.handle([original]))[0]?.action).toBe("ack");
+    const duplicate = recovered[0];
+    if (!duplicate) throw new Error("missing recovered claim");
+    expect(
+      await c.consumer.handle([
+        { id: "recovered", topic: "ingest", attempt: 1, message: duplicate },
+      ]),
+    ).toEqual([{ deliveryId: "recovered", action: "ack" }]);
+    expect(
+      (
+        await c.store.issues.list({
+          projectId: c.project.project.id,
+          sort: "count",
+        })
+      ).items[0]?.count,
+    ).toBe(1);
+    expect(c.logger.error).not.toHaveBeenCalled();
+  });
+  it("deduplicates concurrent original and recovered deliveries", async () => {
+    const c = await setup();
+    expect((await c.send(body(id(75), "concurrent"))).status).toBe(200);
+    const original = c.sent[0];
+    if (!original) throw new Error("missing original claim");
+    const recovered: Message[] = [];
+    await recoverStagedEnvelopes(c.blobs, {
+      send: async (_topic, messages) => {
+        recovered.push(...messages);
+      },
+    });
+    const copy = recovered[0];
+    if (!copy) throw new Error("missing recovered claim");
+    const result = await Promise.all([
+      c.consumer.handle([
+        { id: "original", topic: "ingest", attempt: 1, message: original },
+      ]),
+      c.consumer.handle([
+        { id: "recovered", topic: "ingest", attempt: 1, message: copy },
+      ]),
+    ]);
+    expect(result.map((items) => items[0]?.action)).toEqual(["ack", "ack"]);
+    expect(
+      (
+        await c.store.issues.list({
+          projectId: c.project.project.id,
+          sort: "count",
+        })
+      ).items[0]?.count,
+    ).toBe(1);
+  });
   it("recovers staged envelopes into a new queue without duplicating events", async () => {
     const c = await setup();
     expect((await c.send(body(id(77), "recover"))).status).toBe(200);

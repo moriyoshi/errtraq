@@ -118,6 +118,15 @@ export class ConsumerService {
         const body = await this.options.blobs.get(claim.blobKey);
         if (!body) {
           if (
+            typeof delivery.message.body === "object" &&
+            delivery.message.body !== null &&
+            "recovered" in delivery.message.body &&
+            delivery.message.body.recovered === true
+          ) {
+            results.push({ deliveryId: delivery.id, action: "ack" });
+            continue;
+          }
+          if (
             delivery.attempt >=
             (this.options.maxMissingAttempts ?? CONSUMER_MAX_MISSING_ATTEMPTS)
           ) {

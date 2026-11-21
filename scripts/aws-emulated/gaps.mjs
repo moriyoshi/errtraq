@@ -14,6 +14,7 @@ export function loadGaps() {
     "tags-iam",
     "tags-s3",
     "tags-lambda-mapping",
+    "tags-eventbridge",
     "lambda-vpc-readback",
   ];
   if (

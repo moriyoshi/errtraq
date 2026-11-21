@@ -186,7 +186,7 @@ try {
     "SKIPPED concurrent store and CAS contracts on winterbaume: issue #61 violates conditional atomicity; a diagnostic runs separately (https://github.com/moriyoshi/winterbaume/issues/61)",
   );
   const storePattern =
-    "^(?!.*(?:measures issue-grouped writes on DynamoDB Local|atomically records concurrent event groups for one issue|atomically creates or bumps, reopens regressions, and tracks the latest event|preserves an occurrence concurrent with an issue update|atomically ignores concurrent duplicate deliveries|uses compare-and-set for creation and competing writers, and lists erasures|pages erasures by state and serializes concurrent erasure transitions|atomically creates a token once and never revives a revoked token|bootstraps a DynamoDB store concurrently without prior migration|atomically creates one initial active project key)).*$";
+    "^(?!.*(?:measures issue-grouped writes on DynamoDB Local|measures grouped queue contention end to end on DynamoDB Local|atomically records concurrent event groups for one issue|atomically creates or bumps, reopens regressions, and tracks the latest event|preserves an occurrence concurrent with an issue update|atomically ignores concurrent duplicate deliveries|uses compare-and-set for creation and competing writers, and lists erasures|pages erasures by state and serializes concurrent erasure transitions|atomically creates a token once and never revives a revoked token|bootstraps a DynamoDB store concurrently without prior migration|atomically creates one initial active project key)).*$";
   const storeContract = spawn(
     "pnpm",
     [

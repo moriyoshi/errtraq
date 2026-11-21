@@ -82,7 +82,10 @@ Winterbaume issue #61 prevents the store's concurrent transaction and CAS contra
 atomicity. The command runs those unchanged cases against a cached, digest-pinned DynamoDB
 Local Docker image when available and prints a skip otherwise; it never pulls an image.
 The Winterbaume 40-writer diagnostic records the gap separately and is not a correctness or
-contention benchmark. DynamoDB Local likewise does not replace the M3h real AWS check.
+contention benchmark. DynamoDB Local also runs the grouped in-process pipeline with four memory
+queue workers, 200 and 500 hot events and background traffic, reporting transaction attempts,
+group concurrency and drain time. The memory queue sends one record at a time, so it does not
+measure FIFO batch efficiency. DynamoDB Local does not replace the M3h real AWS check.
 The Local run also exercises concurrent deployed bootstrap with both DynamoDB store and KV;
 `test:postgres` exercises it through separate Postgres pools. Secrets Manager bootstrap calls
 use fake HTTP responses in local tests and still require an M3h real-AWS check.
@@ -177,6 +180,7 @@ The opt-in emulator apply workflow is:
 pnpm infra:apply-emulated
 pnpm infra:apply-emulated --postgres-only  # focused IAM Postgres fixture
 pnpm infra:apply-emulated --fifo-only      # FIFO queue and DLQ with named emulator exceptions
+pnpm infra:apply-emulated --grouped-only   # grouped shared and per-topic roots
 ```
 
 It uses pinned AWS provider 6.73.0 and loopback-only provider settings, with
@@ -187,7 +191,7 @@ and checks API inventories after destroy. The Postgres fixture also checks exact
 and network-interface role policies; the pinned emulator drops Lambda VPC configuration, so a
 self-verifying named exception omits that block only from a temporary module copy. Provider queue-stabilization and deletion waits
 make this a lengthy opt-in run. A feature-enabled fixture checks the three-topic
-queue transition; the actual examples enable only `ingest`. Named exceptions are listed in
+queue transition; the grouped examples enable `ingest` and `record`. Named exceptions are listed in
 `scripts/aws-emulated/gaps.json`, logged visibly, linked to
 [WINTERBAUME_GAPS.md](./WINTERBAUME_GAPS.md), and checked to ensure each gap still reproduces. Temporary module overrides exclude the unusable ownership-control resource and unsupported FIFO
 settings; tracked modules and generator output are unchanged.

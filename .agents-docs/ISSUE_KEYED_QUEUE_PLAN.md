@@ -1,6 +1,6 @@
 # Issue-keyed record stage: design and turn plan
 
-Status: proposed M3 design, not implemented. Current behavior and shapes remain in the code and
+Status: implemented through turn 6; real AWS verification remains in M3h. Current behavior and shapes remain in the code and
 [INFRA_MODEL.md](./INFRA_MODEL.md). The owner selected grouped writes to address hot-issue
 contention and chose **no TTL** on pending bundle items or manifest chunks. Bundle cleanup cron
 is required, and operators must alert on its failures, oldest pending bundle and backlog.
@@ -117,3 +117,27 @@ bursts only if long-run service capacity exceeds arrivals and retention is suffi
    payload cleanup. Add M3h checks for a real AWS FIFO/Lambda deployment and measure the stated
    throughput/cost assumptions. M3g staged-envelope recovery cron and its earlier blob race remain
    queued separately, and M5 bundle cleanup cron must be wired and monitored.
+
+
+## M3h real deployment checklist (in order)
+
+1. Select a disposable sandbox stack, a clean account namespace, budget and cleanup owner;
+   confirm artifact size and select the S3 deployment path if direct ZIP upload is too large.
+2. Build and generate both shared and per-topic grouped stacks, review the plan and least-privilege
+   IAM grants, then apply one variant. Verify the function URLs, role policies, FIFO and DLQ
+   settings, event-source mappings, EventBridge schedule, log groups and alarms.
+3. Run the bootstrap and migrations twice, including concurrent invocations. Retrieve the DSN and
+   token from Secrets Manager without printing them or writing them to Terraform state or output.
+4. Run SDK end-to-end tests: grouping and counts, duplicate sends, FIFO same-group serialization,
+   interleaved groups, visibility expiry, partial failures, poison-to-DLQ and redrive. Measure
+   batch sizes, transactions/event, drain latency and backlog under 200/500-event hot-issue load
+   plus background traffic; compare throughput and request costs with the estimates above.
+5. Exercise the recovery schedule with an old staged envelope, concurrent consumer deletion and
+   a failed publish; check eventual one-event persistence, retry and logs. Test mode-switch drain
+   without overlapping writers, and verify claim-check retention and manual cleanup assumptions.
+6. Test RDS/Aurora IAM access from Lambda, verified CA bundle, token refresh after 15 minutes,
+   RDS Proxy behavior, and VPC NAT or endpoints for SQS, S3, DynamoDB and Secrets Manager.
+7. Verify IAM denial boundaries, TLS-only bucket enforcement, deletion protection, lifecycle
+   behavior, CORS and operational alarms with real AWS; exercise provider retries and timeouts.
+8. Destroy the disposable stack and inspect AWS APIs for leftover resources and retained data.
+   Repeat relevant checks for the other queue topology before considering M3h complete.

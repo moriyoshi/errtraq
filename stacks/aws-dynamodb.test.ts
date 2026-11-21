@@ -281,6 +281,12 @@ describe("AWS descriptor stacks", () => {
           dlq: { enabled: true, maxReceiveCount: 5 },
         },
       },
+      {
+        kind: "cron",
+        functionId: "cron",
+        name: "staged-recovery",
+        schedule: "*/5 * * * *",
+      },
     ]);
     expect(
       shared.platform.infra.inputs(shared.platform.config, view),

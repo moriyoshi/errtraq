@@ -55,6 +55,34 @@ describe("derived capability policy expectations", () => {
       },
     ]);
   });
+  it("scopes metadata deletion to metadata keys", () => {
+    const policy = capabilityPolicy(
+      { selection: "store", capability: "metadata-delete", purpose: "primary" },
+      resources,
+    );
+    expect(policy.Statement).toEqual([
+      {
+        Effect: "Allow",
+        Action: ["dynamodb:DeleteItem"],
+        Resource: ["table"],
+        Condition: {
+          "ForAllValues:StringLike": {
+            "dynamodb:LeadingKeys": [
+              "ORGSLUG|*",
+              "PROJECTSLUG|*",
+              "TOKEN|*",
+              "RELEASE|*",
+              "KEY|*",
+              "KEYID|*",
+              "DEBUG|*",
+              "BUNDLE|*",
+            ],
+          },
+          Null: { "dynamodb:LeadingKeys": "false" },
+        },
+      },
+    ]);
+  });
   it("normalizes reordered policy fields without hiding missing actions", () => {
     expect(canonicalPolicy({ b: ["b", "a"], a: true })).toEqual({
       a: true,

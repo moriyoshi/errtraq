@@ -24,7 +24,14 @@ exports[`Terraform generator > renders the full per-topic stack deterministicall
       }
     },
     "platform": {
-      "cron_triggers": {},
+      "cron_triggers": {
+        "staged-recovery": {
+          "function_id": "cron",
+          "max_event_age_seconds": 86400,
+          "retry_attempts": 185,
+          "schedule": "*/5 * * * *"
+        }
+      },
       "functions": {
         "api": {
           "architecture": "x86_64",
@@ -284,7 +291,14 @@ exports[`Terraform generator > renders the full shared stack deterministically 1
       }
     },
     "platform": {
-      "cron_triggers": {},
+      "cron_triggers": {
+        "staged-recovery": {
+          "function_id": "cron",
+          "max_event_age_seconds": 86400,
+          "retry_attempts": 185,
+          "schedule": "*/5 * * * *"
+        }
+      },
       "functions": {
         "api": {
           "architecture": "x86_64",

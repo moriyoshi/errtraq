@@ -16,6 +16,7 @@ export async function recoverStagedEnvelopes(
   blobs: BlobStore,
   queue: QueueProducer,
   logger?: Pick<Logger, "warn">,
+  options?: { now: Timestamp; minimumAgeMs: number },
 ): Promise<number> {
   let cursor: Cursor | undefined;
   let recovered = 0;
@@ -35,6 +36,13 @@ export async function recoverStagedEnvelopes(
       } catch {
         receivedAt = undefined;
       }
+      if (
+        options &&
+        receivedAt &&
+        isTimestamp(receivedAt) &&
+        Date.parse(receivedAt) > Date.parse(options.now) - options.minimumAgeMs
+      )
+        continue;
       let key = normalizeEventId(parts[3]);
       if (!key || !receivedAt || !isTimestamp(receivedAt)) {
         const stream = await blobs.get(blobKey);
@@ -68,6 +76,7 @@ export async function recoverStagedEnvelopes(
             projectId: projectId as ProjectId,
             blobKey,
             receivedAt: receivedAt as Timestamp,
+            recovered: true,
           },
         },
       ]);

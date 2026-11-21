@@ -156,7 +156,15 @@ export function createHandler(
         log.error("Unknown or missing cron job");
         return;
       }
-      await (options.cronHandler ?? createCronHandler(log))(name, clock.now());
+      await (
+        options.cronHandler ??
+        createCronHandler(
+          log,
+          adapters.blob && adapters.queue
+            ? { blobs: adapters.blob, queue: adapters.queue.producer }
+            : undefined,
+        )
+      )(name, clock.now());
       return;
     }
     if (!("requestContext" in event) || !options.http.length)

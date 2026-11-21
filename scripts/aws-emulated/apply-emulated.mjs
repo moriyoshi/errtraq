@@ -24,12 +24,14 @@ import {
   assertQueueTransition,
   assertRepeatPlan,
 } from "./plan-check.mjs";
+import { probeFifo } from "./probe-fifo.mjs";
 import { runStandalone } from "./standalone.mjs";
 import { providerOverride, terraformEnvironment } from "./terraform-config.mjs";
 import { verifyCleanup, verifyDeployment } from "./verify-deployment.mjs";
 
 const postgresOnly = process.argv.includes("--postgres-only");
 const fifoOnly = process.argv.includes("--fifo-only");
+const groupedOnly = process.argv.includes("--grouped-only");
 const fifoOnlyComplete = Symbol("fifo-only complete");
 const root = resolve(".");
 const scratch = resolve(".agents-workspace/tmp");
@@ -145,9 +147,10 @@ try {
   const account = element(sts.text, "Account");
   if (!account) throw new Error("Missing emulator account");
   await checkEventbridgeGap(c, account);
-  if (!postgresOnly)
+  if (groupedOnly) await probeFifo(endpoint);
+  else if (!postgresOnly)
     await applyFifo({ c, gaps, temp, modules, version, cache, endpoint, tf });
-  if (!postgresOnly)
+  if (!postgresOnly && !groupedOnly)
     await runStandalone({
       c,
       gaps,
@@ -160,6 +163,21 @@ try {
       tf,
       run,
     });
+  // Apply grouped roots with only the two independently probed FIFO readback gaps removed.
+  if (!postgresOnly) {
+    const file = resolve(modules, "aws/sqs/main.tf");
+    let source = readFileSync(file, "utf8");
+    for (const from of [
+      'deduplication_scope         = each.value.fifo ? "messageGroup" : null',
+      'fifo_throughput_limit       = each.value.fifo ? "perMessageGroupId" : null',
+    ]) {
+      if (source.split(from).length !== 2)
+        throw new Error("FIFO emulator override no longer matches");
+      source = source.replace(from, `${from.split("=")[0]}= null`);
+    }
+    writeFileSync(file, source);
+    skipped(gaps, "sqs-fifo");
+  }
   const { deriveDeployment, resolveStack } = await import(
     "../../packages/core/dist/index.js"
   );
@@ -230,6 +248,7 @@ try {
       "tags-iam",
       "tags-s3",
       "tags-lambda-mapping",
+      "tags-eventbridge",
     ]) {
       if (!exceptions.has(id))
         throw new Error(
@@ -287,12 +306,12 @@ try {
     if (
       JSON.stringify(
         view.triggers.filter((t) => t.kind === "queue").map((t) => t.physical),
-      ) !== JSON.stringify(["shared"]) ||
+      ) !== JSON.stringify(["shared", "record"]) ||
       JSON.stringify(
         perTopicView.triggers
           .filter((t) => t.kind === "queue")
           .map((t) => t.physical),
-      ) !== JSON.stringify(["ingest"])
+      ) !== JSON.stringify(["ingest", "record"])
     )
       throw new Error(
         "Example stacks no longer have exactly the expected ingest route",
@@ -300,7 +319,10 @@ try {
     assertQueueTransition(changePlan("queue-change"), view, perTopicView);
     console.log("PASS example shared-to-per-topic change plan");
     const partialSplit = variant(stack, {
-      platform: awsLambda({ split: ["ingest", "api", "consumer"] }),
+      platform: awsLambda({
+        roles: ["ingest", "api", "consumer", "record", "cron"],
+        split: ["ingest", "api", "consumer"],
+      }),
     });
     const splitView = writeStack(partialSplit);
     assertFunctionTransition(changePlan("split-change"), view, splitView);
@@ -388,6 +410,7 @@ try {
       "tags-iam",
       "tags-s3",
       "tags-lambda-mapping",
+      "tags-eventbridge",
     ]) {
       if (!secondExceptions.has(id))
         throw new Error(`Emulator gap ${id} no longer reproduces`);
@@ -402,6 +425,7 @@ try {
     tf(secondDir, "destroy", "-auto-approve", "-input=false");
     await verifyCleanup(c, second.name);
     console.log("PASS per-topic destroy and API inventory");
+    if (groupedOnly) throw fifoOnlyComplete;
     const featureStack = variant(fixtures.archive, {
       name: "m3a2-feature",
       protection: "disposable",
@@ -453,9 +477,9 @@ try {
       .sort();
     if (
       JSON.stringify(featureKeys) !==
-      JSON.stringify(["archive_project", "ingest", "notifications"])
+      JSON.stringify(["archive_project", "ingest", "notifications", "record"])
     )
-      throw new Error("Feature fixture did not activate all three topics");
+      throw new Error("Feature fixture did not activate all four topics");
     run(
       "terraform",
       [

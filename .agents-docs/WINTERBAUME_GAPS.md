@@ -83,6 +83,15 @@ Fixed at pinned revision `79c452d2bb2844abf771cfa4a497275c24b46489`: a protected
   No API error is returned. The emulator cannot establish tag persistence or a truly empty
   unfiltered repeat plan for these resources.
 
+## EventBridge rule tag readback is incomplete
+
+- Revision: `79c452d2bb2844abf771cfa4a497275c24b46489`; provider `6.73.0`.
+- Resource: `aws_cloudwatch_event_rule` for `staged-recovery`; `PutRule` creates the rule,
+  but its tag readback does not retain the `app=errtraq` default tag. A repeat plan proposes
+  `tags_all` changing from `{}` to `{app = "errtraq"}`; no API error is returned. The apply
+  harness checks that this exact named gap still occurs and ignores only that drift. EventBridge
+  tag persistence remains unproven. This additional service-specific gap has not been filed.
+
 ## DynamoDB conditional updates are not atomic with their checks
 
 - Revision: `69fed1d7fb0eb9a2738ff3274197c7591129c4cb`; the pinned revision `79c452d2bb2844abf771cfa4a497275c24b46489` still has the separate `get_item` and `update_item` calls. `UpdateItem` reads and
