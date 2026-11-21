@@ -1,6 +1,9 @@
 import {
   artifact,
+  configReference,
+  constructDeployedStack,
   containsLocalPath,
+  deriveDeployment,
   env,
   generationEnv,
   out,
@@ -13,6 +16,7 @@ import {
   variable,
 } from "@errtraq/core";
 import { describe, expect, it } from "vitest";
+import { z } from "zod";
 import shared from "../../../stacks/aws-dynamodb.js";
 import perTopic from "../../../stacks/aws-dynamodb-per-topic.js";
 import local from "../../../stacks/local.js";
@@ -53,6 +57,200 @@ function parsed(
   return JSON.parse(file);
 }
 describe("Terraform generator", () => {
+  it("delivers runtime config references to precisely the functions using their adapter", async () => {
+    const base = raw(shared);
+    base.variables = {
+      PUBLIC: { type: "json", sensitive: false, default: { enabled: true } },
+    };
+    base.store = {
+      ...base.store,
+      manifest: {
+        ...base.store.manifest,
+        configSchema: z.strictObject({
+          path: configReference(z.string()),
+          options: configReference(z.unknown()),
+        }),
+      },
+      config: {
+        path: env("STORE_PATH", { defaultValue: "fallback" }),
+        options: variable("PUBLIC"),
+      },
+    };
+    const stack = resolveStack(base);
+    const fn = deriveDeployment(stack).functions.find(
+      (item) => item.id === "ingest",
+    );
+    expect(fn?.envBindings.map((item) => item.binding.name)).toEqual(
+      expect.arrayContaining([
+        "ERRTRAQ_CONFIG_ENV_STORE_PATH",
+        "ERRTRAQ_CONFIG_VAR_PUBLIC",
+      ]),
+    );
+    expect(
+      deriveDeployment(stack)
+        .functions.find((item) => item.id === "cron")
+        ?.envBindings.map((item) => item.binding.name),
+    ).not.toContain("ERRTRAQ_CONFIG_ENV_STORE_PATH");
+    const files = terraform(stack);
+    expect(files["main.tf.json"]).toContain(
+      "$" + "{var.errtraq_env_STORE_PATH}",
+    );
+    expect(files["main.tf.json"]).toContain("$" + "{var.PUBLIC}");
+    expect(parsed(files, "variables.tf.json")).toMatchObject({
+      variable: {
+        errtraq_env_STORE_PATH: { type: "string", default: "fallback" },
+      },
+    });
+    let config: unknown;
+    const envs = Object.fromEntries(
+      (fn?.envBindings ?? []).map((item) => [
+        item.binding.name,
+        item.binding.name === "ERRTRAQ_CONFIG_ENV_STORE_PATH"
+          ? ""
+          : item.binding.name === "ERRTRAQ_CONFIG_VAR_PUBLIC"
+            ? '{"enabled":true}'
+            : "value",
+      ]),
+    );
+    const built = await constructDeployedStack(
+      stack,
+      "ingest",
+      envs,
+      async (name) => ({
+        create: (context: { config: unknown }) => {
+          if (name === stack.store.runtimeModule) config = context.config;
+          return {};
+        },
+      }),
+    );
+    expect(config).toEqual({ path: "", options: { enabled: true } });
+    await built.close();
+  });
+  it("encodes config variables as strings and rejects sensitive or colliding references", () => {
+    const base = raw(shared);
+    base.variables = {
+      ITEMS: { type: "string[]", sensitive: false, default: ["a"] },
+      FLAG: { type: "bool", sensitive: false, default: true },
+      NUMBER: { type: "number", sensitive: false, default: 7 },
+      SECRET: { type: "string", sensitive: true },
+    };
+    base.store = {
+      ...base.store,
+      manifest: {
+        ...base.store.manifest,
+        configSchema: z.strictObject({
+          items: configReference(z.unknown()),
+          flag: configReference(z.unknown()),
+          number: configReference(z.unknown()),
+        }),
+      },
+      config: {
+        items: variable("ITEMS"),
+        flag: variable("FLAG"),
+        number: variable("NUMBER"),
+      },
+    };
+    const result = terraform(resolveStack(base))["main.tf.json"];
+    expect(result).toContain("$" + "{jsonencode(var.ITEMS)}");
+    expect(result).toContain("$" + "{tostring(var.FLAG)}");
+    expect(result).toContain("$" + "{tostring(var.NUMBER)}");
+    base.store = {
+      ...base.store,
+      config: {
+        items: variable("SECRET"),
+        flag: variable("FLAG"),
+        number: variable("NUMBER"),
+      },
+    };
+    expect(
+      validateStack(base).some((issue) =>
+        issue.message.includes("Sensitive variables"),
+      ),
+    ).toBe(true);
+    base.store = {
+      ...base.store,
+      config: {
+        items: env("AWS_REGION"),
+        flag: variable("FLAG"),
+        number: variable("NUMBER"),
+      },
+    };
+    expect(validateStack(base)).toEqual([]);
+  });
+  it("shares one runtime binding for the same environment input and rejects conflicting defaults", () => {
+    const base = raw(shared);
+    base.store = {
+      ...base.store,
+      manifest: {
+        ...base.store.manifest,
+        configSchema: z.strictObject({
+          first: configReference(z.string()),
+          second: configReference(z.string()),
+        }),
+      },
+      config: {
+        first: env("DATA", { defaultValue: "x", suffix: "/a" }),
+        second: env("DATA", { defaultValue: "x", suffix: "/b" }),
+      },
+    };
+    const stack = resolveStack(base);
+    const fn = deriveDeployment(stack).functions.find(
+      (item) => item.id === "ingest",
+    );
+    expect(
+      fn?.envBindings.filter(
+        (item) => item.binding.name === "ERRTRAQ_CONFIG_ENV_DATA",
+      ),
+    ).toHaveLength(1);
+    base.store = {
+      ...base.store,
+      config: {
+        first: env("DATA", { defaultValue: "x" }),
+        second: env("DATA", { defaultValue: "y" }),
+      },
+    };
+    expect(
+      validateStack(base).some((issue) =>
+        issue.message.includes("Conflicting defaults"),
+      ),
+    ).toBe(true);
+    base.store = {
+      ...base.store,
+      config: { first: env("DATA"), second: env("DATA") },
+      infra: {
+        ...base.store.infra,
+        bindings: [
+          ...base.store.infra.bindings,
+          {
+            name: "ERRTRAQ_CONFIG_ENV_DATA",
+            kind: "env",
+            purpose: "primary",
+            value: "other",
+          },
+        ],
+      },
+    };
+    expect(
+      validateStack(base).some((issue) =>
+        issue.message.includes("Duplicate binding ERRTRAQ_CONFIG_ENV_DATA"),
+      ),
+    ).toBe(true);
+  });
+  it("escapes Terraform syntax in generated runtime environment defaults", () => {
+    const base = raw(shared);
+    base.store = {
+      ...base.store,
+      manifest: {
+        ...base.store.manifest,
+        configSchema: z.strictObject({ path: configReference(z.string()) }),
+      },
+      config: { path: env("DATA", { defaultValue: "$" + "{literal}" }) },
+    };
+    const files = terraform(resolveStack(base));
+    expect(parsed(files, "variables.tf.json")).toMatchObject({
+      variable: { errtraq_env_DATA: { default: "$" + "$" + "{literal}" } },
+    });
+  });
   it("rejects a __proto__ variable instead of silently dropping it", () => {
     const base = raw(shared);
     base.variables = Object.fromEntries([

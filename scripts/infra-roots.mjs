@@ -3,7 +3,9 @@ import { resolve } from "node:path";
 import { z } from "zod";
 import { postgres } from "../packages/adapters/store-sql/dist/postgres-stack.js";
 import {
+  configReference,
   deriveDeployment,
+  env,
   out,
   resolveStack,
   variable,
@@ -27,6 +29,45 @@ function variant(base, changes) {
 export const fixtures = {
   shared,
   "per-topic": perTopic,
+  "config-refs": variant(shared, {
+    store: {
+      ...shared.store,
+      manifest: {
+        ...shared.store.manifest,
+        configSchema: z.strictObject({
+          path: configReference(z.string()),
+          list: configReference(z.array(z.string())),
+          document: configReference(z.unknown()),
+          enabled: configReference(z.boolean()),
+          count: configReference(z.number()),
+        }),
+      },
+      config: {
+        path: env("STORE_PATH", { defaultValue: "/data" }),
+        list: variable("LIST"),
+        document: variable("DOCUMENT"),
+        enabled: variable("ENABLED"),
+        count: variable("COUNT"),
+      },
+    },
+    variables: {
+      LIST: { type: "string[]", sensitive: false, default: ["a", "b"] },
+      DOCUMENT: { type: "json", sensitive: false, default: { key: "value" } },
+      ENABLED: { type: "bool", sensitive: false, default: true },
+      COUNT: { type: "number", sensitive: false, default: 5 },
+    },
+  }),
+  "postgres-secret": variant(shared, {
+    store: postgres(variable("POSTGRES_SECRET_ARN")),
+    variables: {
+      POSTGRES_SECRET_ARN: {
+        type: "string",
+        sensitive: false,
+        default:
+          "arn:aws:secretsmanager:us-east-1:123456789012:secret:postgres-ABC123",
+      },
+    },
+  }),
   "postgres-vpc": variant(shared, {
     store: postgres({
       mode: "iam",
@@ -170,6 +211,7 @@ const probe = `
 output "test_vpc" { value = { for id, fn in aws_lambda_function.function : id => { subnet_ids = try(tolist(fn.vpc_config[0].subnet_ids), []), security_group_ids = try(tolist(fn.vpc_config[0].security_group_ids), []) } } }
 output "test_vpc_policies" { value = { for id, policy in aws_iam_role_policy.vpc : id => policy.policy if policy.role == aws_iam_role.function[id].id } }
 output "test_env" { value = { for id, fn in aws_lambda_function.function : id => fn.environment[0].variables } }
+output "test_secret_reads" { value = { for id in keys(var.functions) : id => try(jsondecode(aws_iam_role_policy.secret_reads[id].policy).Statement[0].Resource, []) } }
 output "test_policies" {
   value = { for id, fn in var.functions : id => [for n, policy in fn.policies : aws_iam_role_policy.capability["\${id}-\${n}"].policy if aws_iam_role_policy.capability["\${id}-\${n}"].role == aws_iam_role.function[id].id] }
 }
@@ -201,6 +243,10 @@ run "generated_root" {
   assert {
     condition = jsonencode(module.platform.test_policies) == jsonencode(output.expected_policies)
     error_message = "Function policies differ from deployment view."
+  }
+  assert {
+    condition = jsonencode(module.platform.test_secret_reads) == jsonencode(output.expected_secret_reads)
+    error_message = "Secret-read policy resources differ from the deployment view."
   }
   assert {
     condition = jsonencode(module.platform.test_queues) == jsonencode(output.expected_queues)
@@ -280,6 +326,12 @@ export function prepareRoot(parent, name, version) {
       ),
     ]),
   );
+  const secret_reads = Object.fromEntries(
+    view.functions.map((fn) => [
+      fn.id,
+      fn.secretReads.map((item) => render(item.identifier, item.selection)),
+    ]),
+  );
   const queues = Object.fromEntries(
     view.triggers
       .filter((t) => t.kind === "queue")
@@ -308,9 +360,15 @@ export function prepareRoot(parent, name, version) {
     view.functions.flatMap((fn) => fn.http.map((role) => [role, true])),
   );
   const expectations = Object.fromEntries(
-    Object.entries({ env, policies, queues, crons, cron_schedules, http }).map(
-      ([key, value]) => [`expected_${key}`, { value }],
-    ),
+    Object.entries({
+      env,
+      policies,
+      secret_reads,
+      queues,
+      crons,
+      cron_schedules,
+      http,
+    }).map(([key, value]) => [`expected_${key}`, { value }]),
   );
   writeFileSync(
     resolve(target, "expectations.tf.json"),

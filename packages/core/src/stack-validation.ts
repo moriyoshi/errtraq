@@ -12,6 +12,8 @@ import {
   artifact,
   type CoreTopic,
   CRON_JOBS,
+  configBinding,
+  configReferenceBindingName,
   type DeploymentTrigger,
   type DeploymentView,
   type DerivedGrant,
@@ -20,6 +22,7 @@ import {
   type FunctionSettings,
   type InfraValue,
   isArtifactRef,
+  isConfigBindingRef,
   isEnvRef,
   isInfraRef,
   isOutputRef,
@@ -334,6 +337,68 @@ function deploymentFor(
     })),
     triggers: [],
   };
+  if (stack.platform.manifest.id === "aws-lambda") {
+    const all = selections(stack);
+    for (const fn of view.functions) {
+      const needed = new Set(
+        access.grants
+          .filter((g) => g.functionId === fn.id)
+          .map((g) => g.selection),
+      );
+      for (const binding of bindings)
+        if (binding.functionId === fn.id) needed.add(binding.selection);
+      let changed = true;
+      while (changed) {
+        changed = false;
+        for (const path of [...needed]) {
+          for (const child of all.keys())
+            if (child.startsWith(`${path}.`) && !needed.has(child)) {
+              needed.add(child);
+              changed = true;
+            }
+          for (const target of Object.values(all.get(path)?.dependsOn ?? {}))
+            if (!needed.has(target)) {
+              needed.add(target);
+              changed = true;
+            }
+        }
+      }
+      const found = new Set<string>();
+      const visited = new WeakSet<object>();
+      const visit = (value: unknown, selection: string) => {
+        if (
+          isVariableRef(value) ||
+          (isEnvRef(value) && value.phase === "runtime")
+        ) {
+          const name = configReferenceBindingName(value);
+          const label = `${name}:${isVariableRef(value) ? "variable" : "env"}:${value.name}:${isEnvRef(value) ? JSON.stringify(value.defaultValue) : ""}`;
+          if (!found.has(label)) {
+            found.add(label);
+            fn.envBindings.push({
+              functionId: fn.id,
+              selection,
+              binding: {
+                name,
+                kind: "env",
+                purpose: "config",
+                value: configBinding(value),
+              },
+            });
+          }
+          return;
+        }
+        if (value && typeof value === "object") {
+          if (visited.has(value)) return;
+          visited.add(value);
+        }
+        if (Array.isArray(value))
+          for (const child of value) visit(child, selection);
+        else if (value && typeof value === "object" && !isInfraRef(value))
+          for (const child of Object.values(value)) visit(child, selection);
+      };
+      for (const path of needed) visit(all.get(path)?.config, path);
+    }
+  }
   const mapping = stack.queue.infra.topics;
   if (mapping) {
     const queues = new Map<
@@ -852,6 +917,27 @@ function inspect(input: unknown): {
           fail(path, `Platform does not support ${kind} config references`);
       }
       if (
+        isConfigBindingRef(value) &&
+        keys.length === 1 &&
+        keys[0] === "source" &&
+        context === "input" &&
+        owner === "platform" &&
+        (isVariableRef(value.source) ||
+          (isEnvRef(value.source) && value.source.phase === "runtime"))
+      ) {
+        checkValue(
+          value.source,
+          owner,
+          `${path}.source`,
+          true,
+          seen,
+          false,
+          reachable,
+          seenOutputs,
+          context,
+          sensitiveInput,
+        );
+      } else if (
         isOutputRef(value) &&
         keys.every((k) => ["name", "selection", "path"].includes(k)) &&
         typeof value.name === "string" &&
@@ -1234,6 +1320,7 @@ function inspect(input: unknown): {
   }
   // Descriptors cannot alter the data that validation subsequently relies on.
   const deployment = frozenSnapshot(deploymentFor(stack, groups, functions));
+  const runtimeDefaults = new Map<string, string | undefined>();
   for (const fn of deployment.functions) {
     const bindingNames = new Set<string>();
     for (const item of [
@@ -1241,6 +1328,27 @@ function inspect(input: unknown): {
       ...fn.secretBindings,
       ...fn.platformBindings,
     ]) {
+      if (
+        isConfigBindingRef(item.binding.value) &&
+        isEnvRef(item.binding.value.source)
+      ) {
+        const ref = item.binding.value.source;
+        const generated = `errtraq_env_${ref.name}`;
+        if (Object.hasOwn(stack.variables ?? {}, generated))
+          fail(
+            `platform.functions.${fn.id}`,
+            `Runtime environment ${ref.name} conflicts with stack variable ${generated}`,
+          );
+        if (
+          runtimeDefaults.has(ref.name) &&
+          runtimeDefaults.get(ref.name) !== ref.defaultValue
+        )
+          fail(
+            `platform.functions.${fn.id}`,
+            `Conflicting defaults for runtime environment ${ref.name}`,
+          );
+        runtimeDefaults.set(ref.name, ref.defaultValue);
+      }
       if (bindingNames.has(item.binding.name))
         fail(
           `platform.functions.${fn.id}`,
@@ -1558,7 +1666,17 @@ function inspect(input: unknown): {
       ownValue(
         ownValue(sel.infra.capabilities, row.capability),
         row.purpose,
-      ) === null
+      ) === null &&
+      !(
+        sel.manifest.adapterAuthorization === "secret-binding" &&
+        sel.infra.bindings.some(
+          (binding) =>
+            binding.kind === "secret" &&
+            binding.purpose === row.purpose &&
+            (!binding.capabilities ||
+              binding.capabilities.includes(row.capability)),
+        )
+      )
     )
       fail(
         `${loc}.capabilities`,
@@ -1618,7 +1736,20 @@ function inspect(input: unknown): {
     if (
       grant.selection.includes(".") &&
       platform.authorization === "iam" &&
-      !grant.policyOutput
+      !grant.policyOutput &&
+      !(
+        all.get(grant.selection)?.manifest.adapterAuthorization ===
+          "secret-binding" &&
+        all
+          .get(grant.selection)
+          ?.infra.bindings.some(
+            (binding) =>
+              binding.kind === "secret" &&
+              binding.purpose === grant.purpose &&
+              (!binding.capabilities ||
+                binding.capabilities.includes(grant.capability)),
+          )
+      )
     )
       fail(
         `${grant.selection}.infra.capabilities.${grant.capability}.${grant.purpose}`,

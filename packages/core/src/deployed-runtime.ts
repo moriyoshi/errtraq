@@ -1,8 +1,10 @@
 import { assertImplementedConsumerTopics } from "./consumer-policy.js";
-import type { Logger } from "./ports.js";
+import type { Logger, SecretSource } from "./ports.js";
 import {
   type ConstructedAdapter,
   type CoreTopic,
+  configReferenceBindingName,
+  isConfigBindingRef,
   isEnvRef,
   isInfraRef,
   isVariableRef,
@@ -32,7 +34,10 @@ function configValue(
   if (isEnvRef(value)) {
     if (value.phase !== "runtime")
       throw new Error("Invalid deployed config reference");
-    const raw = environment[value.name] ?? value.defaultValue;
+    const raw =
+      environment[configReferenceBindingName(value)] ??
+      environment[value.name] ??
+      value.defaultValue;
     if (raw === undefined)
       throw new Error(`Missing environment variable ${value.name}`);
     const result = raw + (value.suffix ?? "");
@@ -43,7 +48,9 @@ function configValue(
     return number;
   }
   if (isVariableRef(value)) {
-    const raw = environment[`TF_VAR_${value.name}`];
+    const raw =
+      environment[configReferenceBindingName(value)] ??
+      environment[`TF_VAR_${value.name}`];
     if (raw === undefined) {
       const fallback = stack.variables?.[value.name]?.default;
       if (fallback !== undefined) return fallback;
@@ -101,7 +108,11 @@ export interface DeployedPlan {
     runtimeModule: string;
     config: unknown;
     dependsOn: Record<string, string>;
-    bindings: { name: string; kind: "env" | "secret" | "platform" }[];
+    bindings: {
+      name: string;
+      kind: "env" | "secret" | "platform";
+      allowEmpty?: boolean;
+    }[];
   }[];
   topics: Partial<
     Record<CoreTopic, { physical: string; producerBinding?: string }>
@@ -164,7 +175,11 @@ export function deployedPlan(
         dependsOn: selection.dependsOn ?? {},
         bindings: scoped
           .filter((item) => item.selection === path)
-          .map(({ binding }) => ({ name: binding.name, kind: binding.kind })),
+          .map(({ binding }) => ({
+            name: binding.name,
+            kind: binding.kind,
+            ...(isConfigBindingRef(binding.value) ? { allowEmpty: true } : {}),
+          })),
       };
     });
   const queueTriggers = view.triggers.filter(
@@ -203,6 +218,7 @@ export async function constructDeployedPlan(
   environment: Readonly<Record<string, string | undefined>>,
   loadModule: DeployedModuleLoader,
   logger?: Logger,
+  secretSource?: SecretSource,
 ): Promise<DeployedStack> {
   assertImplementedConsumerTopics(
     plan.queueConsumers.flatMap((route) => route.topics),
@@ -222,9 +238,9 @@ export async function constructDeployedPlan(
       if (errors.length)
         throw new AggregateError(errors, "Adapter cleanup failed");
     })());
-  const delivered = (name: string): string => {
+  const delivered = (name: string, allowEmpty = false): string => {
     const value = environment[name];
-    if (value === undefined || value.length === 0)
+    if (value === undefined || (!allowEmpty && value.length === 0))
       throw new Error(`Missing deployed binding ${name}`);
     return value;
   };
@@ -245,7 +261,7 @@ export async function constructDeployedPlan(
       const bindings = Object.fromEntries(
         selection.bindings.map((binding) => [
           binding.name,
-          delivered(binding.name),
+          delivered(binding.name, binding.allowEmpty),
         ]),
       );
       const dependencies = Object.fromEntries(
@@ -274,6 +290,7 @@ export async function constructDeployedPlan(
         dependencies,
         environment,
         logger,
+        secretSource,
         ...queueContext,
       });
       instances.set(selection.path, instance);
@@ -309,11 +326,13 @@ export function constructDeployedStack(
   environment: Readonly<Record<string, string | undefined>>,
   loadModule: DeployedModuleLoader,
   logger?: Logger,
+  secretSource?: SecretSource,
 ): Promise<DeployedStack> {
   return constructDeployedPlan(
     deployedPlan(input, functionId),
     environment,
     loadModule,
     logger,
+    secretSource,
   );
 }

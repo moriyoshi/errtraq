@@ -46,6 +46,8 @@ export interface AdapterManifest<C = unknown> {
   capabilities: Record<string, CapabilityValue>;
   runtimes: string[];
   requires: EnvironmentFeature[];
+  /** External authorization is supplied by a scoped secret binding. */
+  adapterAuthorization?: "secret-binding";
   /** Expected port kind for each named nested selection. */
   childKinds?: Record<string, PortKind>;
 }
@@ -107,6 +109,11 @@ export interface VariableRef {
   readonly [REF]: "variable";
   readonly name: string;
 }
+/** Internal deployment binding: encode a config reference for delivery as a string. */
+export interface ConfigBindingRef {
+  readonly [REF]: "config-binding";
+  readonly source: EnvRef | VariableRef;
+}
 /** A location supplied by the M2c builder for a physical function. */
 /** Build manifest entry; artifact references render the path, with the remaining fields available to build tooling. */
 export interface BuildArtifact {
@@ -124,7 +131,8 @@ export type InfraRef =
   | StackRef
   | EnvRef
   | VariableRef
-  | ArtifactRef;
+  | ArtifactRef
+  | ConfigBindingRef;
 function hasTag(value: unknown, tag: InfraRef[typeof REF]): boolean {
   return (
     typeof value === "object" &&
@@ -143,12 +151,22 @@ export const isVariableRef = (value: unknown): value is VariableRef =>
   hasTag(value, "variable");
 export const isArtifactRef = (value: unknown): value is ArtifactRef =>
   hasTag(value, "artifact");
+export const isConfigBindingRef = (value: unknown): value is ConfigBindingRef =>
+  hasTag(value, "config-binding");
+export const configBinding = (
+  source: EnvRef | VariableRef,
+): ConfigBindingRef => ({ [REF]: "config-binding", source });
+export const configReferenceBindingName = (
+  source: EnvRef | VariableRef,
+): string =>
+  `ERRTRAQ_CONFIG_${isVariableRef(source) ? "VAR" : "ENV"}_${source.name}`;
 export const isInfraRef = (value: unknown): value is InfraRef =>
   isOutputRef(value) ||
   isStackRef(value) ||
   isEnvRef(value) ||
   isVariableRef(value) ||
-  isArtifactRef(value);
+  isArtifactRef(value) ||
+  isConfigBindingRef(value);
 export const artifact = (functionId: string): ArtifactRef => ({
   [REF]: "artifact",
   functionId,
@@ -241,6 +259,7 @@ export type InfraValue =
   | EnvRef
   | VariableRef
   | ArtifactRef
+  | ConfigBindingRef
   | InfraValue[]
   | { [key: string]: InfraValue };
 export type OutputType =

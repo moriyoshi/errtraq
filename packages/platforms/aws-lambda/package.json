@@ -30,7 +30,8 @@
     "@errtraq/core": "workspace:*",
     "@errtraq/http": "workspace:*",
     "hono": "^4.13.19",
-    "zod": "4.6.7"
+    "zod": "4.6.7",
+    "@errtraq/aws-signing": "workspace:*"
   },
   "devDependencies": {
     "@errtraq/testing": "workspace:*"

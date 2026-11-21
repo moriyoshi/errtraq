@@ -55,6 +55,7 @@ const manifestSchema = z.strictObject({
   ),
   runtimes: z.array(z.string().min(1)).min(1),
   requires: z.array(z.enum(ENVIRONMENT_FEATURES)),
+  adapterAuthorization: z.literal("secret-binding").optional(),
   childKinds: z
     .record(
       name,

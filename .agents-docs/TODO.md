@@ -52,19 +52,19 @@ item should be resolved or removed once addressed. Milestone work itself is trac
 - [ ] CI: run the Python SDK end-to-end check required by ARCHITECTURE.md once a Python environment is available. — *source: M1g closing review section B*
 - [ ] M3: provide indexed token enumeration and revocation for tokens issued before M1g; their plaintext was not retained, so local token rotation can revoke only the file-backed token. — *source: M1g closing review*
 
-- [ ] M3: integrate runtime secret sources for deployed functions. — *source: M2a2 review A4*
+- [x] M3: integrate the AWS Secrets Manager runtime secret source for deployed Lambda functions. — *source: M2a2 review A4; M3g part 1*
 
 - [x] M3: enforce the 1 MiB SQS body limit including serialization and envelope overhead. — *source: M2b step 1; resolved in M3c*
 - [ ] M3: implement the remaining AWS runtime adapters and make DynamoDB explicit deletion honor erasure semantics. — *source: M2b step 1*
 
 - [x] M3: implement SQS partial batch failures. — *source: M2b step 2; resolved in M3c*
-- [ ] M3: implement lazy Secrets Manager ARN resolution and verify EventBridge job dispatch with AWS runtime adapters. — *source: M2b step 2*
+- [ ] M3: verify EventBridge job dispatch with AWS runtime adapters. — *source: M2b step 2*
 - [ ] M3e: implement and test the staged DynamoDB layout in `.agents-docs/DYNAMODB_DESIGN.md`, then update the module README and policies; erasure belongs to stage 4. — *source: M2b step 2; revised M3e step 1c*
 
 - [ ] M3 / M6: address second-review follow-ups N9 and N12-N15, including Cloudflare binding authorization and runtime limitations. — *source: `.agents-workspace/tmp/m2a2-review-fixes.md`*
 
 - [ ] M3e / M3h: implement and verify the selected sortable encodings, projections, sharding and transaction limits; document PITR retention of erased data for up to 35 days. — *source: M2b HCL review section B; M3e step 1c*
-- [ ] M3: ensure secret identifiers contain the full Secrets Manager ARN including its random suffix, or safely support suffix matching. — *source: M2b HCL review section B*
+- [x] M3: require the full Secrets Manager ARN including its random suffix. — *source: M2b HCL review section B; M3g part 1*
 - [x] M3: never map an S3 403 directly to missing; use an authorized exact-prefix list to establish absence and propagate real access failures. — *source: M2b HCL review section B*
 - [ ] M3: schedule cron-based staged-envelope recovery for deployed stacks; keep idempotency and a recovery window longer than the sweep interval. — *source: M2b HCL review A3*
 - [ ] M3 / M4: delete overflow payloads when their corresponding events are retained, archived or erased; a fixed bucket lifecycle would violate per-project retention. — *source: M2b HCL review A9*

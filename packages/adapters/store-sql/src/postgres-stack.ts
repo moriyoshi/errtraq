@@ -74,7 +74,15 @@ export function postgres(
     )
       throw new Error("Invalid Postgres secret authentication configuration");
     return {
-      manifest,
+      manifest: {
+        ...manifest,
+        adapterAuthorization: "secret-binding",
+        capabilities: {
+          ...manifest.capabilities,
+          authorizationScope:
+            "Secrets Manager supplies one PostgreSQL user; PostgreSQL privileges enforce read, write and delete.",
+        },
+      },
       infra: {
         ...infra,
         bindings: [

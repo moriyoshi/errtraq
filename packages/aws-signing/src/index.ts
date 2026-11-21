@@ -111,6 +111,11 @@ const retryCodes: Record<string, ReadonlySet<string>> = {
     "RequestLimitExceeded",
     "Throttling",
   ]),
+  secretsmanager: new Set([
+    "ThrottlingException",
+    "Throttling",
+    "TooManyRequestsException",
+  ]),
   s3: new Set(["SlowDown", "Throttling", "ThrottlingException"]),
 };
 function cleanCode(

@@ -3,6 +3,7 @@ import { s3Blob } from "@errtraq/blob-s3/stack";
 import {
   artifact,
   configReference,
+  constructDeployedStack,
   deriveDeployment,
   env,
   out,
@@ -20,7 +21,9 @@ import * as queueModule from "@errtraq/queue-sqs";
 import { SQS_MAX_BYTES, sqsQueue } from "@errtraq/queue-sqs/stack";
 import * as storeModule from "@errtraq/store-dynamodb";
 import { dynamoStore } from "@errtraq/store-dynamodb/stack";
-import { describe, expect, it } from "vitest";
+import { create as createPostgres } from "@errtraq/store-sql/postgres";
+import { postgres } from "@errtraq/store-sql/postgres/stack";
+import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { assertSafeStackImports } from "../scripts/adapter-stack-check.js";
 import shared from "./aws-dynamodb.js";
@@ -32,6 +35,69 @@ const copyStack = <T extends object>(value: T): T =>
 const names = (items: { binding: { name: string } }[]) =>
   items.map((item) => item.binding.name).sort();
 describe("AWS descriptor stacks", () => {
+  it("authorizes external Postgres with a scoped secret binding for every required role", () => {
+    const base = copyStack(shared);
+    const selected = postgres(variable("POSTGRES_SECRET_ARN"));
+    const stack = {
+      ...base,
+      store: selected,
+      variables: {
+        POSTGRES_SECRET_ARN: { type: "string" as const, sensitive: false },
+      },
+    };
+    expect(validateStack(stack)).toEqual([]);
+    const view = deriveDeployment(resolveStack(stack));
+    for (const id of ["ingest", "api", "consumer"])
+      expect(view.functions.find((fn) => fn.id === id)?.secretReads).toEqual([
+        expect.objectContaining({ bindingName: "ERRTRAQ_POSTGRES_SECRET" }),
+      ]);
+    expect(view.functions.find((fn) => fn.id === "cron")?.secretReads).toEqual(
+      [],
+    );
+    const missing = {
+      ...stack,
+      store: { ...selected, infra: { ...selected.infra, bindings: [] } },
+    };
+    expect(
+      validateStack(missing).some((issue) =>
+        issue.message.includes("with an IAM policy"),
+      ),
+    ).toBe(true);
+  });
+  it("constructs the real Postgres secret-mode adapter with the delivered Lambda secret source", async () => {
+    const stack = resolveStack({
+      ...copyStack(shared),
+      store: postgres(variable("POSTGRES_SECRET_ARN")),
+      variables: { POSTGRES_SECRET_ARN: { type: "string", sensitive: false } },
+    });
+    const fn = deriveDeployment(stack).functions.find(
+      (item) => item.id === "ingest",
+    );
+    if (!fn) throw new Error("Missing ingest function");
+    const arn =
+      "arn:aws:secretsmanager:us-east-1:123456789012:secret:postgres-ABC123";
+    const environment = Object.fromEntries(
+      [...fn.envBindings, ...fn.secretBindings].map((item) => [
+        item.binding.name,
+        item.binding.kind === "secret" ? arn : "value",
+      ]),
+    );
+    const read = vi.fn(async () => "postgresql://user:password@localhost/db");
+    const built = await constructDeployedStack(
+      stack,
+      "ingest",
+      environment,
+      async (name) =>
+        name === "@errtraq/store-sql/postgres"
+          ? { create: createPostgres }
+          : { create: () => ({}) },
+      undefined,
+      { read },
+    );
+    expect(read).toHaveBeenCalledWith(arn);
+    expect(built.instances.get("store")).toBeDefined();
+    await built.close();
+  });
   it("requires the DLQ receive limit to cover the consumer missing-claim attempts", () => {
     const bad = {
       ...copyStack(shared),
@@ -400,7 +466,7 @@ describe("AWS descriptor stacks", () => {
       queue_triggers: { shared: { batch_size: 5, max_concurrency: 7 } },
     });
   });
-  it("rejects config references unsupported by the Lambda platform", () => {
+  it("delivers supported Lambda config references to each function needing the store", () => {
     const base = copyStack(shared);
     for (const [kind, ref] of [
       ["env", env("EXTERNAL")],
@@ -418,11 +484,14 @@ describe("AWS descriptor stacks", () => {
           config: { endpoint: ref },
         },
       };
+      expect(validateStack(v)).toEqual([]);
+      const view = deriveDeployment(resolveStack(v));
+      const name = `ERRTRAQ_CONFIG_${kind === "env" ? "ENV" : "VAR"}_EXTERNAL`;
       expect(
-        validateStack(v).some((issue) =>
-          issue.message.includes(`does not support ${kind} config references`),
-        ),
-      ).toBe(true);
+        view.functions
+          .find((fn) => fn.id === "ingest")
+          ?.envBindings.map((item) => item.binding.name),
+      ).toContain(name);
     }
   });
   it("rejects Lambda queue triggers without a visibility timeout", () => {

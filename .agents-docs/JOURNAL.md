@@ -948,3 +948,20 @@ appearing on a later page. Deletes use bounded BatchWriteItem retries. The entir
 store contract ran across winterbaume and DynamoDB Local; only concurrent cases move to
 Local because winterbaume issue #61 invalidates their atomicity assertions. A transient
 SQS redrive probe failed once; the final full emulator rerun passed.
+
+## 2026-11-21 — M3g Lambda secrets and config delivery
+
+Lambda entrypoints now keep one Secrets Manager source per execution environment. It signs
+GetSecretValue using the ARN's region and current Lambda credentials, coalesces concurrent
+reads and caches values for five minutes. Only full secret ARNs are accepted; errors omit
+provider messages and identifiers. The existing Lambda module already derives an exact-ARN
+GetSecretValue policy per receiving function. Customer-managed KMS keys need separate decrypt
+authorization. Postgres secret mode explicitly declares authorization via its scoped secret
+binding; validation rejects a capability lacking both an IAM policy and a matching binding.
+
+Runtime config references are delivered through namespaced bindings for the functions that
+construct each selection. `env("NAME")` becomes a Terraform string variable
+`errtraq_env_NAME`; stack variables retain their types, with JSON / lists encoded as text.
+Sensitive variables are still rejected from config. The generated-root checks include all
+variable types, Postgres secret mode, and per-function secret-read policy resources. Bootstrap
+and deployed staged-envelope recovery remain for the next M3g turn.

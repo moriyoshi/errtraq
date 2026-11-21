@@ -68,7 +68,7 @@ export const manifest: PlatformManifest = {
   provides: ["writable-filesystem", "aws-credentials"],
   authorization: "iam",
   bindingKinds: ["env", "secret"],
-  configReferenceKinds: [],
+  configReferenceKinds: ["env", "variable"],
   infrastructureConfigReferences: {
     vpcSubnetIds: "string[]",
     vpcSecurityGroupIds: "string[]",

@@ -1,3 +1,5 @@
+export { createSecretsManagerSource, SecretReadError } from "./secrets.js";
+
 import {
   type ActiveStore,
   type BlobStore,

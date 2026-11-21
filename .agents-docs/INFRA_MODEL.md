@@ -83,8 +83,17 @@ exported guards (`isOutputRef`, `isStackRef`, `isEnvRef`, `isVariableRef`, `isAr
 references. Validation rejects output, stack, artifact and generation-time references in adapter
 config even if an adapter schema accepts arbitrary values. A platform's `configReferenceKinds`
 whitelists the runtime kinds it can supply; absent means none. Standalone supports `env` and
-`variable` from its process environment; Lambda declares no runtime config reference kinds
-and rejects both in adapter config until delivery is implemented. The separate platform-only
+`variable` from its process environment. Lambda delivers both kinds through per-function
+environment bindings only to functions using the selection. A runtime `env("NAME")` is
+provided through Terraform variable `errtraq_env_NAME` (with the reference default, if any);
+for example, `TF_VAR_errtraq_env_NAME` supplies it to Terraform when no default is set.
+stack variables use their declared Terraform variables. Generated bindings are namespaced,
+and lists / JSON are encoded as JSON text for the runtime to decode. These config values are
+non-sensitive: use a secret binding for a secret identifier. The derived deployment view
+uses the internal `config-binding` reference tag so the generator can render the raw string
+form rather than a structured Terraform value. Identical environment references share one
+binding; conflicting defaults or collisions with generated Terraform variable names are
+validation errors. The separate platform-only
 `infrastructureConfigReferences` map permits typed Terraform variables for explicitly named
 top-level infrastructure fields, without delivering those values to adapter runtime config. The runtime resolves supported references before `create`. A resolved stack is
 branded and its copied data objects are deeply frozen, so core does not re-run transforming
@@ -121,8 +130,17 @@ except module inputs whose top-level names appear in `module.sensitiveInputs`; t
 Terraform and the provider module still matters for state. A secret binding instead carries a
 non-sensitive string variable identifying an existing secret or an output typed `secret-ref`.
 Core derives one `secretReads` requirement for each function receiving that binding. The optional
-`SecretSource` on `CreateContext` is an interface for lazy lookup; no secret-store adapter or
-policy implementation is supplied here.
+`SecretSource` on `CreateContext` resolves identifiers lazily. Lambda provides an AWS Secrets
+Manager source with a five-minute per-execution-environment cache and an ARN-scoped
+`secretsmanager:GetSecretValue` execution-role policy for each receiving function. Secret values
+are neither Terraform inputs nor outputs. Customer-managed KMS keys also require an appropriate
+operator-supplied key policy and decrypt authorization.
+An adapter may explicitly declare `adapterAuthorization: "secret-binding"` for an
+external service such as password-authenticated Postgres. On an IAM platform, each
+capability without an IAM policy must then have a secret binding for the same purpose
+and capability. Core derives the secret-read grant for each receiving function; the
+external service's own privileges enforce the operation. This declaration does not grant
+access to an AWS resource itself.
 
 ### Generator inputs and build artifacts
 
@@ -448,7 +466,7 @@ Deployed construction first derives
 as `constructDeployedStack` while allowing entrypoints to import only needed adapters. AWS S3,
 SQS and DynamoDB KV selections use their `/runtime` exports, which omit the stack schema and
 Zod; their `/stack` exports remain for stack authors. Their runtime adapters are implemented;
-the active-store AWS runtime adapter and secret sources are M3 work.
+the AWS active-store runtime and the Lambda Secrets Manager source are implemented.
 
 
 ## RDS IAM and Lambda VPC
@@ -463,7 +481,7 @@ form the ARN. The separate password-secret mode continues to use an existing dat
 `awsLambda` optionally accepts `vpcSubnetIds` and `vpcSecurityGroupIds` as literal ID lists
 or non-sensitive `string[]` variables. These fields are declared through the platform
 manifest's `infrastructureConfigReferences` map, which permits typed variables for those
-fields without enabling runtime config references for adapters. They must both be empty or
+fields independently of runtime config references for adapters. They must both be empty or
 both nonempty; Terraform rechecks after references resolve. Every physical function receives
 the VPC configuration and an execution-role network-interface policy. EC2 network-interface actions require a wildcard
 resource and are also available to the function code; Lambda's documented source-function deny
