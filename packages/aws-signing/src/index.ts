@@ -23,6 +23,45 @@ export function signAwsRequest(input: AwsSignInput) {
   return new AwsV4Signer(input).sign();
 }
 
+/** Produce a 15-minute RDS IAM password for a new database connection. */
+export async function signRdsAuthToken(input: {
+  host: string;
+  port: number;
+  user: string;
+  region: string;
+  credentials: AwsCredentials;
+  datetime?: string;
+}): Promise<string> {
+  const { host, port, user, region, credentials } = input;
+  if (
+    !/^(?=.{1,253}$)[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?$/.test(host) ||
+    host.includes("..") ||
+    !Number.isInteger(port) ||
+    port < 1 ||
+    port > 65535 ||
+    !user ||
+    !region ||
+    !credentials.accessKeyId ||
+    !credentials.secretAccessKey
+  )
+    throw new Error("Invalid RDS IAM signing parameters");
+  const url = new URL(`https://${host}:${port}/`);
+  url.searchParams.set("Action", "connect");
+  url.searchParams.set("DBUser", user);
+  url.searchParams.set("X-Amz-Expires", "900");
+  const signed = await signAwsRequest({
+    ...credentials,
+    method: "GET",
+    url: url.toString(),
+    service: "rds-db",
+    region,
+    datetime: input.datetime,
+    signQuery: true,
+  });
+  const result = new URL(signed.url);
+  return `${host}:${port}${result.pathname}${result.search}`;
+}
+
 export class AwsRequestError extends Error {
   override name = "AwsRequestError";
   constructor(

@@ -1,3 +1,4 @@
+import { signRdsAuthToken } from "@errtraq/aws-signing";
 import { PostgresDialect, sql } from "kysely";
 import pg from "pg";
 import type { SqlStoreDialect } from "./dialect.js";
@@ -5,7 +6,7 @@ import { createIndexIfAbsent } from "./dialect.js";
 
 /** A small pool is reused across warm invocations and can be closed on shutdown. */
 export function postgresDialect(
-  connectionString: string,
+  connectionString: string | pg.PoolConfig,
   statementTimeoutMs = 30000,
 ): PostgresDialect {
   const types = {
@@ -22,7 +23,9 @@ export function postgresDialect(
   };
   return new PostgresDialect({
     pool: new pg.Pool({
-      connectionString,
+      ...(typeof connectionString === "string"
+        ? { connectionString }
+        : connectionString),
       max: 4,
       idleTimeoutMillis: 10000,
       connectionTimeoutMillis: 5000,
@@ -62,3 +65,41 @@ export const postgresStoreDialect: SqlStoreDialect = {
       .execute();
   },
 };
+
+/** A fresh token and fresh Lambda credentials are obtained for each new TCP connection. */
+export function rdsIamPoolConfig(options: {
+  host: string;
+  port: number;
+  database: string;
+  user: string;
+  region: string;
+  ca: string;
+  environment: Readonly<Record<string, string | undefined>>;
+  now?: () => Date;
+}): pg.PoolConfig {
+  if (!options.ca.includes("-----BEGIN CERTIFICATE-----"))
+    throw new Error("Invalid RDS CA bundle");
+  return {
+    host: options.host,
+    port: options.port,
+    database: options.database,
+    user: options.user,
+    ssl: { ca: options.ca, rejectUnauthorized: true, servername: options.host },
+    password: async () => {
+      const date = (options.now ?? (() => new Date()))();
+      const datetime = date.toISOString().replace(/[:-]|\.\d{3}/g, "");
+      return signRdsAuthToken({
+        host: options.host,
+        port: options.port,
+        user: options.user,
+        region: options.region,
+        datetime,
+        credentials: {
+          accessKeyId: options.environment.AWS_ACCESS_KEY_ID ?? "",
+          secretAccessKey: options.environment.AWS_SECRET_ACCESS_KEY ?? "",
+          sessionToken: options.environment.AWS_SESSION_TOKEN,
+        },
+      });
+    },
+  };
+}

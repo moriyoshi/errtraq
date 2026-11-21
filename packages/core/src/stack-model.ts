@@ -36,6 +36,7 @@ export const ENVIRONMENT_FEATURES = [
   "writable-filesystem",
   "long-lived-process",
   "shared-process-state",
+  "aws-credentials",
 ] as const;
 export type EnvironmentFeature = (typeof ENVIRONMENT_FEATURES)[number];
 export interface AdapterManifest<C = unknown> {

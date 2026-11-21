@@ -47,7 +47,7 @@ export const manifest: PlatformManifest = {
   runtime: "node",
   compute: "function",
   maxStackNameLength: 40,
-  provides: ["writable-filesystem"],
+  provides: ["writable-filesystem", "aws-credentials"],
   authorization: "iam",
   bindingKinds: ["env", "secret"],
   configReferenceKinds: [],

@@ -4,6 +4,7 @@ import {
   type AwsRequestOptions,
   awsRequest,
   signAwsRequest,
+  signRdsAuthToken,
 } from "./index.js";
 
 const credentials = {
@@ -55,6 +56,56 @@ describe("AWS SigV4 vectors", () => {
     expect(signed.headers.get("authorization")).toContain(
       "Signature=5fa00fa31553b73ebf1942676e86291e8372ff2a2260956d9b8aae1d763fbf31",
     );
+  });
+});
+describe("RDS IAM token", () => {
+  it("matches an independently computed SigV4 vector with temporary credentials", async () => {
+    // Expected signature was computed with Python hashlib/hmac and the canonical AWS SigV4 algorithm;
+    // the independent implementation was cross-checked against aws rds generate-db-auth-token offline.
+    const token = await signRdsAuthToken({
+      host: "db.example.us-east-1.rds.amazonaws.com",
+      port: 5432,
+      user: "user+test",
+      region: "us-east-1",
+      datetime: "20240102T030405Z",
+      credentials: { ...credentials, sessionToken: "TOKEN/+example=" },
+    });
+    const url = new URL(`https://${token}`);
+    expect(url.host).toBe("db.example.us-east-1.rds.amazonaws.com:5432");
+    expect(Object.fromEntries(url.searchParams)).toEqual({
+      Action: "connect",
+      DBUser: "user+test",
+      "X-Amz-Algorithm": "AWS4-HMAC-SHA256",
+      "X-Amz-Credential": "AKIDEXAMPLE/20240102/us-east-1/rds-db/aws4_request",
+      "X-Amz-Date": "20240102T030405Z",
+      "X-Amz-Expires": "900",
+      "X-Amz-Security-Token": "TOKEN/+example=",
+      "X-Amz-SignedHeaders": "host",
+      "X-Amz-Signature":
+        "49c449c80a85ed863d9c0bf0f9fd54f9ca4821df406c1b465937148efdf3b9ec",
+    });
+  });
+  it("rejects invalid hosts and empty credentials", async () => {
+    for (const host of ["host/path", "host:5432", "", "a..b"]) {
+      await expect(
+        signRdsAuthToken({
+          host,
+          port: 5432,
+          user: "u",
+          region: "r",
+          credentials,
+        }),
+      ).rejects.toThrow("Invalid RDS");
+    }
+    await expect(
+      signRdsAuthToken({
+        host: "db.example",
+        port: 5432,
+        user: "u",
+        region: "r",
+        credentials: { accessKeyId: "", secretAccessKey: "" },
+      }),
+    ).rejects.toThrow("Invalid RDS");
   });
 });
 describe("shared AWS request", () => {

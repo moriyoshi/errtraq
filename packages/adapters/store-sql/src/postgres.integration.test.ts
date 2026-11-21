@@ -2,7 +2,11 @@ import { activeStoreContract } from "@errtraq/testing";
 import { Kysely, sql } from "kysely";
 import pg from "pg";
 import { afterAll, describe, expect, it } from "vitest";
-import { postgresDialect, postgresStoreDialect } from "./postgres-dialect.js";
+import {
+  postgresDialect,
+  postgresStoreDialect,
+  rdsIamPoolConfig,
+} from "./postgres-dialect.js";
 import type { SqlDatabase } from "./schema.js";
 import { createSqlStore } from "./store.js";
 
@@ -116,6 +120,53 @@ suite("Postgres", () => {
     expect(
       (await sql`select count(*) as n from events`.execute(a)).rows[0],
     ).toMatchObject({ n: 41 });
+  });
+  it("asks the IAM password callback on each new pg connection", async () => {
+    if (!connection) throw new Error("Postgres test connection missing");
+    const url = new URL(connection);
+    const iam = rdsIamPoolConfig({
+      host: "db.example.rds.amazonaws.com",
+      port: 5432,
+      database: "errtraq",
+      user: "errtraq",
+      region: "us-east-1",
+      ca: "-----BEGIN CERTIFICATE-----\nfixture\n-----END CERTIFICATE-----",
+      environment: {
+        AWS_ACCESS_KEY_ID: "AKID",
+        AWS_SECRET_ACCESS_KEY: "secret",
+      },
+    });
+    if (typeof iam.password !== "function")
+      throw new Error("Expected password callback");
+    const sign = iam.password;
+    const tokens: string[] = [];
+    // Local Postgres has no RDS IAM support: generate a token on the real pg callback,
+    // then substitute its local password, using the existing local test TLS setting.
+    const pool = new pg.Pool({
+      ...iam,
+      host: url.hostname,
+      port: Number(url.port),
+      database: url.pathname.slice(1),
+      ssl: false,
+      password: async () => {
+        tokens.push(await sign());
+        return decodeURIComponent(url.password);
+      },
+    });
+    try {
+      const [first, second] = await Promise.all([
+        pool.connect(),
+        pool.connect(),
+      ]);
+      first.release();
+      second.release();
+      expect(tokens).toHaveLength(2);
+      expect(tokens.every((token) => token.includes("Action=connect"))).toBe(
+        true,
+      );
+    } finally {
+      await pool.end();
+    }
   });
   it("releases connections after server-side statement timeouts", async () => {
     if (!connection) throw new Error("Postgres test connection missing");

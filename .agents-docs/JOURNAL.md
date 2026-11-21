@@ -800,3 +800,13 @@ history, and a separately closed admission epoch cannot fence a stale two-action
 transaction without additional coordination. The companion design recommends a conditional
 fence action when erasure is enabled and calls out its conflict with the requested two-action
 shape. The new PII and lifecycle contracts also need cross-adapter review before coding.
+
+## 2026-11-21 — M3f2 RDS IAM authentication, part 1
+
+RDS passwords are SigV4 presigned `rds-db` connect URLs; the independently computed HMAC
+vector was cross-checked against an offline AWS CLI token using dummy session credentials.
+The Postgres pool signs on each new connection with the current environment credentials and
+uses hostname-verified TLS. For Lambda ZIPs its default CA file is `/var/runtime/ca-cert.pem`;
+other runtimes must provide a maintained PEM path, including ACM/ATS roots for RDS Proxy.
+IAM selection requires a platform that guarantees AWS credentials. The policy module and VPC
+wiring remain the second part, so the new IAM descriptor is not yet deployable.

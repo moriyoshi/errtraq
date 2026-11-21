@@ -1,15 +1,45 @@
-import type {
-  AdapterManifest,
-  AdapterSelection,
-  InfraDescriptor,
-  VariableRef,
+import {
+  type AdapterManifest,
+  type AdapterSelection,
+  type EnvRef,
+  type InfraDescriptor,
+  isEnvRef,
+  isVariableRef,
+  out,
+  type VariableRef,
 } from "@errtraq/core";
 import { z } from "zod";
 
+const stringRef = z.custom<VariableRef | EnvRef>(
+  (v) =>
+    isVariableRef(v) ||
+    (isEnvRef(v) && v.phase === "runtime" && v.valueType === undefined),
+);
+const iamSchema = z.strictObject({
+  mode: z.literal("iam"),
+  host: z
+    .string()
+    .min(1)
+    .regex(/^(?=.{1,253}$)[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?$/)
+    .refine((v) => !v.includes("..")),
+  port: z.number().int().min(1).max(65535).default(5432),
+  database: z.string().min(1),
+  user: z.string().min(1),
+  region: z.string().min(1),
+  resourceId: z.string().regex(/^(db|cluster|prx)-[A-Za-z0-9]+$/),
+  sslRootCert: z.union([z.string().min(1), stringRef]).optional(),
+});
+const secretModeSchema = z.strictObject({ mode: z.literal("secret") });
+const iamModeSchema = iamSchema.omit({ sslRootCert: true });
+const modeSchema = z.discriminatedUnion("mode", [
+  secretModeSchema,
+  iamModeSchema,
+]);
+type Config = z.infer<typeof modeSchema>;
 export const manifest: AdapterManifest = {
   id: "postgres",
   kind: "store",
-  configSchema: z.strictObject({}),
+  configSchema: secretModeSchema,
   runtimes: ["node"],
   requires: [],
   capabilities: {
@@ -18,34 +48,7 @@ export const manifest: AdapterManifest = {
     lastSeenRangeOnOtherSort: false,
   },
 };
-export function postgres(secret: VariableRef): AdapterSelection {
-  const infra: InfraDescriptor<Record<string, never>> = {
-    module: { provider: "local", component: "postgres", outputs: {} },
-    inputs: () => ({}),
-    resources: { primary: "external" },
-    capabilities: {
-      read: { primary: null },
-      write: { primary: null },
-      delete: { primary: null },
-    },
-    bindings: [
-      {
-        name: "ERRTRAQ_POSTGRES_SECRET",
-        kind: "secret",
-        purpose: "primary",
-        value: secret,
-      },
-    ],
-  };
-  return {
-    manifest,
-    infra,
-    runtimeModule: "@errtraq/store-sql/postgres",
-    config: {},
-    existing: {},
-  };
-}
-export const infra: InfraDescriptor<Record<string, never>> = {
+export const infra: InfraDescriptor<Config> = {
   module: { provider: "local", component: "postgres", outputs: {} },
   inputs: () => ({}),
   resources: { primary: "external" },
@@ -56,3 +59,87 @@ export const infra: InfraDescriptor<Record<string, never>> = {
   },
   bindings: [],
 };
+export type PostgresIamConfig = z.input<typeof iamSchema>;
+export type PostgresSecretConfig = { mode: "secret"; secret: VariableRef };
+/** Existing database: a secret identifier or a role-bound RDS IAM identity. */
+export function postgres(
+  input: VariableRef | PostgresSecretConfig | PostgresIamConfig,
+): AdapterSelection {
+  if (isVariableRef(input) || input.mode === "secret") {
+    const secret = isVariableRef(input) ? input : input.secret;
+    if (
+      !isVariableRef(secret) ||
+      (!isVariableRef(input) &&
+        Object.keys(input).some((key) => !["mode", "secret"].includes(key)))
+    )
+      throw new Error("Invalid Postgres secret authentication configuration");
+    return {
+      manifest,
+      infra: {
+        ...infra,
+        bindings: [
+          {
+            name: "ERRTRAQ_POSTGRES_SECRET",
+            kind: "secret",
+            purpose: "primary",
+            value: secret,
+          },
+        ],
+      },
+      runtimeModule: "@errtraq/store-sql/postgres",
+      config: { mode: "secret" },
+      existing: {},
+    };
+  }
+  const config = iamSchema.parse(input);
+  const names = {
+    ERRTRAQ_POSTGRES_HOST: config.host,
+    ERRTRAQ_POSTGRES_PORT: String(config.port),
+    ERRTRAQ_POSTGRES_DATABASE: config.database,
+    ERRTRAQ_POSTGRES_USER: config.user,
+    ERRTRAQ_POSTGRES_REGION: config.region,
+    ERRTRAQ_POSTGRES_CA_PATH: config.sslRootCert ?? "/var/runtime/ca-cert.pem",
+  };
+  const iamInfra: InfraDescriptor<Config> = {
+    module: {
+      provider: "aws",
+      component: "rds-iam-access",
+      outputs: { policies: { map: { map: "json-document" } } },
+    },
+    inputs: () => ({
+      resource_id: config.resourceId,
+      database_user: config.user,
+      region: config.region,
+    }),
+    resources: { primary: "external" },
+    capabilities: {
+      read: { primary: out("policies", "read", "primary") },
+      write: { primary: out("policies", "write", "primary") },
+      delete: { primary: out("policies", "delete", "primary") },
+    },
+    bindings: Object.entries(names).map(([name, value]) => ({
+      name,
+      kind: "env" as const,
+      purpose: "primary",
+      value,
+    })),
+  };
+  return {
+    manifest: {
+      ...manifest,
+      configSchema: iamModeSchema,
+      requires: ["aws-credentials"],
+    },
+    infra: iamInfra,
+    runtimeModule: "@errtraq/store-sql/postgres",
+    config: {
+      mode: "iam",
+      host: config.host,
+      port: config.port,
+      database: config.database,
+      user: config.user,
+      region: config.region,
+      resourceId: config.resourceId,
+    },
+  };
+}

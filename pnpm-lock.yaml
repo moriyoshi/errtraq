@@ -325,6 +325,9 @@ importers:
 
   packages/adapters/store-sql:
     dependencies:
+      '@errtraq/aws-signing':
+        specifier: workspace:*
+        version: link:../../aws-signing
       '@errtraq/core':
         specifier: workspace:*
         version: link:../../core

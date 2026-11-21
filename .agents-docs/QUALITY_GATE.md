@@ -57,6 +57,19 @@ that identifier locally without putting the URL in the stack or Terraform. This 
 external database and produces no module. Lambda still needs the M3g deployed secret source
 and config-reference delivery before this selection is usable there.
 
+M3f2's IAM connection path accepts `postgres({ mode: "iam", host, port, database, user,
+region, resourceId, sslRootCert? })`. `sslRootCert` is a path to a PEM trust bundle, optionally
+an environment or string-variable reference; it defaults to `/var/runtime/ca-cert.pem` for
+Node Lambda ZIPs. AWS documents that path as its Amazon CA bundle; an operator using another
+runtime or a container must supply and maintain a suitable bundle. RDS Proxy uses ACM/ATS
+certificates, so its trust bundle must include the corresponding roots. Connections verify the
+CA and endpoint hostname, and the pool's password callback signs a new 15-minute token for
+each connection using current Lambda credentials. Existing open connections do not need token
+renewal. IAM mode needs the M3f2 policy module and Lambda network work from the next part before
+it can be generated and deployed; no IAM-enabled RDS connection is exercised by the local
+Postgres test. See [AWS Lambda RDS TLS requirements](https://docs.aws.amazon.com/lambda/latest/dg/services-rds.html)
+and [RDS Proxy certificate guidance](https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/rds-proxy.howitworks.html).
+
 AWS emulator probes and the namespace lifecycle are opt-in:
 
 ```sh
