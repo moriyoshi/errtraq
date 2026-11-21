@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { signAwsRequest } from "@errtraq/aws-signing";
+import { bundleDebugIdsDigest } from "@errtraq/core/store";
 import { activeStoreContract } from "@errtraq/testing";
-import { afterEach, describe } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { DynamoStore } from "./runtime.js";
 
 const endpoint = process.env.ERRTRAQ_DYNAMO_EMULATOR;
@@ -71,4 +72,77 @@ describe.skipIf(!endpoint)("DynamoDB store emulator", () => {
       await api("DeleteTable", { TableName: table });
   });
   activeStoreContract(makeStore);
+  it("resumes an interrupted active bundle deletion from strongly read chunks", async () => {
+    const store = await makeStore();
+    const ids = Array.from({ length: 150 }, (_, i) => `debug-${i}`);
+    const project = "project" as import("@errtraq/core").ProjectId;
+    const bundle = {
+      id: "bundle" as import("@errtraq/core").ArtifactBundleId,
+      projectId: project,
+      releaseId: "release" as import("@errtraq/core").ReleaseId,
+      blobKey: "bundle",
+      state: "pending" as const,
+      pendingExpiresAt:
+        "2099-01-01T00:00:00.000Z" as import("@errtraq/core").Timestamp,
+      manifest: {
+        blobKey: "manifest",
+        debugIdCount: ids.length,
+        digest: await bundleDebugIdsDigest(ids),
+      },
+    };
+    await store.releases.beginBundle(bundle, bundle.manifest);
+    await store.releases.putBundleDebugIds(
+      project,
+      bundle.id,
+      ids.slice(0, 100),
+      ids,
+    );
+    await store.releases.putBundleDebugIds(
+      project,
+      bundle.id,
+      ids.slice(100),
+      ids,
+    );
+    await store.releases.verifyAndActivateBundle(project, bundle.id, ids);
+    const request = store.request.bind(store);
+    let deletions = 0;
+    const spy = vi
+      .spyOn(store, "request")
+      .mockImplementation(async (action, input) => {
+        if (
+          action === "TransactWriteItems" &&
+          JSON.stringify(input).includes('"Delete"') &&
+          ++deletions === 2
+        )
+          throw new Error("injected interruption");
+        return request(action, input);
+      });
+    await expect(
+      store.releases.deleteBundle(project, bundle.id),
+    ).rejects.toThrow("injected interruption");
+    expect(
+      await store.releases.findBundleByDebugId(project, ids[149] as string),
+    ).toBeNull();
+    spy.mockRestore();
+    await store.releases.deleteBundle(project, bundle.id);
+    const replacement = { ...bundle, id: "replacement" as typeof bundle.id };
+    await store.releases.beginBundle(replacement, replacement.manifest);
+    await store.releases.putBundleDebugIds(
+      project,
+      replacement.id,
+      ids.slice(0, 100),
+      ids,
+    );
+    await store.releases.putBundleDebugIds(
+      project,
+      replacement.id,
+      ids.slice(100),
+      ids,
+    );
+    await store.releases.verifyAndActivateBundle(project, replacement.id, ids);
+    expect(
+      (await store.releases.findBundleByDebugId(project, ids[149] as string))
+        ?.id,
+    ).toBe(replacement.id);
+  });
 });

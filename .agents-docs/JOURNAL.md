@@ -885,3 +885,19 @@ GSI cannot establish that all ownership markers have been removed. A decision is
 persisting bounded manifest chunks in the table, extending the port, or introducing a blob
 dependency. The issue, event and recordEvent operations remain the explicitly requested
 future-step stubs.
+
+## 2026-11-21 — DynamoDB bundle lifecycle
+
+Bundle marker writes now record bounded chunks in the bundle's base-table partition in
+the same transaction as their ownership markers. Cleanup and active deletion enumerate
+these chunks with strongly consistent, bounded queries. A generation fence on bundle and
+marker items prevents an interrupted deletion or lookup from treating a later reuse of the
+same bundle ID as the original. Marker TTLs are cleared in conditional batches before
+activation; the previously documented interruption caveat still applies.
+
+The unchanged shared contract's 1,001-ID lifecycle and blob-cleanup retry cases pass on
+winterbaume, as does a separate interrupted active-deletion test. Winterbaume issue #61
+means these tests do not establish real conditional-write atomicity; verify concurrency
+on a faithful DynamoDB service as already planned for M3h. Query and BatchGetItem need
+store read, PutItem and UpdateItem need write, and marker/chunk deletion needs the
+separate metadata-delete capability.

@@ -197,9 +197,12 @@ write conditional debug-ID ownership markers in idempotent chunks, each with a p
 Verify every expected marker strongly, and clear marker TTLs in bounded chunks before a final
 conditional activation of the bundle. `findBundleByDebugId` reads marker then bundle and returns
 only an active matching owner. A retry repeats chunks/verification; conflicts with another
-owner fail clearly. Clean abandoned pending bundles/markers by replaying their manifest before
-allowing pending metadata and manifest to expire. On delete, make the bundle unavailable first,
-then remove its markers/manifest in resumable chunks. Do not hide the TTL-clearing crash gap
+owner fail clearly. Keep bounded manifest chunk items under the bundle base-table partition,
+and enumerate them with strongly consistent queries; the store does not depend on BlobStore
+and never relies on an eventually consistent index to enumerate marker ownership. Create each
+chunk atomically with its marker writes so interruption leaves a complete recovery record.
+Clean abandoned pending bundles/markers before allowing metadata and manifest to expire. On
+delete, make the bundle unavailable first, then remove its markers in resumable chunks. Do not hide the TTL-clearing crash gap
 identified above, or promise atomic replacement of thousands of markers without a protocol;
 concurrent replacement/ownership and cleanup must be tested. The required blob and store
 capabilities must be reflected in stack validation and IAM. This is the simple lifecycle, not

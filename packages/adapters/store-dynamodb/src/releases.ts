@@ -1,11 +1,9 @@
 import type { Release, ReleaseRepo } from "@errtraq/core";
+import { bundleRepository } from "./bundles.js";
 import { partition, sortKey } from "./keys.js";
 import { indexPartition, markerLookup, writeUnique } from "./projects.js";
 import { type Driver, get, itemData, pageIndex } from "./repository-base.js";
 
-const unimplemented = async (): Promise<never> => {
-  throw new Error("DynamoDB bundle lifecycle is not implemented");
-};
 const releaseKey = (projectId: string, id: string) =>
   partition("REL", projectId, id);
 const versionKey = (projectId: string, version: string) =>
@@ -39,15 +37,6 @@ export function releaseRepository(driver: Driver): ReleaseRepo {
         cursor,
         limit,
       ),
-    beginBundle: unimplemented,
-    putBundleDebugIds: unimplemented,
-    verifyAndActivateBundle: unimplemented,
-    listPendingBundles: unimplemented,
-    claimPendingBundleCleanup: unimplemented,
-    clearPendingBundleDebugIds: unimplemented,
-    finishPendingBundleCleanup: unimplemented,
-    listBundles: unimplemented,
-    deleteBundle: unimplemented,
-    findBundleByDebugId: unimplemented,
+    ...bundleRepository(driver),
   };
 }

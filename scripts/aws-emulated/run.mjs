@@ -185,6 +185,10 @@ try {
     "pages releases without crossing projects",
     "rejects duplicate natural keys owned by another record",
     "atomically creates one initial active project key",
+    "activates only a verified manifest after idempotent chunks and cleans pending bundles",
+    "resumes pending bundle cleanup after blob deletion fails",
+    "looks up keys, hashed tokens, releases and debug ids",
+    "resumes an interrupted active bundle deletion from strongly read chunks",
   ].join("|");
   const storeContract = spawn(
     "pnpm",
