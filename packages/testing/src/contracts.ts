@@ -18,6 +18,7 @@ import {
   type EventPosition,
   InvalidCounterError,
   InvalidCursorError,
+  InvalidQueueMessageError,
   type IssueId,
   type KV,
   type Message,
@@ -1008,6 +1009,22 @@ export function queueContract(
         controller.abort();
         await running;
       }
+    });
+    it("rejects non-JSON message bodies before publishing", async () => {
+      const q = await factory();
+      for (const body of [
+        new Uint8Array([1]),
+        new ArrayBuffer(1),
+        new Date(),
+        NaN,
+        Infinity,
+        { x: undefined },
+        { toJSON: () => 1 },
+        [undefined],
+      ])
+        await expect(
+          q.producer.send("contract", [{ key: "bad", body }]),
+        ).rejects.toBeInstanceOf(InvalidQueueMessageError);
     });
     it("validates a batch before publishing any message", async () => {
       const q = await factory();

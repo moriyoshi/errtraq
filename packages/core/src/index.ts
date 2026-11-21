@@ -1,6 +1,7 @@
 export * from "./blob-key.js";
 export * from "./bootstrap.js";
 export * from "./consumer.js";
+export * from "./consumer-policy.js";
 export * from "./cron.js";
 export * from "./cursor.js";
 export * from "./deployed-runtime.js";
@@ -13,5 +14,6 @@ export * from "./log-redaction.js";
 export * from "./normalize.js";
 export * from "./path-hygiene.js";
 export * from "./ports.js";
+export * from "./queue.js";
 export * from "./recover-ingest.js";
 export * from "./stack.js";

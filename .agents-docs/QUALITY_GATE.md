@@ -25,8 +25,10 @@ pnpm test                        # or focused while iterating: pnpm --filter @er
 Fix violations and re-run until clean. `pnpm test` needs no external daemons, network, or
 cloud credentials; a test that does must be opt-in and skip when its service is absent.
 
-`pnpm lint` also enforces the layering rule: `packages/core` and `packages/http` must not
-import `node:*` or use `Buffer` / `process`.
+`pnpm lint` also enforces Workers layering for `packages/core`, `packages/http` and the
+transitive workspace value imports of packages declaring `errtraqWorkersRuntime`. It also
+checks the browser-target bundle, including bundled dependencies. Runtime entries cannot import
+Node APIs or use Node globals; type-only imports and test files are excluded.
 
 ## 2. Contract suites (when you touch a port or an adapter)
 
@@ -40,7 +42,7 @@ AWS emulator probes and the namespace lifecycle are opt-in:
 pnpm aws-emulator:install              # build the verified, unmodified pinned server
 pnpm aws-emulator:install-s3-patched   # build the verified local UTF-8 patch for S3 contracts
 pnpm test:aws-emulated                 # runs probes plus KV, SQS and S3 contracts; skips absent builds
-pnpm test:workers-smoke                # runs bundled S3, SQS and KV against local fakes in workerd
+pnpm test:workers-smoke                # runs S3, SQS producer / delayed push and KV against local fakes in workerd
 ```
 
 The installer keeps its source, Cargo cache and build under `.agents-workspace/tmp`. The

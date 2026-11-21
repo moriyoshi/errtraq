@@ -1,3 +1,4 @@
+import { CONSUMER_MAX_MISSING_ATTEMPTS } from "./consumer-policy.js";
 import type { EventId, ProjectId, Timestamp } from "./domain.js";
 import { isProjectId, isTimestamp } from "./domain.js";
 import {
@@ -111,7 +112,10 @@ export class ConsumerService {
       try {
         const body = await this.options.blobs.get(claim.blobKey);
         if (!body) {
-          if (delivery.attempt >= (this.options.maxMissingAttempts ?? 5)) {
+          if (
+            delivery.attempt >=
+            (this.options.maxMissingAttempts ?? CONSUMER_MAX_MISSING_ATTEMPTS)
+          ) {
             this.options.logger.error("Staged envelope is missing", {
               deliveryId: delivery.id,
               attempt: delivery.attempt,

@@ -305,6 +305,9 @@ For function platforms supporting env bindings, each queue trigger adds an env b
 function. Its value is the queue resource reference, resolved by Terraform; runtime uses the
 delivered value as `queueConsumers.eventSource`. Collisions and reserved names fail validation.
 Platforms without env bindings need their own runtime binding mechanism.
+Deployed and local construction reject active queue topics with no implemented consumer handler;
+currently only `ingest` is implemented. Lambda DLQ receive counts must cover the consumer
+missing-claim limit (currently five attempts).
 The standalone platform owns migration and bootstrap; its `tokenDirectory` is configured
 independently from the SQLite path. The local stack assigns both from `ERRTRAQ_DATA_DIR`.
 

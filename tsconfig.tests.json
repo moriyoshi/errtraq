@@ -62,6 +62,10 @@
       "@errtraq/core/kv": ["packages/core/src/kv.ts"],
       "@errtraq/kv-dynamodb/runtime": [
         "packages/adapters/kv-dynamodb/src/runtime.ts"
+      ],
+      "@errtraq/core/queue": ["packages/core/src/queue.ts"],
+      "@errtraq/store-dynamodb/runtime": [
+        "packages/adapters/store-dynamodb/src/runtime.ts"
       ]
     }
   },

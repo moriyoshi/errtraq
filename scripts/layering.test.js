@@ -1,6 +1,9 @@
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { join, resolve } from "node:path";
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
-import { findLayeringViolations } from "./layering.mjs";
+import { findLayeringViolations, workersReachable } from "./layering.mjs";
+import { checkWorkerBundle } from "./worker-bundle.mjs";
 
 function check(code) {
   const name = "fixture.ts";
@@ -130,5 +133,61 @@ describe("Workers-only type environment", () => {
       .getPreEmitDiagnostics(program)
       .filter((d) => d.file?.fileName === name);
     expect(diagnostics).toHaveLength(3);
+  });
+});
+
+describe("declared Workers runtime graph", () => {
+  it("rejects Node imports in bundled dependencies", async () => {
+    mkdirSync(".agents-workspace/tmp", { recursive: true });
+    const dir = mkdtempSync(".agents-workspace/tmp/worker-dep-");
+    try {
+      const entry = join(dir, "entry.js"),
+        dep = join(dir, "dependency.js");
+      writeFileSync(entry, 'import "./dependency.js";');
+      writeFileSync(dep, 'import "node:fs";');
+      await expect(checkWorkerBundle(entry)).rejects.toThrow();
+      writeFileSync(
+        entry,
+        'import { load } from "./dependency.js"; globalThis.load = load;',
+      );
+      writeFileSync(
+        dep,
+        "export function load(name) { return require(name); }",
+      );
+      expect((await checkWorkerBundle(entry)).length).toBeGreaterThan(0);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("checks transitive value imports and excludes type-only helpers", () => {
+    mkdirSync(".agents-workspace/tmp", { recursive: true });
+    const dir = mkdtempSync(".agents-workspace/tmp/layering-");
+    try {
+      const entry = join(dir, "entry.ts"),
+        inner = join(dir, "inner.ts"),
+        types = join(dir, "stack.ts");
+      writeFileSync(
+        entry,
+        'import "./inner.js"; import type { T } from "./stack.js"; export const value: T = 1;',
+      );
+      writeFileSync(inner, 'import "node:fs"; process.exit();');
+      writeFileSync(types, "export type T = number; process.exit();");
+      const options = {
+        module: ts.ModuleKind.NodeNext,
+        moduleResolution: ts.ModuleResolutionKind.NodeNext,
+        types: [],
+      };
+      const program = ts.createProgram([entry, inner, types], options);
+      const reachable = workersReachable(program, [entry]);
+      expect(reachable.has(resolve(inner))).toBe(true);
+      expect(reachable.has(resolve(types))).toBe(false);
+      const source = program.getSourceFile(inner);
+      expect(
+        findLayeringViolations(program, source, {}, { workers: true }),
+      ).toHaveLength(2);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

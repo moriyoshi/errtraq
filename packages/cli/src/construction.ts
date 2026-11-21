@@ -1,5 +1,6 @@
 import {
   type AdapterSelection,
+  assertImplementedConsumerTopics,
   type ConstructedAdapter,
   constructionOrder,
   deriveTriggers,
@@ -24,6 +25,11 @@ export async function constructStack(
   loadModule: ModuleLoader = (specifier) => import(specifier),
 ): Promise<ConstructedStack> {
   const selected = selections(stack);
+  assertImplementedConsumerTopics(
+    deriveTriggers(stack)
+      .filter((trigger) => trigger.kind === "queue")
+      .flatMap((trigger) => trigger.topics),
+  );
   const instances = new Map<string, unknown>();
   const closers: ConstructedAdapter[] = [];
   let platform: unknown;

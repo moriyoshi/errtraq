@@ -1,3 +1,5 @@
+import { CONSUMER_MAX_MISSING_ATTEMPTS } from "./consumer-policy.js";
+
 function ownValue<T>(
   record: Record<string, T> | undefined,
   key: string,
@@ -1273,6 +1275,16 @@ function inspect(input: unknown): {
         );
     }
     const setting = trigger.settings;
+    if (
+      platform.id === "aws-lambda" &&
+      setting.dlq?.enabled &&
+      (setting.dlq.maxReceiveCount === undefined ||
+        setting.dlq.maxReceiveCount < CONSUMER_MAX_MISSING_ATTEMPTS)
+    )
+      fail(
+        `queue.infra.topics.settings.${trigger.physical}.dlq.maxReceiveCount`,
+        `Lambda queue DLQ maxReceiveCount must be at least ${CONSUMER_MAX_MISSING_ATTEMPTS}, so the consumer can acknowledge missing claims before redrive`,
+      );
     if (setting.dlq?.enabled && !stack.queue.manifest.capabilities.dlq)
       fail(
         `queue.infra.topics.settings.${trigger.physical}.dlq`,

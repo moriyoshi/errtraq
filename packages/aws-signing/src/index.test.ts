@@ -248,16 +248,21 @@ describe("shared AWS request", () => {
   it("honors caller cancellation", async () => {
     const abort = new AbortController();
     let used: AbortSignal | undefined;
+    let markStarted: () => void = () => {};
+    const started = new Promise<void>((resolve) => {
+      markStarted = resolve;
+    });
     const pending = awsRequest(
       base({
         signal: abort.signal,
         fetch: async (_url, init) => {
           used = init?.signal ?? undefined;
+          markStarted();
           return await new Promise<Response>(() => {});
         },
       }),
     );
-    await new Promise((resolve) => setTimeout(resolve, 5));
+    await started;
     abort.abort();
     await expect(pending).rejects.toMatchObject({
       code: "Aborted",

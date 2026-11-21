@@ -32,6 +32,28 @@ const copyStack = <T extends object>(value: T): T =>
 const names = (items: { binding: { name: string } }[]) =>
   items.map((item) => item.binding.name).sort();
 describe("AWS descriptor stacks", () => {
+  it("requires the DLQ receive limit to cover the consumer missing-claim attempts", () => {
+    const bad = {
+      ...copyStack(shared),
+      queue: sqsQueue({ maxReceiveCount: 4 }),
+    };
+    expect(
+      validateStack(bad).some(
+        (issue) =>
+          issue.message.includes("at least 5") &&
+          issue.message.includes("consumer"),
+      ),
+    ).toBe(true);
+    expect(
+      validateStack({
+        ...copyStack(shared),
+        queue: sqsQueue({ maxReceiveCount: 5 }),
+      }),
+    ).toEqual([]);
+    expect(
+      validateStack({ ...copyStack(shared), queue: sqsQueue({ dlq: false }) }),
+    ).toEqual([]);
+  });
   it("checks the platform-declared stack name limit before generation", () => {
     expect(
       validateStack({ ...copyStack(shared), name: "a".repeat(40) }),

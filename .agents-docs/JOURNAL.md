@@ -748,3 +748,19 @@ integration while the existing validation gate continues to cover both provider 
   The AWS IAM ListUsers and AWS signing-suite get-vanilla vectors are asserted centrally.
 - This turn covers review item 1; items 2 through 8 remain for the next turn. SQS FIFO is
   unsupported and real AWS behavior / scrubbed event fixtures remain M3h follow-ups.
+
+## 2026-11-21 — M3c2 SQS review, items 2 to 8
+
+- Visibility changes run with concurrency four and share the invocation deadline; invalid
+  finite delays are clamped, non-finite delays dropped, and both are logged. Poison records,
+  delay changes and failed visibility requests log IDs and safe reasons only. Duplicate IDs
+  are handled once; Lambda construction passes the same core logger to adapters and services.
+- Queue bodies are validated as plain JSON across SQS, local memory and testing fakes before
+  publishing; SQS escapes U+FFFE and U+FFFF on the wire. Lambda queue DLQs require at least
+  the consumer's five missing-claim attempts. Construction fails if an active topic lacks an
+  implemented consumer, instead of starting a retry loop.
+- Packages declare Workers runtime entries in their manifests. The layering check traverses
+  workspace value imports from those entries, excluding type-only edges and tests; the future
+  DynamoDB store stub now has a separate runtime entry. Workerd smoke exercises delayed SQS
+  push retry as well as production. The emulator driver uses full receive attributes and tests
+  handler and entry failures, redelivery attempts and DLQ redrive in both queue modes.

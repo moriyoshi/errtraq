@@ -51,6 +51,21 @@ const server = createServer(async (req, res) => {
     res.end("{}");
     return;
   }
+  if (
+    req.url === "/" &&
+    req.headers["x-amz-target"] === "AmazonSQS.ChangeMessageVisibility"
+  ) {
+    const body = JSON.parse(Buffer.concat(chunks).toString());
+    if (body.VisibilityTimeout !== 2) {
+      res.writeHead(400);
+      res.end();
+      return;
+    }
+    seen.push("visibility");
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end("{}");
+    return;
+  }
   res.writeHead(404);
   res.end();
 });
@@ -71,13 +86,13 @@ try {
   if (
     response.status !== 200 ||
     (await response.text()) !== "ok" ||
-    seen.join(",") !== "s3,sqs,dynamodb"
+    seen.join(",") !== "s3,sqs,dynamodb,visibility"
   )
     throw new Error(
       `Workers smoke failed: HTTP ${response.status}; requests ${seen.join(",")}`,
     );
   console.log(
-    "PASS workerd executes signed S3, SQS and DynamoDB requests against local fake services",
+    "PASS workerd executes signed S3, SQS producer and delayed push, and DynamoDB requests against local fake services",
   );
 } finally {
   await mf?.dispose();

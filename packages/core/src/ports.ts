@@ -212,6 +212,7 @@ export interface ActiveStore {
 
 export type Topic = string;
 
+/** Body must be plain JSON data: null, booleans, finite numbers, strings, arrays and plain objects. */
 export interface Message {
   key: string;
   body: unknown;

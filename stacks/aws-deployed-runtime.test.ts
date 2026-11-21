@@ -10,6 +10,17 @@ import shared from "./aws-dynamodb.js";
 import perTopic from "./aws-dynamodb-per-topic.js";
 
 describe.each([shared, perTopic])("deployed runtime: $name", (stack) => {
+  it("rejects active topics without an implemented consumer before construction", async () => {
+    const active = {
+      ...(Object.fromEntries(Object.entries(stack)) as typeof stack),
+      features: { notifications: true },
+    };
+    const load = vi.fn(async () => ({ create: () => ({}) }));
+    await expect(
+      constructDeployedStack(active, "consumer", {}, load),
+    ).rejects.toThrow("notifications has no implemented consumer handler");
+    expect(load).not.toHaveBeenCalled();
+  });
   it("constructs the DynamoDB KV adapter from its delivered table binding", async () => {
     const fn = deriveDeployment(stack).functions.find(
       (item) => item.id === "ingest",
@@ -135,6 +146,12 @@ describe.each([shared, perTopic])("deployed runtime: $name", (stack) => {
         return Reflect.get(target, key, receiver);
       },
     });
+    const logger = {
+      debug: () => {},
+      info: () => {},
+      warn: () => {},
+      error: () => {},
+    };
     const built = await constructDeployedStack(
       stack,
       "ingest",
@@ -145,6 +162,7 @@ describe.each([shared, perTopic])("deployed runtime: $name", (stack) => {
           return {};
         },
       }),
+      logger,
     );
     expect([...built.instances.keys()].sort()).toEqual([
       "blob",
@@ -156,7 +174,7 @@ describe.each([shared, perTopic])("deployed runtime: $name", (stack) => {
       "@errtraq/blob-s3/runtime",
       "@errtraq/kv-dynamodb/runtime",
       "@errtraq/queue-sqs/runtime",
-      "@errtraq/store-dynamodb",
+      "@errtraq/store-dynamodb/runtime",
     ]);
     expect(reads.sort()).toEqual(Object.keys(values).sort());
     expect(
@@ -169,6 +187,7 @@ describe.each([shared, perTopic])("deployed runtime: $name", (stack) => {
     ).toMatchObject({
       bindings: { [queueName]: "queue-url" },
       queueConsumers: [],
+      logger,
     });
     await built.close();
   });

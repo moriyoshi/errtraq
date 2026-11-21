@@ -1,7 +1,7 @@
 import { build } from "esbuild";
 import { describe, expect, it } from "vitest";
 
-describe.each(["blob-s3", "queue-sqs", "kv-dynamodb"])(
+describe.each(["blob-s3", "queue-sqs", "kv-dynamodb", "store-dynamodb"])(
   "%s runtime bundle",
   (adapter) => {
     it("excludes the stack schema and zod", async () => {

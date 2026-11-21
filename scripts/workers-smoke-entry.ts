@@ -24,7 +24,13 @@ export default {
       endpoint: env.ENDPOINT,
       bindings: { URL: `${env.ENDPOINT}/queue` },
       topics: { ingest: { physical: "shared", producerBinding: "URL" } },
-      consumers: [],
+      consumers: [
+        {
+          physical: "shared",
+          topics: ["ingest"],
+          eventSource: "arn:aws:sqs:us-east-1:123456789012:test",
+        },
+      ],
     });
     const kv = new DynamoKV({
       table: "table",
@@ -35,6 +41,30 @@ export default {
     await blob.put("object", new Uint8Array([1]));
     await queue.producer.send("ingest", [{ key: "key", body: 1 }]);
     await kv.put("key", "value");
+    const result = await queue.push.handle(
+      {
+        Records: [
+          {
+            messageId: "id",
+            receiptHandle: "receipt",
+            body: JSON.stringify({
+              topic: "ingest",
+              message: { key: "key", body: 1 },
+            }),
+            attributes: { ApproximateReceiveCount: "1" },
+            eventSourceARN: "arn:aws:sqs:us-east-1:123456789012:test",
+          },
+        ],
+      },
+      async (batch) =>
+        batch.map((item) => ({
+          deliveryId: item.id,
+          action: "retry" as const,
+          delaySec: 2,
+        })),
+    );
+    if (result.batchItemFailures[0]?.itemIdentifier !== "id")
+      throw new Error("Unexpected queue failure result");
     return new Response("ok");
   },
 };

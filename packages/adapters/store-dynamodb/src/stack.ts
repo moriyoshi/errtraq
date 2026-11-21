@@ -54,5 +54,10 @@ export const infra: InfraDescriptor<Config> = {
   ],
 };
 export function dynamoStore(config: Config = {}): AdapterSelection<Config> {
-  return { manifest, infra, config, runtimeModule: "@errtraq/store-dynamodb" };
+  return {
+    manifest,
+    infra,
+    config,
+    runtimeModule: "@errtraq/store-dynamodb/runtime",
+  };
 }

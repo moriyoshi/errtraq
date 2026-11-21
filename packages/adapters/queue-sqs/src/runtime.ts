@@ -3,8 +3,10 @@ import type {
   BatchHandler,
   CreateContext,
   Delivery,
+  Logger,
   Queue,
 } from "@errtraq/core";
+import { validateQueueBody } from "@errtraq/core/queue";
 import { SQS_MAX_BYTES } from "./constants.js";
 import type { Config } from "./stack.js";
 
@@ -26,16 +28,9 @@ const integer = (value: unknown, max: number): value is number =>
   value >= 0 &&
   value <= max;
 const serialize = (value: unknown) =>
-  JSON.stringify(value, (_key, item: unknown) => {
-    if (
-      item === undefined ||
-      typeof item === "function" ||
-      typeof item === "symbol" ||
-      typeof item === "bigint"
-    )
-      throw new Error("Message must be JSON serializable");
-    return item;
-  });
+  JSON.stringify(value)
+    .replaceAll("\ufffe", "\\ufffe")
+    .replaceAll("\uffff", "\\uffff");
 
 /** Lambda's SQS event fields used by the adapter. */
 export interface SqsEvent {
@@ -57,6 +52,7 @@ export interface SqsOptions {
   requestTimeoutMs?: number;
   overallTimeoutMs?: number;
   signal?: AbortSignal;
+  logger?: Pick<Logger, "warn" | "error">;
 }
 export class SqsQueue implements Queue<SqsEvent, SqsResponse> {
   readonly capabilities = {
@@ -90,6 +86,7 @@ export class SqsQueue implements Queue<SqsEvent, SqsResponse> {
   private async request(
     action: string,
     input: RecordValue,
+    overallTimeoutMs = this.options.overallTimeoutMs,
   ): Promise<RecordValue> {
     const response = await awsRequest({
       service: "sqs",
@@ -111,7 +108,7 @@ export class SqsQueue implements Queue<SqsEvent, SqsResponse> {
       sleep: this.options.sleep,
       random: this.options.random,
       requestTimeoutMs: this.options.requestTimeoutMs,
-      overallTimeoutMs: this.options.overallTimeoutMs,
+      overallTimeoutMs,
       signal: this.options.signal,
     });
     const parsed: unknown = await response.json();
@@ -137,6 +134,7 @@ export class SqsQueue implements Queue<SqsEvent, SqsResponse> {
       const entries = messages.map((message, index) => {
         if (typeof message.key !== "string")
           throw new Error("Message key must be a string");
+        validateQueueBody(message.body);
         const MessageBody = serialize({ topic, message });
         const bytes = encoder.encode(MessageBody).byteLength;
         if (bytes > SQS_MAX_BYTES)
@@ -208,14 +206,24 @@ export class SqsQueue implements Queue<SqsEvent, SqsResponse> {
     ): Promise<SqsResponse> => {
       if (!event || !Array.isArray(event.Records))
         throw new Error("Invalid SQS event");
+      const deadline = Date.now() + (this.options.overallTimeoutMs ?? 25_000);
       const failed = new Set<string>();
       const deliveries: Delivery[] = [];
       const metadata = new Map<string, { arn: string; receipt: string }>();
+      const seen = new Set<string>();
+      const logger = this.options.logger ?? {
+        warn: (message: string, fields?: Record<string, unknown>) =>
+          console.warn(message, fields ?? {}),
+        error: (message: string, fields?: Record<string, unknown>) =>
+          console.error(message, fields ?? {}),
+      };
       for (const raw of event.Records) {
         const record = object(raw),
           id = record?.messageId;
-        if (typeof id !== "string" || !id || metadata.has(id) || failed.has(id))
+        if (typeof id !== "string" || !id)
           throw new Error("Invalid SQS message ID");
+        if (seen.has(id)) continue;
+        seen.add(id);
         try {
           const arn = record?.eventSourceARN,
             receipt = record?.receiptHandle,
@@ -227,26 +235,34 @@ export class SqsQueue implements Queue<SqsEvent, SqsResponse> {
             !receipt ||
             typeof body !== "string"
           )
-            throw new Error("Malformed record");
+            throw new Error("malformed record");
           const route = this.options.consumers.find(
             (item) => item.eventSource === arn,
           );
-          if (!route) throw new Error("Unknown queue source");
-          const decoded = object(JSON.parse(body));
+          if (!route) throw new Error("unknown event source");
+          let decoded: RecordValue | undefined;
+          try {
+            decoded = object(JSON.parse(body));
+          } catch {
+            throw new Error("invalid JSON");
+          }
           const message = object(decoded?.message),
             topic = decoded?.topic;
           const attemptText = attrs?.ApproximateReceiveCount;
+          if (
+            typeof attemptText !== "string" ||
+            !/^[1-9]\d*$/.test(attemptText) ||
+            !Number.isSafeInteger(Number(attemptText))
+          )
+            throw new Error("invalid receive count");
           if (
             typeof topic !== "string" ||
             !route.topics.includes(topic) ||
             !message ||
             typeof message.key !== "string" ||
-            !Object.hasOwn(message, "body") ||
-            typeof attemptText !== "string" ||
-            !/^[1-9]\d*$/.test(attemptText) ||
-            !Number.isSafeInteger(Number(attemptText))
+            !Object.hasOwn(message, "body")
           )
-            throw new Error("Malformed envelope");
+            throw new Error("invalid envelope");
           deliveries.push({
             id,
             topic,
@@ -254,10 +270,30 @@ export class SqsQueue implements Queue<SqsEvent, SqsResponse> {
             attempt: Number(attemptText),
           });
           metadata.set(id, { arn, receipt });
-        } catch {
+        } catch (error) {
           failed.add(id);
+          const reasons = [
+            "malformed record",
+            "unknown event source",
+            "invalid JSON",
+            "invalid receive count",
+            "invalid envelope",
+          ];
+          logger.warn("Invalid SQS record", {
+            messageId: id,
+            reason:
+              error instanceof Error && reasons.includes(error.message)
+                ? error.message
+                : "malformed record",
+          });
         }
       }
+      const changes: {
+        id: string;
+        arn: string;
+        receipt: string;
+        delay: number;
+      }[] = [];
       if (deliveries.length) {
         try {
           const results = await handler(deliveries);
@@ -269,24 +305,63 @@ export class SqsQueue implements Queue<SqsEvent, SqsResponse> {
             if (result?.action === "ack") continue;
             failed.add(delivery.id);
             if (result?.action === "retry" && result.delaySec !== undefined) {
-              if (!integer(result.delaySec, 43200)) continue;
+              const delay = result.delaySec;
+              if (typeof delay !== "number" || !Number.isFinite(delay)) {
+                logger.warn("Invalid SQS retry delay", {
+                  messageId: delivery.id,
+                  reason: "non-finite delay dropped",
+                });
+                continue;
+              }
+              const clamped = Math.min(43200, Math.max(0, Math.floor(delay)));
+              if (clamped !== delay)
+                logger.warn("Invalid SQS retry delay", {
+                  messageId: delivery.id,
+                  reason: "delay clamped",
+                  delaySec: clamped,
+                });
               const meta = metadata.get(delivery.id);
               if (meta)
-                try {
-                  await this.request("ChangeMessageVisibility", {
-                    QueueUrl: this.queueUrl(meta.arn),
-                    ReceiptHandle: meta.receipt,
-                    VisibilityTimeout: result.delaySec,
-                  });
-                } catch {
-                  /* Failure remains retryable via the original visibility timeout. */
-                }
+                changes.push({ id: delivery.id, ...meta, delay: clamped });
             }
           }
         } catch {
           for (const delivery of deliveries) failed.add(delivery.id);
         }
       }
+      let index = 0;
+      await Promise.all(
+        Array.from({ length: Math.min(4, changes.length) }, async () => {
+          for (;;) {
+            const change = changes[index++];
+            if (!change) return;
+            const remaining = deadline - Date.now();
+            if (remaining <= 0) {
+              logger.error("SQS visibility change failed", {
+                messageId: change.id,
+                reason: "deadline exceeded",
+              });
+              continue;
+            }
+            try {
+              await this.request(
+                "ChangeMessageVisibility",
+                {
+                  QueueUrl: this.queueUrl(change.arn),
+                  ReceiptHandle: change.receipt,
+                  VisibilityTimeout: change.delay,
+                },
+                remaining,
+              );
+            } catch {
+              logger.error("SQS visibility change failed", {
+                messageId: change.id,
+                reason: "request failed",
+              });
+            }
+          }
+        }),
+      );
       return {
         batchItemFailures: [...failed].map((itemIdentifier) => ({
           itemIdentifier,
@@ -301,6 +376,7 @@ export function create({
   topics = {},
   queueConsumers = [],
   environment = {},
+  logger,
 }: CreateContext<Config, Record<string, unknown>>): SqsQueue {
   const region = environment.AWS_REGION ?? environment.AWS_DEFAULT_REGION;
   if (!region) throw new Error("Missing SQS region (AWS_REGION)");
@@ -313,5 +389,6 @@ export function create({
     endpoint: environment.AWS_ENDPOINT_URL_SQS,
     requestTimeoutMs: config.requestTimeoutMs,
     overallTimeoutMs: config.overallTimeoutMs,
+    logger,
   });
 }

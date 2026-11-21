@@ -10,7 +10,11 @@ import type {
   Queue,
   StoredEvent,
 } from "@errtraq/core";
-import { InvalidCounterError, validateBlobKey } from "@errtraq/core";
+import {
+  InvalidCounterError,
+  validateBlobKey,
+  validateQueueBody,
+} from "@errtraq/core";
 import {
   bytes,
   compareUtf8,
@@ -167,6 +171,7 @@ export class MemoryQueue implements Queue {
       const delay = options?.delaySec ?? 0;
       if (!Number.isFinite(delay) || delay < 0)
         throw new RangeError("Invalid queue delay");
+      for (const message of messages) validateQueueBody(message.body);
       const copies = messages.map((message) => copy(message));
       for (const message of copies)
         if (

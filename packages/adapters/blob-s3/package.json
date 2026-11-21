@@ -34,5 +34,6 @@
   },
   "devDependencies": {
     "@errtraq/testing": "workspace:*"
-  }
+  },
+  "errtraqWorkersRuntime": "./src/runtime.ts"
 }

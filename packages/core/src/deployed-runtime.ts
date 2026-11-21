@@ -1,3 +1,5 @@
+import { assertImplementedConsumerTopics } from "./consumer-policy.js";
+import type { Logger } from "./ports.js";
 import {
   type ConstructedAdapter,
   type CoreTopic,
@@ -200,7 +202,11 @@ export async function constructDeployedPlan(
   plan: DeployedPlan,
   environment: Readonly<Record<string, string | undefined>>,
   loadModule: DeployedModuleLoader,
+  logger?: Logger,
 ): Promise<DeployedStack> {
+  assertImplementedConsumerTopics(
+    plan.queueConsumers.flatMap((route) => route.topics),
+  );
   const instances = new Map<string, unknown>();
   const closers: ConstructedAdapter[] = [];
   let closing: Promise<void> | undefined;
@@ -267,6 +273,7 @@ export async function constructDeployedPlan(
         bindings,
         dependencies,
         environment,
+        logger,
         ...queueContext,
       });
       instances.set(selection.path, instance);
@@ -301,10 +308,12 @@ export function constructDeployedStack(
   functionId: string,
   environment: Readonly<Record<string, string | undefined>>,
   loadModule: DeployedModuleLoader,
+  logger?: Logger,
 ): Promise<DeployedStack> {
   return constructDeployedPlan(
     deployedPlan(input, functionId),
     environment,
     loadModule,
+    logger,
   );
 }

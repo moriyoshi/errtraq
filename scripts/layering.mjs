@@ -16,12 +16,18 @@ const forbidden = new Set([
 ]);
 
 /** Enforce Workers globals and workspace import boundaries. */
-export function findLayeringViolations(program, source, packageNames = {}) {
+export function findLayeringViolations(
+  program,
+  source,
+  packageNames = {},
+  options = {},
+) {
   const checker = program.getTypeChecker();
   const violations = [];
   const path = source.fileName.replaceAll("\\", "/");
-  const restricted =
+  const coreRestricted =
     /(?:^|\/)packages\/(?:core|http)\//.test(path) || path === "fixture.ts";
+  const restricted = coreRestricted || options.workers === true;
   const adapter = path.match(/(?:^|\/)packages\/adapters\/([^/]+)\//)?.[1];
   const platform = path.match(/(?:^|\/)packages\/platforms\/([^/]+)\//)?.[1];
   const aliases = new Set();
@@ -49,6 +55,12 @@ export function findLayeringViolations(program, source, packageNames = {}) {
           specifier === "hono" ||
           specifier.startsWith("hono/") ||
           specifier === "@errtraq/core" ||
+          (!coreRestricted &&
+            options.workers &&
+            (specifier.startsWith("@errtraq/core/") ||
+              specifier === "@errtraq/aws-signing" ||
+              specifier === "aws4fetch" ||
+              specifier === "fast-xml-parser")) ||
           (specifier === "vitest" && /\.test\.[cm]?[jt]sx?$/.test(path))
         ))
     )
@@ -86,6 +98,13 @@ export function findLayeringViolations(program, source, packageNames = {}) {
     if (ts.isExternalModuleReference(node) && node.expression)
       checkModule(node.expression);
     if (ts.isCallExpression(node)) {
+      if (
+        options.workers &&
+        path.endsWith("worker-bundle.mjs") &&
+        ts.isIdentifier(node.expression) &&
+        node.expression.text === "__require"
+      )
+        report(node);
       if (
         node.expression.kind === ts.SyntaxKind.ImportKeyword &&
         node.arguments[0]
@@ -146,4 +165,69 @@ export function findLayeringViolations(program, source, packageNames = {}) {
   }
   visit(source);
   return violations;
+}
+
+/** Traverse runtime value imports in workspace sources, excluding type-only references and tests. */
+export function workersReachable(program, entries) {
+  const byPath = new Map(
+    program
+      .getSourceFiles()
+      .map((source) => [resolve(source.fileName), source]),
+  );
+  const visited = new Set();
+  const queue = entries.map((entry) => resolve(entry));
+  while (queue.length) {
+    const name = queue.pop();
+    if (visited.has(name)) continue;
+    const source = byPath.get(name);
+    if (!source) throw new Error(`Workers runtime source not found: ${name}`);
+    visited.add(name);
+    const add = (specifier) => {
+      const found = ts.resolveModuleName(
+        specifier,
+        source.fileName,
+        program.getCompilerOptions(),
+        ts.sys,
+      ).resolvedModule;
+      if (!found) return;
+      const target = resolve(found.resolvedFileName);
+      if (
+        !target.includes(`${sep}node_modules${sep}`) &&
+        byPath.has(target) &&
+        !/\.test\.[cm]?[jt]sx?$/.test(target)
+      )
+        queue.push(target);
+    };
+    const visit = (node) => {
+      if (
+        ts.isImportDeclaration(node) &&
+        ts.isStringLiteralLike(node.moduleSpecifier) &&
+        !node.importClause?.isTypeOnly
+      ) {
+        const bindings = node.importClause?.namedBindings;
+        const onlyTypes =
+          !node.importClause?.name &&
+          bindings &&
+          ts.isNamedImports(bindings) &&
+          bindings.elements.every((item) => item.isTypeOnly);
+        if (!onlyTypes) add(node.moduleSpecifier.text);
+      } else if (
+        ts.isExportDeclaration(node) &&
+        node.moduleSpecifier &&
+        ts.isStringLiteralLike(node.moduleSpecifier) &&
+        !node.isTypeOnly
+      )
+        add(node.moduleSpecifier.text);
+      else if (
+        ts.isCallExpression(node) &&
+        node.expression.kind === ts.SyntaxKind.ImportKeyword &&
+        node.arguments[0] &&
+        ts.isStringLiteralLike(node.arguments[0])
+      )
+        add(node.arguments[0].text);
+      ts.forEachChild(node, visit);
+    };
+    visit(source);
+  }
+  return visited;
 }

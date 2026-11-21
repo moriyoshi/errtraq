@@ -18,6 +18,11 @@
       "development": "./src/kv.ts",
       "types": "./dist/kv.d.ts",
       "import": "./dist/kv.js"
+    },
+    "./queue": {
+      "development": "./src/queue.ts",
+      "types": "./dist/queue.d.ts",
+      "import": "./dist/queue.js"
     }
   },
   "files": [

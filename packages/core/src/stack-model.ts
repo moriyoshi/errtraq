@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { SecretSource } from "./ports.js";
+import type { Logger, SecretSource } from "./ports.js";
 
 export type PortKind =
   | "platform"
@@ -342,6 +342,7 @@ export interface CreateContext<
   environment?: Readonly<Record<string, string | undefined>>;
   /** Resolve secret identifiers only when an adapter needs the secret bytes. */
   secretSource?: SecretSource;
+  logger?: Logger;
   cronJobs?: readonly string[];
   /** Supplied only to a queue adapter. */
   topics?: Partial<

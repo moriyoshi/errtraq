@@ -5,6 +5,7 @@ import {
   type Logger,
   type Queue,
   toTimestamp,
+  validateQueueBody,
 } from "@errtraq/core";
 import { configSchema, QUEUE_MAX_BYTES, type QueueConfig } from "./stack.js";
 
@@ -66,6 +67,7 @@ export class MemoryQueue implements Queue {
       const delay = options?.delaySec ?? 0;
       if (!Number.isFinite(delay) || delay < 0)
         throw new RangeError("Invalid queue delay");
+      for (const message of messages) validateQueueBody(message.body);
       const copied = messages.map((message) => structuredClone(message));
       for (const message of copied) {
         const json = JSON.stringify(message);
