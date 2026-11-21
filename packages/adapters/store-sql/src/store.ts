@@ -12,10 +12,13 @@ import {
   InvalidCursorError,
   type Issue,
   NotFoundError,
+  type Occurrence,
   type Page,
   type ProjectId,
   type ProjectKey,
   pageLimit,
+  type RecordInput,
+  type RecordResult,
   type StoredEvent,
   UnsupportedQueryError,
   VersionConflictError,
@@ -141,116 +144,172 @@ export function createSqlStore({ db, dialect }: SqlStoreOptions): ActiveStore {
   }
   const transaction = <T>(operation: (trx: SqlDatabase) => Promise<T>) =>
     retryBusy(() => db.transaction().execute(operation));
-  const store: ActiveStore = {
-    capabilities: { textSearch: false, lastSeenRangeOnOtherSort: false },
-    migrate: async () => retryBusy(() => migrate(db, dialect)),
-    recordEvent: async (occurrence, event) => {
+  async function recordOne(
+    trx: SqlDatabase,
+    occurrence: Occurrence,
+    event: StoredEvent,
+  ): Promise<RecordResult> {
+    const inserted = await dialect.insertIfAbsent(trx, "events", {
+      pk: pk(event.projectId, event.eventId),
+      project_id: event.projectId,
+      event_id: event.eventId,
+      issue_id: event.issueId,
+      received_at: event.receivedAt,
+      user_id: event.user?.id ?? null,
+      user_email: event.user?.email ?? null,
+      user_name: event.user?.username ?? null,
+      user_ip: event.user?.ipAddress ?? null,
+      level: event.level,
+      release: event.release ?? null,
+      environment: event.environment ?? null,
+      tags: JSON.stringify(event.tags),
+      data: JSON.stringify(event),
+    });
+    if (!inserted) {
+      const old = await trx
+        .selectFrom("events")
+        .select("data")
+        .where("pk", "=", pk(event.projectId, event.eventId))
+        .executeTakeFirstOrThrow();
+      const saved = decode<StoredEvent>(old.data);
+      const issue = await trx
+        .selectFrom("issues")
+        .select("data")
+        .where("pk", "=", pk(saved.projectId, saved.issueId))
+        .executeTakeFirstOrThrow();
+      return {
+        inserted: false,
+        issue: decode<Issue>(issue.data),
+        isNew: false,
+        isRegression: false,
+      };
+    }
+    const key = pk(occurrence.projectId, occurrence.issueId);
+    const row = await trx
+      .selectFrom("issues")
+      .select("data")
+      .where("pk", "=", key)
+      .executeTakeFirst();
+    const isNew = !row;
+    const issue: Issue = row
+      ? decode<Issue>(row.data)
+      : {
+          id: occurrence.issueId,
+          projectId: occurrence.projectId,
+          fingerprint: occurrence.fingerprint,
+          status: "unresolved",
+          title: occurrence.title,
+          culprit: occurrence.culprit,
+          level: occurrence.level,
+          type: occurrence.type,
+          metadata: occurrence.metadata,
+          firstSeen: occurrence.receivedAt,
+          lastSeen: occurrence.receivedAt,
+          count: 0,
+          lastEventId: occurrence.eventId,
+          lastEventReceivedAt: occurrence.receivedAt,
+        };
+    if (issue.fingerprint !== occurrence.fingerprint)
+      throw new Error("Issue fingerprint mismatch");
+    const isRegression =
+      issue.status === "resolved" &&
+      (!issue.resolvedAt || occurrence.receivedAt > issue.resolvedAt);
+    issue.count++;
+    if (occurrence.receivedAt < issue.firstSeen)
+      issue.firstSeen = occurrence.receivedAt;
+    if (
+      occurrence.receivedAt > issue.lastSeen ||
+      (occurrence.receivedAt === issue.lastSeen &&
+        compareUtf8(occurrence.eventId, issue.lastEventId) > 0)
+    ) {
+      issue.lastSeen = occurrence.receivedAt;
+      issue.lastEventReceivedAt = occurrence.receivedAt;
+      issue.lastEventId = occurrence.eventId;
+    }
+    if (isRegression) {
+      issue.status = "unresolved";
+      delete issue.resolvedAt;
+    }
+    const values = {
+      pk: key,
+      project_id: issue.projectId,
+      issue_id: issue.id,
+      fingerprint: issue.fingerprint,
+      status: issue.status,
+      first_seen: issue.firstSeen,
+      last_seen: issue.lastSeen,
+      count: issue.count,
+      data: JSON.stringify(issue),
+    };
+    await dialect.upsert(trx, "issues", values);
+    return { inserted: true, issue, isNew, isRegression };
+  }
+  function validateGroup(group: readonly RecordInput[]): void {
+    if (!Array.isArray(group) || group.length < 1 || group.length > 10)
+      throw new RangeError("Record group must contain 1 to 10 events");
+    const first = group[0]?.occurrence;
+    if (!first) throw new TypeError("Missing record group");
+    for (const { occurrence, event } of group) {
       if (
+        occurrence.projectId !== first.projectId ||
+        occurrence.issueId !== first.issueId ||
+        occurrence.fingerprint !== first.fingerprint ||
         occurrence.projectId !== event.projectId ||
         occurrence.issueId !== event.issueId ||
         occurrence.eventId !== event.eventId ||
         occurrence.receivedAt !== event.receivedAt
       )
-        throw new Error("Occurrence and event mismatch");
+        throw new TypeError("Record group identity mismatch");
+      JSON.stringify(occurrence);
+      JSON.stringify(event);
+    }
+  }
+  const store: ActiveStore = {
+    capabilities: {
+      textSearch: false,
+      lastSeenRangeOnOtherSort: false,
+      recordEvents: true,
+    },
+    migrate: async () => retryBusy(() => migrate(db, dialect)),
+    recordEvent: async (occurrence, event) => {
+      validateGroup([{ occurrence, event }]);
       return transaction(async (trx) => {
         await dialect.lock(
           trx,
           `issue:${pk(occurrence.projectId, occurrence.issueId)}`,
         );
-        const inserted = await dialect.insertIfAbsent(trx, "events", {
-          pk: pk(event.projectId, event.eventId),
-          project_id: event.projectId,
-          event_id: event.eventId,
-          issue_id: event.issueId,
-          received_at: event.receivedAt,
-          user_id: event.user?.id ?? null,
-          user_email: event.user?.email ?? null,
-          user_name: event.user?.username ?? null,
-          user_ip: event.user?.ipAddress ?? null,
-          level: event.level,
-          release: event.release ?? null,
-          environment: event.environment ?? null,
-          tags: JSON.stringify(event.tags),
-          data: JSON.stringify(event),
-        });
-        if (!inserted) {
-          const old = await trx
-            .selectFrom("events")
-            .select("data")
-            .where("pk", "=", pk(event.projectId, event.eventId))
-            .executeTakeFirstOrThrow();
-          const saved = decode<StoredEvent>(old.data);
-          const issue = await trx
-            .selectFrom("issues")
-            .select("data")
-            .where("pk", "=", pk(saved.projectId, saved.issueId))
-            .executeTakeFirstOrThrow();
-          return {
-            inserted: false,
-            issue: decode<Issue>(issue.data),
-            isNew: false,
-            isRegression: false,
-          };
-        }
-        const key = pk(occurrence.projectId, occurrence.issueId);
+        return recordOne(trx, occurrence, event);
+      });
+    },
+    recordEvents: async (group) => {
+      validateGroup(group);
+      const first = group[0];
+      if (!first) throw new TypeError("Missing record group");
+      return transaction(async (trx) => {
+        await dialect.lock(
+          trx,
+          `issue:${pk(first.occurrence.projectId, first.occurrence.issueId)}`,
+        );
+        const results: RecordResult[] = [];
+        for (const { occurrence, event } of group)
+          results.push(await recordOne(trx, occurrence, event));
         const row = await trx
           .selectFrom("issues")
           .select("data")
-          .where("pk", "=", key)
+          .where(
+            "pk",
+            "=",
+            pk(first.occurrence.projectId, first.occurrence.issueId),
+          )
           .executeTakeFirst();
-        const isNew = !row;
-        const issue: Issue = row
-          ? decode<Issue>(row.data)
-          : {
-              id: occurrence.issueId,
-              projectId: occurrence.projectId,
-              fingerprint: occurrence.fingerprint,
-              status: "unresolved",
-              title: occurrence.title,
-              culprit: occurrence.culprit,
-              level: occurrence.level,
-              type: occurrence.type,
-              metadata: occurrence.metadata,
-              firstSeen: occurrence.receivedAt,
-              lastSeen: occurrence.receivedAt,
-              count: 0,
-              lastEventId: occurrence.eventId,
-              lastEventReceivedAt: occurrence.receivedAt,
-            };
-        if (issue.fingerprint !== occurrence.fingerprint)
-          throw new Error("Issue fingerprint mismatch");
-        const isRegression =
-          issue.status === "resolved" &&
-          (!issue.resolvedAt || occurrence.receivedAt > issue.resolvedAt);
-        issue.count++;
-        if (occurrence.receivedAt < issue.firstSeen)
-          issue.firstSeen = occurrence.receivedAt;
-        if (
-          occurrence.receivedAt > issue.lastSeen ||
-          (occurrence.receivedAt === issue.lastSeen &&
-            compareUtf8(occurrence.eventId, issue.lastEventId) > 0)
-        ) {
-          issue.lastSeen = occurrence.receivedAt;
-          issue.lastEventReceivedAt = occurrence.receivedAt;
-          issue.lastEventId = occurrence.eventId;
-        }
-        if (isRegression) {
-          issue.status = "unresolved";
-          delete issue.resolvedAt;
-        }
-        const values = {
-          pk: key,
-          project_id: issue.projectId,
-          issue_id: issue.id,
-          fingerprint: issue.fingerprint,
-          status: issue.status,
-          first_seen: issue.firstSeen,
-          last_seen: issue.lastSeen,
-          count: issue.count,
-          data: JSON.stringify(issue),
-        };
-        await dialect.upsert(trx, "issues", values);
-        return { inserted: true, issue, isNew, isRegression };
+        const final = row ? decode<Issue>(row.data) : undefined;
+        return results.map((result) =>
+          final &&
+          result.issue.projectId === final.projectId &&
+          result.issue.id === final.id
+            ? { ...result, issue: final }
+            : result,
+        );
       });
     },
     projects: {

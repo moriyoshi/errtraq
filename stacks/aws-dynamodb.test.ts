@@ -375,6 +375,7 @@ describe("AWS descriptor stacks", () => {
     expect(dynamoStore().manifest.capabilities).toEqual({
       textSearch: false,
       lastSeenRangeOnOtherSort: false,
+      recordEvents: true,
       deleteStrategy: "explicit",
       deleteBySubject: false,
     });

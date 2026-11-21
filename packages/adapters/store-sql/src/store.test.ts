@@ -44,6 +44,56 @@ for (const kind of ["memory", "file"] as const) {
   });
 }
 describe("SQLite migrations and indexes", () => {
+  it("rolls back the entire record group if a later event write fails", async () => {
+    const db = database(":memory:");
+    let issueWrites = 0;
+    const dialect = {
+      ...sqliteStoreDialect,
+      async upsert(...args: Parameters<typeof sqliteStoreDialect.upsert>) {
+        if (args[1] === "issues" && ++issueWrites === 2)
+          throw new Error("injected group failure");
+        return sqliteStoreDialect.upsert(...args);
+      },
+    };
+    const store = createSqlStore({ db, dialect });
+    await store.migrate();
+    const projectId = "1" as import("@errtraq/core").ProjectId;
+    const issueId = "issue" as import("@errtraq/core").IssueId;
+    const time =
+      "2025-01-01T00:00:00.000Z" as import("@errtraq/core").Timestamp;
+    const group = ["first", "second"].map((id) => {
+      const eventId = id as import("@errtraq/core").EventId;
+      const common = {
+        projectId,
+        issueId,
+        eventId,
+        timestamp: time,
+        receivedAt: time,
+      };
+      return {
+        occurrence: {
+          ...common,
+          fingerprint: "fp",
+          title: "title",
+          culprit: "",
+          level: "error" as const,
+          type: "error",
+          metadata: {},
+        },
+        event: { ...common, level: "error" as const, tags: {}, payload: {} },
+      };
+    });
+    await expect(store.recordEvents?.(group)).rejects.toThrow(
+      "injected group failure",
+    );
+    expect(
+      await store.events.get(
+        projectId,
+        group[0]?.event.eventId as import("@errtraq/core").EventId,
+      ),
+    ).toBeNull();
+    expect(await store.issues.get(projectId, issueId)).toBeNull();
+  });
   it("creates a missing database parent directory when initialized", async () => {
     const store = create({
       path: join(directory, "nested", "data", "events.sqlite"),

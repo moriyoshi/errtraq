@@ -67,7 +67,7 @@ export async function testDynamoConcurrency(shapes) {
         "packages/adapters/store-dynamodb/src/contract.emulated.test.ts",
         "packages/cli/src/deployed-bootstrap.emulated.test.ts",
         "--testNamePattern",
-        "bootstraps concurrently with the real DynamoDB store and KV adapters|pages unfiltered event listings and archival scans across multiple shards|atomically creates or bumps, reopens regressions, and tracks the latest event|preserves an occurrence concurrent with an issue update|atomically ignores concurrent duplicate deliveries|uses compare-and-set for creation and competing writers, and lists erasures|pages erasures by state and serializes concurrent erasure transitions|atomically creates a token once and never revives a revoked token|bootstraps a DynamoDB store concurrently without prior migration|atomically creates one initial active project key",
+        "bootstraps concurrently with the real DynamoDB store and KV adapters|pages unfiltered event listings and archival scans across multiple shards|measures issue-grouped writes on DynamoDB Local|atomically records concurrent event groups for one issue|atomically creates or bumps, reopens regressions, and tracks the latest event|preserves an occurrence concurrent with an issue update|atomically ignores concurrent duplicate deliveries|uses compare-and-set for creation and competing writers, and lists erasures|pages erasures by state and serializes concurrent erasure transitions|atomically creates a token once and never revives a revoked token|bootstraps a DynamoDB store concurrently without prior migration|atomically creates one initial active project key",
         "--disableConsoleIntercept",
         "--testTimeout",
         "30000",

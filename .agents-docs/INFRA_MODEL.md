@@ -214,7 +214,8 @@ missing job names log an error and return without retrying.
 ### Grouped recording (M3; model implemented, runtime stage planned)
 
 Core now models stack `recordMode: "direct" | "grouped"` and a `record` function role; the
-record handler, SQL/DynamoDB batch writes and SQS FIFO implementation remain future work. An
+record handler and SQS FIFO implementation remain future work; SQLite, Postgres and DynamoDB
+now support batched writes. An
 omitted mode currently defaults to direct for every stack. Future stack helpers will explicitly
 default standalone to direct and AWS Lambda/SQS to grouped; validation
 must reject a grouped stack that lacks per-key serial delivery, a deployed record role, the

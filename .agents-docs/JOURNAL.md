@@ -1041,3 +1041,19 @@ legacy `CoreTopic` type excludes `record` because SQS currently requires a compl
 keys; `RoutedTopic` and `TOPICS` include it. Unify the topic aliases and make the migrated adapter
 contracts explicit when the remaining adapters are updated. Deployed record handling and FIFO
 remain future work; direct remains the default.
+
+## 2026-11-21 — Batched active-store writes
+
+SQLite and Postgres now execute a homogeneous record group in one transaction using the existing
+per-issue lock (Postgres acquires its advisory lock before touching event rows). DynamoDB issues
+one conditional transaction for the group's distinct new events and one count update; cancellation
+reasons identify duplicates before a rebuilt retry, and count/status preimages preserve correctness
+under API updates or overlapping delivery leases. A request token is stable inside an individual
+request-layer retry and changes when the transaction is rebuilt. The tests cover SQL rollback,
+DynamoDB duplicate cancellation, a concurrent resolution, and the transaction-size bound.
+
+With one sequential writer for an issue and groups of ten, DynamoDB Local recorded 20 transactions
+for 200 events and 50 for 500 events (0.10 transactions/event, no retries in either run). This
+measures the batched store path only, not FIFO throughput or real-AWS contention; the queue-stage
+and M3h measurements remain open. Winterbaume issue #61 still requires the concurrency contracts
+to run on DynamoDB Local.

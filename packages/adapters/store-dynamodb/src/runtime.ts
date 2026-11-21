@@ -11,7 +11,7 @@ import { eventRepository } from "./events.js";
 import { issueRepository } from "./issues.js";
 import { metaRepository } from "./meta.js";
 import { projectRepository } from "./projects.js";
-import { recordEvent } from "./record-event.js";
+import { recordEvent, recordEvents } from "./record-event.js";
 import { releaseRepository } from "./releases.js";
 import type { Config } from "./stack.js";
 
@@ -44,6 +44,7 @@ export class DynamoStore implements ActiveStore {
   readonly capabilities = {
     textSearch: false,
     lastSeenRangeOnOtherSort: false,
+    recordEvents: true,
   };
   private readonly endpoint: string;
   private shards?: number;
@@ -206,6 +207,7 @@ export class DynamoStore implements ActiveStore {
   recordEvent: ActiveStore["recordEvent"] = recordEvent(this, () =>
     this.loadShards(),
   );
+  recordEvents = recordEvents(this, () => this.loadShards());
   projects: ActiveStore["projects"] = projectRepository(this);
   issues: ActiveStore["issues"] = issueRepository(this);
   events: ActiveStore["events"] = eventRepository(this, () =>

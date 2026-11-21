@@ -91,6 +91,57 @@ describe.skipIf(!endpoint)("DynamoDB store emulator", () => {
       await api("DeleteTable", { TableName: table });
   });
   activeStoreContract(makeStore);
+  it("measures issue-grouped writes on DynamoDB Local", async () => {
+    for (const total of [200, 500]) {
+      const store = await makeStore();
+      const request = DynamoStore.prototype.request.bind(store);
+      let transactions = 0;
+      vi.spyOn(store, "request").mockImplementation(async (action, input) => {
+        if (action === "TransactWriteItems") transactions++;
+        return request(action, input);
+      });
+      const projectId = "benchmark" as import("@errtraq/core").ProjectId;
+      const issueId = "issue" as import("@errtraq/core").IssueId;
+      const receivedAt =
+        "2025-01-01T00:00:00.000Z" as import("@errtraq/core").Timestamp;
+      for (let start = 0; start < total; start += 10) {
+        const group = Array.from({ length: 10 }, (_, n) => {
+          const eventId =
+            `event-${start + n}` as import("@errtraq/core").EventId;
+          const common = {
+            projectId,
+            issueId,
+            eventId,
+            timestamp: receivedAt,
+            receivedAt,
+          };
+          return {
+            occurrence: {
+              ...common,
+              fingerprint: "fp",
+              title: "test",
+              culprit: "",
+              level: "error" as const,
+              type: "error",
+              metadata: {},
+            },
+            event: {
+              ...common,
+              level: "error" as const,
+              tags: {},
+              payload: {},
+            },
+          };
+        });
+        await store.recordEvents(group);
+      }
+      expect((await store.issues.get(projectId, issueId))?.count).toBe(total);
+      console.log(
+        `GROUPED DYNAMODB LOCAL: ${total} events, ${transactions} transactions, ${(transactions / total).toFixed(2)} transactions/event`,
+      );
+      expect(transactions).toBe(total / 10);
+    }
+  }, 60000);
   it("bootstraps a DynamoDB store concurrently without prior migration", async () => {
     const store = await makeStore(false);
     const kv = new MemoryKV();

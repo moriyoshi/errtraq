@@ -45,6 +45,48 @@ suite("Postgres", () => {
     await store.migrate();
     return store;
   });
+  it("serializes grouped writes through separate Postgres pools", async () => {
+    const { db: a, name } = await database();
+    const { db: b } = await database(name);
+    const left = createSqlStore({ db: a, dialect: postgresStoreDialect });
+    const right = createSqlStore({ db: b, dialect: postgresStoreDialect });
+    await left.migrate();
+    const projectId = "1" as import("@errtraq/core").ProjectId;
+    const issueId = "issue" as import("@errtraq/core").IssueId;
+    const time =
+      "2025-01-01T00:00:00.000Z" as import("@errtraq/core").Timestamp;
+    const groups = Array.from({ length: 4 }, (_, n) =>
+      Array.from({ length: 10 }, (_, i) => {
+        const eventId = `${n}-${i}` as import("@errtraq/core").EventId;
+        const common = {
+          projectId,
+          issueId,
+          eventId,
+          timestamp: time,
+          receivedAt: time,
+        };
+        return {
+          occurrence: {
+            ...common,
+            fingerprint: "fp",
+            title: "title",
+            culprit: "",
+            level: "error" as const,
+            type: "error",
+            metadata: {},
+          },
+          event: { ...common, level: "error" as const, tags: {}, payload: {} },
+        };
+      }),
+    );
+    const results = (
+      await Promise.all(
+        groups.map((group, i) => (i % 2 ? left : right).recordEvents?.(group)),
+      )
+    ).flat();
+    expect(results.filter((result) => result?.isNew)).toHaveLength(1);
+    expect((await left.issues.get(projectId, issueId))?.count).toBe(40);
+  });
   it("migrates and bootstraps concurrently through separate Postgres pools", async () => {
     const { db: a, name } = await database();
     const { db: b } = await database(name);

@@ -1,7 +1,7 @@
 # DynamoDB active-store design (M3e step 1c)
 
 Status: approved direction with the decisions and open correctness questions below. The stage 1 shared contracts, table infrastructure and DynamoDB runtime are implemented;
-grouped stage 2 is a design for future implementation.
+batched `recordEvents` is implemented; FIFO and the grouped pipeline remain future work.
 `ports.ts` and ARCHITECTURE.md describe the current public contracts. The default erasure-index design is independent
 of DynamoDB: see [SUBJECT_INDEX_DESIGN.md](./SUBJECT_INDEX_DESIGN.md). No port operation uses
 DynamoDB `Scan` or a filtered full-table scan.
@@ -181,8 +181,8 @@ batch being processed; an expired lease, a mode transition, redrive, an API upda
 writer can still overlap. FIFO does not replace transaction isolation or the count preimage guard.
 The public contract starts at 1..10 inputs per same `(project, issue, fingerprint)` group; Lambda
 FIFO currently uses at most 10 per group. Every input's occurrence/event IDs, issue and receivedAt
-must match. The queue handler validates group key against the computed issue ID and rejects an
-oversized group before calling the store. The future port is:
+must match. The future queue handler validates group key against the computed issue ID and splits oversized
+groups into ordered, bounded transactions before calling the store. The future port is:
 
 ```ts
 interface RecordInput { occurrence: Occurrence; event: StoredEvent }
@@ -282,7 +282,7 @@ capacity. User-visible pages may be eventually incomplete even after hydration.
 | `meta.getArchiveState`, `getErasureRequest` | G scoped item: ~1 RRU. |
 | `meta.compareAndSetArchiveState`, `compareAndSetErasureRequest` | Conditional Put/Update with expected-null creates version 0, else expected+1; invalid/mismatched -> `VersionConflictError`. Erasure metadata updates four sparse GSI keys; ~1 WRU + affected index writes. |
 | `meta.listErasureRequests` | Q one of four erasure GSIs depending on project/state, then B/validate. Page cost as above. |
-| `recordEvent`, `recordEvents` | TX and cancellation/branch rules above. Per-event cost example below; batch in stage 2. |
+| `recordEvent`, `recordEvents` | TX and cancellation/branch rules above. Per-event cost example below; batch uses the same conditional transaction rules. |
 | `migrate` | Schema is provisioned by infra; no implicit table scan; explicit versioned migration for future schema changes. 0 data R/W. |
 
 Subject erasure is disabled consistently across sqlite, Postgres, memory and DynamoDB in stage

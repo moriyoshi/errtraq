@@ -26,6 +26,7 @@ export const manifest: AdapterManifest = {
     deleteStrategy: "explicit",
     textSearch: false,
     lastSeenRangeOnOtherSort: false,
+    recordEvents: true,
   },
 };
 // TODO(M2b): provide local module generation semantics.

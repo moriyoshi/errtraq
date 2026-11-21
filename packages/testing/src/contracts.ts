@@ -233,6 +233,36 @@ export function activeStoreContract(
       expect(results[2]?.issue.lastEventId).toBe("z-latest");
       expect(results[2]?.issue.status).toBe("unresolved");
     });
+    it("atomically records concurrent event groups for one issue", async () => {
+      const store = await factory();
+      if (!store.capabilities.recordEvents) return;
+      if (!store.recordEvents)
+        throw new Error("Missing recordEvents implementation");
+      const make = (index: number) => {
+        const o = occurrence(
+          `group-${String(index).padStart(2, "0")}`,
+          index % 10,
+        );
+        return {
+          occurrence: o,
+          event: event(o.eventId, index % 10, { issueId: o.issueId }),
+        };
+      };
+      const groups = Array.from({ length: 4 }, (_, group) =>
+        Array.from({ length: 10 }, (_, i) => make(group * 10 + i)),
+      );
+      const results = (
+        await Promise.all(groups.map((group) => store.recordEvents?.(group)))
+      ).flat();
+      expect(results.filter((result) => result?.inserted)).toHaveLength(40);
+      expect(results.filter((result) => result?.isNew)).toHaveLength(1);
+      const saved = await store.issues.get(
+        project,
+        groups[0]?.[0]?.occurrence.issueId as IssueId,
+      );
+      expect(saved?.count).toBe(40);
+      expect(saved?.lastEventId).toBe("group-39");
+    });
     it("puts events idempotently by project and event id", async () => {
       const s = await factory();
       const a = event("one", 1);

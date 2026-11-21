@@ -46,6 +46,7 @@ export const manifest: AdapterManifest = {
     deleteStrategy: "explicit",
     textSearch: false,
     lastSeenRangeOnOtherSort: false,
+    recordEvents: true,
   },
 };
 export const infra: InfraDescriptor<Config> = {

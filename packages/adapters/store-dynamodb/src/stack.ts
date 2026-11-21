@@ -20,6 +20,7 @@ export const manifest: AdapterManifest = {
   capabilities: {
     textSearch: false,
     lastSeenRangeOnOtherSort: false,
+    recordEvents: true,
     deleteStrategy: "explicit",
     deleteBySubject: false,
   },

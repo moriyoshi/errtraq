@@ -82,4 +82,4 @@ item should be resolved or removed once addressed. Milestone work itself is trac
 - [ ] M3: reduce Lambda bundle size; current bundles include most of core and Zod. — *source: M2 final review section B*
 - [x] M3: test SQS partial-batch failures with real-shaped AWS events. — *source: M2 final review section B; resolved in M3c*
 - [ ] M3: test EventBridge event handling against real AWS event shapes. — *source: M2 final review section B*
-- [ ] M3 / M3h (store-dynamodb): implement the owner-selected issue-keyed FIFO stage and batched `recordEvents` to reduce count-preimage contention, then measure 200 / 500 writers through that path on DynamoDB Local and real AWS. — *source: owner queue-first decision*
+- [ ] M3 / M3h (store-dynamodb): implement the owner-selected issue-keyed FIFO stage using the completed batched `recordEvents`, then measure 200 / 500 writers through that path on DynamoDB Local and real AWS. — *source: owner queue-first decision*
