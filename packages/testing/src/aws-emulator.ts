@@ -24,6 +24,8 @@ export async function createAwsTestNamespace(
   deadLetter?: { attributes: Record<string, string>; maxReceiveCount: number },
   kvShape?: Record<string, unknown>,
   ttlAttribute?: string,
+  kvTtlAttribute = ttlAttribute,
+  storeMetadata?: Record<string, unknown>,
 ) {
   const name = `errtraq-${globalThis.crypto.randomUUID().replaceAll("-", "")}`;
   const cleanups: (() => Promise<unknown>)[] = [];
@@ -53,6 +55,8 @@ export async function createAwsTestNamespace(
     });
     await client.dynamo("CreateTable", { ...tableShape, TableName: name });
     cleanups.push(() => client.dynamo("DeleteTable", { TableName: name }));
+    if (storeMetadata)
+      await client.dynamo("PutItem", { TableName: name, Item: storeMetadata });
     if (ttlAttribute)
       await client.dynamo("UpdateTimeToLive", {
         TableName: name,
@@ -62,12 +66,12 @@ export async function createAwsTestNamespace(
     if (kvTable && kvShape) {
       await client.dynamo("CreateTable", { ...kvShape, TableName: kvTable });
       cleanups.push(() => client.dynamo("DeleteTable", { TableName: kvTable }));
-      if (ttlAttribute)
+      if (kvTtlAttribute)
         await client.dynamo("UpdateTimeToLive", {
           TableName: kvTable,
           TimeToLiveSpecification: {
             Enabled: true,
-            AttributeName: ttlAttribute,
+            AttributeName: kvTtlAttribute,
           },
         });
     }

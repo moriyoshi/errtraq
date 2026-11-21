@@ -7,7 +7,9 @@ import {
 } from "@errtraq/core";
 import { z } from "zod";
 
-export const configSchema = z.strictObject({});
+export const configSchema = z.strictObject({
+  indexShards: z.number().int().min(1).max(4).optional(),
+});
 export type Config = z.input<typeof configSchema>;
 export const manifest: AdapterManifest = {
   id: "store-dynamodb",
@@ -19,6 +21,7 @@ export const manifest: AdapterManifest = {
     textSearch: false,
     lastSeenRangeOnOtherSort: false,
     deleteStrategy: "explicit",
+    deleteBySubject: false,
   },
 };
 /** HCL module contract; policies are module outputs, not provider IAM in TypeScript. */
@@ -32,17 +35,21 @@ export const infra: InfraDescriptor<Config> = {
       policies: { map: { map: "json-document" } },
     },
   },
-  inputs: () => ({
+  inputs: (config) => ({
     name: stackValue("name"),
     protection: stackValue("protection"),
     tags: stackValue("tags"),
     purpose: "store",
+    index_shards: config.indexShards ?? 4,
   }),
   resources: { primary: out("table_arn") },
   capabilities: {
     read: { primary: out("policies", "read", "primary") },
     write: { primary: out("policies", "write", "primary") },
     delete: { primary: out("policies", "delete", "primary") },
+    "metadata-delete": {
+      primary: out("policies", "metadata-delete", "primary"),
+    },
   },
   bindings: [
     {

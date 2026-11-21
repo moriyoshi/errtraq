@@ -32,3 +32,13 @@ variable "protection" {
     error_message = "protection must be production or disposable."
   }
 }
+
+variable "index_shards" {
+  type        = number
+  description = "Immutable project-time index shard count for a new store table."
+  default     = 4
+  validation {
+    condition     = var.index_shards >= 1 && var.index_shards <= 4 && floor(var.index_shards) == var.index_shards
+    error_message = "index_shards must be an integer from 1 to 4."
+  }
+}

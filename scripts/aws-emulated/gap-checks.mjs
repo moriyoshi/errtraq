@@ -2,40 +2,51 @@ import assert from "node:assert/strict";
 import { unique } from "./client.mjs";
 
 /** Each check must fail as soon as the reason for its exception disappears. */
-export function assertS3LifecycleGap(headers) {
-  assert.equal(
-    headers.get("x-amz-transition-default-minimum-object-size"),
-    null,
-    "s3-lifecycle gap no longer reproduces; remove the exception",
-  );
-}
-export function assertDeletionProtectionGap(table, deleted) {
-  assert.equal(
-    table.DeletionProtectionEnabled,
-    false,
-    "dynamodb-deletion-protection gap no longer reproduces; remove the exception",
-  );
-  assert.equal(
-    deleted,
-    true,
-    "dynamodb-deletion-protection delete behavior changed; remove the exception",
-  );
-}
-export function assertPartialBatchGap(mapping) {
+export function assertPartialBatchSupport(mapping) {
   assert.ok(
-    mapping &&
-      !mapping.FunctionResponseTypes?.includes("ReportBatchItemFailures"),
-    "lambda-partial-batch gap no longer reproduces; remove the exception",
+    mapping?.FunctionResponseTypes?.includes("ReportBatchItemFailures"),
+    "Lambda mapping must retain ReportBatchItemFailures",
   );
 }
-export function assertEventbridgeGap(target) {
-  assert.ok(
-    target &&
-      target.RetryPolicy === undefined &&
-      target.DeadLetterConfig === undefined,
-    "eventbridge-retry-dlq gap no longer reproduces; remove the exception",
-  );
+/** Reproduce issue #61: only one conditional update may succeed on each absent key. */
+export async function checkConditionalUpdateGap(c, rounds = 5, attempts = 200) {
+  const TableName = unique();
+  await c.dynamo("CreateTable", {
+    TableName,
+    BillingMode: "PAY_PER_REQUEST",
+    AttributeDefinitions: [{ AttributeName: "PK", AttributeType: "S" }],
+    KeySchema: [{ AttributeName: "PK", KeyType: "HASH" }],
+  });
+  try {
+    for (let round = 0; round < rounds; round++) {
+      const request = {
+        TableName,
+        Key: { PK: { S: `race-${round}` } },
+        UpdateExpression: "SET #v = :one",
+        ConditionExpression: "attribute_not_exists(#v)",
+        ExpressionAttributeNames: { "#v": "v" },
+        ExpressionAttributeValues: { ":one": { N: "1" } },
+      };
+      const results = await Promise.allSettled(
+        Array.from({ length: attempts }, () => c.dynamo("UpdateItem", request)),
+      );
+      for (const result of results)
+        if (
+          result.status === "rejected" &&
+          !String(result.reason).includes("ConditionalCheckFailedException")
+        )
+          throw result.reason;
+      if (results.filter((result) => result.status === "fulfilled").length > 1)
+        return;
+    }
+    throw new Error(
+      "dynamodb-conditional-atomicity gap no longer reproduces; inspect and remove the exception",
+    );
+  } finally {
+    await c.dynamo("DeleteTable", { TableName });
+  }
 }
+
 export async function checkStandaloneGaps(c) {
   const name = unique();
   let bucket = false,
@@ -53,7 +64,11 @@ export async function checkStandaloneGaps(c) {
       body: "<LifecycleConfiguration><Rule><ID>probe</ID><Filter><Prefix>probe/</Prefix></Filter><Status>Enabled</Status><Expiration><Days>1</Days></Expiration></Rule></LifecycleConfiguration>",
     });
     const lifecycle = await c.request("s3", `/${name}?lifecycle`);
-    assertS3LifecycleGap(lifecycle.headers);
+    assert.equal(
+      lifecycle.headers.get("x-amz-transition-default-minimum-object-size"),
+      "all_storage_classes_128K",
+      "S3 lifecycle header must be preserved",
+    );
     await c.request("s3", `/${name}?ownershipControls`, {
       method: "PUT",
       headers: { "content-type": "application/xml" },
@@ -84,9 +99,17 @@ export async function checkStandaloneGaps(c) {
     });
     table = true;
     const description = await c.dynamo("DescribeTable", { TableName: name });
+    assert.equal(description.Table.DeletionProtectionEnabled, true);
+    await assert.rejects(
+      () => c.dynamo("DeleteTable", { TableName: name }),
+      /protected against deletion/i,
+    );
+    await c.dynamo("UpdateTable", {
+      TableName: name,
+      DeletionProtectionEnabled: false,
+    });
     await c.dynamo("DeleteTable", { TableName: name });
     table = false;
-    assertDeletionProtectionGap(description.Table, true);
   } finally {
     if (table)
       await c.dynamo("DeleteTable", { TableName: name }).catch(() => {});
@@ -133,8 +156,14 @@ export async function checkEventbridgeGap(c, account) {
     });
     assert.equal(result.FailedEntryCount, 0);
     const targets = await call("ListTargetsByRule", { Rule: name });
-    assertEventbridgeGap(
-      targets.Targets?.find((target) => target.Id === "probe"),
+    const target = targets.Targets?.find((target) => target.Id === "probe");
+    assert.deepEqual(target.RetryPolicy, {
+      MaximumEventAgeInSeconds: 100,
+      MaximumRetryAttempts: 2,
+    });
+    assert.equal(
+      target.DeadLetterConfig.Arn,
+      `arn:aws:sqs:us-east-1:${account}:${name}`,
     );
   } finally {
     if (created) {

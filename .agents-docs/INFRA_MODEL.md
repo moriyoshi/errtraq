@@ -170,7 +170,8 @@ and `api` have HTTP apps. The standalone platform mounts exactly the configured 
 ingest needs store read, blob write/delete, KV read/write and queue produce; API needs store
 read/write and blob read; consumer needs store read/write and blob read/write/delete and queue
 consume. Planned bundle handlers require API store `metadata-delete` and primary blob write/delete;
-those rows stay inactive until handlers and least-privilege policies exist. Subject erasure is
+those rows stay inactive until handlers exist. The DynamoDB store descriptor now exposes a
+separate metadata-delete policy constrained to the documented metadata key prefixes. Subject erasure is
 unavailable until M4 and grants no active erasure capability. Blob read includes the
 prefix-scoped list access needed to distinguish missing objects.
 Deployed cron also needs primary blob read / list and ingest-queue produce to recover staged

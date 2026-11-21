@@ -1,38 +1,48 @@
 import { describe, expect, it } from "vitest";
 import {
-  assertDeletionProtectionGap,
-  assertEventbridgeGap,
-  assertPartialBatchGap,
-  assertS3LifecycleGap,
+  assertPartialBatchSupport,
+  checkConditionalUpdateGap,
 } from "./gap-checks.mjs";
 
 describe("emulator gaps must still reproduce", () => {
-  it("fails the suite when lifecycle metadata or deletion protection is fixed", () => {
-    expect(() => assertS3LifecycleGap(new Headers())).not.toThrow();
-    expect(() =>
-      assertS3LifecycleGap(
-        new Headers({
-          "x-amz-transition-default-minimum-object-size":
-            "all_storage_classes_128K",
-        }),
-      ),
-    ).toThrow();
-    expect(() =>
-      assertDeletionProtectionGap({ DeletionProtectionEnabled: false }, true),
-    ).not.toThrow();
-    expect(() =>
-      assertDeletionProtectionGap({ DeletionProtectionEnabled: true }, false),
-    ).toThrow();
+  it("requires the conditional update race to reproduce and cleans its table", async () => {
+    let updates = 0;
+    const broken = {
+      dynamo: async (action) => {
+        if (action === "UpdateItem") {
+          updates++;
+          return {};
+        }
+        return {};
+      },
+    };
+    await expect(
+      checkConditionalUpdateGap(broken, 1, 2),
+    ).resolves.toBeUndefined();
+    expect(updates).toBe(2);
+    let deleted = false,
+      seen = false;
+    const fixed = {
+      dynamo: async (action) => {
+        if (action === "DeleteTable") deleted = true;
+        if (action === "UpdateItem") {
+          if (seen) throw new Error("ConditionalCheckFailedException");
+          seen = true;
+        }
+        return {};
+      },
+    };
+    await expect(checkConditionalUpdateGap(fixed, 1, 2)).rejects.toThrow(
+      "no longer reproduces",
+    );
+    expect(deleted).toBe(true);
   });
-  it("fails when partial batch or target settings start being retained", () => {
-    expect(() => assertPartialBatchGap({})).not.toThrow();
+  it("requires partial batch settings", () => {
+    expect(() => assertPartialBatchSupport({})).toThrow();
     expect(() =>
-      assertPartialBatchGap({
+      assertPartialBatchSupport({
         FunctionResponseTypes: ["ReportBatchItemFailures"],
       }),
-    ).toThrow();
-    expect(() => assertEventbridgeGap({})).not.toThrow();
-    expect(() => assertEventbridgeGap({ RetryPolicy: {} })).toThrow();
-    expect(() => assertEventbridgeGap({ DeadLetterConfig: {} })).toThrow();
+    ).not.toThrow();
   });
 });

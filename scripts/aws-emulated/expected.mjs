@@ -1,3 +1,13 @@
+import { readFileSync } from "node:fs";
+
+const indexNames = Object.keys(
+  JSON.parse(
+    readFileSync(
+      new URL("../../infra/modules/aws/dynamodb/indexes.json", import.meta.url),
+      "utf8",
+    ),
+  ),
+).sort();
 /** Policies expected from the module contracts, selected solely by derived grants. */
 export function capabilityPolicy(grant, resources) {
   const { selection, capability, purpose } = grant;
@@ -14,22 +24,28 @@ export function capabilityPolicy(grant, resources) {
     const arn = resources[selection];
     const actions = {
       read: ["dynamodb:GetItem", "dynamodb:BatchGetItem", "dynamodb:Query"],
-      write:
+      write: ["dynamodb:PutItem", "dynamodb:UpdateItem", "dynamodb:GetItem"],
+      delete:
         selection === "kv"
-          ? ["dynamodb:PutItem", "dynamodb:UpdateItem", "dynamodb:GetItem"]
-          : [
-              "dynamodb:PutItem",
-              "dynamodb:UpdateItem",
-              "dynamodb:ConditionCheckItem",
-            ],
-      delete: ["dynamodb:DeleteItem"],
+          ? ["dynamodb:DeleteItem"]
+          : ["dynamodb:BatchWriteItem"],
     }[capability];
     if (!arn || !actions)
       throw new Error(`Unsupported ${selection} ${capability} policy`);
     statements = [
       statement(
         actions,
-        capability === "read" ? [arn, `${arn}/index/*`] : [arn],
+        capability === "read" && selection === "store"
+          ? [arn, ...indexNames.map((name) => `${arn}/index/${name}`)]
+          : [arn],
+        capability === "delete" && selection === "store"
+          ? {
+              Condition: {
+                "ForAllValues:StringLike": { "dynamodb:LeadingKeys": ["EV|*"] },
+                Null: { "dynamodb:LeadingKeys": "false" },
+              },
+            }
+          : {},
       ),
     ];
   } else if (selection === "queue") {

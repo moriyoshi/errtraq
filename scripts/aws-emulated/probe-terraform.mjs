@@ -13,7 +13,7 @@ import { providerOverride, terraformEnvironment } from "./terraform-config.mjs";
 
 const root = resolve(".");
 const scratch = resolve(".agents-workspace/tmp");
-const revision = "69fed1d7fb0eb9a2738ff3274197c7591129c4cb";
+const revision = "79c452d2bb2844abf771cfa4a497275c24b46489";
 const binary = resolve(
   scratch,
   `winterbaume-${revision}/target/debug/winterbaume-server`,

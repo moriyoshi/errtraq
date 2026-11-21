@@ -3,12 +3,14 @@ import { access } from "node:fs/promises";
 import { createServer } from "node:net";
 import { fileURLToPath } from "node:url";
 
-const binary = fileURLToPath(
-  new URL(
-    "../../.agents-workspace/tmp/winterbaume-69fed1d7fb0eb9a2738ff3274197c7591129c4cb-s3-utf8/target/debug/winterbaume-server",
-    import.meta.url,
-  ),
-);
+const binary =
+  process.env.ERRTRAQ_S3_EMULATOR_BINARY ??
+  fileURLToPath(
+    new URL(
+      "../../.agents-workspace/tmp/winterbaume-79c452d2bb2844abf771cfa4a497275c24b46489-s3-utf8/target/debug/winterbaume-server",
+      import.meta.url,
+    ),
+  );
 try {
   await access(binary);
 } catch {

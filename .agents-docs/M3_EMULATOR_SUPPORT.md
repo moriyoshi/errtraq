@@ -1,6 +1,6 @@
 # M3 AWS emulator probes
 
-The baseline is Winterbaume source revision `69fed1d7fb0eb9a2738ff3274197c7591129c4cb`
+The baseline is Winterbaume source revision `79c452d2bb2844abf771cfa4a497275c24b46489`
 (server 0.2.8). Its source archive is SHA-256 verified by `pnpm aws-emulator:install`;
 the source, Cargo cache, build output and executable stay under `.agents-workspace/tmp`.
 The first source build needs Rust and network access and is substantial (a debug build can
@@ -22,17 +22,19 @@ endpoints. S3 uses path-style URLs.
 | S3 | Single-part multipart upload and completion | Pass |
 | S3 | Delete and missing object | Pass |
 | DynamoDB | GSI query, ascending and descending | Pass |
-| DynamoDB | Transaction condition check and abort atomicity | Pass |
+| DynamoDB | Sequential transaction condition check and abort | Pass |
+| DynamoDB | Concurrent UpdateItem condition/write atomicity | Known gap ([#61](https://github.com/moriyoshi/winterbaume/issues/61)); reproduced |
 | DynamoDB | Conditional update with `ADD` and `SET if_not_exists` | Pass |
 | DynamoDB | BatchGetItem and consistent GetItem | Pass |
 | DynamoDB | TTL attribute registration | Pass |
+| DynamoDB | Eleven module-derived sparse GSI key schemas and keys-only projections | Pass |
 | SQS | Send, receive, delete and approximate receive count | Pass |
 | SQS | Batch send | Pass |
 | SQS | Change visibility and redelivery | Pass |
 | SQS | Delayed delivery | Pass |
 | SQS | DLQ redrive | Pass |
 
-The harness also creates two independent namespaces using the module-derived eight-index
+The harness also creates two independent namespaces using the module-derived eleven-index
 store and KV tables and SQS queue/DLQ shape, then verifies removal. Runtime values such as the test
 visibility and redrive counts are chosen by the caller; cloud security settings such as
 SSE and TLS-only policies are Terraform concerns and are not exercised by HTTP emulator

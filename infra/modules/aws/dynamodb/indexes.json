@@ -1,0 +1,46 @@
+{
+  "event-project-time": {
+    "hash": "GSI1PK",
+    "range": "GSI1SK"
+  },
+  "event-issue-time": {
+    "hash": "GSI2PK",
+    "range": "GSI2SK"
+  },
+  "issue-id": {
+    "hash": "GSI3PK",
+    "range": "GSI3SK"
+  },
+  "issue-last": {
+    "hash": "GSI4PK",
+    "range": "GSI4SK"
+  },
+  "issue-first": {
+    "hash": "GSI5PK",
+    "range": "GSI5SK"
+  },
+  "issue-count": {
+    "hash": "GSI6PK",
+    "range": "GSI6SK"
+  },
+  "entity-list": {
+    "hash": "GSI7PK",
+    "range": "GSI7SK"
+  },
+  "erasure-all": {
+    "hash": "GSI8PK",
+    "range": "GSI8SK"
+  },
+  "erasure-project": {
+    "hash": "GSI9PK",
+    "range": "GSI9SK"
+  },
+  "erasure-state": {
+    "hash": "GSI10PK",
+    "range": "GSI10SK"
+  },
+  "erasure-project-state": {
+    "hash": "GSI11PK",
+    "range": "GSI11SK"
+  }
+}

@@ -129,8 +129,11 @@ interface ReleaseRepo {
   sqlite, D1, libsql); only driver wiring + a few dialect quirks (upsert syntax, JSON columns)
   differ. Migrations written with Kysely's schema builder, run via `errtraq migrate` or on
   cold start for D1/SQLite.
-- DynamoDB: single-table design (PK `P#<project>`, SKs for issue/event, GSIs for
-  lastSeen/fingerprint). Firestore: per-project subcollections + composite indexes.
+- DynamoDB: one table with distributed `EV|project|eventId` event keys and
+  `IS|project|issueId` issue keys, an issue-ID pointer, and eleven sparse keys-only GSIs.
+  A durable table metadata item records the immutable project-time shard count. The
+  Terraform module is in place; the M3e runtime is still to be implemented. See
+  `.agents-docs/DYNAMODB_DESIGN.md`. Firestore: per-project subcollections + composite indexes.
 - Event payloads above a size threshold (DynamoDB 400 KB, D1 row limits) overflow to BlobStore
   by reference — handled in core, not per adapter.
 

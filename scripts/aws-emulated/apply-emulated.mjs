@@ -12,7 +12,8 @@ import { createServer } from "node:net";
 import { resolve } from "node:path";
 import { client, element } from "./client.mjs";
 import {
-  assertPartialBatchGap,
+  assertPartialBatchSupport,
+  checkConditionalUpdateGap,
   checkEventbridgeGap,
   checkStandaloneGaps,
 } from "./gap-checks.mjs";
@@ -29,11 +30,10 @@ import { verifyCleanup, verifyDeployment } from "./verify-deployment.mjs";
 const postgresOnly = process.argv.includes("--postgres-only");
 const root = resolve(".");
 const scratch = resolve(".agents-workspace/tmp");
-const revision = "69fed1d7fb0eb9a2738ff3274197c7591129c4cb";
-const binary = resolve(
-  scratch,
-  `winterbaume-${revision}/target/debug/winterbaume-server`,
-);
+const revision = "79c452d2bb2844abf771cfa4a497275c24b46489";
+const binary =
+  process.env.ERRTRAQ_WINTERBAUME_BINARY ??
+  resolve(scratch, `winterbaume-${revision}/target/debug/winterbaume-server`);
 const cache = resolve(scratch, "terraform-plugin-cache");
 if (!existsSync(binary)) {
   console.log(
@@ -64,11 +64,7 @@ const modules = resolve(temp, "modules");
 cpSync(resolve(root, "infra/modules"), modules, { recursive: true });
 writeFileSync(
   resolve(modules, "aws/s3/emulator_override.tf"),
-  'resource "aws_s3_bucket_lifecycle_configuration" "this" { count = 0 }\nresource "aws_s3_bucket_ownership_controls" "this" { count = 0 }\n',
-);
-writeFileSync(
-  resolve(modules, "aws/lambda-app/emulator_override.tf"),
-  'resource "aws_lambda_event_source_mapping" "queue" {\n  lifecycle {\n    ignore_changes = [function_response_types]\n  }\n}\n',
+  'resource "aws_s3_bucket_ownership_controls" "this" { count = 0 }\n',
 );
 const socket = createServer();
 await new Promise((yes, no) => {
@@ -114,7 +110,7 @@ function json(path, value) {
 }
 try {
   let ready = false;
-  for (let i = 0; i < 100; i++) {
+  for (let i = 0; i < 600; i++) {
     if (exited) throw new Error(`Emulator exited: ${serverError}`);
     try {
       await fetch(endpoint, {
@@ -130,9 +126,9 @@ try {
   if (!ready) throw new Error(`Emulator did not start: ${serverError}`);
   const c = client(endpoint);
   await checkStandaloneGaps(c);
-  skipped(gaps, "s3-lifecycle");
   skipped(gaps, "s3-ownership-delete");
-  skipped(gaps, "dynamodb-deletion-protection");
+  await checkConditionalUpdateGap(c);
+  skipped(gaps, "dynamodb-conditional-atomicity");
   run("pnpm", ["build"], root);
   const sts = await c.request("sts", "/", {
     method: "POST",
@@ -142,7 +138,6 @@ try {
   const account = element(sts.text, "Account");
   if (!account) throw new Error("Missing emulator account");
   await checkEventbridgeGap(c, account);
-  skipped(gaps, "eventbridge-retry-dlq");
   if (!postgresOnly)
     await runStandalone({
       c,
@@ -203,8 +198,7 @@ try {
     console.log("PASS shared-stack apply");
     const observed = await verifyDeployment(c, stack, view, account);
     for (const mapping of observed.mappingForStack)
-      assertPartialBatchGap(mapping);
-    skipped(gaps, "lambda-partial-batch");
+      assertPartialBatchSupport(mapping);
     console.log("PASS shared-stack API assertions");
     run(
       "terraform",
@@ -223,7 +217,6 @@ try {
     );
     const exceptions = assertRepeatPlan(repeat, gaps, stack.providers.aws.tags);
     for (const id of [
-      "dynamodb-sse",
       "tags-dynamodb",
       "tags-iam",
       "tags-s3",
@@ -356,7 +349,7 @@ try {
       account,
     );
     for (const mapping of secondObserved.mappingForStack)
-      assertPartialBatchGap(mapping);
+      assertPartialBatchSupport(mapping);
     run(
       "terraform",
       [
@@ -382,7 +375,6 @@ try {
       second.providers.aws.tags,
     );
     for (const id of [
-      "dynamodb-sse",
       "tags-dynamodb",
       "tags-iam",
       "tags-s3",
@@ -392,7 +384,6 @@ try {
         throw new Error(`Emulator gap ${id} no longer reproduces`);
       skipped(gaps, id);
     }
-    skipped(gaps, "lambda-partial-batch");
     console.log(
       "PASS per-topic API assertions and repeat plan after named gap exclusions",
     );

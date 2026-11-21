@@ -851,3 +851,22 @@ separate metadata-delete and blob policies; their requirement rows are recorded 
 The SQL activation and cleanup API supplies the full manifest ID list, since a store adapter
 does not itself have a BlobStore dependency. The DynamoDB implementation must preserve bounded
 marker operations and the TTL-clearing crash caveat in the design.
+
+## 2026-11-21 — M3e stage 1 table infrastructure and emulator
+
+The redesigned table is versioned as `<stack>-store-v2`; applying the new module to a
+previous table is a migration, not an in-place reinterpretation of old index keys. The
+project-time shard count is persisted as a table item and guarded against changes in both
+Terraform state and readback. Production metadata uses `prevent_destroy` so a failed table
+destroy cannot erase the shard count first; changing production to disposable therefore
+requires an explicit state migration. Metadata DeleteItem has a separate LeadingKeys
+policy with a missing-key guard; event deletion uses BatchWriteItem scoped to `EV|` keys,
+which can also put event items and is restricted to event-deleting roles.
+
+Winterbaume main `79c452d2bb2844abf771cfa4a497275c24b46489` retains keys-only GSI
+projections and fixes lifecycle-header, deletion-protection, SSE, EventBridge retry/DLQ,
+and Lambda partial-batch readback. Its S3 UTF-8 bug still requires the unchanged verified
+local patch. Conditional-update issue #61 still reproduces: four of 200 requests passed
+the same absent-item condition. Lambda VPC readback issue #62 and the recorded tag and
+ownership-control exceptions remain. These local readbacks do not establish real IAM
+enforcement, DynamoDB transaction isolation, actual at-rest encryption or Lambda execution.

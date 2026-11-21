@@ -1,29 +1,4 @@
 {
-  "s3-lifecycle": {
-    "heading": "S3 lifecycle configuration does not stabilize",
-    "effect": "exclude the lifecycle resource from emulated apply",
-    "issue": "https://github.com/moriyoshi/winterbaume/issues/41"
-  },
-  "lambda-partial-batch": {
-    "heading": "Lambda partial batch response setting is discarded",
-    "effect": "ignore this attribute in the repeat-plan assertion",
-    "issue": "https://github.com/moriyoshi/winterbaume/issues/45"
-  },
-  "eventbridge-retry-dlq": {
-    "heading": "EventBridge retry policy is discarded",
-    "effect": "do not assert retry or DLQ readback",
-    "issue": "https://github.com/moriyoshi/winterbaume/issues/47"
-  },
-  "dynamodb-deletion-protection": {
-    "heading": "DynamoDB deletion protection is ignored",
-    "effect": "probe rather than rely on production protection",
-    "issue": "https://github.com/moriyoshi/winterbaume/issues/42"
-  },
-  "dynamodb-sse": {
-    "heading": "DynamoDB server-side encryption cannot be read back",
-    "effect": "exclude the missing encryption readback from repeat-plan comparison",
-    "issue": "https://github.com/moriyoshi/winterbaume/issues/43"
-  },
   "tags-dynamodb": {
     "heading": "Resource tag readback is incomplete",
     "effect": "exclude DynamoDB tags_all drift from repeat-plan comparison",
@@ -52,6 +27,11 @@
   "lambda-vpc-readback": {
     "heading": "Lambda VPC configuration is discarded",
     "effect": "omit the Lambda VPC block only in the copied emulator module after verifying the gap",
-    "issue": null
+    "issue": "https://github.com/moriyoshi/winterbaume/issues/62"
+  },
+  "dynamodb-conditional-atomicity": {
+    "heading": "DynamoDB conditional updates are not atomic with their checks",
+    "effect": "emulator tests cannot prove conditional-write atomicity",
+    "issue": "https://github.com/moriyoshi/winterbaume/issues/61"
   }
 }

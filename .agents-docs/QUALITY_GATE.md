@@ -178,8 +178,9 @@ make this a lengthy opt-in run. A feature-enabled fixture checks the three-topic
 queue transition; the actual examples enable only `ingest`. Named exceptions are listed in
 `scripts/aws-emulated/gaps.json`, logged visibly, linked to
 [WINTERBAUME_GAPS.md](./WINTERBAUME_GAPS.md), and checked to ensure each gap still reproduces. Temporary module overrides exclude only the
-unusable lifecycle and ownership-control resources and partial-batch readback; tracked
-modules and generator output are unchanged.
+unusable ownership-control resource; tracked modules and generator output are unchanged.
+Lifecycle header, DynamoDB encryption and deletion protection, EventBridge retry/DLQ settings and partial-batch readback
+are exercised by the updated pin rather than excluded.
 
 This does not prove IAM or TLS-only policy enforcement, Lambda code execution, DynamoDB
 encryption at rest or deletion protection, S3 lifecycle or ownership-control behavior,
@@ -189,7 +190,7 @@ full Terraform module declarations at both pinned provider versions. The earlier
 
 `pnpm infra:mutate` requires the cached 6.73.0 provider. It verifies unmodified baselines, applies
 each mutation from `scripts/infra-mutations.json` in its own temporary copy, and reports whether
-validation, HCL tests or the output-shape check detected it. It also mutates generated roots to
+validation, HCL tests, the output-shape check or the static production-metadata lifecycle check detected it. It also mutates generated roots to
 check detection of missing or misassigned policies, missing bindings or triggers, and an unescaped
 literal. `pnpm infra:validate` additionally builds the generator, generates both AWS stacks and
 seven variants (including an IAM Postgres/VPC fixture and a fake existing archive to exercise cron), and runs `terraform fmt -check`,

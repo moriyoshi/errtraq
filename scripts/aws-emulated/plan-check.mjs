@@ -17,14 +17,8 @@ export function assertRepeatPlan(plan, gaps, expectedTags = {}) {
     const before = { ...change.change.before },
       after = { ...change.change.after };
     const fieldsByType = {
-      aws_dynamodb_table: [
-        ["server_side_encryption", "dynamodb-sse"],
-        ["tags_all", "tags-dynamodb"],
-      ],
-      aws_lambda_event_source_mapping: [
-        ["function_response_types", "lambda-partial-batch"],
-        ["tags_all", "tags-lambda-mapping"],
-      ],
+      aws_dynamodb_table: [["tags_all", "tags-dynamodb"]],
+      aws_lambda_event_source_mapping: [["tags_all", "tags-lambda-mapping"]],
       aws_s3_bucket: [["tags_all", "tags-s3"]],
       aws_iam_role: [["tags_all", "tags-iam"]],
     };
@@ -42,18 +36,6 @@ export function assertRepeatPlan(plan, gaps, expectedTags = {}) {
             after[field],
             expectedTags,
             `unexpected desired tag values at ${change.address}`,
-          );
-        }
-        if (gap === "dynamodb-sse") {
-          assert.deepEqual(
-            before[field],
-            [],
-            `unexpected prior SSE values at ${change.address}`,
-          );
-          assert.deepEqual(
-            after[field],
-            [{ enabled: true, kms_key_arn: null }],
-            `unexpected desired SSE values at ${change.address}`,
           );
         }
         observed.add(gap);

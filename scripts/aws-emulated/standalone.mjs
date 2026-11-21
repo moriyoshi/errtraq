@@ -3,9 +3,10 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { element } from "./client.mjs";
 import { canonicalPolicy } from "./expected.mjs";
-import { assertEventbridgeGap, assertPartialBatchGap } from "./gap-checks.mjs";
+import { assertPartialBatchSupport } from "./gap-checks.mjs";
 import { skipped } from "./gaps.mjs";
 import { assertRepeatPlan } from "./plan-check.mjs";
+import { moduleShapes } from "./shapes.mjs";
 import { providerOverride } from "./terraform-config.mjs";
 import { verifyCleanup } from "./verify-deployment.mjs";
 
@@ -113,27 +114,34 @@ export async function runStandalone({
     console.log(`Applying standalone ${component}`);
     tf(dir, "apply", "-auto-approve", "-input=false");
     if (component === "dynamodb") {
-      const TableName = `${name}-store`,
+      const TableName = `${name}-store-v2`,
         table = (await c.dynamo("DescribeTable", { TableName })).Table;
-      assert.equal(table.GlobalSecondaryIndexes.length, 8);
+      const shape = (await moduleShapes()).table;
       assert.equal(table.BillingModeSummary.BillingMode, "PAY_PER_REQUEST");
+      assert.equal(table.SSEDescription?.Status, "ENABLED");
       assert.deepEqual(
-        table.GlobalSecondaryIndexes.map((index) => index.IndexName).sort(),
-        Array.from({ length: 8 }, (_, i) => `gsi${i + 1}`),
+        [...table.GlobalSecondaryIndexes]
+          .sort((a, b) => a.IndexName.localeCompare(b.IndexName))
+          .map((i) => ({
+            IndexName: i.IndexName,
+            KeySchema: i.KeySchema,
+            Projection: i.Projection,
+          })),
+        [...shape.GlobalSecondaryIndexes].sort((a, b) =>
+          a.IndexName.localeCompare(b.IndexName),
+        ),
       );
-      for (const index of table.GlobalSecondaryIndexes) {
-        const n = index.IndexName.slice(3);
-        assert.deepEqual(index.KeySchema, [
-          { AttributeName: `GSI${n}PK`, KeyType: "HASH" },
-          { AttributeName: `GSI${n}SK`, KeyType: "RANGE" },
-        ]);
-        assert.equal(index.Projection.ProjectionType, "ALL");
-      }
       assert.equal(
         (await c.dynamo("DescribeTimeToLive", { TableName }))
           .TimeToLiveDescription.AttributeName,
-        "expiresAt",
+        "ttlEpoch",
       );
+      const metadata = await c.dynamo("GetItem", {
+        TableName,
+        Key: { PK: { S: "META|schema" }, SK: { S: "DATA" } },
+        ConsistentRead: true,
+      });
+      assert.equal(metadata.Item.projectTimeShards.N, "4");
       assert.equal(
         (await c.dynamo("DescribeContinuousBackups", { TableName }))
           .ContinuousBackupsDescription.PointInTimeRecoveryDescription
@@ -248,7 +256,7 @@ export async function runStandalone({
       const mapping = mappings.find((item) =>
         item.FunctionArn.endsWith(`:function:${functionName}`),
       );
-      assertPartialBatchGap(mapping);
+      assertPartialBatchSupport(mapping);
       const targets = JSON.parse(
         (
           await c.request("events", "/", {
@@ -261,7 +269,14 @@ export async function runStandalone({
           })
         ).text,
       );
-      assertEventbridgeGap(targets.Targets[0]);
+      assert.deepEqual(targets.Targets[0].RetryPolicy, {
+        MaximumEventAgeInSeconds: 86400,
+        MaximumRetryAttempts: 185,
+      });
+      assert.equal(
+        targets.Targets[0].DeadLetterConfig.Arn,
+        `arn:aws:sqs:us-east-1:${account}:${name}`,
+      );
     }
     run(
       "terraform",

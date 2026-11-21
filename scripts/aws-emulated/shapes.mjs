@@ -6,6 +6,10 @@ export async function moduleShapes() {
     new URL("../../infra/modules/aws/dynamodb/main.tf", import.meta.url),
     "utf8",
   );
+  const ddbVariables = await readFile(
+    new URL("../../infra/modules/aws/dynamodb/variables.tf", import.meta.url),
+    "utf8",
+  );
   const sqs = await readFile(
     new URL("../../infra/modules/aws/sqs/main.tf", import.meta.url),
     "utf8",
@@ -17,32 +21,30 @@ export async function moduleShapes() {
   }
   const pk = capture(ddb, /hash_key\s*=\s*"([^"]+)"/);
   const sk = capture(ddb, /range_key\s*=\s*"([^"]+)"/);
-  const end = Number(capture(ddb, /range\(1,\s*(\d+)\)/));
-  for (const text of [
-    `"GSI\${i}PK"`,
-    `"GSI\${i}SK"`,
-    `"gsi\${global_secondary_index.value}"`,
-    'projection_type = "ALL"',
-    'billing_mode                = "PAY_PER_REQUEST"',
-  ]) {
-    if (!ddb.includes(text))
-      throw new Error(`Unsupported DynamoDB module template: ${text}`);
-  }
+  if (
+    !ddb.includes('projection_type = "KEYS_ONLY"') ||
+    !ddb.includes("/indexes.json") ||
+    !ddb.includes('"ttlEpoch" : "expiresAt"')
+  )
+    throw new Error("Unsupported DynamoDB module template");
+  const indexes = JSON.parse(
+    await readFile(
+      new URL("../../infra/modules/aws/dynamodb/indexes.json", import.meta.url),
+      "utf8",
+    ),
+  );
   const attributes = [pk, sk];
-  const gsis = [];
-  for (let i = 1; i < end; i++) {
-    const hash = `GSI${i}PK`,
-      range = `GSI${i}SK`;
-    attributes.push(hash, range);
-    gsis.push({
-      IndexName: `gsi${i}`,
+  const gsis = Object.entries(indexes).map(([name, keys]) => {
+    attributes.push(keys.hash, keys.range);
+    return {
+      IndexName: name,
       KeySchema: [
-        { AttributeName: hash, KeyType: "HASH" },
-        { AttributeName: range, KeyType: "RANGE" },
+        { AttributeName: keys.hash, KeyType: "HASH" },
+        { AttributeName: keys.range, KeyType: "RANGE" },
       ],
-      Projection: { ProjectionType: "ALL" },
-    });
-  }
+      Projection: { ProjectionType: "KEYS_ONLY" },
+    };
+  });
   return {
     table: {
       BillingMode: "PAY_PER_REQUEST",
@@ -73,7 +75,18 @@ export async function moduleShapes() {
         /message_retention_seconds\s*=\s*(1209600)/,
       ),
     },
-    ttl: capture(ddb, /attribute_name\s*=\s*"(expiresAt)"/),
+    metadata: {
+      PK: { S: capture(ddb, /PK = \{ S = "([^"]+)" \}/) },
+      SK: { S: capture(ddb, /SK = \{ S = "([^"]+)" \}/) },
+      projectTimeShards: {
+        N: capture(
+          ddbVariables,
+          /variable "index_shards" \{[\s\S]*?default\s*=\s*(\d+)/,
+        ),
+      },
+    },
+    ttl: "ttlEpoch",
+    kvTtl: "expiresAt",
     queue: {
       MessageRetentionPeriod: capture(
         sqs,

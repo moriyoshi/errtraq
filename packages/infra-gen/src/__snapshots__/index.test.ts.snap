@@ -164,6 +164,7 @@ exports[`Terraform generator > renders the full per-topic stack deterministicall
       }
     },
     "store": {
+      "index_shards": 4,
       "name": "aws-dynamodb-per-topic",
       "protection": "production",
       "purpose": "store",
@@ -383,6 +384,7 @@ exports[`Terraform generator > renders the full shared stack deterministically 1
       }
     },
     "store": {
+      "index_shards": 4,
       "name": "aws-dynamodb",
       "protection": "production",
       "purpose": "store",

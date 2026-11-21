@@ -309,6 +309,7 @@ describe("AWS descriptor stacks", () => {
       textSearch: false,
       lastSeenRangeOnOtherSort: false,
       deleteStrategy: "explicit",
+      deleteBySubject: false,
     });
     expect(s3Blob().infra.capabilities.write?.staging).toEqual(
       outPolicy("write", "staging"),

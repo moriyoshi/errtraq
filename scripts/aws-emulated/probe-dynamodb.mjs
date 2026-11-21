@@ -24,7 +24,7 @@ export async function probeDynamo(endpoint) {
             { AttributeName: "GSI1PK", KeyType: "HASH" },
             { AttributeName: "GSI1SK", KeyType: "RANGE" },
           ],
-          Projection: { ProjectionType: "ALL" },
+          Projection: { ProjectionType: "KEYS_ONLY" },
         },
       ],
     });
@@ -33,6 +33,7 @@ export async function probeDynamo(endpoint) {
       SK: { S: sk },
       GSI1PK: { S: "g" },
       GSI1SK: { S: sk },
+      payload: { S: "not projected" },
     });
     await c.dynamo("PutItem", { TableName, Item: item("a") });
     await c.dynamo("PutItem", { TableName, Item: item("b") });
@@ -55,6 +56,30 @@ export async function probeDynamo(endpoint) {
         b.Items.map((x) => x.SK.S),
         ["b", "a"],
       );
+    });
+    await check(results, "gsi-keys-only-projection", async () => {
+      const result = await c.dynamo("Query", {
+        TableName,
+        IndexName: "gsi1",
+        KeyConditionExpression: "GSI1PK = :p",
+        ExpressionAttributeValues: { ":p": { S: "g" } },
+      });
+      assert.equal(result.Items.length, 2);
+      for (const value of result.Items) {
+        assert.deepEqual(Object.keys(value).sort(), [
+          "GSI1PK",
+          "GSI1SK",
+          "PK",
+          "SK",
+        ]);
+        assert.equal(value.payload, undefined);
+      }
+      const base = await c.dynamo("GetItem", {
+        TableName,
+        Key: { PK: { S: "p" }, SK: { S: "a" } },
+        ConsistentRead: true,
+      });
+      assert.equal(base.Item.payload.S, "not projected");
     });
     await check(results, "transactions-condition-check", async () => {
       await c.dynamo("TransactWriteItems", {

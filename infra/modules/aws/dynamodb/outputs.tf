@@ -8,5 +8,5 @@ output "table_arn" {
 }
 output "policies" {
   value       = local.policies
-  description = "errtraq-type=map(map(json-document)); errtraq-keys=read.primary,write.primary,delete.primary; JSON-encoded capability policies keyed by resource purpose"
+  description = "errtraq-type=map(map(json-document)); errtraq-keys=read.primary,write.primary,delete.primary,metadata-delete.primary; JSON-encoded capability policies keyed by resource purpose"
 }

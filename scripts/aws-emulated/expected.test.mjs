@@ -33,7 +33,27 @@ describe("derived capability policy expectations", () => {
       { selection: "store", capability: "read", purpose: "primary" },
       resources,
     );
-    expect(read.Statement[0].Resource).toEqual(["table", "table/index/*"]);
+    expect(read.Statement[0].Resource).toContain(
+      "table/index/event-issue-time",
+    );
+    expect(read.Statement[0].Resource).toHaveLength(12);
+  });
+  it("limits event batch writes to event keys", () => {
+    const policy = capabilityPolicy(
+      { selection: "store", capability: "delete", purpose: "primary" },
+      resources,
+    );
+    expect(policy.Statement).toEqual([
+      {
+        Effect: "Allow",
+        Action: ["dynamodb:BatchWriteItem"],
+        Resource: ["table"],
+        Condition: {
+          "ForAllValues:StringLike": { "dynamodb:LeadingKeys": ["EV|*"] },
+          Null: { "dynamodb:LeadingKeys": "false" },
+        },
+      },
+    ]);
   });
   it("normalizes reordered policy fields without hiding missing actions", () => {
     expect(canonicalPolicy({ b: ["b", "a"], a: true })).toEqual({

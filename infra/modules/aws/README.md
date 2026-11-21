@@ -30,37 +30,45 @@ source mappings request partial batch failure responses and check visibility aga
 function timeout; core additionally enforces its six-times safety factor. The M3 queue handler
 must return partial failures.
 
-The DynamoDB store table uses `PK` / `SK`, with project records under `P#<project>` and
-entity-specific sort keys. M3 must create and maintain lookup and index items atomically
-alongside the canonical records. Natural-key aliases provide organization and project slug,
-project key, token hash, release version and debug-id lookups; a global issue-id partition
-serves cross-project issue lookup, and a project-list partition serves project enumeration.
-Sparse index items make both all-status and specific-status issue queries possible. The eight
-store indexes are:
+The DynamoDB store table uses `PK` / `SK`, with distributed `EV|project|eventId` event
+keys and `IS|project|issueId` issue keys. The M3 runtime must maintain natural-key markers and
+one strong issue-ID pointer per issue alongside the canonical records. Sparse GSI attributes
+live on their source items and their indexes are eventually consistent. Natural-key aliases
+provide organization and project slug, project key, token hash, release version and debug-ID
+lookups; an issue-ID pointer partition serves cross-project issue lookup.
+The store has eleven sparse, `KEYS_ONLY` GSIs: `event-project-time`,
+`event-issue-time`, `issue-id`, `issue-last`, `issue-first`, `issue-count`,
+`entity-list`, `erasure-all`, `erasure-project`, `erasure-state`, and
+`erasure-project-state`. Their exact string attributes live in `dynamodb/indexes.json`.
+See `.agents-docs/DYNAMODB_DESIGN.md` for the key encodings, per-operation access
+patterns, eventually consistent hydration and the strong issue-ID pointer. No subject
+index is stored in DynamoDB. KV has no GSIs and keeps its numeric `expiresAt` TTL;
+the store uses numeric `ttlEpoch`, distinct from the domain's ISO `expiresAt`.
 
-| Index | Query |
-| --- | --- |
-| gsi1 | Issue list by project and optional status, ordered by lastSeen, including time ranges. |
-| gsi2 | Issue list by project and optional status, ordered by firstSeen. |
-| gsi3 | Issue list by project and optional status, ordered by count. |
-| gsi4 | Events by project and issue in receivedAt / eventId order. |
-| gsi5 | Events by project in receivedAt / eventId order, including the archival cutoff scan. |
-| gsi6 | Events by project, subject kind and value for bounded erasure; event-id selectors use direct keys. |
-| gsi7 | Issue fingerprint within a project. |
-| gsi8 | Erasure requests by project and/or state, including cross-project state queries. |
+The redesigned store table uses the versioned name `<stack>-store-v2`, so upgrading an old
+layout cannot silently rewrite its indexes in place. Migrating data and Terraform state needs
+an explicit reviewed operation. An existing-store selection is an operator promise that the
+external table already has this layout and metadata; stack validation cannot inspect it.
+KV retains its `<stack>-kv` name. The store creates a
+`META|schema` / `DATA` item recording `index_shards` (default 4,
+range 1 to 4). Terraform preserves the initial count and rejects later changes; actual
+re-sharding or migration of an older table requires a reviewed backfill and state migration.
+Production metadata also has `prevent_destroy` so a refused protected-table destroy cannot
+first delete the metadata. Switching production to disposable needs an explicit state
+migration rather than an implicit replacement. Readers must use the persisted shard count.
+The Terraform execution principal needs permission to read, put and delete this metadata
+item; those provisioning permissions are separate from function-role grants.
 
-M3 must encode sort keys for the documented tie-breaks and create separate index items where
-a record needs more than one partition key, such as all-status versus status-specific views,
-multiple subject identities, and project-only versus state-only erasure queries. Project / status
-and state / project index fan-out must be maintained transactionally with their source records.
-GSI reads are eventually consistent; M3 must account for that limit in its port implementation
-and tests. KV uses the same table module without store indexes. `expiresAt` is a numeric epoch
-seconds TTL attribute and is set only on items intended for expiration. The store's explicit
-PII erasure must not wait for TTL. Point-in-time recovery is enabled, and operators must manage
-backup retention in any hard-erasure procedure. The `read` policy assumes GetItem, BatchGetItem
-and Query; `write` assumes PutItem, UpdateItem and transaction condition checks; `delete` assumes
-DeleteItem or transaction Delete operations. `BatchWriteItem` is deliberately not granted because
-it can also put items. M3 must implement deletion accordingly.
+The store read policy grants GetItem, BatchGetItem and Query on the table and named indexes;
+write grants GetItem, PutItem and UpdateItem, without DeleteItem or a stage-4 fence check.
+Event deletion grants BatchWriteItem only for `EV|` keys; this action can also put event
+items, so it must be given only to roles that delete events. The policy cannot distinguish a
+put from a delete in a batch. AWS applies `dynamodb:LeadingKeys` to every item in a
+batch: [DynamoDB fine-grained IAM conditions](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/specifying-conditions.html).
+Separate metadata-delete grants DeleteItem constrained by
+`dynamodb:LeadingKeys` to the listed metadata namespaces. KV write and delete continue to
+use their existing PutItem/UpdateItem/GetItem and DeleteItem policies. PITR can retain erased
+bytes after deletion; operators must account for backup retention.
 
 SQS physical queues are keyed maps, each with independent visibility and DLQ settings. The
 DLQ retains messages for 14 days and the source queue retains them for four. S3 blocks public

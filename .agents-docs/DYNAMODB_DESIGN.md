@@ -1,8 +1,8 @@
 # DynamoDB active-store design (M3e step 1c)
 
-Status: approved direction with the decisions and open correctness questions below. This is a
-plan, not current implementation. `ports.ts` and ARCHITECTURE.md remain authoritative until
-stage 1 makes the proposed contract changes. The default erasure-index design is independent
+Status: approved direction with the decisions and open correctness questions below. The stage 1
+shared contracts and table infrastructure are implemented; the DynamoDB runtime remains a stub.
+`ports.ts` and ARCHITECTURE.md describe the current public contracts. The default erasure-index design is independent
 of DynamoDB: see [SUBJECT_INDEX_DESIGN.md](./SUBJECT_INDEX_DESIGN.md). No port operation uses
 DynamoDB `Scan` or a filtered full-table scan.
 
@@ -253,19 +253,18 @@ accordingly; non-erasure store functionality stays usable.
 
 ## TTL, infrastructure and capability policies
 
-Use numeric epoch-seconds `ttlEpoch` as the table TTL attribute, distinct from the domain's
-ISO `StoredEvent.expiresAt` string. Change `infra/modules/aws/dynamodb` TTL declaration and
-mock/emulator contract fixtures; keep the KV table's existing `expiresAt` numeric TTL by
-making the TTL attribute purpose-specific. Explicit deletion remains primary. Without archival,
+The module uses numeric epoch-seconds `ttlEpoch` as the store TTL attribute, distinct from
+the domain's ISO `StoredEvent.expiresAt` string. The KV table keeps its existing numeric
+`expiresAt` TTL; module and emulator fixtures use the purpose-specific attribute. Explicit deletion remains primary. Without archival,
 an event can have a retention + margin TTL backstop; with archival, set the numeric TTL only
 after the archive batch is durably committed, because a fixed margin cannot prove the
 no-delete-before-commit invariant during an unbounded outage. Pending bundle and debug markers
 use `ttlEpoch`, subject to the activation caveat above; permanent/active markers have no TTL.
 PITR/backups can retain deleted bytes until their retention expires.
 
-Replace the current eight GSIs with the 11 string-key schemas listed above and `KEYS_ONLY`
-projections; update key attributes, purpose-specific TTL, mock policy/index tests, descriptor
-and emulator table derivation. Record shard count in table metadata. Descriptor declares
+The module defines the 11 string-key schemas listed above with `KEYS_ONLY` projections, uses
+purpose-specific TTL and records shard count in a protected table metadata item. It versions the
+redesigned store name as `<stack>-store-v2` so the old table is not reinterpreted in place. Descriptor declares
 `textSearch:false`, `lastSeenRangeOnOtherSort:false`, `deleteStrategy:explicit`, and stage 1
 subject erasure unavailable. Versioned migration/backfill is needed for an existing table; do
 not reinterpret old keys in place. Module output names can remain stable.
@@ -277,12 +276,18 @@ not reinterpret old keys in place. Module output names can remain stable.
   event recording uses no `DeleteItem`. When the stage 4 fence is enabled, add
   `dynamodb:ConditionCheckItem` to the writer policy.
 - `delete`: `BatchWriteItem` on table for event batches, with retry; never assume this action
-  can be replaced by `DeleteItem`. Restrict to the roles that delete active events.
+  can be replaced by `DeleteItem`. Restrict to the roles that delete active events. The policy
+  constrains every `dynamodb:LeadingKeys` value to `EV|*` and requires the key to be present;
+  this still permits batch puts on event keys, but excludes issues and schema metadata.
 - The **API** performs natural-key renames and bundle-marker removal, which need conditional
   `DeleteItem`. Add a distinct `metadata-delete` capability/policy restricted to metadata key
   namespaces where IAM `dynamodb:LeadingKeys` permits it; do not hide table-wide DeleteItem in
   ordinary write. If IAM cannot safely enforce the desired namespace restriction, surface that
   broader grant explicitly for review. Blob manifests need separate purpose-scoped grants.
+  The stage 1 module reserves `ORGSLUG|`, `PROJECTSLUG|`, `TOKEN|`, `RELEASE|`, `KEY|`,
+  `KEYID|`, `DEBUG|` and `BUNDLE|` as the only metadata-deletion PK prefixes, and requires
+  LeadingKeys to be present. Implementations must use these prefixes for deletable metadata;
+  changing the encoding requires a policy change. Event and issue keys remain outside this grant.
   Core requirement tables, descriptor output keys and generated-role tests must change together.
 
 ## Costs at the review's example scale

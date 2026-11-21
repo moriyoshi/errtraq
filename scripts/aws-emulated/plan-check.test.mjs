@@ -3,9 +3,7 @@ import { assertRepeatPlan } from "./plan-check.mjs";
 
 describe("repeat-plan gap filtering", () => {
   const gaps = {
-    "dynamodb-sse": {},
     "tags-dynamodb": {},
-    "lambda-partial-batch": {},
   };
   it("permits only documented differing fields", () => {
     const plan = {
@@ -16,16 +14,18 @@ describe("repeat-plan gap filtering", () => {
           type: "aws_dynamodb_table",
           change: {
             actions: ["update"],
-            before: { id: "x", server_side_encryption: [] },
+            before: { id: "x", tags_all: {} },
             after: {
               id: "x",
-              server_side_encryption: [{ enabled: true, kms_key_arn: null }],
+              tags_all: { app: "errtraq" },
             },
           },
         },
       ],
     };
-    expect([...assertRepeatPlan(plan, gaps)]).toEqual(["dynamodb-sse"]);
+    expect([...assertRepeatPlan(plan, gaps, { app: "errtraq" })]).toEqual([
+      "tags-dynamodb",
+    ]);
     plan.resource_changes[0].change.after.id = "changed";
     expect(() => assertRepeatPlan(plan, gaps)).toThrow();
   });

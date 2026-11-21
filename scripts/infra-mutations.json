@@ -10,15 +10,15 @@
     "id": "ddb-write-missing-put",
     "module": "dynamodb",
     "file": "main.tf",
-    "find": "[\"dynamodb:PutItem\", \"dynamodb:UpdateItem\", \"dynamodb:ConditionCheckItem\"]",
-    "replace": "[\"dynamodb:UpdateItem\", \"dynamodb:ConditionCheckItem\"]"
+    "find": "[\"dynamodb:PutItem\", \"dynamodb:UpdateItem\", \"dynamodb:GetItem\"]",
+    "replace": "[\"dynamodb:UpdateItem\", \"dynamodb:GetItem\"]"
   },
   {
     "id": "ddb-read-missing-index",
     "module": "dynamodb",
     "file": "main.tf",
-    "find": "[aws_dynamodb_table.this.arn, \"${aws_dynamodb_table.this.arn}/index/*\"]",
-    "replace": "[aws_dynamodb_table.this.arn]"
+    "find": "var.purpose == \"store\" ? local.index_arns : []",
+    "replace": "[]"
   },
   {
     "id": "ddb-pitr-disabled",
@@ -31,15 +31,15 @@
     "id": "ddb-gsi-projection",
     "module": "dynamodb",
     "file": "main.tf",
-    "find": "projection_type = \"ALL\"",
-    "replace": "projection_type = \"KEYS_ONLY\""
+    "find": "projection_type = \"KEYS_ONLY\"",
+    "replace": "projection_type = \"ALL\""
   },
   {
     "id": "ddb-ttl-removed",
     "module": "dynamodb",
     "file": "main.tf",
-    "find": "  ttl {\n    attribute_name = \"expiresAt\"\n    enabled        = true\n  }\n",
-    "replace": ""
+    "find": "    attribute_name = var.purpose == \"store\" ? \"ttlEpoch\" : \"expiresAt\"",
+    "replace": "    attribute_name = \"expiresAt\""
   },
   {
     "id": "ddb-table-name-list",
@@ -205,5 +205,145 @@
     "file": "main.tf",
     "find": "subnet_ids         = var.vpc_subnet_ids",
     "replace": "subnet_ids         = []"
+  },
+  {
+    "id": "ddb-metadata-delete-unscoped",
+    "module": "dynamodb",
+    "file": "main.tf",
+    "find": "\"ForAllValues:StringLike\" = { \"dynamodb:LeadingKeys\" = [\"ORGSLUG|*\"",
+    "replace": "\"StringLike\" = { \"dynamodb:LeadingKeys\" = [\"ORGSLUG|*\""
+  },
+  {
+    "id": "ddb-store-delete-action",
+    "module": "dynamodb",
+    "file": "main.tf",
+    "find": "var.purpose == \"store\" ? [\"dynamodb:BatchWriteItem\"] : [\"dynamodb:DeleteItem\"]",
+    "replace": "[\"dynamodb:DeleteItem\"]"
+  },
+  {
+    "id": "ddb-write-add-delete",
+    "module": "dynamodb",
+    "file": "main.tf",
+    "find": "\"dynamodb:UpdateItem\", \"dynamodb:GetItem\"",
+    "replace": "\"dynamodb:UpdateItem\", \"dynamodb:GetItem\", \"dynamodb:DeleteItem\""
+  },
+  {
+    "id": "ddb-index-schema",
+    "module": "dynamodb",
+    "file": "indexes.json",
+    "find": "\"GSI1PK\"",
+    "replace": "\"GSI11PK\""
+  },
+  {
+    "id": "ddb-shard-default",
+    "module": "dynamodb",
+    "file": "variables.tf",
+    "find": "default     = 4",
+    "replace": "default     = 3"
+  },
+  {
+    "id": "ddb-metadata-prevent-destroy",
+    "module": "dynamodb",
+    "file": "main.tf",
+    "find": "prevent_destroy = true",
+    "replace": "prevent_destroy = false"
+  },
+  {
+    "id": "ddb-ttl-disabled",
+    "module": "dynamodb",
+    "file": "main.tf",
+    "find": "  ttl {\n    attribute_name = var.purpose == \"store\" ? \"ttlEpoch\" : \"expiresAt\"\n    enabled        = true\n  }",
+    "replace": "  ttl {\n    attribute_name = var.purpose == \"store\" ? \"ttlEpoch\" : \"expiresAt\"\n    enabled        = false\n  }"
+  },
+  {
+    "id": "ddb-unnecessary-fence-permission",
+    "module": "dynamodb",
+    "file": "main.tf",
+    "find": "\"dynamodb:UpdateItem\", \"dynamodb:GetItem\"",
+    "replace": "\"dynamodb:UpdateItem\", \"dynamodb:GetItem\", \"dynamodb:ConditionCheckItem\""
+  },
+  {
+    "id": "ddb-metadata-broad-leadingkey",
+    "module": "dynamodb",
+    "file": "main.tf",
+    "find": "\"DEBUG|*\", \"BUNDLE|*\"",
+    "replace": "\"DEBUG|*\", \"BUNDLE|*\", \"EV|*\""
+  },
+  {
+    "id": "ddb-shard-guard-disabled",
+    "module": "dynamodb",
+    "file": "main.tf",
+    "find": "      condition     = terraform_data.shard_identity[0].output == var.index_shards && tonumber(jsondecode(var.protection == \"production\" ? aws_dynamodb_table_item.store_production_metadata[0].item : aws_dynamodb_table_item.store_disposable_metadata[0].item).projectTimeShards.N) == var.index_shards",
+    "replace": "      condition = true"
+  },
+  {
+    "id": "ddb-production-protection-disabled",
+    "module": "dynamodb",
+    "file": "main.tf",
+    "find": "deletion_protection_enabled = var.protection == \"production\"",
+    "replace": "deletion_protection_enabled = false"
+  },
+  {
+    "id": "ddb-metadata-missing-null-guard",
+    "module": "dynamodb",
+    "file": "main.tf",
+    "find": "\"DEBUG|*\", \"BUNDLE|*\"] }, \"Null\" = { \"dynamodb:LeadingKeys\" = \"false\" }",
+    "replace": "\"DEBUG|*\", \"BUNDLE|*\"] }"
+  },
+  {
+    "id": "ddb-unversioned-store-name",
+    "module": "dynamodb",
+    "file": "main.tf",
+    "find": "var.purpose == \"store\" ? \"${var.name}-store-v2\" : \"${var.name}-kv\"",
+    "replace": "\"${var.name}-${var.purpose}\""
+  },
+  {
+    "id": "ddb-event-delete-broad-key",
+    "module": "dynamodb",
+    "file": "main.tf",
+    "find": "\"dynamodb:LeadingKeys\" = [\"EV|*\"]",
+    "replace": "\"dynamodb:LeadingKeys\" = [\"*\"]"
+  },
+  {
+    "id": "ddb-event-delete-missing-null-guard",
+    "module": "dynamodb",
+    "file": "main.tf",
+    "find": "\"dynamodb:LeadingKeys\" = [\"EV|*\"] }, \"Null\" = { \"dynamodb:LeadingKeys\" = \"false\" }",
+    "replace": "\"dynamodb:LeadingKeys\" = [\"EV|*\"] }"
+  },
+  {
+    "id": "ddb-shard-validation-removed",
+    "module": "dynamodb",
+    "file": "variables.tf",
+    "find": "condition     = var.index_shards >= 1 && var.index_shards <= 4 && floor(var.index_shards) == var.index_shards",
+    "replace": "condition     = true"
+  },
+  {
+    "id": "ddb-kv-ttl-wrong",
+    "module": "dynamodb",
+    "file": "main.tf",
+    "find": "var.purpose == \"store\" ? \"ttlEpoch\" : \"expiresAt\"",
+    "replace": "var.purpose == \"store\" ? \"ttlEpoch\" : \"ttlEpoch\""
+  },
+  {
+    "id": "ddb-kv-index-policy",
+    "module": "dynamodb",
+    "file": "main.tf",
+    "find": "var.purpose == \"store\" ? local.index_arns : []",
+    "replace": "local.index_arns"
+  },
+  {
+    "id": "ddb-sse-disabled",
+    "module": "dynamodb",
+    "file": "main.tf",
+    "find": "server_side_encryption { enabled = true }",
+    "replace": "server_side_encryption { enabled = false }"
+  },
+  {
+    "id": "ddb-kv-unexpected-metadata",
+    "module": "dynamodb",
+    "file": "main.tf",
+    "find": "count      = var.purpose == \"store\" && var.protection == \"disposable\" ? 1 : 0",
+    "replace": "count      = var.protection == \"disposable\" ? 1 : 0"
   }
 ]

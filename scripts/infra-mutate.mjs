@@ -9,6 +9,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { resolve } from "node:path";
+import { dynamoMetadataProtection } from "./infra-security-contract.mjs";
 import { capturedShape, checkShape, shapeFixture } from "./infra-shapes.mjs";
 
 const root = resolve("infra/modules/aws");
@@ -121,6 +122,8 @@ try {
       ["test", "-no-color", "-filter=tests/contract.tftest.hcl"],
       target,
     );
+    if (component === "dynamodb" && !dynamoMetadataProtection(target))
+      throw new Error("DynamoDB metadata protection baseline failed");
     if (validated.status !== 0 || tested.status !== 0)
       throw new Error(
         `Baseline failed for ${component}: ${tested.stdout} ${tested.stderr} ${validated.stderr}`,
@@ -148,6 +151,9 @@ try {
       validation.status !== 0 ? "validate" : "",
       tests.status !== 0 ? "tests" : "",
       result.differs ? "shape" : "",
+      mutation.module === "dynamodb" && !dynamoMetadataProtection(target)
+        ? "source"
+        : "",
     ].filter(Boolean);
     console.log(
       `${mutation.id}: ${caught.length ? caught.join(", ") : "MISSED"}`,

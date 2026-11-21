@@ -1,7 +1,10 @@
 # Winterbaume gaps found by Terraform provider probes
 
-Target: source revision `69fed1d7fb0eb9a2738ff3274197c7591129c4cb` (server 0.2.8),
-unless stated otherwise. `pnpm infra:probe-emulated` creates an isolated local server,
+The historical provider probe below targeted revision `69fed1d7fb0eb9a2738ff3274197c7591129c4cb`.
+The pinned revision is `79c452d2bb2844abf771cfa4a497275c24b46489`. Its S3 lifecycle
+header, DynamoDB SSE and deletion protection, EventBridge retry/DLQ fields and Lambda partial-batch
+setting now pass direct readback probes; their former exceptions are removed. The remaining
+sections describe the historical observations unless stated otherwise. `pnpm infra:probe-emulated` creates an isolated local server,
 uses the real AWS provider with loopback-only endpoints and no AWS credentials, and saves
 Terraform apply and provider debug logs in an ignored scratch directory. Runs are capped
 at 90 seconds per apply; a timeout is a probe limit, not an AWS error response. The probe
@@ -28,6 +31,8 @@ stated; successful creation by itself does not prove all settings were retained.
 
 ## S3 lifecycle configuration does not stabilize
 
+Fixed at pinned revision `79c452d2bb2844abf771cfa4a497275c24b46489`: the lifecycle header is retained.
+
 - Resource: `aws_s3_bucket_lifecycle_configuration` in the unchanged S3 module. The
   provider sends `PutBucketLifecycleConfiguration` with header
   `x-amz-transition-default-minimum-object-size: all_storage_classes_128K`. Winterbaume
@@ -49,6 +54,8 @@ stated; successful creation by itself does not prove all settings were retained.
 
 ## DynamoDB server-side encryption cannot be read back
 
+Fixed at pinned revision `79c452d2bb2844abf771cfa4a497275c24b46489`: the repeat plan retains the enabled encryption setting.
+
 - Resource: `aws_dynamodb_table`, `server_side_encryption { enabled = true }`.
   The provider sends `CreateTable` with `SSESpecification: { "Enabled": true }`;
   `DescribeTable` returns no `SSEDescription` field. There is no error. This probe
@@ -56,6 +63,8 @@ stated; successful creation by itself does not prove all settings were retained.
   in-memory storage cannot demonstrate encryption at rest.
 
 ## DynamoDB deletion protection is ignored
+
+Fixed at pinned revision `79c452d2bb2844abf771cfa4a497275c24b46489`: a protected table refuses deletion.
 
 - Resource: `aws_dynamodb_table`, `deletion_protection_enabled: true`. With
   providers 6.30.0 and 6.73.0, the production-mode module applies successfully, but
@@ -76,14 +85,16 @@ stated; successful creation by itself does not prove all settings were retained.
 
 ## DynamoDB conditional updates are not atomic with their checks
 
-- Revision: `69fed1d7fb0eb9a2738ff3274197c7591129c4cb`. `UpdateItem` reads and
+- Revision: `69fed1d7fb0eb9a2738ff3274197c7591129c4cb`; the pinned revision `79c452d2bb2844abf771cfa4a497275c24b46489` still has the separate `get_item` and `update_item` calls. `UpdateItem` reads and
   evaluates `ConditionExpression` in the request handler, then separately calls the backend
   update. Concurrent requests can both pass the same old revision. During the KV contract,
   50 concurrent revision-guarded increments initially returned only 49 distinct results.
   The handler implementation confirms the check and write are separate awaited operations.
   The KV runtime returns the atomic `ADD` result, which lets the contract pass, but this
   emulator cannot prove the atomicity of conditional changes, expiry resets or overflow
-  guards under concurrent writes. Real DynamoDB verification remains necessary.
+  guards under concurrent writes. At the current pin, four of 200 concurrent updates with
+`attribute_not_exists` all succeeded on the same item. The emulator test now reprobes this
+race and fails if it cannot reproduce the listed exception. Real DynamoDB verification remains necessary.
 
 ## Lambda resource policy conditions are discarded
 
@@ -96,6 +107,8 @@ stated; successful creation by itself does not prove all settings were retained.
   their enforcement.
 
 ## Lambda partial batch response setting is discarded
+
+Fixed at pinned revision `79c452d2bb2844abf771cfa4a497275c24b46489`: ReportBatchItemFailures is returned.
 
 - Resource: `aws_lambda_event_source_mapping`. The provider's
   `CreateEventSourceMapping` request includes
@@ -114,6 +127,8 @@ stated; successful creation by itself does not prove all settings were retained.
   must filter returned `FunctionArn` themselves rather than trust this server-side filter.
 
 ## EventBridge retry policy is discarded
+
+Fixed at pinned revision `79c452d2bb2844abf771cfa4a497275c24b46489`: retry and DLQ settings are returned.
 
 - Resource: `aws_cloudwatch_event_target`. `PutTargets` sends `RetryPolicy` with
   `MaximumEventAgeInSeconds: 86400` and `MaximumRetryAttempts: 185` and succeeds;
@@ -175,8 +190,8 @@ stated; successful creation by itself does not prove all settings were retained.
 The real-provider integration workflow checks the supported API readbacks and resource
 inventories with named, self-verifying exceptions for the gaps above. Its filtered repeat
 plan is not a truly empty unfiltered Terraform plan. IAM enforcement, encryption at rest,
-function execution, deletion protection, lifecycle and the other excluded behavior remain
-unproven until an emulator fix or the real AWS deployment.
+function execution, actual encryption at rest, lifecycle execution, IAM enforcement and the
+remaining excluded behavior remain unproven until a real AWS deployment or emulator support.
 
 ## Upstream issues
 
@@ -209,11 +224,11 @@ reproduces).
 
 ## Lambda VPC configuration is discarded
 
-At pinned revision `69fed1d7fb0eb9a2738ff3274197c7591129c4cb`, Lambda
+At both historical revision `69fed1d7fb0eb9a2738ff3274197c7591129c4cb` and pinned revision `79c452d2bb2844abf771cfa4a497275c24b46489`, Lambda
 `CreateFunction` accepts `VpcConfig` containing `SubnetIds: ["subnet-12345678"]` and
 `SecurityGroupIds: ["sg-12345678"]` with HTTP 201, but both the create response and
 subsequent `GetFunction` HTTP 200 omit `VpcConfig`. There is no error. The emulator cannot
 prove Lambda networking or its provider readback. The apply harness reproduces this gap on
 every run before omitting only the VPC block in its temporary module copy; the network role
 policy and all other generated resources remain in the emulated apply. Terraform mock tests
-cover the intended block. This gap is not yet filed upstream.
+cover the intended block. Filed as [issue #62](https://github.com/moriyoshi/winterbaume/issues/62).

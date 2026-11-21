@@ -84,6 +84,14 @@ describe("Terraform generator", () => {
       expect(containsLocalPath(content, process.cwd())).toBe(false);
     }
   });
+  it("passes a custom store index-shard count to the module", () => {
+    const base = raw(shared);
+    base.store = { ...base.store, config: { indexShards: 2 } };
+    const files = terraform(resolveStack(base));
+    expect(parsed(files, "main.tf.json")).toMatchObject({
+      module: { store: { index_shards: 2 } },
+    });
+  });
   it("explains standalone has no Terraform", () => {
     expect(generate(local, options)).toEqual({
       kind: "not-applicable",

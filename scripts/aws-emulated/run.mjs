@@ -4,18 +4,22 @@ import { createServer } from "node:net";
 import { fileURLToPath } from "node:url";
 import { createAwsTestNamespace } from "../../packages/testing/src/aws-emulator.ts";
 import { client } from "./client.mjs";
+import { checkConditionalUpdateGap } from "./gap-checks.mjs";
+import { loadGaps, skipped } from "./gaps.mjs";
 import { probeControl } from "./probe-control.mjs";
 import { probeDynamo } from "./probe-dynamodb.mjs";
 import { probeS3 } from "./probe-s3.mjs";
 import { probeSqs } from "./probe-sqs.mjs";
 import { moduleShapes } from "./shapes.mjs";
 
-const binary = fileURLToPath(
-  new URL(
-    "../../.agents-workspace/tmp/winterbaume-69fed1d7fb0eb9a2738ff3274197c7591129c4cb/target/debug/winterbaume-server",
-    import.meta.url,
-  ),
-);
+const binary =
+  process.env.ERRTRAQ_WINTERBAUME_BINARY ??
+  fileURLToPath(
+    new URL(
+      "../../.agents-workspace/tmp/winterbaume-79c452d2bb2844abf771cfa4a497275c24b46489/target/debug/winterbaume-server",
+      import.meta.url,
+    ),
+  );
 try {
   await access(binary);
 } catch {
@@ -47,7 +51,7 @@ processHandle.once("exit", (code) => {
 const endpoint = `http://127.0.0.1:${port}`;
 try {
   let ready = false;
-  for (let i = 0; i < 100; i++) {
+  for (let i = 0; i < 600; i++) {
     if (exited !== undefined)
       throw new Error(`Emulator exited (${exited}): ${stderr}`);
     try {
@@ -105,8 +109,20 @@ try {
     },
     shapes.kv,
     shapes.ttl,
+    shapes.kvTtl,
+    shapes.metadata,
   );
   try {
+    const metadata = await api.dynamo("GetItem", {
+      TableName: first.table,
+      Key: { PK: shapes.metadata.PK, SK: shapes.metadata.SK },
+      ConsistentRead: true,
+    });
+    if (
+      metadata.Item?.projectTimeShards?.N !==
+      shapes.metadata.projectTimeShards.N
+    )
+      throw new Error("Module-derived shard metadata missing");
     const second = await createAwsTestNamespace(
       api,
       shapes.table,
@@ -115,6 +131,10 @@ try {
         attributes: shapes.dlq,
         maxReceiveCount: 3,
       },
+      undefined,
+      shapes.ttl,
+      undefined,
+      shapes.metadata,
     );
     try {
       if (
@@ -155,6 +175,8 @@ try {
     if (!removed) throw new Error("Namespace cleanup left a resource behind");
   }
   console.log("PASS namespace cleanup");
+  await checkConditionalUpdateGap(api);
+  skipped(loadGaps(), "dynamodb-conditional-atomicity");
   console.log("Running DynamoDB KV contract against the unmodified emulator");
   const kvContract = spawn(
     "pnpm",
@@ -170,7 +192,7 @@ try {
         ...process.env,
         ERRTRAQ_DYNAMO_EMULATOR: endpoint,
         ERRTRAQ_DYNAMO_KV_SHAPE: JSON.stringify(shapes.kv),
-        ERRTRAQ_DYNAMO_TTL_ATTRIBUTE: shapes.ttl,
+        ERRTRAQ_DYNAMO_TTL_ATTRIBUTE: shapes.kvTtl,
       },
     },
   );

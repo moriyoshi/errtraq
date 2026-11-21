@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { element } from "./client.mjs";
 import { canonicalPolicy, capabilityPolicy } from "./expected.mjs";
+import { moduleShapes } from "./shapes.mjs";
 
 const sorted = (values) => [...values].sort();
 async function iam(c, action, values = {}) {
@@ -40,29 +41,40 @@ export async function verifyDeployment(c, stack, view, account) {
     resources.store = `arn:aws:rds-db:${stack.store.config.region}:${account}:dbuser:${stack.store.config.resourceId}/${stack.store.config.user}`;
   }
   for (const purpose of rds ? ["kv"] : ["store", "kv"]) {
-    const tableName = `${name}-${purpose}`;
+    const tableName = purpose === "store" ? `${name}-store-v2` : `${name}-kv`;
     const table = (await c.dynamo("DescribeTable", { TableName: tableName }))
       .Table;
     assert.equal(table.TableName, tableName);
     assert.equal(table.BillingModeSummary.BillingMode, "PAY_PER_REQUEST");
+    assert.equal(table.SSEDescription?.Status, "ENABLED");
+    const shape = (await moduleShapes())[purpose === "store" ? "table" : "kv"];
     assert.deepEqual(
-      sorted(
-        (table.GlobalSecondaryIndexes ?? []).map((index) => index.IndexName),
-      ),
-      purpose === "store"
-        ? Array.from({ length: 8 }, (_, i) => `gsi${i + 1}`)
-        : [],
+      sorted((table.GlobalSecondaryIndexes ?? []).map((i) => i.IndexName)),
+      sorted((shape.GlobalSecondaryIndexes ?? []).map((i) => i.IndexName)),
     );
     for (const index of table.GlobalSecondaryIndexes ?? []) {
-      const n = index.IndexName.slice(3);
-      assert.deepEqual(index.KeySchema, [
-        { AttributeName: `GSI${n}PK`, KeyType: "HASH" },
-        { AttributeName: `GSI${n}SK`, KeyType: "RANGE" },
-      ]);
-      assert.equal(index.Projection.ProjectionType, "ALL");
+      const expected = shape.GlobalSecondaryIndexes.find(
+        (i) => i.IndexName === index.IndexName,
+      );
+      assert.deepEqual(index.KeySchema, expected.KeySchema);
+      assert.equal(index.Projection.ProjectionType, "KEYS_ONLY");
+    }
+    if (purpose === "store") {
+      const metadata = await c.dynamo("GetItem", {
+        TableName: tableName,
+        Key: { PK: { S: "META|schema" }, SK: { S: "DATA" } },
+        ConsistentRead: true,
+      });
+      assert.equal(
+        metadata.Item.projectTimeShards.N,
+        String(stack.store.config.indexShards ?? 4),
+      );
     }
     const ttl = await c.dynamo("DescribeTimeToLive", { TableName: tableName });
-    assert.equal(ttl.TimeToLiveDescription.AttributeName, "expiresAt");
+    assert.equal(
+      ttl.TimeToLiveDescription.AttributeName,
+      purpose === "store" ? "ttlEpoch" : "expiresAt",
+    );
     assert.equal(ttl.TimeToLiveDescription.TimeToLiveStatus, "ENABLED");
     const pitr = await c.dynamo("DescribeContinuousBackups", {
       TableName: tableName,

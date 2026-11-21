@@ -7,9 +7,9 @@ import { fileURLToPath } from "node:url";
 const root = fileURLToPath(
   new URL("../../.agents-workspace/tmp/", import.meta.url),
 );
-const revision = "69fed1d7fb0eb9a2738ff3274197c7591129c4cb";
+const revision = "79c452d2bb2844abf771cfa4a497275c24b46489";
 const sha256 =
-  "6e48ddc5b3654d7557248b397f8afffb4114b83c2f76c26289ffeaa995d145d9";
+  "1ae53165343300f21e83ba63f611d8ce51f0afd3bb52816604329da3f32e94a0";
 const base = join(root, `winterbaume-${revision}`);
 const binary = join(base, "target/debug/winterbaume-server");
 try {
