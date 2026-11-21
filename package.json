@@ -19,7 +19,8 @@
     "test:aws-emulated": "node scripts/aws-emulated/run.mjs",
     "infra:probe-emulated": "node scripts/aws-emulated/probe-terraform.mjs",
     "infra:apply-emulated": "node scripts/aws-emulated/apply-emulated.mjs",
-    "aws-emulator:install-s3-patched": "node scripts/aws-emulated/install-s3-patched.mjs"
+    "aws-emulator:install-s3-patched": "node scripts/aws-emulated/install-s3-patched.mjs",
+    "test:workers-smoke": "node scripts/workers-smoke.mjs"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.15",
@@ -37,6 +38,7 @@
     "@errtraq/store-sql": "workspace:*",
     "@sentry/node": "^11.15.0",
     "@types/node": "^26.6.6",
+    "miniflare": "4.20260730.0",
     "typescript": "~5.9.3",
     "vitest": "5.0.5",
     "zod": "4.6.7"

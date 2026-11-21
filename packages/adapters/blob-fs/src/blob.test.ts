@@ -9,7 +9,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { join } from "node:path";
-import { BlobCorruptError } from "@errtraq/core";
+import { BlobCorruptError, BlobInvalidKeyError } from "@errtraq/core";
 import { blobStoreContract } from "@errtraq/testing";
 import { afterAll, expect, it, vi } from "vitest";
 import { create as createAdapter } from "./index.js";
@@ -29,20 +29,17 @@ blobStoreContract(() =>
   create({ root: join(directory, `root-${++sequence}`) }),
 );
 afterAll(() => rmSync(directory, { recursive: true, force: true }));
-it("encodes unsafe keys without leaving the root", async () => {
-  const root = join(directory, "encoded");
-  const b = create({ root });
-  for (const key of [
-    "../escape",
-    "/absolute/path",
-    "a/../../outside",
-    "a\0b",
-  ]) {
-    await b.put(key, new TextEncoder().encode(key));
-    const data = await b.get(key);
-    expect(data).not.toBeNull();
-    if (data) expect(await new Response(data).text()).toBe(key);
-  }
+it("rejects traversal and control keys while safely encoding absolute-looking keys", async () => {
+  const b = create({ root: join(directory, "encoded") });
+  for (const key of ["../escape", "a/../../outside", "a\0b"])
+    await expect(b.put(key, new Uint8Array())).rejects.toBeInstanceOf(
+      BlobInvalidKeyError,
+    );
+  const key = "/absolute/path";
+  await b.put(key, new TextEncoder().encode(key));
+  const data = await b.get(key);
+  if (!data) throw new Error("Missing object");
+  expect(await new Response(data).text()).toBe(key);
 });
 it("does not follow object symlinks", async () => {
   const root = join(directory, "symlinks");

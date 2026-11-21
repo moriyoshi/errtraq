@@ -272,7 +272,9 @@ export interface BlobMetadata {
   contentType?: string;
 }
 
-/** Blob read capability includes whatever prefix-scoped listing is required to distinguish a missing key from an authorization failure. */
+/** Blob keys are nonempty, at most 1024 UTF-8 bytes, contain no control characters,
+ * and contain no `.` or `..` path segments. Invalid keys raise BlobInvalidKeyError.
+ * Read capability includes prefix-scoped listing for missing-key disambiguation. */
 export interface BlobStore {
   put(
     key: string,

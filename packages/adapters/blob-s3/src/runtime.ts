@@ -1,14 +1,22 @@
 import { signAwsRequest } from "@errtraq/aws-signing";
 import {
+  BlobAccessDeniedError,
+  BlobBucketNotFoundError,
   BlobCorruptError,
+  BlobError,
+  BlobInvalidKeyError,
   type BlobMetadata,
+  BlobPreconditionError,
   type BlobStore,
+  BlobThrottledError,
+  BlobUnavailableError,
   type CreateContext,
   type Cursor,
   decodeCursor,
   encodeCursor,
   InvalidCursorError,
   pageLimit,
+  validateBlobKey,
 } from "@errtraq/core";
 import { XMLParser, XMLValidator } from "fast-xml-parser";
 import type { Config } from "./stack.js";
@@ -77,20 +85,36 @@ function checkedStream(
   body: ReadableStream<Uint8Array>,
   expected: number | undefined,
 ): ReadableStream<Uint8Array> {
-  if (expected === undefined) return body;
+  const reader = body.getReader();
   let count = 0;
-  return body.pipeThrough(
-    new TransformStream({
-      transform(chunk, controller) {
-        count += chunk.byteLength;
-        controller.enqueue(chunk);
-      },
-      flush() {
-        if (count !== expected)
-          throw new BlobCorruptError("S3 response length mismatch");
-      },
-    }),
-  );
+  return new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      try {
+        const item = await reader.read();
+        if (item.done) {
+          reader.releaseLock();
+          if (expected !== undefined && count !== expected)
+            controller.error(
+              new BlobCorruptError("S3 response length mismatch"),
+            );
+          else controller.close();
+        } else {
+          count += item.value.byteLength;
+          controller.enqueue(item.value);
+        }
+      } catch (error) {
+        reader.releaseLock();
+        controller.error(error);
+      }
+    },
+    async cancel(reason) {
+      try {
+        await reader.cancel(reason);
+      } finally {
+        reader.releaseLock();
+      }
+    },
+  });
 }
 /** S3-compatible BlobStore. Streams are uploaded in bounded multipart chunks. */
 export class S3BlobStore implements BlobStore {
@@ -111,20 +135,13 @@ export class S3BlobStore implements BlobStore {
       this.endpoint.hash
     )
       throw new Error("Invalid S3 endpoint");
-    this.fetcher = options.fetch ?? fetch;
+    this.fetcher = (options.fetch ?? globalThis.fetch).bind(globalThis);
     this.sleep =
       options.sleep ??
       ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
   }
   private url(key?: string, query?: Record<string, string>): URL {
-    if (
-      key !== undefined &&
-      (!key ||
-        key.split("/").some((segment) => segment === "." || segment === ".."))
-    )
-      throw new Error(
-        "S3 key cannot be represented safely by Web URL handling",
-      );
+    if (key !== undefined) validateBlobKey(key);
     const url = new URL(this.endpoint);
     const base = url.pathname.replace(/\/$/, "");
     const bucket = encodeURIComponent(this.options.bucket);
@@ -176,27 +193,79 @@ export class S3BlobStore implements BlobStore {
         return response;
       } catch (error) {
         last = error;
-        if (attempt === 3) throw error;
+        if (attempt === 3)
+          throw new BlobUnavailableError(`S3 request failed: ${String(error)}`);
         await this.sleep(50 * 2 ** attempt);
       }
     }
     throw last;
   }
-  private async requireOk(response: Response, action: string): Promise<void> {
-    if (!response.ok) {
-      await response.body?.cancel();
-      throw new Error(`S3 ${action} failed (${response.status})`);
+  private async error(response: Response, action: string): Promise<BlobError> {
+    const status = response.status;
+    let code: string | undefined =
+      response.headers.get("x-amz-error-code") ?? undefined;
+    try {
+      const text = await response.text();
+      if (text) {
+        const value = record(parseXml(text).Error).Code;
+        if (typeof value === "string") code = value;
+      }
+    } catch {
+      /* HEAD responses and non-XML errors may not have a body. */
     }
+    return this.providerError(status, action, code);
   }
-  private async missing(response: Response, key: string): Promise<boolean> {
+  private providerError(
+    status: number,
+    action: string,
+    code?: string,
+  ): BlobError {
+    const message =
+      status === 301 || status === 307
+        ? `S3 ${action} failed (${status}): check the bucket region and endpoint`
+        : `S3 ${action} failed (${status}${code ? `, ${code}` : ""})`;
+    if (code === "NoSuchBucket")
+      return new BlobBucketNotFoundError(message, code);
+    if (status === 403 || code === "AccessDenied")
+      return new BlobAccessDeniedError(message, code);
+    if (status === 429 || code === "SlowDown" || code === "Throttling")
+      return new BlobThrottledError(message, code);
+    if (status === 412 || code === "PreconditionFailed")
+      return new BlobPreconditionError(message, code);
+    if (status >= 500 || status === 408)
+      return new BlobUnavailableError(message, code);
+    if (code === "InvalidArgument" || code === "InvalidObjectName")
+      return new BlobInvalidKeyError(message, code);
+    return new BlobError(message, code);
+  }
+  private async requireOk(response: Response, action: string): Promise<void> {
+    if (!response.ok) throw await this.error(response, action);
+  }
+  private async missing(
+    response: Response,
+    key: string,
+    action: "get" | "head",
+  ): Promise<boolean> {
+    if (response.status !== 404 && response.status !== 403) return false;
+    const failure = await this.error(response, action);
+    if (failure.providerCode === "NoSuchBucket") throw failure;
     if (response.status === 404) {
-      await response.body?.cancel();
-      return true;
+      if (
+        failure.providerCode === "NoSuchKey" ||
+        (action === "head" && !failure.providerCode)
+      )
+        return true;
+      throw failure;
     }
-    if (response.status !== 403) return false;
-    await response.body?.cancel();
-    const result = await this.listPage(key, undefined, 1);
-    return !result.keys.includes(key);
+    if (failure.providerCode && failure.providerCode !== "AccessDenied")
+      throw failure;
+    try {
+      const result = await this.listPage(key, undefined, 1);
+      if (!result.keys.includes(key)) return true;
+    } catch {
+      /* The original error is more informative than the disambiguation failure. */
+    }
+    throw failure;
   }
   async put(
     key: string,
@@ -221,22 +290,28 @@ export class S3BlobStore implements BlobStore {
       await response.body?.cancel();
       return;
     }
-    const init = await this.request(
-      "POST",
-      this.url(key, { uploads: "" }),
-      metadata?.contentType ? { "content-type": metadata.contentType } : {},
-    );
-    await this.requireOk(init, "start multipart upload");
-    const uploadId = record(
-      parseXml(await init.text()).InitiateMultipartUploadResult,
-    ).UploadId;
-    if (typeof uploadId !== "string" || !uploadId)
-      throw new BlobCorruptError("Missing multipart upload ID");
+    validateBlobKey(key);
+    const reader = body.getReader();
+    let uploadId: string | undefined;
     const parts: string[] = [];
     let total = 0,
       used = 0;
     let buffer = new Uint8Array(PART_SIZE);
     const upload = async (chunk: Uint8Array) => {
+      if (!uploadId) {
+        const init = await this.request(
+          "POST",
+          this.url(key, { uploads: "" }),
+          metadata?.contentType ? { "content-type": metadata.contentType } : {},
+        );
+        await this.requireOk(init, "start multipart upload");
+        const id = record(
+          parseXml(await init.text()).InitiateMultipartUploadResult,
+        ).UploadId;
+        if (typeof id !== "string" || !id)
+          throw new BlobCorruptError("Missing multipart upload ID");
+        uploadId = id;
+      }
       if (parts.length >= MAX_PARTS)
         throw new Error("S3 multipart upload exceeds 10000 parts");
       const response = await this.request(
@@ -251,7 +326,6 @@ export class S3BlobStore implements BlobStore {
       if (!etag) throw new BlobCorruptError("Missing multipart ETag");
       parts.push(etag);
     };
-    const reader = body.getReader();
     try {
       for (;;) {
         const item = await reader.read();
@@ -265,27 +339,24 @@ export class S3BlobStore implements BlobStore {
         )
           throw new Error("Size mismatch");
         for (let offset = 0; offset < item.value.length; ) {
-          const length = Math.min(PART_SIZE - used, item.value.length - offset);
-          buffer.set(item.value.subarray(offset, offset + length), used);
-          used += length;
-          offset += length;
           if (used === PART_SIZE) {
             await upload(buffer);
             buffer = new Uint8Array(PART_SIZE);
             used = 0;
           }
+          const length = Math.min(PART_SIZE - used, item.value.length - offset);
+          buffer.set(item.value.subarray(offset, offset + length), used);
+          used += length;
+          offset += length;
         }
       }
       if (metadata?.size !== undefined && metadata.size !== total)
         throw new Error("Size mismatch");
-      if (total === 0) {
-        const abort = await this.request("DELETE", this.url(key, { uploadId }));
-        await this.requireOk(abort, "abort empty multipart upload");
-        await abort.body?.cancel();
-        await this.put(key, new Uint8Array(), metadata);
+      if (!uploadId) {
+        await this.put(key, buffer.subarray(0, used), metadata);
         return;
       }
-      if (used > 0) await upload(buffer.subarray(0, used));
+      if (used) await upload(buffer.subarray(0, used));
       const payload = `<CompleteMultipartUpload>${parts.map((etag, i) => `<Part><PartNumber>${i + 1}</PartNumber><ETag>${escapeXml(etag)}</ETag></Part>`).join("")}</CompleteMultipartUpload>`;
       const complete = await this.request(
         "POST",
@@ -295,15 +366,32 @@ export class S3BlobStore implements BlobStore {
       );
       await this.requireOk(complete, "complete multipart upload");
       const result = parseXml(await complete.text());
-      if (result.Error || !result.CompleteMultipartUploadResult)
-        throw new Error("S3 multipart completion failed");
+      if (result.Error) {
+        const code = record(result.Error).Code;
+        throw this.providerError(
+          200,
+          "complete multipart upload",
+          typeof code === "string" ? code : undefined,
+        );
+      }
+      if (!result.CompleteMultipartUploadResult)
+        throw new BlobError("S3 multipart completion failed");
     } catch (error) {
       await reader.cancel(error).catch(() => {});
-      try {
-        const abort = await this.request("DELETE", this.url(key, { uploadId }));
-        await abort.body?.cancel();
-      } catch {
-        /* Preserve the upload error. */
+      if (uploadId) {
+        try {
+          const abort = await this.request(
+            "DELETE",
+            this.url(key, { uploadId }),
+          );
+          await this.requireOk(abort, "abort multipart upload");
+          await abort.body?.cancel();
+        } catch (abortError) {
+          throw new AggregateError(
+            [error, abortError],
+            "S3 upload and multipart abort failed",
+          );
+        }
       }
       throw error;
     } finally {
@@ -340,7 +428,7 @@ export class S3BlobStore implements BlobStore {
       await response.body?.cancel();
       return (await this.head(key)) ? emptyStream() : null;
     }
-    if (await this.missing(response, key)) return null;
+    if (await this.missing(response, key, "get")) return null;
     await this.requireOk(response, "get");
     if (range && response.status !== 206) {
       await response.body?.cancel();
@@ -384,7 +472,7 @@ export class S3BlobStore implements BlobStore {
   }
   async head(key: string): Promise<BlobMetadata | null> {
     const response = await this.request("HEAD", this.url(key));
-    if (await this.missing(response, key)) return null;
+    if (await this.missing(response, key, "head")) return null;
     await this.requireOk(response, "head");
     const length = response.headers.get("content-length");
     const size = length === null ? NaN : Number(length);

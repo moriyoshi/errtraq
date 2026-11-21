@@ -1,3 +1,4 @@
+export * from "./blob-key.js";
 export * from "./bootstrap.js";
 export * from "./consumer.js";
 export * from "./cron.js";

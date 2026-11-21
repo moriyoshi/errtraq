@@ -79,7 +79,7 @@ export class SqsQueue implements Queue<SqsEvent, SqsResponse> {
     )
       throw new Error("Invalid SQS endpoint");
     this.endpoint = endpoint.origin;
-    this.fetcher = options.fetch ?? fetch;
+    this.fetcher = (options.fetch ?? globalThis.fetch).bind(globalThis);
     this.sleep =
       options.sleep ??
       ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));

@@ -4,6 +4,7 @@ import {
   type ApiTokenId,
   type ArchiveState,
   type ArchiveStore,
+  BlobInvalidKeyError,
   type BlobStore,
   type Clock,
   ConflictError,
@@ -1207,6 +1208,28 @@ export function blobStoreContract(
   _options: ContractOptions = {},
 ): void {
   describe("BlobStore contract", () => {
+    it("rejects nonportable object keys on every key operation", async () => {
+      const b = await factory();
+      for (const key of [
+        "",
+        ".",
+        "a/../b",
+        "a/./b",
+        "a\u0001b",
+        "é".repeat(513),
+      ]) {
+        for (const action of [
+          () => b.put(key, new Uint8Array()),
+          () => b.get(key),
+          () => b.head(key),
+          () => b.delete(key),
+          ...(b.presign
+            ? [() => b.presign?.(key, { method: "GET", expiresInSec: 60 })]
+            : []),
+        ])
+          await expect(action()).rejects.toBeInstanceOf(BlobInvalidKeyError);
+      }
+    });
     it("stores byte arrays and streams, reports metadata, and deletes idempotently", async () => {
       const b = await factory();
       const first = new TextEncoder().encode("first");

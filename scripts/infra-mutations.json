@@ -163,5 +163,12 @@
     "id": "root-unescaped-literal",
     "root": "existing",
     "operation": "unescaped-literal"
+  },
+  {
+    "id": "s3-missing-abort-multipart",
+    "module": "s3",
+    "file": "main.tf",
+    "find": "write  = [\"s3:PutObject\", \"s3:AbortMultipartUpload\"]",
+    "replace": "write  = [\"s3:PutObject\"]"
   }
 ]

@@ -13,7 +13,7 @@ run "policies_and_lifecycle" {
         { Effect = "Allow", Action = ["s3:GetObject"], Resource = [for prefix in prefixes : "${aws_s3_bucket.this.arn}/${prefix}*"] },
         { Effect = "Allow", Action = ["s3:ListBucket"], Resource = aws_s3_bucket.this.arn, Condition = { StringLike = { "s3:prefix" = [for prefix in prefixes : "${prefix}*"] } } }
       ] }) &&
-      jsonencode(jsondecode(output.policies.write[purpose])) == jsonencode({ Version = "2012-10-17", Statement = [{ Effect = "Allow", Action = ["s3:PutObject"], Resource = [for prefix in prefixes : "${aws_s3_bucket.this.arn}/${prefix}*"] }] }) &&
+      jsonencode(jsondecode(output.policies.write[purpose])) == jsonencode({ Version = "2012-10-17", Statement = [{ Effect = "Allow", Action = ["s3:PutObject", "s3:AbortMultipartUpload"], Resource = [for prefix in prefixes : "${aws_s3_bucket.this.arn}/${prefix}*"] }] }) &&
       jsonencode(jsondecode(output.policies.delete[purpose])) == jsonencode({ Version = "2012-10-17", Statement = [{ Effect = "Allow", Action = ["s3:DeleteObject"], Resource = [for prefix in prefixes : "${aws_s3_bucket.this.arn}/${prefix}*"] }] }) &&
       jsonencode(jsondecode(output.policies.list[purpose])) == jsonencode({ Version = "2012-10-17", Statement = [{ Effect = "Allow", Action = ["s3:ListBucket"], Resource = aws_s3_bucket.this.arn, Condition = { StringLike = { "s3:prefix" = [for prefix in prefixes : "${prefix}*"] } } }] })
     ])

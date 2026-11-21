@@ -6,7 +6,10 @@ item should be resolved or removed once addressed. Milestone work itself is trac
 
 ## Open Items
 
-- [ ] M3 / M6: decide whether the BlobStore key contract needs to exclude empty and `.` / `..` path segments, which Web URL parsing cannot address as literal S3 path segments without normalizing them. — *source: M3b*
+- [ ] M3h: verify real S3 behavior for unsigned payloads over HTTP, URL-encoded listing spaces and plus signs, 403-versus-missing under the scoped read policy, and multipart-abort permissions. — *source: M3b review section B*
+- [ ] M3h / security: review the pinned `aws4fetch` 1.0.20 signing dependency; it is small and WebCrypto-compatible but has not been independently audited. — *source: M3b review section B*
+
+- [x] M3 / M6: define and enforce portable BlobStore key rules, including empty and `.` / `..` segments. — *source: M3b; resolved in M3b2*
 - [ ] M3: replace the local S3 UTF-8 decoder patch when Winterbaume fixes the new percent-decoding gap upstream. — *source: M3b*
 - [x] M3a2: add the local real-provider generated-root harness with API assertions, named gap checks, repeat and change plans, and destroy inventories. — *source: M3a2 provider probe*
 - [ ] M4 spike: confirm DuckDB iceberg-extension appends through a REST catalog against Lakekeeper and S3 Tables, and what Cloudflare Workers can do against R2 Data Catalog. — *source: JOURNAL 2026-11-21 — Project bootstrap decisions*

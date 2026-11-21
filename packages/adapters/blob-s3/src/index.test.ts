@@ -1,4 +1,14 @@
-import { BlobCorruptError, InvalidCursorError } from "@errtraq/core";
+import {
+  BlobAccessDeniedError,
+  BlobBucketNotFoundError,
+  BlobCorruptError,
+  BlobError,
+  BlobInvalidKeyError,
+  BlobPreconditionError,
+  BlobThrottledError,
+  BlobUnavailableError,
+  InvalidCursorError,
+} from "@errtraq/core";
 import { describe, expect, it, vi } from "vitest";
 import { create } from "./index.js";
 import { S3BlobStore, signS3Request } from "./runtime.js";
@@ -159,6 +169,162 @@ describe("S3 request signing", () => {
 });
 
 describe("S3 error handling and streaming", () => {
+  it("cancels a response body and releases its reader", async () => {
+    let canceled = false;
+    const stream = new ReadableStream<Uint8Array>({
+      cancel() {
+        canceled = true;
+      },
+    });
+    const s3 = store(
+      async () => new Response(stream, { headers: { "content-length": "5" } }),
+    );
+    const body = await s3.get("a");
+    if (!body) throw new Error("missing body");
+    await body.cancel();
+    expect(canceled).toBe(true);
+    expect(stream.locked).toBe(false);
+  });
+  it("puts small and empty streams directly, without multipart or abort permission", async () => {
+    const calls: string[] = [];
+    const s3 = store(async (_url, init) => {
+      calls.push(String(init?.method));
+      return new Response(null, { status: 200 });
+    });
+    for (const bytes of [new Uint8Array(), new Uint8Array([1, 2, 3])]) {
+      await s3.put(
+        "a",
+        new ReadableStream({
+          start(controller) {
+            controller.enqueue(bytes);
+            controller.close();
+          },
+        }),
+      );
+    }
+    expect(calls).toEqual(["PUT", "PUT"]);
+  });
+  it("reports both an upload failure and an abort denial", async () => {
+    const s3 = store(async (url, init) => {
+      if (init?.method === "POST" && String(url).includes("uploads="))
+        return new Response(
+          "<InitiateMultipartUploadResult><UploadId>upload</UploadId></InitiateMultipartUploadResult>",
+        );
+      return new Response("<Error><Code>AccessDenied</Code></Error>", {
+        status: 403,
+      });
+    });
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new Uint8Array(5 * 1024 * 1024 + 1));
+        controller.close();
+      },
+    });
+    const failure = await s3.put("a", body).catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(AggregateError);
+    expect((failure as AggregateError).errors).toHaveLength(2);
+    expect((failure as AggregateError).errors[1]).toBeInstanceOf(
+      BlobAccessDeniedError,
+    );
+  });
+  it("preserves an embedded multipart completion error code", async () => {
+    const s3 = store(async (url, init) => {
+      if (init?.method === "POST" && String(url).includes("uploads="))
+        return new Response(
+          "<InitiateMultipartUploadResult><UploadId>upload</UploadId></InitiateMultipartUploadResult>",
+        );
+      if (init?.method === "PUT")
+        return new Response(null, { headers: { etag: '"part"' } });
+      if (init?.method === "POST")
+        return new Response("<Error><Code>SlowDown</Code></Error>");
+      return new Response(null, { status: 204 });
+    });
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new Uint8Array(5 * 1024 * 1024 + 1));
+        controller.close();
+      },
+    });
+    await expect(s3.put("a", body)).rejects.toMatchObject({
+      name: "BlobThrottledError",
+      providerCode: "SlowDown",
+    });
+  });
+  it("reports a missing bucket instead of treating it as a missing object", async () => {
+    const s3 = store(
+      async () =>
+        new Response("<Error><Code>NoSuchBucket</Code></Error>", {
+          status: 404,
+        }),
+    );
+    await expect(s3.get("a")).rejects.toBeInstanceOf(BlobBucketNotFoundError);
+    await expect(s3.head("a")).rejects.toBeInstanceOf(BlobBucketNotFoundError);
+    await expect(
+      store(
+        async () =>
+          new Response(null, {
+            status: 404,
+            headers: { "x-amz-error-code": "NoSuchBucket" },
+          }),
+      ).head("a"),
+    ).rejects.toBeInstanceOf(BlobBucketNotFoundError);
+    expect(
+      await store(
+        async () =>
+          new Response("<Error><Code>NoSuchKey</Code></Error>", {
+            status: 404,
+          }),
+      ).get("a"),
+    ).toBeNull();
+    expect(
+      await store(async () => new Response(null, { status: 404 })).head("a"),
+    ).toBeNull();
+  });
+  it("maps provider failures to typed errors and preserves provider codes", async () => {
+    for (const [status, code, kind] of [
+      [403, "AccessDenied", BlobAccessDeniedError],
+      [429, "SlowDown", BlobThrottledError],
+      [412, "PreconditionFailed", BlobPreconditionError],
+      [400, "InvalidArgument", BlobInvalidKeyError],
+      [503, "ServiceUnavailable", BlobUnavailableError],
+      [301, "PermanentRedirect", BlobError],
+    ] as const) {
+      const s3 = store(
+        async () =>
+          new Response(`<Error><Code>${code}</Code></Error>`, { status }),
+      );
+      const error = await s3
+        .put("a", new Uint8Array())
+        .catch((err: unknown) => err);
+      expect(error).toBeInstanceOf(kind);
+      expect(error).toMatchObject({ providerCode: code });
+      if (status === 301)
+        expect(String(error)).toContain("region and endpoint");
+    }
+  });
+  it("retains the original clock-skew or access error when disambiguation fails", async () => {
+    let calls = 0;
+    const skew = store(async () => {
+      calls++;
+      return new Response("<Error><Code>RequestTimeTooSkewed</Code></Error>", {
+        status: 403,
+      });
+    });
+    await expect(skew.get("a")).rejects.toMatchObject({
+      providerCode: "RequestTimeTooSkewed",
+    });
+    expect(calls).toBe(1);
+    const denied = store(async (url) =>
+      String(url).includes("list-type=2")
+        ? new Response("<Error><Code>Other</Code></Error>", { status: 403 })
+        : new Response("<Error><Code>AccessDenied</Code></Error>", {
+            status: 403,
+          }),
+    );
+    await expect(denied.get("a")).rejects.toMatchObject({
+      providerCode: "AccessDenied",
+    });
+  });
   it("distinguishes an absent key from a denied existing key using scoped list", async () => {
     for (const [keys, expected] of [
       [[], null],
@@ -207,7 +373,7 @@ describe("S3 error handling and streaming", () => {
     const request = vi.fn(async () => new Response(null, { status: 204 }));
     const s3 = store(request);
     for (const key of ["", "a/./b", "a/../b"])
-      await expect(s3.delete(key)).rejects.toThrow("cannot be represented");
+      await expect(s3.delete(key)).rejects.toBeInstanceOf(BlobInvalidKeyError);
     expect(request).not.toHaveBeenCalled();
   });
   it("rejects ignored byte ranges and malformed cursors", async () => {
@@ -308,11 +474,12 @@ describe("S3 error handling and streaming", () => {
         "a",
         new ReadableStream({
           start(controller) {
-            controller.enqueue(new Uint8Array([1, 2]));
+            controller.enqueue(new Uint8Array(5 * 1024 * 1024 + 1));
+            controller.enqueue(new Uint8Array(2));
             controller.close();
           },
         }),
-        { size: 1 },
+        { size: 5 * 1024 * 1024 + 1 },
       ),
     ).rejects.toThrow("Size mismatch");
     expect(

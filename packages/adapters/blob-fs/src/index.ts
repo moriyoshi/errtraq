@@ -21,6 +21,7 @@ import {
   InvalidCursorError,
   type Logger,
   pageLimit,
+  validateBlobKey,
 } from "@errtraq/core";
 import { type BlobConfig, configSchema } from "./stack.js";
 
@@ -151,6 +152,7 @@ export class FsBlobStore implements BlobStore {
     body: Uint8Array | ReadableStream<Uint8Array>,
     metadata?: { contentType?: string; size?: number },
   ): Promise<void> {
+    validateBlobKey(key);
     const root = await this.root;
     const temp = join(root, `.tmp-${randomUUID()}`);
     const target = await this.path(key);
@@ -241,6 +243,7 @@ export class FsBlobStore implements BlobStore {
     key: string,
     options?: { range?: { offset: number; length?: number } },
   ): Promise<ReadableStream<Uint8Array> | null> {
+    validateBlobKey(key);
     const range = options?.range;
     if (
       range &&
@@ -300,6 +303,7 @@ export class FsBlobStore implements BlobStore {
     }
   }
   async head(key: string) {
+    validateBlobKey(key);
     let file: FileHandle;
     try {
       file = await open(await this.path(key), noFollow);
@@ -353,6 +357,7 @@ export class FsBlobStore implements BlobStore {
   }
 
   async delete(key: string) {
+    validateBlobKey(key);
     try {
       const root = await this.root;
       await unlink(await this.path(key));

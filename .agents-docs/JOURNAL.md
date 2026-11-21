@@ -686,3 +686,20 @@ integration while the existing validation gate continues to cover both provider 
 - The unmodified Winterbaume push driver runs the queue contract in shared and per-topic
   modes with polling, visibility and partial acknowledgements. It does not enforce real AWS
   IAM or execute Lambda; deployed event-source behavior still needs M3h.
+
+## 2026-11-21 — M3b2 S3 review, items 1 to 5
+
+- Worker global fetch requires the global receiver; S3 and SQS bind injected or ambient fetch,
+  and the opt-in Miniflare / workerd smoke test executes both bundles against loopback fakes.
+  Miniflare 4.20260730.0 is pinned for this test; its workerd postinstall is allowed explicitly.
+- The BlobStore contract now rejects empty keys, keys over 1,024 UTF-8 bytes, control
+  characters and dot path segments in S3, filesystem and memory implementations. The rule avoids
+  Web URL normalization ambiguity. S3 errors preserve provider codes and distinguish missing
+  buckets when S3 supplies the code. A body-less HEAD 404 remains ambiguous and is treated as a
+  missing object, because probing the bucket can require additional permissions.
+- Streaming reads forward cancellation to the underlying reader. Small streams use a single
+  PUT; multipart starts only beyond one full 5 MiB part. The S3 write policy now includes
+  prefix-scoped AbortMultipartUpload, tested by the Terraform contract and a mutation. A failed
+  upload and failed abort both surface in an AggregateError; lifecycle is the backstop.
+- Review items 6 to 10 remain for the next turn. The 403-versus-missing behavior, multipart
+  authorization, payload mode and URL-encoded plus behavior still require real AWS verification.

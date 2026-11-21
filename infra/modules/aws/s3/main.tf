@@ -64,7 +64,7 @@ locals {
   policies = {
     for capability, actions in {
       read   = ["s3:GetObject"]
-      write  = ["s3:PutObject"]
+      write  = ["s3:PutObject", "s3:AbortMultipartUpload"]
       delete = ["s3:DeleteObject"]
       list   = ["s3:ListBucket"]
       } : capability => {

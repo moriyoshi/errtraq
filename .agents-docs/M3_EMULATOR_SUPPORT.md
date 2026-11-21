@@ -61,11 +61,14 @@ credentials are used. Explicit binding values are also accepted by the runtime c
 for Web environments without Node globals. The default AWS endpoint uses virtual-hosted
 addressing; use `forcePathStyle` for the local emulator.
 
-The adapter uses unsigned SigV4 payloads and sends stream uploads as multipart parts of at
-most 5 MiB, retaining only a part for retry. S3 limits uploads to 10,000 parts. It rejects
-empty keys and keys containing `.` or `..` path segments: standard Web URL parsing would
-otherwise normalize such paths and address a different object. It rejects a non-advancing
-listing rather than silently returning repeated cursors.
+The adapter uses unsigned SigV4 payloads. Streams up to 5 MiB use a single PUT; larger
+streams use 5 MiB multipart parts, retaining only a part for retry, up to 10,000 parts.
+The write policy includes multipart abort; lifecycle remains the backstop. The portable
+BlobStore contract rejects empty keys, keys over 1,024 UTF-8 bytes, control characters and
+`.` or `..` path segments. A body-less HEAD 404 is treated as a missing key without an extra
+bucket probe: S3 does not provide the error code in that response, and a probe may require
+additional permissions. A GET 404 with `NoSuchBucket` raises `BlobBucketNotFoundError`.
+The adapter rejects a non-advancing listing rather than silently returning repeated cursors.
 
 The unmodified emulator still runs all other probes. The separate patched build is only for
 the S3 contract; installation requires Rust, network access, and substantial disk space,

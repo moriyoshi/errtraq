@@ -10,7 +10,7 @@ import type {
   Queue,
   StoredEvent,
 } from "@errtraq/core";
-import { InvalidCounterError } from "@errtraq/core";
+import { InvalidCounterError, validateBlobKey } from "@errtraq/core";
 import {
   bytes,
   compareUtf8,
@@ -32,6 +32,7 @@ export class MemoryBlobStore implements BlobStore {
     body: Uint8Array | ReadableStream<Uint8Array>,
     metadata?: { contentType?: string; size?: number },
   ): Promise<void> {
+    validateBlobKey(key);
     const data = await bytes(body);
     if (metadata?.size !== undefined && metadata.size !== data.length)
       throw new Error("Size mismatch");
@@ -41,6 +42,7 @@ export class MemoryBlobStore implements BlobStore {
     key: string,
     options?: { range?: { offset: number; length?: number } },
   ) {
+    validateBlobKey(key);
     const obj = this.objects.get(key);
     if (!obj) return null;
     const range = options?.range;
@@ -55,6 +57,7 @@ export class MemoryBlobStore implements BlobStore {
     );
   }
   async head(key: string) {
+    validateBlobKey(key);
     const obj = this.objects.get(key);
     return obj
       ? {
@@ -82,6 +85,7 @@ export class MemoryBlobStore implements BlobStore {
     );
   }
   async delete(key: string): Promise<void> {
+    validateBlobKey(key);
     this.objects.delete(key);
   }
 }
