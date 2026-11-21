@@ -788,3 +788,15 @@ large-table distributions to choose ordered index paths under default planner se
 planner can still choose other plans with different statistics or settings. The 255-character
 indexed key boundary needs a deliberate port-level treatment. Standalone secret identifiers
 resolve through the supplied environment; deployed secret resolution remains M3g.
+
+## 2026-11-21 — M3e revised DynamoDB and subject-index design
+
+The owner-selected design now uses sparse, eventually consistent GSIs with strong hydration,
+per-event or grouped issue updates, an opt-in hot-issue limit, and asynchronous reduced-subject
+indexing. Terraform provider 6.32.1 validated a numeric multi-attribute GSI key schema locally;
+that does not prove the AWS API or emulator behavior. Two proposed erasure guarantees remain
+review blockers: an eventual issue-index count cannot prove completeness or include archived
+history, and a separately closed admission epoch cannot fence a stale two-action event
+transaction without additional coordination. The companion design recommends a conditional
+fence action when erasure is enabled and calls out its conflict with the requested two-action
+shape. The new PII and lifecycle contracts also need cross-adapter review before coding.
