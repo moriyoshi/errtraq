@@ -70,6 +70,18 @@ try {
   let failed = false;
   for (const [service, checks] of Object.entries(results))
     for (const [name, result] of Object.entries(checks)) {
+      if (service === "s3" && name === "utf8-key-list") {
+        if (result.supported)
+          throw new Error(
+            "Winterbaume UTF-8 key gap no longer reproduces; remove the local patch",
+          );
+        if (result.detail !== "S3_UTF8_PERCENT_DECODER_GAP")
+          throw new Error(`Unexpected UTF-8 probe failure: ${result.detail}`);
+        console.log(
+          "KNOWN GAP s3 utf8-key-list: pinned emulator corrupts percent-encoded UTF-8 keys",
+        );
+        continue;
+      }
       console.log(
         `${result.supported ? "PASS" : "FAIL"} ${service} ${name}${result.detail ? `: ${result.detail}` : ""}`,
       );
@@ -143,6 +155,17 @@ try {
     if (!removed) throw new Error("Namespace cleanup left a resource behind");
   }
   console.log("PASS namespace cleanup");
+  const contract = spawn(
+    process.execPath,
+    ["scripts/aws-emulated/run-s3-contract.mjs"],
+    { stdio: "inherit" },
+  );
+  const contractStatus = await new Promise((resolve, reject) => {
+    contract.once("error", reject);
+    contract.once("exit", resolve);
+  });
+  if (contractStatus !== 0)
+    throw new Error(`S3 contract runner failed (${contractStatus})`);
   if (failed) process.exitCode = 1;
 } finally {
   processHandle.kill("SIGTERM");

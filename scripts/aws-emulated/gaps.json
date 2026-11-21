@@ -1,42 +1,52 @@
 {
   "s3-lifecycle": {
     "heading": "S3 lifecycle configuration does not stabilize",
-    "effect": "exclude the lifecycle resource from emulated apply"
+    "effect": "exclude the lifecycle resource from emulated apply",
+    "issue": "https://github.com/moriyoshi/winterbaume/issues/41"
   },
   "lambda-partial-batch": {
     "heading": "Lambda partial batch response setting is discarded",
-    "effect": "ignore this attribute in the repeat-plan assertion"
+    "effect": "ignore this attribute in the repeat-plan assertion",
+    "issue": "https://github.com/moriyoshi/winterbaume/issues/45"
   },
   "eventbridge-retry-dlq": {
     "heading": "EventBridge retry policy is discarded",
-    "effect": "do not assert retry or DLQ readback"
+    "effect": "do not assert retry or DLQ readback",
+    "issue": "https://github.com/moriyoshi/winterbaume/issues/47"
   },
   "dynamodb-deletion-protection": {
     "heading": "DynamoDB deletion protection is ignored",
-    "effect": "probe rather than rely on production protection"
+    "effect": "probe rather than rely on production protection",
+    "issue": "https://github.com/moriyoshi/winterbaume/issues/42"
   },
   "dynamodb-sse": {
     "heading": "DynamoDB server-side encryption cannot be read back",
-    "effect": "exclude the missing encryption readback from repeat-plan comparison"
+    "effect": "exclude the missing encryption readback from repeat-plan comparison",
+    "issue": "https://github.com/moriyoshi/winterbaume/issues/43"
   },
   "tags-dynamodb": {
     "heading": "Resource tag readback is incomplete",
-    "effect": "exclude DynamoDB tags_all drift from repeat-plan comparison"
+    "effect": "exclude DynamoDB tags_all drift from repeat-plan comparison",
+    "issue": "https://github.com/moriyoshi/winterbaume/issues/51"
   },
   "tags-iam": {
     "heading": "Resource tag readback is incomplete",
-    "effect": "exclude IAM role tags_all drift from repeat-plan comparison"
+    "effect": "exclude IAM role tags_all drift from repeat-plan comparison",
+    "issue": "https://github.com/moriyoshi/winterbaume/issues/52"
   },
   "tags-s3": {
     "heading": "Resource tag readback is incomplete",
-    "effect": "exclude S3 bucket tags_all drift from repeat-plan comparison"
+    "effect": "exclude S3 bucket tags_all drift from repeat-plan comparison",
+    "issue": "https://github.com/moriyoshi/winterbaume/issues/53"
   },
   "tags-lambda-mapping": {
     "heading": "Resource tag readback is incomplete",
-    "effect": "exclude event mapping tags_all drift from repeat-plan comparison"
+    "effect": "exclude event mapping tags_all drift from repeat-plan comparison",
+    "issue": "https://github.com/moriyoshi/winterbaume/issues/54"
   },
   "s3-ownership-delete": {
     "heading": "S3 ownership-control deletion is ignored",
-    "effect": "exclude ownership controls from emulator apply so destroy can complete"
+    "effect": "exclude ownership controls from emulator apply so destroy can complete",
+    "issue": "https://github.com/moriyoshi/winterbaume/issues/50"
   }
 }

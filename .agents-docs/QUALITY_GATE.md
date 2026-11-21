@@ -37,8 +37,9 @@ the contract suite first, then make every existing adapter pass it.
 AWS emulator probes and the namespace lifecycle are opt-in:
 
 ```sh
-pnpm aws-emulator:install   # first run: download verified pinned source and build with Rust
-pnpm test:aws-emulated      # starts and stops the local server; skips if not installed
+pnpm aws-emulator:install              # build the verified, unmodified pinned server
+pnpm aws-emulator:install-s3-patched   # build the verified local UTF-8 patch for S3 contracts
+pnpm test:aws-emulated                 # runs probes and S3 contract; skips absent builds
 ```
 
 The installer keeps its source, Cargo cache and build under `.agents-workspace/tmp`. The
@@ -99,7 +100,7 @@ pnpm infra:mutate
 
 This checks module formatting, initializes each module in an ignored temporary directory with a
 plugin cache under `.agents-workspace/tmp`, validates it, and runs Terraform mock-provider tests
-without credentials. AWS provider versions 6.30.0 and 6.73.0 are pinned for the minimum and
+without credentials. AWS provider versions 6.32.1 and 6.73.0 are pinned for the minimum and
 recorded latest-tested runs; any deprecation warning fails the check. On a cache hit, init uses
 the cache as a filesystem mirror and does not contact the registry. A cache miss downloads the
 pinned version. Mock output values are reduced to shapes and compared with the committed
@@ -145,8 +146,7 @@ This does not prove IAM or TLS-only policy enforcement, Lambda code execution, D
 encryption at rest or deletion protection, S3 lifecycle or ownership-control behavior,
 partial-batch delivery, EventBridge retry/DLQ behavior, or tag persistence. These need
 real AWS verification or a fixed emulator. The normal mock-provider checks still cover the
-full Terraform module declarations at both pinned provider versions. Provider 6.30.0's
-GSI repeat-plan issue is recorded separately in `WINTERBAUME_GAPS.md`.
+full Terraform module declarations at both pinned provider versions. The earlier provider 6.30.0 GSI repeat-plan issue is recorded separately in `WINTERBAUME_GAPS.md`.
 
 `pnpm infra:mutate` requires the cached 6.73.0 provider. It verifies unmodified baselines, applies
 each mutation from `scripts/infra-mutations.json` in its own temporary copy, and reports whether

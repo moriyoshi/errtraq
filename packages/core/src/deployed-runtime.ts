@@ -266,6 +266,7 @@ export async function constructDeployedPlan(
         config: configValue(selection.config, plan, environment),
         bindings,
         dependencies,
+        environment,
         ...queueContext,
       });
       instances.set(selection.path, instance);

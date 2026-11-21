@@ -103,6 +103,7 @@ export async function constructStack(
         config: resolveRuntimeValue(selection.config, path, stack, environment),
         bindings: resolveRoleBindings(stack, roles, path, environment),
         dependencies,
+        environment,
         ...queueContext,
         ...(selection.manifest.kind === "platform"
           ? {

@@ -290,7 +290,9 @@ not record absolute input paths. In free text, path hygiene checks complete repo
 path prefixes with at least two components; one-component roots such as `/app`, `/src` and
 `/root` are deliberately ignored because those strings commonly denote application paths.
 
-Factories receive config, role-scoped bindings and explicit dependencies. Only queues receive
+Factories receive config, role-scoped bindings, explicit dependencies and the host-supplied
+runtime environment. The latter remains a live lookup so adapters can refresh ambient credentials;
+it is distinct from the role-scoped bindings. Only queues receive
 `topics` and `queueConsumers` (event source, physical queue, topics); platforms may receive named
 `cronJobs`. Constructed adapters may expose `close()`. Local CLI construction builds all selections
 in dependency order and supplies root adapters to the platform by port kind. For deployed functions,
@@ -434,5 +436,5 @@ ordinary local runs default to loopback. Standalone's optional `publicUrl` confi
 printed DSN's public HTTP(S) origin; otherwise a wildcard listener uses localhost with a note.
 Deployed construction first derives
 `deployedPlan` and then runs `constructDeployedPlan`, preserving the same role and binding scopes
-as `constructDeployedStack` while allowing entrypoints to import only needed adapters. Actual AWS
-runtime adapters and secret sources remain M3 work.
+as `constructDeployedStack` while allowing entrypoints to import only needed adapters. The S3
+runtime adapter is implemented; the remaining AWS runtime adapters and secret sources are M3 work.

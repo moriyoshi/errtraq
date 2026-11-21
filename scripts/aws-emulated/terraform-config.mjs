@@ -2,7 +2,7 @@ import { localEndpoint } from "./client.mjs";
 
 export function providerOverride(endpoint, version) {
   endpoint = localEndpoint(endpoint);
-  if (!["6.30.0", "6.73.0"].includes(version))
+  if (!["6.32.1", "6.73.0"].includes(version))
     throw new Error("Unpinned AWS provider version");
   const provider = {
     region: "us-east-1",

@@ -71,7 +71,7 @@ try {
       withFileTypes: true,
     }).filter((entry) => entry.isDirectory())) {
       const name = `${provider.name}/${component.name}`;
-      for (const version of ["6.30.0", "6.73.0"]) {
+      for (const version of ["6.32.1", "6.73.0"]) {
         const target = resolve(
           temporary,
           version,
@@ -84,12 +84,12 @@ try {
         });
         const versions = resolve(target, "versions.tf");
         const source = readFileSync(versions, "utf8");
-        if (!source.includes('version = ">= 6.30.0, < 7.0"'))
+        if (!source.includes('version = ">= 6.32.1, < 7.0"'))
           throw new Error(`Unexpected provider constraint in ${name}`);
         writeFileSync(
           versions,
           source.replace(
-            'version = ">= 6.30.0, < 7.0"',
+            'version = ">= 6.32.1, < 7.0"',
             `version = "= ${version}"`,
           ),
         );
@@ -155,7 +155,7 @@ try {
   }
   if (process.env.UPDATE_INFRA_SHAPES === "1")
     writeFileSync(snapshotPath, `${JSON.stringify(observed, null, 2)}\n`);
-  for (const version of ["6.30.0", "6.73.0"]) {
+  for (const version of ["6.32.1", "6.73.0"]) {
     for (const name of Object.keys(fixtures)) {
       const target = prepareRoot(
         resolve(temporary, `roots-${version}`),

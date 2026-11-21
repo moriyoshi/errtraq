@@ -649,3 +649,24 @@ Winterbaume also fails to delete S3 ownership controls and loses default-tag rea
 several resources. Provider 6.30.0 independently plans GSI churn because its diff code lacks
 the range-key suppression present in 6.73.0; the user approved using 6.73.0 for this
 integration while the existing validation gate continues to cover both provider versions.
+
+## 2026-11-21 — M3b S3 runtime and provider minimum
+
+- AWS provider 6.32.0 lacks the GSI `range_key` diff suppression; 6.32.1 adds it in
+  hashicorp/terraform-provider-aws PR 46442, also recorded in that release's changelog.
+  The declared AWS minimum and the lower infra-validation pin are 6.32.1; 6.73.0 remains
+  the latest-tested pin. A local emulator apply with 6.32.1 and the module/root validation
+  gate passed.
+- The S3 adapter signs Web fetch requests with aws4fetch and parses bounded S3 XML responses
+  with fast-xml-parser. Stream uploads use replayable 5 MiB multipart chunks; credentials
+  are looked up per request. For a 403 read, exact-prefix listing distinguishes a missing
+  object from an actual denial. Web URL parsing normalizes `.` and `..` segments, so the
+  adapter explicitly rejects those keys and empty keys instead of addressing another object.
+- The pinned unmodified Winterbaume S3 decoder corrupts percent-encoded UTF-8 bytes. The
+  original probe now detects this specific gap, while the S3 contract uses a separate
+  checksum-verified local decoder patch approved for this slice. The upstream decoder gap
+  remains to be filed and the patch removed after an upstream fix. The seven opt-in S3
+  contract and stream tests pass against the patched server; no real AWS deployment or
+  signature-enforcing emulator has yet been exercised.
+- Construction now passes the host environment through the adapter context, so S3 can
+  refresh standard Lambda credentials without using Node globals in Workers-compatible code.

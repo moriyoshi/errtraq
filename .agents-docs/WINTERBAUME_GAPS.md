@@ -135,9 +135,24 @@ stated; successful creation by itself does not prove all settings were retained.
   [6.30.0 provider diff code](https://github.com/hashicorp/terraform-provider-aws/blob/v6.30.0/internal/service/dynamodb/table.go)
   special-cases legacy `hash_key` when `key_schema` is used, but not legacy `range_key`;
   [6.73.0](https://github.com/hashicorp/terraform-provider-aws/blob/v6.73.0/internal/service/dynamodb/table.go)
-  handles both. This is not being classified as a Winterbaume exception or suppressed:
-  the minimum provider's repeat plan remains unproven until the provider compatibility
-  issue is resolved. The API readback itself has the intended eight keys and projections.
+  handles both. The [6.32.1 source](https://github.com/hashicorp/terraform-provider-aws/blob/v6.32.1/internal/service/dynamodb/table.go)
+  is the first released version with both cases; 6.32.0 lacks the fix. The declared minimum
+  is now 6.32.1. This was a provider issue, not a Winterbaume exception. The emulator API
+  readback itself has the intended eight keys and projections.
+
+## S3 percent-decoding corrupts UTF-8 keys
+
+- Resource: S3 object paths and ListObjectsV2 query parameters at the pinned source
+  revision. `PUT` of a key containing the UTF-8 percent-encoded bytes for a non-ASCII
+  character succeeds, but a subsequent listing returns each byte as a separate character
+  rather than the original key. The S3 handler's `percent_decode` converts each byte to a
+  Rust `char` before decoding UTF-8. A byte-ordered cursor can then repeat or skip keys.
+- The unmodified emulator probe retains a check for this gap. The BlobStore contract uses
+  a separate source build with the checksum-verified `winterbaume-s3-utf8.patch`, which
+  decodes the accumulated bytes as UTF-8. This is a local test patch, not an upstream fix;
+  the unpatched emulator and Terraform integration remain unchanged. The patch should be
+  removed when a pinned upstream revision fixes the decoder. This new gap has not yet
+  been filed upstream.
 
 ## S3 range requests in server release 0.2.6
 
@@ -176,4 +191,5 @@ reproduces).
 | Tag readback: IAM `CreateRole` / `GetRole` omit `Role.Tags` | [#52](https://github.com/moriyoshi/winterbaume/issues/52) |
 | Tag readback: S3 `CreateBucket` drops `CreateBucketConfiguration.Tags` | [#53](https://github.com/moriyoshi/winterbaume/issues/53) |
 | Tag readback: Lambda event source mapping has no ARN and cannot be tagged | [#54](https://github.com/moriyoshi/winterbaume/issues/54) |
+| S3 percent-decoding corrupts UTF-8 keys | Not yet filed; local contract-only patch |
 | S3 ranged GET in server release 0.2.6 | [#29](https://github.com/moriyoshi/winterbaume/issues/29) (closed; fixed at the pinned revision) |

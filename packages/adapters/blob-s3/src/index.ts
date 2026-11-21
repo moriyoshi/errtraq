@@ -1,7 +1,2 @@
-import type { CreateContext } from "@errtraq/core";
-
+export { create } from "./runtime.js";
 export { infra, manifest } from "./stack.js";
-/** Runtime adapter is intentionally deferred to M3. */
-export function create(_context: CreateContext): never {
-  throw new Error("blob-s3 runtime not implemented until M3");
-}

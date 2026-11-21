@@ -481,7 +481,6 @@ describe("AWS descriptor stacks", () => {
     for (const [name, module] of [
       ["store-dynamodb", storeModule],
       ["kv-dynamodb", kvModule],
-      ["blob-s3", blobModule],
       ["queue-sqs", queueModule],
       ["platform-aws-lambda", lambdaModule],
     ] as const) {
@@ -494,6 +493,14 @@ describe("AWS descriptor stacks", () => {
         `${name} runtime not implemented until M3`,
       );
     }
+    expect(Object.keys(blobModule).sort()).toEqual([
+      "create",
+      "infra",
+      "manifest",
+    ]);
+    expect(() => blobModule.create(context)).toThrow(
+      "Missing S3 bucket binding",
+    );
   });
 });
 function outPolicy(capability: string, purpose: string) {

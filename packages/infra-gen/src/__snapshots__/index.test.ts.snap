@@ -203,7 +203,7 @@ exports[`Terraform generator > renders the full per-topic stack deterministicall
     "required_providers": {
       "aws": {
         "source": "hashicorp/aws",
-        "version": ">= 6.30.0, < 7.0"
+        "version": ">= 6.32.1, < 7.0"
       }
     },
     "required_version": ">= 1.9.0, < 2.0.0"
@@ -420,7 +420,7 @@ exports[`Terraform generator > renders the full shared stack deterministically 1
     "required_providers": {
       "aws": {
         "source": "hashicorp/aws",
-        "version": ">= 6.30.0, < 7.0"
+        "version": ">= 6.32.1, < 7.0"
       }
     },
     "required_version": ">= 1.9.0, < 2.0.0"

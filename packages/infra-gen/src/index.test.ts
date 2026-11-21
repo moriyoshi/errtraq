@@ -290,7 +290,7 @@ describe("Terraform generator", () => {
       ...base.providers,
       aws_eu: {
         source: "hashicorp/aws",
-        version: ">= 6.30.0, < 7.0",
+        version: ">= 6.32.1, < 7.0",
         region: "eu-west-1",
         tags: { note: literal },
       },
@@ -334,7 +334,7 @@ describe("Terraform generator", () => {
       ...base.providers,
       aws_eu: {
         source: "hashicorp/aws",
-        version: ">= 6.30.0, < 7.0",
+        version: ">= 6.32.1, < 7.0",
         region: "eu-west-1",
         tags: { team: "eu" },
       },
@@ -372,7 +372,7 @@ describe("Terraform generator", () => {
       },
       terraform: {
         required_providers: {
-          aws: { source: "hashicorp/aws", version: ">= 6.30.0, < 7.0" },
+          aws: { source: "hashicorp/aws", version: ">= 6.32.1, < 7.0" },
         },
       },
     });

@@ -7,7 +7,11 @@ import {
 } from "@errtraq/core";
 import { z } from "zod";
 
-export const configSchema = z.strictObject({});
+export const configSchema = z.strictObject({
+  region: z.string().min(1).optional(),
+  endpoint: z.url().optional(),
+  forcePathStyle: z.boolean().optional(),
+});
 export type Config = z.input<typeof configSchema>;
 export const manifest: AdapterManifest = {
   id: "blob-s3",

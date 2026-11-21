@@ -227,7 +227,7 @@ export function renderInfraValue(
   return render(value, owner);
 }
 
-const MIN_AWS = ">= 6.30.0, < 7.0";
+const MIN_AWS = ">= 6.32.1, < 7.0";
 const REQUIRED_VERSION = ">= 1.9.0, < 2.0.0";
 const MODULE_META = new Set([
   "source",

@@ -67,6 +67,10 @@ describe.each([shared, perTopic])("deployed runtime: $name", (stack) => {
     ]);
     expect(reads.sort()).toEqual(Object.keys(values).sort());
     expect(
+      calls.find((item) => item.module === "@errtraq/blob-s3")?.context
+        .environment,
+    ).toBe(environment);
+    expect(
       calls.find((item) => item.module === "@errtraq/queue-sqs")?.context,
     ).toMatchObject({
       bindings: { [queueName]: "queue-url" },

@@ -10,7 +10,7 @@ export default defineStack({
   providers: {
     aws: {
       source: "hashicorp/aws",
-      version: ">= 6.30.0, < 7.0",
+      version: ">= 6.32.1, < 7.0",
       region: "us-east-1",
       tags: { app: "errtraq" },
     },

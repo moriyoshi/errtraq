@@ -23,11 +23,19 @@ export function loadGaps() {
   )
     throw new Error("Unexpected emulator exception inventory");
   for (const [id, gap] of Object.entries(gaps))
-    if (!doc.includes(`## ${gap.heading}\n`) || !gap.effect)
+    if (
+      !doc.includes(`## ${gap.heading}\n`) ||
+      !gap.effect ||
+      !/^https:\/\/github\.com\/moriyoshi\/winterbaume\/issues\/\d+$/.test(
+        gap.issue,
+      )
+    )
       throw new Error(`Missing documentation for emulator exception ${id}`);
   return gaps;
 }
 export function skipped(gaps, id) {
   if (!gaps[id]) throw new Error(`Undeclared emulator exception ${id}`);
-  console.log(`SKIPPED (winterbaume gap: ${id}): ${gaps[id].effect}`);
+  console.log(
+    `SKIPPED (winterbaume gap: ${id}): ${gaps[id].effect} (${gaps[id].issue})`,
+  );
 }

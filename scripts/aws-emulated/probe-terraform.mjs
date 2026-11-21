@@ -25,7 +25,7 @@ if (!existsSync(binary)) {
   );
   process.exit(0);
 }
-const versions = ["6.30.0", "6.73.0"];
+const versions = ["6.32.1", "6.73.0"];
 const targets = [
   "dynamodb",
   "dynamodb-protected",

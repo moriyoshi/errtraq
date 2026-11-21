@@ -30,6 +30,22 @@ export async function probeS3(endpoint) {
       );
       assert.notEqual(element(a.text, "Key"), element(b.text, "Key"));
     });
+    await check(results, "utf8-key-list", async () => {
+      const key = "utf8/～";
+      await c.request("s3", `${base}/utf8/${encodeURIComponent("～")}`, {
+        method: "PUT",
+        body: "x",
+      });
+      const result = await c.request(
+        "s3",
+        `${base}?list-type=2&prefix=utf8%2F`,
+      );
+      const actual = element(result.text, "Key");
+      if (actual === key) return;
+      const corrupted = `utf8/${Array.from(new TextEncoder().encode("～"), (byte) => String.fromCharCode(byte)).join("")}`;
+      assert.equal(actual, corrupted, "Unexpected UTF-8 probe failure");
+      throw new Error("S3_UTF8_PERCENT_DECODER_GAP");
+    });
     await check(results, "conditional-put", async () => {
       await c.request("s3", `${base}/conditional`, {
         method: "PUT",
@@ -86,7 +102,13 @@ export async function probeS3(endpoint) {
       await assert.rejects(() => c.request("s3", `${base}/alpha`), / 404:/);
     });
   } finally {
-    for (const key of ["alpha", "beta", "conditional", "multipart"])
+    for (const key of [
+      "alpha",
+      "beta",
+      "conditional",
+      "multipart",
+      `utf8/${encodeURIComponent("～")}`,
+    ])
       await c
         .request("s3", `${base}/${key}`, { method: "DELETE" })
         .catch(() => {});

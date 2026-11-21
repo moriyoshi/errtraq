@@ -39,11 +39,37 @@ SSE and TLS-only policies are Terraform concerns and are not exercised by HTTP e
 probes. TTL registration does not prove an asynchronous TTL sweeper. The namespace helper
 is exported by `@errtraq/testing`; callers must always close it in a `finally` block.
 
+The unmodified pinned server corrupts percent-encoded UTF-8 S3 keys; see
+[WINTERBAUME_GAPS.md](./WINTERBAUME_GAPS.md). The S3 contract runs against a separate,
+checksum-verified local source patch for that decoder. Other probes and Terraform integration
+continue to use the unmodified pinned binary.
+
 The latest server release binary tested, 0.2.6, returned the entire object with HTTP 200
 for a range request. A separately signed AWS CLI request reproduced this. The pinned
 newer source revision passes the range probe, so no S3 fallback is needed. No missing
 DynamoDB or SQS feature in this probe set forces DynamoDB Local or ElasticMQ; use
 Winterbaume for all three until a more demanding adapter contract demonstrates a gap.
+
+## S3 runtime contract
+
+`@errtraq/blob-s3` takes its bucket from `ERRTRAQ_BLOB_BUCKET` (or the staging
+binding when only that purpose is supplied). Configuration accepts optional `region`,
+`endpoint` and `forcePathStyle`; region otherwise comes from `AWS_REGION` or
+`AWS_DEFAULT_REGION`. Lambda credentials are read from `AWS_ACCESS_KEY_ID`,
+`AWS_SECRET_ACCESS_KEY` and optional `AWS_SESSION_TOKEN` for each request, so refreshed
+credentials are used. Explicit binding values are also accepted by the runtime constructor
+for Web environments without Node globals. The default AWS endpoint uses virtual-hosted
+addressing; use `forcePathStyle` for the local emulator.
+
+The adapter uses unsigned SigV4 payloads and sends stream uploads as multipart parts of at
+most 5 MiB, retaining only a part for retry. S3 limits uploads to 10,000 parts. It rejects
+empty keys and keys containing `.` or `..` path segments: standard Web URL parsing would
+otherwise normalize such paths and address a different object. It rejects a non-advancing
+listing rather than silently returning repeated cursors.
+
+The unmodified emulator still runs all other probes. The separate patched build is only for
+the S3 contract; installation requires Rust, network access, and substantial disk space,
+even when the unmodified server has already been built.
 
 ## Terraform control-plane inventory
 
