@@ -502,7 +502,6 @@ describe("AWS descriptor stacks", () => {
   it("exports only the runtime triple and fails clearly until M3", () => {
     const context = { config: {}, bindings: {}, dependencies: {} };
     for (const [name, module] of [
-      ["store-dynamodb", storeModule],
       ["platform-aws-lambda", lambdaModule],
     ] as const) {
       expect(Object.keys(module).sort()).toEqual([
@@ -514,6 +513,12 @@ describe("AWS descriptor stacks", () => {
         `${name} runtime not implemented until M3`,
       );
     }
+    expect(Object.keys(storeModule).sort()).toEqual([
+      "create",
+      "infra",
+      "manifest",
+    ]);
+    expect(() => storeModule.create(context)).toThrow("table binding");
     expect(Object.keys(kvModule).sort()).toEqual([
       "create",
       "infra",

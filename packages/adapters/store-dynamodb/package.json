@@ -28,7 +28,11 @@
   },
   "dependencies": {
     "@errtraq/core": "workspace:*",
-    "zod": "4.6.7"
+    "zod": "4.6.7",
+    "@errtraq/aws-signing": "workspace:*"
   },
-  "errtraqWorkersRuntime": "./src/runtime.ts"
+  "errtraqWorkersRuntime": "./src/runtime.ts",
+  "devDependencies": {
+    "@errtraq/testing": "workspace:*"
+  }
 }

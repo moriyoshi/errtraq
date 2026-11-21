@@ -870,3 +870,18 @@ local patch. Conditional-update issue #61 still reproduces: four of 200 requests
 the same absent-item condition. Lambda VPC readback issue #62 and the recorded tag and
 ownership-control exceptions remain. These local readbacks do not establish real IAM
 enforcement, DynamoDB transaction isolation, actual at-rest encryption or Lambda execution.
+
+## 2026-11-21 — DynamoDB stage 1 step C in progress
+
+The runtime skeleton uses the shared AWS request layer and a runtime-only core store entry.
+Project, release metadata, and meta operations use framed keys, sparse indexes with strong
+hydration, and conditional transactions; the relevant existing shared contract cases pass
+against winterbaume. The examined-key cursor advances through stale index entries without
+skipping a live entry. Workers smoke exercises the store without importing stack schemas.
+
+Bundle lifecycle is not implemented yet. The accepted port's `deleteBundle(projectId, id)`
+provides no manifest IDs, and the store has no BlobStore dependency. An eventually consistent
+GSI cannot establish that all ownership markers have been removed. A decision is pending on
+persisting bounded manifest chunks in the table, extending the port, or introducing a blob
+dependency. The issue, event and recordEvent operations remain the explicitly requested
+future-step stubs.

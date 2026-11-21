@@ -177,6 +177,42 @@ try {
   console.log("PASS namespace cleanup");
   await checkConditionalUpdateGap(api);
   skipped(loadGaps(), "dynamodb-conditional-atomicity");
+  console.log("Running implemented DynamoDB store repository contract cases");
+  const storePattern = [
+    "uses compare-and-set for creation and competing writers, and lists erasures",
+    "pages erasures by state and serializes concurrent erasure transitions",
+    "stores and retrieves organizations and pages projects",
+    "pages releases without crossing projects",
+    "rejects duplicate natural keys owned by another record",
+    "atomically creates one initial active project key",
+  ].join("|");
+  const storeContract = spawn(
+    "pnpm",
+    [
+      "exec",
+      "vitest",
+      "run",
+      "packages/adapters/store-dynamodb/src/contract.emulated.test.ts",
+      "--testNamePattern",
+      storePattern,
+    ],
+    {
+      stdio: "inherit",
+      env: {
+        ...process.env,
+        ERRTRAQ_DYNAMO_EMULATOR: endpoint,
+        ERRTRAQ_DYNAMO_STORE_SHAPE: JSON.stringify(shapes.table),
+      },
+    },
+  );
+  const storeStatus = await new Promise((resolve, reject) => {
+    storeContract.once("error", reject);
+    storeContract.once("exit", resolve);
+  });
+  if (storeStatus !== 0)
+    throw new Error(
+      `DynamoDB store repository contract failed (${storeStatus})`,
+    );
   console.log("Running DynamoDB KV contract against the unmodified emulator");
   const kvContract = spawn(
     "pnpm",

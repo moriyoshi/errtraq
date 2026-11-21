@@ -53,6 +53,22 @@ const server = createServer(async (req, res) => {
   }
   if (
     req.url === "/" &&
+    req.headers["x-amz-target"] === "DynamoDB_20120810.GetItem"
+  ) {
+    const body = JSON.parse(Buffer.concat(chunks).toString());
+    seen.push("store");
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(
+      JSON.stringify(
+        body.Key.PK.S === "META|schema"
+          ? { Item: { projectTimeShards: { N: "4" } } }
+          : {},
+      ),
+    );
+    return;
+  }
+  if (
+    req.url === "/" &&
     req.headers["x-amz-target"] === "AmazonSQS.ChangeMessageVisibility"
   ) {
     const body = JSON.parse(Buffer.concat(chunks).toString());
@@ -86,7 +102,7 @@ try {
   if (
     response.status !== 200 ||
     (await response.text()) !== "ok" ||
-    seen.join(",") !== "s3,sqs,dynamodb,visibility"
+    seen.join(",") !== "s3,sqs,dynamodb,store,store,visibility"
   )
     throw new Error(
       `Workers smoke failed: HTTP ${response.status}; requests ${seen.join(",")}`,

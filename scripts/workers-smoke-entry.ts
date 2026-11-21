@@ -1,6 +1,7 @@
 import { S3BlobStore } from "../packages/adapters/blob-s3/src/runtime.js";
 import { DynamoKV } from "../packages/adapters/kv-dynamodb/src/runtime.js";
 import { SqsQueue } from "../packages/adapters/queue-sqs/src/runtime.js";
+import { DynamoStore } from "../packages/adapters/store-dynamodb/src/runtime.js";
 export default {
   async fetch(_request: Request, env: { ENDPOINT: string }) {
     const environment = {
@@ -41,6 +42,15 @@ export default {
     await blob.put("object", new Uint8Array([1]));
     await queue.producer.send("ingest", [{ key: "key", body: 1 }]);
     await kv.put("key", "value");
+    const store = new DynamoStore({
+      table: "store",
+      region: "us-east-1",
+      environment,
+      endpoint: env.ENDPOINT,
+    });
+    await store.migrate();
+    if ((await store.projects.getKey("missing")) !== null)
+      throw new Error("Unexpected store key");
     const result = await queue.push.handle(
       {
         Records: [
