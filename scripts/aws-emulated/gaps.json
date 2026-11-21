@@ -48,5 +48,10 @@
     "heading": "S3 ownership-control deletion is ignored",
     "effect": "exclude ownership controls from emulator apply so destroy can complete",
     "issue": "https://github.com/moriyoshi/winterbaume/issues/50"
+  },
+  "lambda-vpc-readback": {
+    "heading": "Lambda VPC configuration is discarded",
+    "effect": "omit the Lambda VPC block only in the copied emulator module after verifying the gap",
+    "issue": null
   }
 }

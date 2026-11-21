@@ -83,8 +83,10 @@ exported guards (`isOutputRef`, `isStackRef`, `isEnvRef`, `isVariableRef`, `isAr
 references. Validation rejects output, stack, artifact and generation-time references in adapter
 config even if an adapter schema accepts arbitrary values. A platform's `configReferenceKinds`
 whitelists the runtime kinds it can supply; absent means none. Standalone supports `env` and
-`variable` from its process environment; Lambda declares none and rejects both until delivery
-is implemented. The runtime resolves supported references before `create`. A resolved stack is
+`variable` from its process environment; Lambda declares no runtime config reference kinds
+and rejects both in adapter config until delivery is implemented. The separate platform-only
+`infrastructureConfigReferences` map permits typed Terraform variables for explicitly named
+top-level infrastructure fields, without delivering those values to adapter runtime config. The runtime resolves supported references before `create`. A resolved stack is
 branded and its copied data objects are deeply frozen, so core does not re-run transforming
 adapter schemas on the original resolved object. A structural copy retains the brand but is not
 cached; validation rejects it with a clear error rather than re-parsing transformed configuration. Shared Zod schema instances and executable functions remain unfrozen; Zod uses
@@ -443,3 +445,24 @@ as `constructDeployedStack` while allowing entrypoints to import only needed ada
 SQS and DynamoDB KV selections use their `/runtime` exports, which omit the stack schema and
 Zod; their `/stack` exports remain for stack authors. Their runtime adapters are implemented;
 the active-store AWS runtime adapter and secret sources are M3 work.
+
+
+## RDS IAM and Lambda VPC
+
+A Postgres IAM selection uses the `aws/rds-iam-access` module: it creates no database and
+returns the same exact-resource `rds-db:connect` policy for read, write and delete. These
+capabilities scope which functions need a connection, but **do not** constrain their SQL:
+all use one PostgreSQL user and its database privileges. `errtraq validate` exposes that
+limitation. The provider's account and the configured region, database resource ID and user
+form the ARN. The separate password-secret mode continues to use an existing database.
+
+`awsLambda` optionally accepts `vpcSubnetIds` and `vpcSecurityGroupIds` as literal ID lists
+or non-sensitive `string[]` variables. These fields are declared through the platform
+manifest's `infrastructureConfigReferences` map, which permits typed variables for those
+fields without enabling runtime config references for adapters. They must both be empty or
+both nonempty; Terraform rechecks after references resolve. Every physical function receives
+the VPC configuration and an execution-role network-interface policy. EC2 network-interface actions require a wildcard
+resource and are also available to the function code; Lambda's documented source-function deny
+is an optional operator defense. No network infrastructure is created. Private subnets need NAT
+or appropriate S3, DynamoDB, SQS and Secrets Manager VPC endpoints, including correct DNS,
+routes and security-group rules, for the adapters' HTTPS calls.

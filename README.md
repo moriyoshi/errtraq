@@ -53,3 +53,36 @@ verification commands.
 
 When using `existing` resources, the function receives exactly the operator-supplied policy
 documents; an empty document grants no access.
+
+
+### Bring-your-own RDS PostgreSQL
+
+The Postgres stack helper supports RDS IAM authentication with
+`postgres({ mode: "iam", host, port, database, user, region, resourceId })` from
+`@errtraq/store-sql/postgres/stack`. Use the actual RDS, Aurora or RDS Proxy endpoint as
+`host` and the `db-`, `cluster-` or `prx-` resource ID, not the database's display name.
+The AWS provider account must own the named resource. The database user is restricted to a
+1-63 character ASCII identifier without IAM wildcard or path characters. A fresh 15-minute token is generated on
+each new connection; RDS Proxy is recommended to limit connection fan-in. The Lambda runtime
+CA bundle is the default; set `sslRootCert` to a path or stack reference for a maintained PEM
+bundle if using another runtime or a proxy that needs different trust roots. TLS verifies the
+certificate and hostname. Existing password-secret authentication remains available.
+
+IAM mode uses **one PostgreSQL user** for all store capabilities. The derived read, write and
+delete grants each allow only `rds-db:connect` to that same user; they do not restrict SQL
+operations. Configure PostgreSQL privileges for that user, and understand that any function
+with its connect grant inherits all privileges held by that user. `errtraq validate` prints
+this scope. The database and user are operator-provided, including RDS IAM authentication and
+appropriate database privileges.
+
+For a private database set `vpcSubnetIds` and `vpcSecurityGroupIds` together on `awsLambda`,
+as literal lists of existing IDs or `string[]` stack variables. errtraq creates no VPC,
+subnets, security groups, NAT gateway or endpoints. The configured subnets and security groups
+must allow reaching the database. Lambda functions attached to a VPC also need NAT or suitable
+VPC endpoints, DNS, route tables and security-group rules for the HTTPS calls they make to SQS,
+S3, DynamoDB and Secrets Manager. In particular, gateway endpoints for S3/DynamoDB and interface
+endpoints for SQS/Secrets Manager have different routing and DNS requirements. Execution roles
+receive EC2 network-interface permissions on `*`, as required by Lambda; those permissions can
+also be used by function code. See [AWS VPC guidance](https://docs.aws.amazon.com/lambda/latest/dg/configuration-vpc.html)
+for network access and the optional source-function deny defense. Test actual IAM, TLS and
+network behavior in a real account before relying on it.

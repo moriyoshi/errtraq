@@ -24,8 +24,8 @@ const iamSchema = z.strictObject({
     .refine((v) => !v.includes("..")),
   port: z.number().int().min(1).max(65535).default(5432),
   database: z.string().min(1),
-  user: z.string().min(1),
-  region: z.string().min(1),
+  user: z.string().regex(/^[A-Za-z_][A-Za-z0-9_.@-]{0,62}$/),
+  region: z.string().regex(/^[a-z]{2}(-[a-z0-9]+)+-[0-9]+$/),
   resourceId: z.string().regex(/^(db|cluster|prx)-[A-Za-z0-9]+$/),
   sslRootCert: z.union([z.string().min(1), stringRef]).optional(),
 });
@@ -128,6 +128,11 @@ export function postgres(
     manifest: {
       ...manifest,
       configSchema: iamModeSchema,
+      capabilities: {
+        ...manifest.capabilities,
+        authorizationScope:
+          "IAM grants connection to one PostgreSQL user; PostgreSQL privileges enforce read, write and delete.",
+      },
       requires: ["aws-credentials"],
     },
     infra: iamInfra,

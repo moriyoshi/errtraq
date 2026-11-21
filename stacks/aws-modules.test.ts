@@ -1,6 +1,12 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { deriveDeployment, isOutputRef, type OutputType } from "@errtraq/core";
+import {
+  deriveDeployment,
+  isOutputRef,
+  type OutputType,
+  resolveStack,
+} from "@errtraq/core";
+import { postgres } from "@errtraq/store-sql/postgres/stack";
 import { describe, expect, it } from "vitest";
 import stack from "./aws-dynamodb.js";
 import perTopic from "./aws-dynamodb-per-topic.js";
@@ -43,8 +49,19 @@ const shapes: unknown = JSON.parse(
   readFileSync(resolve("infra/modules/aws/output-shapes.json"), "utf8"),
 );
 
+const postgresStack = resolveStack({
+  ...Object.fromEntries(Object.entries(stack)),
+  store: postgres({
+    mode: "iam",
+    host: "db.example.rds.amazonaws.com",
+    database: "errtraq",
+    user: "app_user",
+    region: "us-east-1",
+    resourceId: "db-ABC123",
+  }),
+});
 describe("AWS module descriptor contracts", () => {
-  for (const selectedStack of [stack, perTopic]) {
+  for (const selectedStack of [stack, perTopic, postgresStack]) {
     const view = deriveDeployment(selectedStack);
     it(`${selectedStack.name}: passes a physical-queue map to SQS`, () => {
       const inputs = selectedStack.queue.infra.inputs(
@@ -53,7 +70,10 @@ describe("AWS module descriptor contracts", () => {
       );
       expect(inputs.physical_queues).toEqual(
         Object.fromEntries(
-          (selectedStack === stack ? ["shared"] : ["ingest"]).map((key) => [
+          (selectedStack.queue.infra.topics?.mode === "shared"
+            ? ["shared"]
+            : ["ingest"]
+          ).map((key) => [
             key,
             {
               visibility_timeout_sec: 180,

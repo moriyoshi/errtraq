@@ -121,3 +121,22 @@ variable "handler" {
     error_message = "handler must be a Lambda handler identifier."
   }
 }
+
+variable "vpc_subnet_ids" {
+  type        = list(string)
+  description = "Existing subnet IDs for Lambda VPC access; provide with security groups."
+  default     = []
+  validation {
+    condition     = length(var.vpc_subnet_ids) <= 16 && alltrue([for id in var.vpc_subnet_ids : can(regex("^subnet-([a-f0-9]{8}|[a-f0-9]{17})$", id))])
+    error_message = "Provide up to 16 valid subnet IDs."
+  }
+}
+variable "vpc_security_group_ids" {
+  type        = list(string)
+  description = "Existing security group IDs for Lambda VPC access; provide with subnets."
+  default     = []
+  validation {
+    condition     = length(var.vpc_security_group_ids) <= 5 && alltrue([for id in var.vpc_security_group_ids : can(regex("^sg-([a-f0-9]{8}|[a-f0-9]{17})$", id))])
+    error_message = "Provide up to five valid security group IDs."
+  }
+}

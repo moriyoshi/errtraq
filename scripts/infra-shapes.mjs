@@ -5,6 +5,7 @@ import { resolve } from "node:path";
 export const snapshotPath = resolve("infra/modules/aws/output-shapes.json");
 export const captureRuns = {
   dynamodb: "store_indexes_and_permissions",
+  "rds-iam-access": "rds_connect_policies",
   "lambda-app": "functions_triggers_and_urls",
   s3: "policies_and_lifecycle",
   sqs: "queues_and_policies",

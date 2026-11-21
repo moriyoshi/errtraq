@@ -1,4 +1,5 @@
 import {
+  configReference,
   type InfraDescriptor,
   type PlatformManifest,
   type PlatformSelection,
@@ -20,6 +21,12 @@ export const configSchema = z
     split: z.array(role).default(["ingest", "api", "consumer", "cron"]),
     http: z.array(z.enum(["ingest", "api"])).default(["ingest", "api"]),
     settings: z.partialRecord(role, settings).default({}),
+    vpcSubnetIds: configReference(
+      z.array(z.string().regex(/^subnet-[a-f0-9]{8}(?:[a-f0-9]{9})?$/)).max(16),
+    ).default([]),
+    vpcSecurityGroupIds: configReference(
+      z.array(z.string().regex(/^sg-[a-f0-9]{8}(?:[a-f0-9]{9})?$/)).max(5),
+    ).default([]),
     runtime: z.string().min(1).default("nodejs22.x"),
     handler: z.string().min(1).default("index.handler"),
     cronRetryAttempts: z.number().int().min(0).max(185).default(185),
@@ -29,6 +36,17 @@ export const configSchema = z
       .regex(/^arn:[^:]+:sqs:/)
       .optional(),
   })
+  .refine(
+    (config) =>
+      !Array.isArray(config.vpcSubnetIds) ||
+      !Array.isArray(config.vpcSecurityGroupIds) ||
+      (config.vpcSubnetIds.length === 0) ===
+        (config.vpcSecurityGroupIds.length === 0),
+    {
+      message:
+        "VPC subnet IDs and security group IDs must be provided together",
+    },
+  )
   .transform((config) => ({
     ...config,
     settings: {
@@ -51,6 +69,10 @@ export const manifest: PlatformManifest = {
   authorization: "iam",
   bindingKinds: ["env", "secret"],
   configReferenceKinds: [],
+  infrastructureConfigReferences: {
+    vpcSubnetIds: "string[]",
+    vpcSecurityGroupIds: "string[]",
+  },
   reservedBindings: [
     "_HANDLER",
     "_X_AMZN_TRACE_ID",
@@ -75,6 +97,8 @@ export const infra: InfraDescriptor<Config> = {
   inputs: (config, deployment) => ({
     name: stackValue("name"),
     tags: stackValue("tags"),
+    vpc_subnet_ids: config.vpcSubnetIds ?? [],
+    vpc_security_group_ids: config.vpcSecurityGroupIds ?? [],
     runtime: config.runtime ?? "nodejs22.x",
     handler: config.handler ?? "index.handler",
     functions: Object.fromEntries(

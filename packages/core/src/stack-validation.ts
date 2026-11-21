@@ -834,7 +834,21 @@ function inspect(input: unknown): {
         (isVariableRef(value) || (isEnvRef(value) && value.phase === "runtime"))
       ) {
         const kind = isVariableRef(value) ? "variable" : "env";
-        if (!platform.configReferenceKinds?.includes(kind))
+        const infraType =
+          owner === "platform" && isVariableRef(value)
+            ? ownValue(
+                platform.infrastructureConfigReferences,
+                path.slice("platform.config.".length),
+              )
+            : undefined;
+        if (infraType && path.startsWith("platform.config.")) {
+          const actualType = ownValue(stack.variables, value.name)?.type;
+          if (actualType && actualType !== infraType)
+            fail(
+              path,
+              `Infrastructure config variable must have type ${infraType}`,
+            );
+        } else if (!platform.configReferenceKinds?.includes(kind))
           fail(path, `Platform does not support ${kind} config references`);
       }
       if (

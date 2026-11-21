@@ -17,6 +17,7 @@ export function loadGaps() {
     "tags-iam",
     "tags-s3",
     "tags-lambda-mapping",
+    "lambda-vpc-readback",
   ];
   if (
     JSON.stringify(Object.keys(gaps).sort()) !== JSON.stringify(expected.sort())
@@ -26,8 +27,11 @@ export function loadGaps() {
     if (
       !doc.includes(`## ${gap.heading}\n`) ||
       !gap.effect ||
-      !/^https:\/\/github\.com\/moriyoshi\/winterbaume\/issues\/\d+$/.test(
-        gap.issue,
+      !(
+        gap.issue === null ||
+        /^https:\/\/github\.com\/moriyoshi\/winterbaume\/issues\/\d+$/.test(
+          gap.issue,
+        )
       )
     )
       throw new Error(`Missing documentation for emulator exception ${id}`);
@@ -36,6 +40,6 @@ export function loadGaps() {
 export function skipped(gaps, id) {
   if (!gaps[id]) throw new Error(`Undeclared emulator exception ${id}`);
   console.log(
-    `SKIPPED (winterbaume gap: ${id}): ${gaps[id].effect} (${gaps[id].issue})`,
+    `SKIPPED (winterbaume gap: ${id}): ${gaps[id].effect} (${gaps[id].issue ?? "upstream issue not filed"})`,
   );
 }

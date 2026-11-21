@@ -6,8 +6,9 @@ item should be resolved or removed once addressed. Milestone work itself is trac
 
 ## Open Items
 
-- [ ] M3f2 part 2: add the RDS IAM policy module and contract / mutation tests, Lambda VPC configuration and ENI grants, and Postgres-on-Lambda generated-root and emulator coverage. — *source: M3f2 part 1*
-- [ ] M3h: verify real Lambda-to-RDS/Aurora IAM authentication, hostname and CA validation, new connections after 15 minutes, and RDS Proxy IAM/TLS behavior and permissions. — *source: M3f2*
+- [x] M3f2 part 2: add the RDS IAM policy module and contract / mutation tests, Lambda VPC configuration and ENI grants, and Postgres-on-Lambda generated-root and emulator coverage. — *source: M3f2 part 1*
+- [ ] M3f2: file the Winterbaume Lambda VPC readback gap upstream and remove the emulator-only override when the fix is pinned. — *source: M3f2 part 2*
+- [ ] M3h: verify real Lambda-to-RDS/Aurora IAM authentication, the Lambda runtime CA bundle and hostname verification, new connections after 15 minutes, and RDS Proxy IAM/TLS behavior and permissions; verify VPC attachment, ENI role permissions and service reachability through the selected NAT or endpoints. — *source: M3f2*
 
 - [ ] M3e / M4 design review: resolve the erasure admission fence versus two-action DynamoDB event transaction, certified active/index/archive counts, durable receipts and the cross-adapter subject/reducer and bundle lifecycle contracts before implementation. — *source: M3e step 1b*
 - [ ] M3h: measure 500 concurrent same-issue writes in both modes, transaction/GSI write units and index backpressure, and verify the revised IAM policies and multi-attribute index queries on real AWS. — *source: M3e step 1b R10*

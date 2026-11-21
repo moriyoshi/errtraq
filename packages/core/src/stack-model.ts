@@ -60,6 +60,8 @@ export interface PlatformManifest<C = unknown> extends AdapterManifest<C> {
   bindingKinds: Binding["kind"][];
   /** Config reference kinds the platform supplies to runtime; absent means none. */
   configReferenceKinds?: ("env" | "variable")[];
+  /** Top-level infrastructure-only config fields may reference variables of the declared type. */
+  infrastructureConfigReferences?: Record<string, StackVariableType>;
   /** Exact names or prefixes ending in '*'. */
   reservedBindings: string[];
 }

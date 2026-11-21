@@ -76,6 +76,10 @@ run "functions_triggers_and_urls" {
     error_message = "Logging and secret-read policies must have exact actions, resources and role scopes."
   }
   assert {
+    condition     = length(aws_iam_role_policy.vpc) == 0 && alltrue([for fn in values(aws_lambda_function.function) : length(fn.vpc_config) == 0])
+    error_message = "Functions without VPC configuration must not receive VPC permissions."
+  }
+  assert {
     condition     = length(aws_iam_role_policy.logs["shared"].policy) <= 1024
     error_message = "The logging policy must fit the 1024-character sizing budget."
   }
@@ -140,4 +144,71 @@ run "inline_policy_limit" {
     cron_triggers  = {}
   }
   expect_failures = [aws_iam_role.function["ingest"]]
+}
+
+run "vpc_configuration" {
+  command = apply
+  variables {
+    name                   = "vpc-test"
+    tags                   = {}
+    vpc_subnet_ids         = ["subnet-12345678", "subnet-abcdef12"]
+    vpc_security_group_ids = ["sg-12345678"]
+    functions = {
+      api = {
+        roles        = ["api"]
+        http         = ["api"]
+        artifact     = "tests/artifact.txt"
+        memory_mb    = 512
+        timeout_sec  = 30
+        architecture = "arm64"
+        environment  = {}
+        secrets      = {}
+        secret_reads = []
+        policies     = []
+      }
+      worker = {
+        roles        = ["consumer"]
+        http         = []
+        artifact     = "tests/artifact.txt"
+        memory_mb    = 512
+        timeout_sec  = 30
+        architecture = "arm64"
+        environment  = {}
+        secrets      = {}
+        secret_reads = []
+        policies     = []
+      }
+    }
+    queue_triggers = {}
+    cron_triggers  = {}
+  }
+  assert {
+    condition     = alltrue([for id in ["api", "worker"] : toset(aws_lambda_function.function[id].vpc_config[0].subnet_ids) == toset(var.vpc_subnet_ids) && toset(aws_lambda_function.function[id].vpc_config[0].security_group_ids) == toset(var.vpc_security_group_ids) && aws_iam_role_policy.vpc[id].role == aws_iam_role.function[id].id && jsonencode(jsondecode(aws_iam_role_policy.vpc[id].policy)) == jsonencode({ Version = "2012-10-17", Statement = [{ Effect = "Allow", Action = ["ec2:CreateNetworkInterface", "ec2:DescribeNetworkInterfaces", "ec2:DescribeSubnets", "ec2:DeleteNetworkInterface", "ec2:AssignPrivateIpAddresses", "ec2:UnassignPrivateIpAddresses"], Resource = ["*"] }] })])
+    error_message = "Each VPC function requires the exact configured subnets, security groups and ENI role permissions."
+  }
+}
+run "incomplete_vpc" {
+  command = plan
+  variables {
+    name           = "vpc-test"
+    tags           = {}
+    vpc_subnet_ids = ["subnet-12345678"]
+    functions = {
+      api = {
+        roles        = ["api"]
+        http         = ["api"]
+        artifact     = "tests/artifact.txt"
+        memory_mb    = 512
+        timeout_sec  = 30
+        architecture = "arm64"
+        environment  = {}
+        secrets      = {}
+        secret_reads = []
+        policies     = []
+      }
+    }
+    queue_triggers = {}
+    cron_triggers  = {}
+  }
+  expect_failures = [aws_lambda_function.function["api"]]
 }

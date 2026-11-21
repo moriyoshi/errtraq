@@ -9,8 +9,11 @@ import {
 export function formatValidation(stack: ResolvedStack): string {
   const lines: string[] = [];
   lines.push(`Valid stack: ${stack.name}`);
-  for (const [path, selection] of selections(stack))
+  for (const [path, selection] of selections(stack)) {
     lines.push(`Selection ${path}: ${selection.manifest.id}`);
+    const scope = selection.manifest.capabilities.authorizationScope;
+    if (typeof scope === "string") lines.push(`  Authorization: ${scope}`);
+  }
   const view = deriveDeployment(stack);
   const access = deriveAccess(stack);
   for (const fn of view.functions) {

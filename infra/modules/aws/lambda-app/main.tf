@@ -5,7 +5,9 @@ locals {
   policies         = { for item in flatten([for id, fn in var.functions : [for index, policy in fn.policies : { key = "${id}-${index}", id = id, policy = policy }]]) : item.key => item }
   secret_functions = { for id, fn in var.functions : id => fn if length(fn.secret_reads) > 0 }
   # Core emits standard five-field cron; EventBridge requires six fields and ? in one day field.
-  cron = { for job, trigger in var.cron_triggers : job => split(" ", trigger.schedule) }
+  cron        = { for job, trigger in var.cron_triggers : job => split(" ", trigger.schedule) }
+  vpc_enabled = length(var.vpc_subnet_ids) > 0 && length(var.vpc_security_group_ids) > 0
+  vpc_policy  = jsonencode({ Version = "2012-10-17", Statement = [{ Effect = "Allow", Action = ["ec2:CreateNetworkInterface", "ec2:DescribeNetworkInterfaces", "ec2:DescribeSubnets", "ec2:DeleteNetworkInterface", "ec2:AssignPrivateIpAddresses", "ec2:UnassignPrivateIpAddresses"], Resource = ["*"] }] })
 }
 data "aws_iam_policy_document" "assume" {
   statement {
@@ -23,7 +25,7 @@ resource "aws_iam_role" "function" {
   tags               = var.tags
   lifecycle {
     precondition {
-      condition     = sum(concat([0], [for policy in each.value.policies : length(jsonencode(jsondecode(policy)))])) <= 10240 && sum(concat([0], [for policy in each.value.policies : length(jsonencode(jsondecode(policy)))])) + length(jsonencode({ Version = "2012-10-17", Statement = [{ Effect = "Allow", Action = ["logs:CreateLogStream", "logs:PutLogEvents"], Resource = "${aws_cloudwatch_log_group.function[each.key].arn}:*" }] })) + (length(each.value.secret_reads) == 0 ? 0 : length(jsonencode({ Version = "2012-10-17", Statement = [{ Effect = "Allow", Action = ["secretsmanager:GetSecretValue"], Resource = distinct(each.value.secret_reads) }] }))) <= 10240
+      condition     = sum(concat([0], [for policy in each.value.policies : length(jsonencode(jsondecode(policy)))])) <= 10240 && sum(concat([0], [for policy in each.value.policies : length(jsonencode(jsondecode(policy)))])) + length(jsonencode({ Version = "2012-10-17", Statement = [{ Effect = "Allow", Action = ["logs:CreateLogStream", "logs:PutLogEvents"], Resource = "${aws_cloudwatch_log_group.function[each.key].arn}:*" }] })) + (length(each.value.secret_reads) == 0 ? 0 : length(jsonencode({ Version = "2012-10-17", Statement = [{ Effect = "Allow", Action = ["secretsmanager:GetSecretValue"], Resource = distinct(each.value.secret_reads) }] }))) + (local.vpc_enabled ? length(local.vpc_policy) : 0) <= 10240
       error_message = "Aggregate inline policies exceed the 10240-character IAM role limit."
     }
   }
@@ -52,6 +54,12 @@ resource "aws_iam_role_policy" "secret_reads" {
   role     = aws_iam_role.function[each.key].id
   policy   = jsonencode({ Version = "2012-10-17", Statement = [{ Effect = "Allow", Action = ["secretsmanager:GetSecretValue"], Resource = distinct(each.value.secret_reads) }] })
 }
+resource "aws_iam_role_policy" "vpc" {
+  for_each = local.vpc_enabled ? var.functions : {}
+  name     = "vpc-network-interfaces"
+  role     = aws_iam_role.function[each.key].id
+  policy   = local.vpc_policy
+}
 resource "aws_lambda_function" "function" {
   for_each                       = var.functions
   function_name                  = "${var.name}-${each.key}"
@@ -65,8 +73,21 @@ resource "aws_lambda_function" "function" {
   timeout                        = each.value.timeout_sec
   architectures                  = [each.value.architecture]
   environment { variables = merge(each.value.environment, each.value.secrets) }
+  dynamic "vpc_config" {
+    for_each = local.vpc_enabled ? [1] : []
+    content {
+      subnet_ids         = var.vpc_subnet_ids
+      security_group_ids = var.vpc_security_group_ids
+    }
+  }
+  lifecycle {
+    precondition {
+      condition     = (length(var.vpc_subnet_ids) == 0) == (length(var.vpc_security_group_ids) == 0)
+      error_message = "VPC subnet IDs and security group IDs must be provided together."
+    }
+  }
   tags       = var.tags
-  depends_on = [aws_iam_role_policy.logs]
+  depends_on = [aws_iam_role_policy.logs, aws_iam_role_policy.vpc]
 }
 # Public URL is required for ordinary Sentry clients; request authentication is in the application.
 resource "aws_lambda_function_url" "http" {

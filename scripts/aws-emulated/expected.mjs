@@ -8,7 +8,9 @@ export function capabilityPolicy(grant, resources) {
     ...extra,
   });
   let statements;
-  if (selection === "store" || selection === "kv") {
+  if (selection === "store" && resources.storeMode === "rds") {
+    statements = [statement(["rds-db:connect"], [resources.store])];
+  } else if (selection === "store" || selection === "kv") {
     const arn = resources[selection];
     const actions = {
       read: ["dynamodb:GetItem", "dynamodb:BatchGetItem", "dynamodb:Query"],

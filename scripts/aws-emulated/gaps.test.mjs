@@ -4,7 +4,7 @@ import { loadGaps, skipped } from "./gaps.mjs";
 describe("emulator exception inventory", () => {
   it("requires named documented exceptions and rejects undeclared exclusions", () => {
     const gaps = loadGaps();
-    expect(Object.keys(gaps)).toHaveLength(10);
+    expect(Object.keys(gaps)).toHaveLength(11);
     expect(() => skipped(gaps, "unlisted")).toThrow("Undeclared");
   });
   it("maps each exclusion to its upstream issue and prints the link", () => {
@@ -21,6 +21,7 @@ describe("emulator exception inventory", () => {
       "tags-s3": 53,
       "tags-lambda-mapping": 54,
     };
+    expect(gaps["lambda-vpc-readback"].issue).toBeNull();
     const log = vi.spyOn(console, "log").mockImplementation(() => {});
     try {
       for (const [id, issue] of Object.entries(issues)) {

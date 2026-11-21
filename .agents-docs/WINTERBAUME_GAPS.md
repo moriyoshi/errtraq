@@ -204,3 +204,14 @@ reproduces).
 | Tag readback: Lambda event source mapping has no ARN and cannot be tagged | [#54](https://github.com/moriyoshi/winterbaume/issues/54) |
 | S3 percent-decoding corrupts UTF-8 keys | [#58](https://github.com/moriyoshi/winterbaume/issues/58); local contract-only patch until fixed |
 | S3 ranged GET in server release 0.2.6 | [#29](https://github.com/moriyoshi/winterbaume/issues/29) (closed; fixed at the pinned revision) |
+
+## Lambda VPC configuration is discarded
+
+At pinned revision `69fed1d7fb0eb9a2738ff3274197c7591129c4cb`, Lambda
+`CreateFunction` accepts `VpcConfig` containing `SubnetIds: ["subnet-12345678"]` and
+`SecurityGroupIds: ["sg-12345678"]` with HTTP 201, but both the create response and
+subsequent `GetFunction` HTTP 200 omit `VpcConfig`. There is no error. The emulator cannot
+prove Lambda networking or its provider readback. The apply harness reproduces this gap on
+every run before omitting only the VPC block in its temporary module copy; the network role
+policy and all other generated resources remain in the emulated apply. Terraform mock tests
+cover the intended block. This gap is not yet filed upstream.

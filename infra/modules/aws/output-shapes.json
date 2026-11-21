@@ -18,6 +18,19 @@
     "api_url": "string",
     "ingest_url": "string"
   },
+  "rds-iam-access": {
+    "policies": {
+      "delete": {
+        "primary": "json-document"
+      },
+      "read": {
+        "primary": "json-document"
+      },
+      "write": {
+        "primary": "json-document"
+      }
+    }
+  },
   "s3": {
     "bucket_arn": "string",
     "bucket_name": "string",

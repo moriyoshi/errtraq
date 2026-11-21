@@ -177,5 +177,33 @@
     "file": "main.tf",
     "find": "[\"dynamodb:PutItem\", \"dynamodb:UpdateItem\", \"dynamodb:GetItem\"]",
     "replace": "[\"dynamodb:PutItem\", \"dynamodb:UpdateItem\"]"
+  },
+  {
+    "id": "rds-iam-broad-action",
+    "module": "rds-iam-access",
+    "file": "main.tf",
+    "find": "[\"rds-db:connect\"]",
+    "replace": "[\"rds-db:*\"]"
+  },
+  {
+    "id": "rds-iam-wildcard-resource",
+    "module": "rds-iam-access",
+    "file": "main.tf",
+    "find": "dbuser:${var.resource_id}/${var.database_user}",
+    "replace": "dbuser:*/*"
+  },
+  {
+    "id": "lambda-vpc-no-eni-create",
+    "module": "lambda-app",
+    "file": "main.tf",
+    "find": "\"ec2:CreateNetworkInterface\", ",
+    "replace": ""
+  },
+  {
+    "id": "lambda-vpc-wrong-subnets",
+    "module": "lambda-app",
+    "file": "main.tf",
+    "find": "subnet_ids         = var.vpc_subnet_ids",
+    "replace": "subnet_ids         = []"
   }
 ]

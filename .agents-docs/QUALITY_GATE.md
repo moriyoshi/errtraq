@@ -65,9 +65,8 @@ runtime or a container must supply and maintain a suitable bundle. RDS Proxy use
 certificates, so its trust bundle must include the corresponding roots. Connections verify the
 CA and endpoint hostname, and the pool's password callback signs a new 15-minute token for
 each connection using current Lambda credentials. Existing open connections do not need token
-renewal. IAM mode needs the M3f2 policy module and Lambda network work from the next part before
-it can be generated and deployed; no IAM-enabled RDS connection is exercised by the local
-Postgres test. See [AWS Lambda RDS TLS requirements](https://docs.aws.amazon.com/lambda/latest/dg/services-rds.html)
+renewal. The RDS IAM policy module and optional Lambda VPC settings are generated and mock-tested;
+no IAM-enabled RDS connection is exercised by the local Postgres test. See [AWS Lambda RDS TLS requirements](https://docs.aws.amazon.com/lambda/latest/dg/services-rds.html)
 and [RDS Proxy certificate guidance](https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/rds-proxy.howitworks.html).
 
 AWS emulator probes and the namespace lifecycle are opt-in:
@@ -165,13 +164,16 @@ The opt-in emulator apply workflow is:
 
 ```sh
 pnpm infra:apply-emulated
+pnpm infra:apply-emulated --postgres-only  # focused IAM Postgres fixture
 ```
 
 It uses pinned AWS provider 6.73.0 and loopback-only provider settings, with
 independent Terraform data directories and a read-only plugin directory. It applies the
 DynamoDB, SQS and Lambda modules and generated shared and per-topic example stacks,
 checks resources and policies through service APIs, compares repeat and change plans,
-and checks API inventories after destroy. Provider queue-stabilization and deletion waits
+and checks API inventories after destroy. The Postgres fixture also checks exact RDS connect
+and network-interface role policies; the pinned emulator drops Lambda VPC configuration, so a
+self-verifying named exception omits that block only from a temporary module copy. Provider queue-stabilization and deletion waits
 make this a lengthy opt-in run. A feature-enabled fixture checks the three-topic
 queue transition; the actual examples enable only `ingest`. Named exceptions are listed in
 `scripts/aws-emulated/gaps.json`, logged visibly, linked to
@@ -190,7 +192,7 @@ each mutation from `scripts/infra-mutations.json` in its own temporary copy, and
 validation, HCL tests or the output-shape check detected it. It also mutates generated roots to
 check detection of missing or misassigned policies, missing bindings or triggers, and an unescaped
 literal. `pnpm infra:validate` additionally builds the generator, generates both AWS stacks and
-six variants (including a fake existing archive to exercise cron), and runs `terraform fmt -check`,
+seven variants (including an IAM Postgres/VPC fixture and a fake existing archive to exercise cron), and runs `terraform fmt -check`,
 offline `init -backend=false`, `validate` and a
 mock-provider `terraform test` apply for each at both pinned provider versions. The test compares
 actual function environments, policies, queue and cron triggers, and HTTP outputs against the

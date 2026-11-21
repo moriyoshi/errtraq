@@ -7,6 +7,7 @@ import {
 import { expect, it } from "vitest";
 import local from "../../../../stacks/local.js";
 import { constructStack } from "../../../cli/src/construction.js";
+import { formatValidation } from "../../../cli/src/validation.js";
 import { postgres } from "./postgres-stack.js";
 
 it("constructs a bring-your-own Postgres using a local secret identifier", async () => {
@@ -48,6 +49,9 @@ it("validates IAM configuration and requires AWS credentials from the platform",
   });
   const stack = { ...Object.fromEntries(Object.entries(aws)), store: iam };
   expect(validateStack(stack)).toEqual([]);
+  expect(formatValidation(resolveStack(stack))).toContain(
+    "IAM grants connection to one PostgreSQL user; PostgreSQL privileges enforce read, write and delete.",
+  );
   const view = deriveDeployment(resolveStack(stack));
   for (const fn of view.functions.filter((item) =>
     item.roles.some((role) => ["ingest", "api", "consumer"].includes(role)),

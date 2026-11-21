@@ -1,6 +1,7 @@
 import { cpSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { z } from "zod";
+import { postgres } from "../packages/adapters/store-sql/dist/postgres-stack.js";
 import {
   deriveDeployment,
   out,
@@ -26,6 +27,32 @@ function variant(base, changes) {
 export const fixtures = {
   shared,
   "per-topic": perTopic,
+  "postgres-vpc": variant(shared, {
+    store: postgres({
+      mode: "iam",
+      host: "db.example.rds.amazonaws.com",
+      database: "errtraq",
+      user: "app_user",
+      region: "us-east-1",
+      resourceId: "db-ABC123",
+    }),
+    platform: awsLambda({
+      vpcSubnetIds: variable("SUBNETS"),
+      vpcSecurityGroupIds: variable("SECURITY_GROUPS"),
+    }),
+    variables: {
+      SUBNETS: {
+        type: "string[]",
+        sensitive: false,
+        default: ["subnet-12345678"],
+      },
+      SECURITY_GROUPS: {
+        type: "string[]",
+        sensitive: false,
+        default: ["sg-12345678"],
+      },
+    },
+  }),
   existing: variant(shared, {
     store: {
       ...shared.store,
@@ -140,6 +167,8 @@ export const fixtures = {
 
 // Expose actual resources from the copied, otherwise unchanged module to the root test.
 const probe = `
+output "test_vpc" { value = { for id, fn in aws_lambda_function.function : id => { subnet_ids = try(tolist(fn.vpc_config[0].subnet_ids), []), security_group_ids = try(tolist(fn.vpc_config[0].security_group_ids), []) } } }
+output "test_vpc_policies" { value = { for id, policy in aws_iam_role_policy.vpc : id => policy.policy if policy.role == aws_iam_role.function[id].id } }
 output "test_env" { value = { for id, fn in aws_lambda_function.function : id => fn.environment[0].variables } }
 output "test_policies" {
   value = { for id, fn in var.functions : id => [for n, policy in fn.policies : aws_iam_role_policy.capability["\${id}-\${n}"].policy if aws_iam_role_policy.capability["\${id}-\${n}"].role == aws_iam_role.function[id].id] }
@@ -157,6 +186,8 @@ output "test_http" {
 `;
 const test = `mock_provider "aws" {
   mock_data "aws_iam_policy_document" { defaults = { json = "{}" } }
+  mock_data "aws_caller_identity" { defaults = { account_id = "123456789012" } }
+  mock_data "aws_partition" { defaults = { partition = "aws" } }
   mock_resource "aws_iam_role" { defaults = { arn = "arn:aws:iam::123456789012:role/test" } }
   mock_resource "aws_sqs_queue" { defaults = { arn = "arn:aws:sqs:us-east-1:123456789012:test" } }
   mock_resource "aws_cloudwatch_event_rule" { defaults = { arn = "arn:aws:events:us-east-1:123456789012:rule/test" } }
@@ -305,9 +336,23 @@ export function prepareRoot(parent, name, version) {
 }`,
         )
         .join("\n");
+  const vpcAssertions =
+    name === "postgres-vpc"
+      ? `
+  assert {
+    condition = alltrue([for fn in values(module.platform.test_vpc) : toset(fn.subnet_ids) == toset(var.SUBNETS) && toset(fn.security_group_ids) == toset(var.SECURITY_GROUPS)]) && length(module.platform.test_vpc_policies) == ${view.functions.length}
+    error_message = "Every Lambda function must receive the requested VPC and network-interface policy."
+  }
+  assert {
+    condition = jsondecode(module.store.policies.read.primary).Statement[0].Resource[0] == "arn:aws:rds-db:us-east-1:123456789012:dbuser:db-ABC123/app_user" && toset(jsondecode(module.store.policies.read.primary).Statement[0].Action) == toset(["rds-db:connect"])
+    error_message = "Postgres IAM policy must identify the exact database and user."
+  }
+`
+      : "";
+  const rootTest = test.replace(/\n}\s*$/, `${vpcAssertions}\n}\n`);
   writeFileSync(
     resolve(target, "tests/root.tftest.hcl"),
-    `${functionOverrides}\n${queueOverrides}\n${test}`,
+    `${functionOverrides}\n${queueOverrides}\n${rootTest}`,
   );
   return target;
 }

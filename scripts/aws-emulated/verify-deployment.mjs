@@ -33,7 +33,13 @@ async function json(c, service, target, body) {
 export async function verifyDeployment(c, stack, view, account) {
   const name = stack.name;
   const resources = { queues: {} };
-  for (const purpose of ["store", "kv"]) {
+  const rds =
+    stack.store.manifest.id === "postgres" && stack.store.config.mode === "iam";
+  if (rds) {
+    resources.storeMode = "rds";
+    resources.store = `arn:aws:rds-db:${stack.store.config.region}:${account}:dbuser:${stack.store.config.resourceId}/${stack.store.config.user}`;
+  }
+  for (const purpose of rds ? ["kv"] : ["store", "kv"]) {
     const tableName = `${name}-${purpose}`;
     const table = (await c.dynamo("DescribeTable", { TableName: tableName }))
       .Table;
@@ -175,8 +181,14 @@ export async function verifyDeployment(c, stack, view, account) {
     const policyNames = [...listed.matchAll(/<member>([^<]+)<\/member>/g)].map(
       (match) => match[1],
     );
+    const vpc =
+      !!stack.platform.config.vpcSubnetIds &&
+      (Array.isArray(stack.platform.config.vpcSubnetIds)
+        ? stack.platform.config.vpcSubnetIds.length > 0
+        : true);
     const expectedNames = [
       "logs",
+      ...(vpc ? ["vpc-network-interfaces"] : []),
       ...fn.policies
         .filter((item) => item.policyOutput)
         .map((_, index) => `capability-${fn.id}-${index}`),
@@ -194,6 +206,27 @@ export async function verifyDeployment(c, stack, view, account) {
           },
         ],
       },
+      ...(vpc
+        ? [
+            {
+              Version: "2012-10-17",
+              Statement: [
+                {
+                  Effect: "Allow",
+                  Action: [
+                    "ec2:CreateNetworkInterface",
+                    "ec2:DescribeNetworkInterfaces",
+                    "ec2:DescribeSubnets",
+                    "ec2:DeleteNetworkInterface",
+                    "ec2:AssignPrivateIpAddresses",
+                    "ec2:UnassignPrivateIpAddresses",
+                  ],
+                  Resource: ["*"],
+                },
+              ],
+            },
+          ]
+        : []),
       ...fn.policies
         .filter((item) => item.policyOutput)
         .map((grant) =>

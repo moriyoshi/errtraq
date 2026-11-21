@@ -810,3 +810,16 @@ uses hostname-verified TLS. For Lambda ZIPs its default CA file is `/var/runtime
 other runtimes must provide a maintained PEM path, including ACM/ATS roots for RDS Proxy.
 IAM selection requires a platform that guarantees AWS credentials. The policy module and VPC
 wiring remain the second part, so the new IAM descriptor is not yet deployable.
+
+## 2026-11-21 — M3f2 RDS IAM policy and Lambda VPC
+
+The RDS IAM access module grants `rds-db:connect` only to the configured resource ID and one
+PostgreSQL user in the provider's account. Read, write and delete share that identity: IAM
+controls connection while PostgreSQL privileges determine operations, and validation reports
+this scope. Lambda VPC placement applies to every physical function, with the AWS-required EC2
+network-interface actions on `*` and an explicit paired-subnet/security-group precondition.
+Infrastructure-only platform variable references are declared separately from runtime config
+references, so VPC input support does not silently enable undelivered adapter config variables.
+The pinned Winterbaume accepts but drops `VpcConfig` on Lambda create/readback; the emulated
+Postgres fixture reprobes this before excluding the block in its temporary module copy. Real
+networking, IAM authentication, token expiry and the Lambda CA bundle remain M3h checks.
