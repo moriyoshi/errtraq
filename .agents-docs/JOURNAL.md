@@ -583,3 +583,31 @@ isolated Docker client configuration. AWS runtime adapters, deployed secrets and
 deployment remain M3 work; cron implementations remain M4 work.
 The source e2e passed with a recurring `Skipping unreadable blob` / `ENOENT` log in one run;
 the existing M3 recovery-race investigation remains open and no cause is assumed.
+
+## 2026-11-21 — M2 closed (orchestrator notes)
+
+- M2 ran as: M2a (infra model design), a first peer review that built a prototype generator on
+  it and found it insufficient, M2a2 (model revision in six steps), a second peer review
+  (prototype with no casts, eight variants through `terraform validate`, no blockers), model
+  fixes in two parts, M2b (AWS descriptors, HCL modules, generator, generated-root validation),
+  a peer review of the HCL modules (mock providers only) and its fixes, M2c (CLI, build,
+  container), a closing peer review, and M2d (its fixes).
+- Closing verification by the orchestrator: on a fresh copy placed under a directory named
+  `src/app`, with a clean install and no build, typecheck, lint and 402 tests pass; the three
+  example stacks build; `infra generate` works and regenerates with Terraform working files
+  present. In the working tree `pnpm e2e`, `pnpm e2e --bundle`, `pnpm infra:validate` (8
+  generated-root variants at both pinned provider versions), `pnpm infra:mutate` (20 module and
+  5 generated-root mutations detected) and `pnpm container:check` pass. The M2d fixes were
+  verified this way, not by a further independent review.
+- Process lessons. A large redesign handed to the implementing agent as one task was abandoned
+  twice (once per conversation) with "incomplete, no blocker"; the same work succeeded as
+  normal-sized steps with a review between each. Tests written by the implementer looked
+  thorough and caught 6 of about 20 seeded faults until a mutation check was required; require
+  mutation checks for security-relevant contracts from the start. Reviews that build a
+  throwaway consumer of an interface (a prototype generator) found far more than reading did.
+- Operational note: running `terraform init` by hand with `TF_PLUGIN_CACHE_DIR` pointed at the
+  shared plugin cache overwrote a cached provider binary and left it unloadable; use the
+  scripts, or a private cache directory, for manual experiments.
+- What M2 does not prove: nothing has been planned or applied against a real AWS account, the
+  AWS runtime adapters are stubs, and deployed secret resolution is an interface only. M3
+  starts there.
