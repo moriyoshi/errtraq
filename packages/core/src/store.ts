@@ -1,6 +1,11 @@
 // Runtime-only store utilities; this entry does not import stack schemas.
 
-export { decodeCursor, encodeCursor, pageLimit } from "./cursor.js";
+export {
+  decodeCursor,
+  encodeCursor,
+  eventCursorScope,
+  pageLimit,
+} from "./cursor.js";
 export {
   ConflictError,
   InvalidCursorError,

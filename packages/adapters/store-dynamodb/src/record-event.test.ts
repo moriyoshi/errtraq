@@ -8,6 +8,7 @@ import type {
   Timestamp,
 } from "@errtraq/core";
 import { describe, expect, it } from "vitest";
+import { issueMutableAttributes } from "./issue-item.js";
 import { DynamoStore } from "./runtime.js";
 
 const projectId = "project" as ProjectId,
@@ -50,8 +51,57 @@ const issue = (count: number): Issue => ({
 const row = (count: number) => ({
   data: { S: JSON.stringify(issue(count)) },
   count: { N: String(count) },
+  ...issueMutableAttributes(issue(count)),
 });
 describe("DynamoDB recordEvent", () => {
+  it("re-evaluates regression when a status update wins between the read and transaction", async () => {
+    let saved = row(3),
+      writes = 0;
+    const fetcher: typeof fetch = async (_url, init) => {
+      const target = new Headers(init?.headers).get("x-amz-target");
+      const body = JSON.parse(String(init?.body));
+      if (target === "DynamoDB_20120810.GetItem") {
+        if (body.Key.PK.S === "META|schema")
+          return Response.json({ Item: { projectTimeShards: { N: "4" } } });
+        return Response.json({ Item: saved });
+      }
+      const update = body.TransactItems[1].Update;
+      if (++writes === 1) {
+        const resolved = {
+          ...issue(3),
+          status: "resolved" as const,
+          resolvedAt: "2024-12-31T00:00:00.000Z" as Timestamp,
+        };
+        saved = { ...row(3), ...issueMutableAttributes(resolved) };
+        return Response.json(
+          {
+            __type: "TransactionCanceledException",
+            CancellationReasons: [
+              { Code: "None" },
+              { Code: "ConditionalCheckFailed", Item: saved },
+            ],
+          },
+          { status: 400 },
+        );
+      }
+      expect(update.ConditionExpression).toContain("#status = :resolved");
+      expect(update.UpdateExpression).toContain("REMOVE #removeResolved");
+      saved = row(4);
+      return Response.json({});
+    };
+    const store = new DynamoStore({
+      table: "table",
+      region: "us-east-1",
+      environment: { AWS_ACCESS_KEY_ID: "id", AWS_SECRET_ACCESS_KEY: "secret" },
+      fetch: fetcher,
+    });
+    await store.migrate();
+    expect(await store.recordEvent(occurrence, event)).toMatchObject({
+      isRegression: true,
+      issue: { status: "unresolved", count: 4 },
+    });
+    expect(writes).toBe(2);
+  });
   it("retries with the returned issue preimage without a reread", async () => {
     let reads = 0,
       writes = 0,
@@ -72,6 +122,8 @@ describe("DynamoDB recordEvent", () => {
       tokens.push(body.ClientRequestToken);
       const update = body.TransactItems[1].Update;
       expect(update.ReturnValuesOnConditionCheckFailure).toBe("ALL_OLD");
+      expect(update.ConditionExpression).not.toContain("#oldData");
+      expect(update.UpdateExpression).not.toContain("#data");
       if (writes === 1) {
         expect(update.ExpressionAttributeValues[":oldCount"].N).toBe("3");
         saved = row(4);
@@ -87,10 +139,7 @@ describe("DynamoDB recordEvent", () => {
         );
       }
       expect(update.ExpressionAttributeValues[":oldCount"].N).toBe("4");
-      saved = {
-        data: update.ExpressionAttributeValues[":data"],
-        count: { N: "5" },
-      };
+      saved = row(5);
       return Response.json({});
     };
     const store = new DynamoStore({

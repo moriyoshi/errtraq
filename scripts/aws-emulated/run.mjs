@@ -182,20 +182,8 @@ try {
   console.log(
     "SKIPPED concurrent store and CAS contracts on winterbaume: issue #61 violates conditional atomicity; a diagnostic runs separately (https://github.com/moriyoshi/winterbaume/issues/61)",
   );
-  const storePattern = [
-    "stores and retrieves organizations and pages projects",
-    "pages releases without crossing projects",
-    "rejects duplicate natural keys owned by another record",
-    "activates only a verified manifest after idempotent chunks and cleans pending bundles",
-    "resumes pending bundle cleanup after blob deletion fails",
-    "looks up keys, hashed tokens, releases and debug ids",
-    "resumes an interrupted active bundle deletion from strongly read chunks",
-    "lists issues sorted and paged without gaps and filters status/time",
-    "rejects unsupported issue filters",
-    "does not repeat issues when earlier entries are inserted or bumped",
-    "looks up matching issue IDs across projects",
-    "measures forty concurrent writes without treating emulator atomicity as proof",
-  ].join("|");
+  const storePattern =
+    "^(?!.*(?:atomically creates or bumps, reopens regressions, and tracks the latest event|preserves an occurrence concurrent with an issue update|atomically ignores concurrent duplicate deliveries|uses compare-and-set for creation and competing writers, and lists erasures|pages erasures by state and serializes concurrent erasure transitions|atomically creates one initial active project key)).*$";
   const storeContract = spawn(
     "pnpm",
     [

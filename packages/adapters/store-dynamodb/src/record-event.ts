@@ -5,6 +5,7 @@ import type {
   StoredEvent,
 } from "@errtraq/core";
 import { DynamoStoreError, DynamoTransactionCanceledError } from "./errors.js";
+import { issueFromItem, issueMutableAttributes } from "./issue-item.js";
 import { issueKey, issuePointerKey, issuePointerSort } from "./issues.js";
 import {
   component,
@@ -138,7 +139,7 @@ export function recordEvent(
     const eventRow = await eventItem(event, count);
     let old = await get(d, PK);
     for (let attempt = 0; attempt < 80; attempt++) {
-      const previous = itemData<Issue>(old),
+      const previous = issueFromItem(old),
         next = nextIssue(occ, previous),
         attrs = issueAttributes(next.issue);
       const candidate = {
@@ -146,29 +147,63 @@ export function recordEvent(
         data: s(JSON.stringify(next.issue)),
         count: { N: String(next.issue.count) },
         ...attrs,
+        ...issueMutableAttributes(next.issue),
       };
       assertItemSize(candidate);
-      const names: Record<string, string> = {
-        "#data": "data",
-        "#count": "count",
-      };
-      const values: Record<string, unknown> = {
-        ":data": candidate.data,
-        ":one": { N: "1" },
-      };
-      const sets = ["#data = :data"];
-      for (const [name, value] of Object.entries(attrs)) {
+      const legacy = !!previous && !old?.issueStatus?.S;
+      const names: Record<string, string> = { "#count": "count" };
+      const values: Record<string, unknown> = { ":one": { N: "1" } };
+      const updates: Item = {};
+      if (!previous || legacy) {
+        Object.assign(updates, attrs, issueMutableAttributes(next.issue));
+        updates.data = candidate.data;
+      } else {
+        updates.GSI6SK = attrs.GSI6SK;
+        if (next.issue.firstSeen !== previous.firstSeen) {
+          updates.firstSeen = s(next.issue.firstSeen);
+          updates.GSI5SK = attrs.GSI5SK;
+        }
+        if (
+          next.issue.lastSeen !== previous.lastSeen ||
+          next.issue.lastEventId !== previous.lastEventId
+        ) {
+          updates.lastSeen = s(next.issue.lastSeen);
+          updates.lastEventId = s(next.issue.lastEventId);
+          updates.lastEventReceivedAt = s(next.issue.lastEventReceivedAt);
+          updates.GSI4SK = attrs.GSI4SK;
+        }
+        if (next.isRegression) {
+          updates.issueStatus = s("unresolved");
+          updates.GSI4PK = attrs.GSI4PK;
+          updates.GSI5PK = attrs.GSI5PK;
+          updates.GSI6PK = attrs.GSI6PK;
+        }
+      }
+      const sets: string[] = [];
+      for (const [name, value] of Object.entries(updates)) {
         names[`#${name}`] = name;
         values[`:${name}`] = value;
         sets.push(`#${name} = :${name}`);
       }
-      const condition = previous
-        ? "#count = :oldCount AND #data = :oldData"
-        : "attribute_not_exists(PK)";
+      let condition = "attribute_not_exists(PK)";
       if (previous) {
         values[":oldCount"] = { N: String(previous.count) };
-        values[":oldData"] = old?.data;
+        if (legacy) {
+          names["#oldData"] = "data";
+          values[":oldData"] = old?.data;
+          condition = "#count = :oldCount AND #oldData = :oldData";
+        } else {
+          names["#status"] = "issueStatus";
+          names["#resolved"] = "resolvedAt";
+          values[":resolved"] = s("resolved");
+          values[":received"] = s(occ.receivedAt);
+          condition = next.isRegression
+            ? "#count = :oldCount AND #status = :resolved AND (attribute_not_exists(#resolved) OR #resolved < :received)"
+            : "#count = :oldCount AND (#status <> :resolved OR #resolved >= :received)";
+        }
       }
+      if (next.isRegression && !legacy) names["#removeResolved"] = "resolvedAt";
+      const updateExpression = `SET ${sets.join(", ")}${next.isRegression && !legacy ? " REMOVE #removeResolved" : ""} ADD #count :one`;
       const writes: object[] = [
         {
           Put: {
@@ -182,7 +217,7 @@ export function recordEvent(
           Update: {
             TableName: d.table,
             Key: primary(PK),
-            UpdateExpression: `SET ${sets.join(", ")} ADD #count :one`,
+            UpdateExpression: updateExpression,
             ConditionExpression: condition,
             ExpressionAttributeNames: names,
             ExpressionAttributeValues: values,
@@ -210,7 +245,7 @@ export function recordEvent(
           TransactItems: writes,
           ClientRequestToken: crypto.randomUUID(),
         });
-        const saved = itemData<Issue>(await get(d, PK));
+        const saved = issueFromItem(await get(d, PK));
         if (!saved) throw new Error("Committed issue is missing");
         return {
           inserted: true,
@@ -242,7 +277,7 @@ export function recordEvent(
             (reasons[0]?.item as Item | undefined) ?? (await get(d, evPK)),
           );
           if (duplicate) {
-            const issue = itemData<Issue>(
+            const issue = issueFromItem(
               await get(d, issueKey(duplicate.projectId, duplicate.issueId)),
             );
             if (!issue) throw new Error("Stored event has no issue");

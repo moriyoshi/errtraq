@@ -205,8 +205,7 @@ export function bundleRepository(
       const key = bundleKey(project, id);
       const old = await state(d, key);
       if (
-        !old ||
-        !old.item.generation?.S ||
+        !old?.item.generation?.S ||
         old.bundle.state !== "pending" ||
         old.bundle.cleanupStarted ||
         old.item.deleting
@@ -358,8 +357,7 @@ export function bundleRepository(
       const key = bundleKey(project, id);
       const old = await state(d, key);
       if (
-        !old ||
-        old.bundle.state !== "pending" ||
+        old?.bundle.state !== "pending" ||
         !old.bundle.pendingExpiresAt ||
         old.bundle.pendingExpiresAt > before ||
         old.item.deleting
@@ -378,8 +376,7 @@ export function bundleRepository(
       const key = bundleKey(project, id);
       const old = await state(d, key);
       if (
-        !old ||
-        old.bundle.state !== "pending" ||
+        old?.bundle.state !== "pending" ||
         !old.bundle.cleanupStarted ||
         old.bundle.cleanupId !== cleanupId
       )

@@ -8,6 +8,7 @@ import {
   UnsupportedQueryError,
 } from "@errtraq/core/store";
 import { DynamoStoreError } from "./errors.js";
+import { issueFromItem, issueMutableAttributes } from "./issue-item.js";
 import { issueTimeSort, partition, sortKey } from "./keys.js";
 import { issueAttributes, issueStatusPartition } from "./record-event.js";
 import {
@@ -15,7 +16,6 @@ import {
   type Driver,
   get,
   type Item,
-  itemData,
   primary,
   s,
 } from "./repository-base.js";
@@ -48,7 +48,7 @@ export async function getIssuesById(d: Driver, id: string): Promise<Issue[]> {
         });
         const values = response.Responses as Record<string, Item[]> | undefined;
         for (const item of values?.[d.table] ?? []) {
-          const issue = itemData<Issue>(item);
+          const issue = issueFromItem(item);
           if (issue?.id === id) result.push(issue);
         }
         const pending = response.UnprocessedKeys as
@@ -200,7 +200,7 @@ async function listIssues(d: Driver, query: IssueQuery) {
         true,
       );
     const full = hydrated[0],
-      issue = itemData<Issue>(full);
+      issue = issueFromItem(full);
     if (
       issue &&
       issue.projectId === query.projectId &&
@@ -238,7 +238,7 @@ async function updateIssue(
   const key = issueKey(project, id);
   for (let attempt = 0; attempt < 30; attempt++) {
     const old = await get(d, key),
-      previous = itemData<Issue>(old);
+      previous = issueFromItem(old);
     if (!previous || !old) throw new NotFoundError("Issue not found");
     const issue = { ...previous, ...patch },
       attrs = issueAttributes(issue);
@@ -248,31 +248,55 @@ async function updateIssue(
       count: { N: String(issue.count) },
       ...attrs,
     });
+    const legacy = !old.issueStatus?.S;
     const names: Record<string, string> = {
-        "#data": "data",
-        "#count": "count",
-      },
-      values: Record<string, unknown> = {
-        ":data": s(JSON.stringify(issue)),
-        ":old": old.data,
-        ":count": { N: String(previous.count) },
-      };
-    const sets = ["#data = :data"];
-    for (const [name, value] of Object.entries(attrs)) {
+      "#status": "issueStatus",
+      "#resolved": "resolvedAt",
+    };
+    const values: Record<string, unknown> = { ":status": s(issue.status) };
+    const updates: Item = {
+      issueStatus: s(issue.status),
+      GSI4PK: attrs.GSI4PK,
+      GSI5PK: attrs.GSI5PK,
+      GSI6PK: attrs.GSI6PK,
+    };
+    if (legacy) Object.assign(updates, attrs, issueMutableAttributes(issue));
+    if (issue.resolvedAt) updates.resolvedAt = s(issue.resolvedAt);
+    const sets: string[] = [];
+    for (const [name, value] of Object.entries(updates)) {
       names[`#${name}`] = name;
       values[`:${name}`] = value;
       sets.push(`#${name} = :${name}`);
     }
+    delete values[":status"];
+    let condition: string;
+    if (legacy) {
+      names["#data"] = "data";
+      names["#count"] = "count";
+      values[":old"] = old.data;
+      values[":count"] = { N: String(previous.count) };
+      condition = "#data = :old AND #count = :count";
+      delete names["#status"];
+      if (issue.resolvedAt) delete names["#resolved"];
+    } else {
+      values[":oldStatus"] = s(previous.status);
+      condition = "#status = :oldStatus";
+      if (previous.resolvedAt) {
+        values[":oldResolved"] = s(previous.resolvedAt);
+        condition += " AND #resolved = :oldResolved";
+      } else condition += " AND attribute_not_exists(#resolved)";
+    }
     try {
-      await d.request("UpdateItem", {
+      const result = await d.request("UpdateItem", {
         TableName: d.table,
         Key: primary(key),
-        UpdateExpression: `SET ${sets.join(", ")}`,
-        ConditionExpression: "#data = :old AND #count = :count",
+        UpdateExpression: `SET ${sets.join(", ")}${issue.resolvedAt ? "" : " REMOVE #resolved"}`,
+        ConditionExpression: condition,
         ExpressionAttributeNames: names,
         ExpressionAttributeValues: values,
+        ReturnValues: "ALL_NEW",
       });
-      return issue;
+      return issueFromItem(result.Attributes as Item | undefined) ?? issue;
     } catch (error) {
       if (
         !(error instanceof DynamoStoreError) ||
@@ -296,7 +320,7 @@ async function updateIssue(
 export function issueRepository(d: Driver): IssueRepo {
   return {
     get: async (project, id) =>
-      itemData<Issue>(await get(d, issueKey(project, id))),
+      issueFromItem(await get(d, issueKey(project, id))),
     getById: (id) => getIssuesById(d, id),
     list: (query) => listIssues(d, query),
     update: (project, id, patch) => updateIssue(d, project, id, patch),

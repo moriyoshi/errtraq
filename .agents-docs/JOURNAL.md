@@ -930,3 +930,21 @@ Winterbaume also admitted both writers in the existing concurrent metadata CAS c
 load. The harness therefore runs the unchanged CAS and active-key concurrency cases on the
 same DynamoDB Local fallback as the issue transactions, while retaining the winterbaume
 gap probe. This prevents a known emulator race from making the opt-in gate flaky.
+
+## 2026-11-21 — DynamoDB stage 1 events and narrow issue guards
+
+Mutable issue fields are now separate attributes, so count-only occurrences do not rewrite
+serialized issue data or status index partitions. Count guards protect the exact count sort
+key; the guarded regression predicate prevents a concurrent status change from being lost.
+Legacy items without the separate fields upgrade on first write using the old preimage guard.
+The 40-writer DynamoDB Local contract measured 394 attempts / 40 events (9.85 per event),
+versus 433 / 40 (10.82) in the prior run. These single local measurements are noisy; the
+mandatory count preimage remains a contention point and real AWS measurement remains M3h.
+
+Event reads use the issue-time index or merge project-time shard streams, strongly hydrate
+candidates, and preserve both per-stream examined keys and the global examined boundary in
+the cursor. The global boundary prevents an earlier insertion in an unconsumed shard from
+appearing on a later page. Deletes use bounded BatchWriteItem retries. The entire shared
+store contract ran across winterbaume and DynamoDB Local; only concurrent cases move to
+Local because winterbaume issue #61 invalidates their atomicity assertions. A transient
+SQS redrive probe failed once; the final full emulator rerun passed.

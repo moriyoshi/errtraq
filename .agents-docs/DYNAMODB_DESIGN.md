@@ -31,6 +31,11 @@ DynamoDB `Scan` or a filtered full-table scan.
   resulting extra conflicts; the reviewer's 2.7 transactions/event did not establish the cost
   of this additional condition. Alternative multi-attribute keys or an unbounded tie-group
   sort conflict with the selected constraints and need a new decision.
+- The stage 1 runtime stores mutable issue fields separately from the original serialized
+  issue data. Count-only updates do not rewrite that data or the status index partitions.
+  The transaction guards count plus the regression predicate, so a status change that would
+  alter the regression decision causes a retry. Old issue items without separate fields are
+  upgraded on their next update using a one-time serialized preimage guard.
 - **Erasure completion has a separate concrete gap.** A message can commit an event, crash
   before indexing, be retried repeatedly in the main queue, and not yet be in the DLQ when the
   worker sees two empty index passes. The specified wait and DLQ check alone cannot prove the

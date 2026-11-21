@@ -140,9 +140,14 @@ describe("DynamoDB store runtime", () => {
       dependencies: {},
       environment: { AWS_REGION: "us-east-1" },
     });
-    await expect(store.events.get("p" as never, "e" as never)).rejects.toThrow(
-      "not implemented",
-    );
+    await expect(
+      store.events.deleteBySubject(
+        "p" as never,
+        { kind: "eventIds", eventIds: [] },
+        "2025-01-01T00:00:00.000Z" as never,
+        1,
+      ),
+    ).rejects.toBeInstanceOf(UnsupportedQueryError);
     await expect(
       store.issues.repairAfterErasure("p" as never, "i" as never, 1),
     ).rejects.toBeInstanceOf(UnsupportedQueryError);

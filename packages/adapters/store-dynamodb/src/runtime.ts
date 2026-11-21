@@ -1,6 +1,5 @@
 import { AwsRequestError, awsRequest } from "@errtraq/aws-signing";
 import type { ActiveStore, Clock, CreateContext, Logger } from "@errtraq/core";
-import { UnsupportedQueryError } from "@errtraq/core/store";
 import {
   DynamoStoreAccessDeniedError,
   DynamoStoreError,
@@ -8,6 +7,7 @@ import {
   DynamoStoreUnavailableError,
   DynamoTransactionCanceledError,
 } from "./errors.js";
+import { eventRepository } from "./events.js";
 import { issueRepository } from "./issues.js";
 import { metaRepository } from "./meta.js";
 import { projectRepository } from "./projects.js";
@@ -39,15 +39,6 @@ export interface DynamoStoreOptions {
   logger?: Logger;
   fetch?: typeof fetch;
 }
-const unavailableErasure = async (): Promise<never> => {
-  throw new UnsupportedQueryError("Subject erasure is unavailable until M4");
-};
-const unimplemented = async (): Promise<never> => {
-  throw new Error(
-    "DynamoDB store repository operation not implemented in M3e stage 1 step C",
-  );
-};
-
 /** Runtime-only DynamoDB store skeleton. The table layout is provisioned by Terraform. */
 export class DynamoStore implements ActiveStore {
   readonly capabilities = {
@@ -204,14 +195,7 @@ export class DynamoStore implements ActiveStore {
   );
   projects: ActiveStore["projects"] = projectRepository(this);
   issues: ActiveStore["issues"] = issueRepository(this);
-  events: ActiveStore["events"] = {
-    capabilities: { deleteStrategy: "explicit", deleteBySubject: false },
-    get: unimplemented,
-    listByIssue: unimplemented,
-    scanOlderThan: unimplemented,
-    deleteBatch: unimplemented,
-    deleteBySubject: unavailableErasure,
-  };
+  events: ActiveStore["events"] = eventRepository(this, () => this.shards);
   releases: ActiveStore["releases"] = releaseRepository(this);
   meta: ActiveStore["meta"] = metaRepository(this);
 }
