@@ -15,8 +15,10 @@ import {
   assertItemSize,
   type Driver,
   get,
+  hydrateRows,
   type Item,
   primary,
+  queryIndex,
   s,
 } from "./repository-base.js";
 
@@ -73,7 +75,13 @@ export async function getIssuesById(d: Driver, id: string): Promise<Issue[]> {
     return left < right ? -1 : left > right ? 1 : 0;
   });
 }
-type Stream = { status: string; start?: Item; done: boolean; next?: Item };
+type Stream = {
+  status: string;
+  start?: Item;
+  done: boolean;
+  buffer?: Item[];
+  terminal?: boolean;
+};
 async function listIssues(d: Driver, query: IssueQuery) {
   if (query.text || ((query.from || query.to) && query.sort !== "lastSeen"))
     throw new UnsupportedQueryError("Unsupported issue filter");
@@ -140,11 +148,16 @@ async function listIssues(d: Driver, query: IssueQuery) {
     ? `${issueTimeSort(query.from, "x").slice(0, 24)}#~`
     : undefined;
   const items: Issue[] = [];
-  let examined = 0;
-  while (items.length < limit && examined < 100) {
+  const hydrated = new Map<string, Item>();
+  while (items.length < limit) {
+    const fetched: Item[] = [];
     for (const stream of streams) {
-      if (stream.done || stream.next) continue;
-      const result = await d.request("Query", {
+      if (stream.done || stream.buffer?.length) continue;
+      if (stream.terminal) {
+        stream.done = true;
+        continue;
+      }
+      const result = await queryIndex(d, {
         TableName: d.table,
         IndexName: index,
         KeyConditionExpression: `#hash = :hash${lower && upper ? " AND #range BETWEEN :lower AND :upper" : lower ? " AND #range > :lower" : upper ? " AND #range < :upper" : ""}`,
@@ -157,50 +170,42 @@ async function listIssues(d: Driver, query: IssueQuery) {
           ...(lower ? { ":lower": s(lower) } : {}),
           ...(upper ? { ":upper": s(upper) } : {}),
         },
-        Limit: 1,
+        Limit: Math.min(100, limit - items.length),
         ...(stream.start ? { ExclusiveStartKey: stream.start } : {}),
       });
-      stream.next = (result.Items as Item[] | undefined)?.[0];
-      if (!stream.next) stream.done = true;
+      stream.buffer = (result.Items as Item[] | undefined) ?? [];
+      stream.terminal = !result.LastEvaluatedKey;
+      if (!stream.buffer.length) {
+        stream.done = true;
+        continue;
+      }
+      fetched.push(...stream.buffer);
     }
+    for (const [key, value] of await hydrateRows(d, fetched))
+      hydrated.set(key, value);
     const available = streams
-      .filter((x) => x.next)
+      .filter((x) => x.buffer?.length)
       .sort((a, b) =>
-        (a.next?.[range]?.S ?? "") < (b.next?.[range]?.S ?? "") ? -1 : 1,
+        (a.buffer?.[0]?.[range]?.S ?? "") < (b.buffer?.[0]?.[range]?.S ?? "")
+          ? -1
+          : 1,
       );
     const selected = available[0];
-    if (!selected?.next) break;
-    const row = selected.next;
-    selected.next = undefined;
+    if (!selected?.buffer?.length) break;
+    const row = selected.buffer.shift() as Item;
     selected.start = row;
-    examined++;
-    let pendingKeys = [{ PK: row.PK, SK: row.SK }];
-    let hydrated: Item[] = [];
-    for (let attempt = 0; pendingKeys.length && attempt < 10; attempt++) {
-      const response = await d.request("BatchGetItem", {
-        RequestItems: {
-          [d.table]: { Keys: pendingKeys, ConsistentRead: true },
-        },
-      });
-      const values = response.Responses as Record<string, Item[]> | undefined;
-      hydrated = hydrated.concat(values?.[d.table] ?? []);
-      const pending = response.UnprocessedKeys as
-        | Record<string, { Keys?: typeof pendingKeys }>
-        | undefined;
-      pendingKeys = pending?.[d.table]?.Keys ?? [];
-      if (pendingKeys.length)
-        await new Promise((resolve) =>
-          setTimeout(resolve, Math.random() * Math.min(250, 10 * 2 ** attempt)),
-        );
-    }
-    if (pendingKeys.length)
-      throw new DynamoStoreError(
-        "Unprocessed issue hydration",
-        undefined,
-        true,
-      );
-    const full = hydrated[0],
+    if (!selected.buffer.length && selected.terminal) selected.done = true;
+    const hydrationKey = JSON.stringify([row.PK?.S, row.SK?.S]);
+    const full = hydrated.get(hydrationKey),
       issue = issueFromItem(full);
+    if (
+      !streams.some((stream) =>
+        stream.buffer?.some(
+          (entry) => entry.PK?.S === row.PK?.S && entry.SK?.S === row.SK?.S,
+        ),
+      )
+    )
+      hydrated.delete(hydrationKey);
     if (
       issue &&
       issue.projectId === query.projectId &&

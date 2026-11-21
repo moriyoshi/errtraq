@@ -987,3 +987,27 @@ revoked token. Postgres separate-pool and DynamoDB Local store-plus-KV tests exe
 bootstrap; Secrets Manager requests use fake HTTP in tests, so actual IAM, AWS consistency and
 network access remain M3h checks. The command needs operator-provided non-secret binding values
 and AWS credentials; it currently supports independent top-level store and KV selections.
+
+## 2026-11-21 — DynamoDB review: buffered listings and bundle recovery decision
+
+Issue and event GSI merges now prefetch bounded batches, strongly hydrate at most 100 distinct
+base keys per request, and retain only examined positions in cursors. Bundle release and pending
+expiry listings use distinct sparse index partitions; existing bundle rows need a backfill.
+Conditional metadata writes use a single PutItem, and bundle cleanup uses a conditional
+DeleteItem. Bundle transactions classify cancellation reasons and retry conflicts; contending
+record-event transactions now use full jitter capped at 500 ms.
+
+On DynamoDB Local, an isolated same-issue, same-timestamp stress run recorded 23.18 transaction
+attempts per event and zero failures at 200 writers; 500 writers recorded 58.55 attempts per
+submitted event and 213 of 500 operations hit the 80-attempt contention limit. The cap alone
+therefore does not solve hot-issue contention; real AWS measurement and the retry/admission
+policy remain open. The stress runner confirmed the stored count equaled successful operations.
+
+The requested TTL backstop on pending bundle metadata and manifest chunks conflicts with
+ARCHITECTURE.md's resumable interrupted-cleanup guarantee: after an arbitrarily long outage,
+the TTL sweeper can remove the only recovery record. No such TTL was added while the owner
+chooses a bounded guarantee or an additional durable recovery record. The existing marker TTL
+and its already-documented crash-reclamation limitation remain. M3g staged recovery cron was
+not started in this turn.
+The stress harness counted all rejected operations together; an earlier run showed the first
+rejection was the retryable contention-limit error, but it did not classify every rejection.

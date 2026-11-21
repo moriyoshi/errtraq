@@ -1,10 +1,12 @@
 import type { ArtifactBundle, ReleaseRepo } from "@errtraq/core";
 import { bundleDebugIdsDigest, ConflictError } from "@errtraq/core/store";
+import { DynamoStoreError, DynamoTransactionCanceledError } from "./errors.js";
 import { partition, sortKey } from "./keys.js";
 import { indexPartition } from "./projects.js";
 import {
   cancelled,
   conditionFor,
+  contentionDelay,
   type Driver,
   dataItem,
   get,
@@ -23,9 +25,11 @@ const failed = (): never => {
   throw new ConflictError("Bundle lifecycle conflict");
 };
 const index = (bundle: ArtifactBundle) => ({
-  partition: indexPartition("bundles", bundle.projectId),
+  partition: indexPartition("bundles", bundle.projectId, bundle.releaseId),
   sort: sortKey(bundle.id),
 });
+const pendingPartition = (project: string) =>
+  indexPartition("pending-bundles", project);
 type State = { item: Item; bundle: ArtifactBundle };
 async function state(d: Driver, key: string): Promise<State | null> {
   const item = await get(d, key);
@@ -45,19 +49,66 @@ function bundlePut(
       Item: {
         ...dataItem(key, bundle, deleting ? undefined : index(bundle)),
         generation: old?.generation ?? s(crypto.randomUUID()),
+        ...(bundle.state === "pending" && bundle.pendingExpiresAt && !deleting
+          ? {
+              GSI3PK: s(pendingPartition(bundle.projectId)),
+              GSI3SK: s(`${bundle.pendingExpiresAt}#${sortKey(bundle.id)}`),
+            }
+          : {}),
         ...(deleting ? { deleting: s("1") } : {}),
       },
       ...conditionFor(old),
     },
   };
 }
-async function transact(d: Driver, writes: object[]) {
-  try {
-    await d.request("TransactWriteItems", { TransactItems: writes });
-  } catch (e) {
-    if (cancelled(e)) failed();
-    throw e;
+async function transact(
+  d: Driver,
+  writes: object[],
+  retryGuard = false,
+): Promise<boolean> {
+  for (let attempt = 0; attempt < 12; attempt++) {
+    try {
+      await d.request("TransactWriteItems", {
+        TransactItems: writes,
+        ClientRequestToken: crypto.randomUUID(),
+      });
+      return true;
+    } catch (error) {
+      if (!(error instanceof DynamoTransactionCanceledError)) throw error;
+      const codes = error.reasons.map((reason) => reason.code);
+      if (
+        codes.some(
+          (code) =>
+            code &&
+            ![
+              "None",
+              "ConditionalCheckFailed",
+              "TransactionConflict",
+              "ProvisionedThroughputExceeded",
+              "ThrottlingError",
+            ].includes(code),
+        )
+      )
+        throw error;
+      if (codes.includes("ConditionalCheckFailed")) {
+        if (
+          retryGuard &&
+          codes[0] === "ConditionalCheckFailed" &&
+          !codes.slice(1).includes("ConditionalCheckFailed")
+        )
+          return false;
+        failed();
+      }
+      if (attempt === 11)
+        throw new DynamoStoreError(
+          "DynamoDB bundle contention limit reached",
+          "TransactionConflict",
+          true,
+        );
+      await contentionDelay(attempt);
+    }
   }
+  return false;
 }
 async function valid(bundle: ArtifactBundle, ids: readonly string[]) {
   if (
@@ -157,10 +208,14 @@ async function removeChunks(
         Delete: { TableName: d.table, Key: primary(key, chunk.SK?.S) },
       });
       try {
-        await d.request("TransactWriteItems", { TransactItems: writes });
+        await d.request("TransactWriteItems", {
+          TransactItems: writes,
+          ClientRequestToken: crypto.randomUUID(),
+        });
         break;
       } catch (error) {
         if (!cancelled(error) || attempt === 11) throw error;
+        await contentionDelay(attempt);
       }
     }
   }
@@ -186,6 +241,8 @@ export function bundleRepository(
         bundle.state !== "pending" ||
         !bundle.pendingExpiresAt ||
         !Number.isFinite(Date.parse(bundle.pendingExpiresAt)) ||
+        new Date(bundle.pendingExpiresAt).toISOString() !==
+          bundle.pendingExpiresAt ||
         JSON.stringify(bundle.manifest) !== JSON.stringify(manifest)
       )
         failed();
@@ -217,58 +274,71 @@ export function bundleRepository(
       const unique = [...new Set(ids)];
       for (let i = 0; i < unique.length; i += 98) {
         const group = unique.slice(i, i + 98);
-        const current = await state(d, key);
-        if (
-          !current ||
-          current.item.generation?.S !== old.item.generation?.S ||
-          current.bundle.state !== "pending" ||
-          current.bundle.cleanupStarted ||
-          current.item.deleting
-        )
-          return failed();
-        const digest = await bundleDebugIdsDigest(group);
-        const writes: object[] = [
-          bundlePut(d, key, current.item, current.bundle),
-          {
-            Put: {
-              TableName: d.table,
-              Item: {
-                ...primary(key, `CHUNK|${digest}`),
-                data: s(JSON.stringify(group)),
-              },
-            },
-          },
-        ];
-        for (const debug of group)
-          writes.push({
-            Put: {
-              TableName: d.table,
-              Item: {
-                ...primary(debugKey(project, debug)),
-                owner: s(key),
-                generation: current.item.generation,
-                ttlEpoch: {
-                  N: String(
-                    Math.floor(
-                      Date.parse(current.bundle.pendingExpiresAt as string) /
-                        1000,
-                    ),
-                  ),
+        let committed = false;
+        for (let attempt = 0; attempt < 12; attempt++) {
+          const current = await state(d, key);
+          if (
+            !current ||
+            current.item.generation?.S !== old.item.generation?.S ||
+            current.bundle.state !== "pending" ||
+            current.bundle.cleanupStarted ||
+            current.item.deleting
+          )
+            return failed();
+          const digest = await bundleDebugIdsDigest(group);
+          const writes: object[] = [
+            bundlePut(d, key, current.item, current.bundle),
+            {
+              Put: {
+                TableName: d.table,
+                Item: {
+                  ...primary(key, `CHUNK|${digest}`),
+                  data: s(JSON.stringify(group)),
                 },
               },
-              ConditionExpression:
-                "attribute_not_exists(PK) OR (#owner = :owner AND #gen = :gen)",
-              ExpressionAttributeNames: {
-                "#owner": "owner",
-                "#gen": "generation",
-              },
-              ExpressionAttributeValues: {
-                ":owner": s(key),
-                ":gen": current.item.generation,
-              },
             },
-          });
-        await transact(d, writes);
+          ];
+          for (const debug of group)
+            writes.push({
+              Put: {
+                TableName: d.table,
+                Item: {
+                  ...primary(debugKey(project, debug)),
+                  owner: s(key),
+                  generation: current.item.generation,
+                  ttlEpoch: {
+                    N: String(
+                      Math.floor(
+                        Date.parse(current.bundle.pendingExpiresAt as string) /
+                          1000,
+                      ),
+                    ),
+                  },
+                },
+                ConditionExpression:
+                  "attribute_not_exists(PK) OR (#owner = :owner AND #gen = :gen)",
+                ExpressionAttributeNames: {
+                  "#owner": "owner",
+                  "#gen": "generation",
+                },
+                ExpressionAttributeValues: {
+                  ":owner": s(key),
+                  ":gen": current.item.generation,
+                },
+              },
+            });
+          if (await transact(d, writes, true)) {
+            committed = true;
+            break;
+          }
+          await contentionDelay(attempt);
+        }
+        if (!committed)
+          throw new DynamoStoreError(
+            "DynamoDB bundle contention limit reached",
+            "TransactionConflict",
+            true,
+          );
       }
     },
     async verifyAndActivateBundle(project, id, ids) {
@@ -335,13 +405,14 @@ export function bundleRepository(
     async listPendingBundles(project, before, cursor, limit) {
       const page = await pageIndex<ArtifactBundle>(
         d,
-        "entity-list",
-        "GSI7PK",
-        "GSI7SK",
-        indexPartition("bundles", project),
+        "issue-id",
+        "GSI3PK",
+        "GSI3SK",
+        pendingPartition(project),
         JSON.stringify(["pending-bundles", project, before]),
         cursor,
         limit,
+        `${before}#~`,
       );
       return {
         ...page,
@@ -405,15 +476,21 @@ export function bundleRepository(
         old.bundle.cleanupId !== cleanupId
       )
         return failed();
-      await transact(d, [
-        {
-          Delete: {
-            TableName: d.table,
-            Key: primary(key),
-            ...conditionFor(old.item),
-          },
-        },
-      ]);
+      try {
+        await d.request("DeleteItem", {
+          TableName: d.table,
+          Key: primary(key),
+          ...conditionFor(old.item),
+        });
+      } catch (error) {
+        if (
+          error instanceof DynamoStoreError &&
+          !error.ambiguous &&
+          error.providerCode === "ConditionalCheckFailedException"
+        )
+          failed();
+        throw error;
+      }
     },
     async listBundles(project, release, cursor, limit) {
       const page = await pageIndex<ArtifactBundle>(
@@ -421,7 +498,7 @@ export function bundleRepository(
         "entity-list",
         "GSI7PK",
         "GSI7SK",
-        indexPartition("bundles", project),
+        indexPartition("bundles", project, release),
         JSON.stringify(["bundles", project, release]),
         cursor,
         limit,

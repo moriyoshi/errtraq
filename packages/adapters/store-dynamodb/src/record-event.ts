@@ -17,6 +17,7 @@ import {
 } from "./keys.js";
 import {
   assertItemSize,
+  contentionDelay,
   type Driver,
   dataItem,
   get,
@@ -288,13 +289,7 @@ export function recordEvent(
         old = (reasons[1]?.item as Item | undefined) ?? (await get(d, PK));
         if (reasons[2]?.code === "ConditionalCheckFailed" && !old)
           throw new DynamoStoreError("Issue pointer already exists");
-        if (attempt < 79)
-          await new Promise((resolve) =>
-            setTimeout(
-              resolve,
-              Math.random() * Math.min(25, 2 ** Math.min(attempt, 5)),
-            ),
-          );
+        if (attempt < 79) await contentionDelay(attempt);
       }
     }
     throw new DynamoStoreError(

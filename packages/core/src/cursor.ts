@@ -13,7 +13,10 @@ export function encodeCursor(scope: string, keys: (string | number)[]): Cursor {
   const bytes = new TextEncoder().encode(JSON.stringify([scope, keys]));
   let binary = "";
   for (const byte of bytes) binary += String.fromCharCode(byte);
-  return `v1.${btoa(binary).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/, "")}` as Cursor;
+  const cursor = `v1.${btoa(binary).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/, "")}`;
+  if (cursor.length > 8192)
+    throw new InvalidCursorError("Cursor exceeds maximum size");
+  return cursor as Cursor;
 }
 export function decodeCursor(
   cursor: Cursor | undefined,

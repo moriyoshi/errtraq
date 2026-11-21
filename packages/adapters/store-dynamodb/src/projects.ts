@@ -13,6 +13,7 @@ import {
   cancelled,
   conditionFor,
   conflict,
+  contentionDelay,
   type Driver,
   dataItem,
   get,
@@ -80,6 +81,7 @@ async function writeUnique<T>(
       if (!cancelled(error)) throw error;
       const claimed = await get(driver, marker);
       if (claimed?.owner?.S && claimed.owner.S !== PK) conflict();
+      await contentionDelay(attempt);
     }
   }
   throw new DynamoStoreError(
@@ -141,6 +143,7 @@ async function writeDirectUnique<T>(
       const found = await get(driver, PK),
         marker = await get(driver, idMarker);
       if (found && marker?.owner?.S !== PK) conflict();
+      await contentionDelay(attempt);
     }
   }
   throw new DynamoStoreError(
@@ -244,6 +247,7 @@ export function projectRepository(driver: Driver): ProjectRepo {
           return key;
         } catch (error) {
           if (!cancelled(error)) throw error;
+          await contentionDelay(attempt);
         }
       }
       throw new DynamoStoreError(

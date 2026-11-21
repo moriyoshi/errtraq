@@ -1,8 +1,8 @@
 import type { ArchiveState, ErasureRequest, MetaRepo } from "@errtraq/core";
 import { VersionConflictError } from "@errtraq/core/store";
+import { DynamoStoreError } from "./errors.js";
 import { partition, sortKey } from "./keys.js";
 import {
-  cancelled,
   type Driver,
   dataItem,
   get,
@@ -46,13 +46,18 @@ async function cas<T extends { version: number }>(
           ExpressionAttributeValues: { ":expected": { N: String(expected) } },
         };
   try {
-    await driver.request("TransactWriteItems", {
-      TransactItems: [
-        { Put: { TableName: driver.table, Item: item, ...condition } },
-      ],
+    await driver.request("PutItem", {
+      TableName: driver.table,
+      Item: item,
+      ...condition,
     });
   } catch (error) {
-    if (cancelled(error)) throw new VersionConflictError("Version conflict");
+    if (
+      error instanceof DynamoStoreError &&
+      !error.ambiguous &&
+      error.providerCode === "ConditionalCheckFailedException"
+    )
+      throw new VersionConflictError("Version conflict");
     throw error;
   }
 }

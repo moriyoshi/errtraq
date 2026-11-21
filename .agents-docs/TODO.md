@@ -6,6 +6,10 @@ item should be resolved or removed once addressed. Milestone work itself is trac
 
 ## Open Items
 
+- [ ] M3e: add the event and issue `ttlEpoch` backstops from the DynamoDB design; explicit retention deletes remain primary. The ingest role's read policy also grants table-wide `GetItem`: restricting it with `dynamodb:LeadingKeys` requires a separate capability policy because the current read output is shared with roles that query the whole table. — *source: store review section C*
+- [ ] M3e: define an index backfill for bundle records created before the release and expiry index keys were added; existing records are not automatically reindexed. — *source: store review section C*
+- [ ] M3e: resolve whether pending bundle and manifest TTL may bound resumable cleanup or whether a durable recovery record is required before adding that TTL backstop. — *source: store review section C / ARCHITECTURE.md bundle cleanup guarantee*
+- [ ] M3e: the 500 ms jitter cap alone did not eliminate hot-issue exhaustion: a DynamoDB Local run with 500 simultaneous, same-timestamp events used 58.55 transaction attempts per event and 213 operations failed; the sampled failure was the 80-attempt contention limit. Reassess retry budget and admission control alongside the real-DynamoDB measurements before relying on this load. — *source: store review section B*
 - [x] M3f2 part 2: add the RDS IAM policy module and contract / mutation tests, Lambda VPC configuration and ENI grants, and Postgres-on-Lambda generated-root and emulator coverage. — *source: M3f2 part 1*
 - [ ] M3f2: file the Winterbaume Lambda VPC readback gap upstream and remove the emulator-only override when the fix is pinned. — *source: M3f2 part 2*
 - [ ] M3h: verify real Lambda-to-RDS/Aurora IAM authentication, the Lambda runtime CA bundle and hostname verification, new connections after 15 minutes, and RDS Proxy IAM/TLS behavior and permissions; verify VPC attachment, ENI role permissions and service reachability through the selected NAT or endpoints. — *source: M3f2*

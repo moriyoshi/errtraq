@@ -93,9 +93,9 @@ real load tests justify changing list semantics.
 | --- | --- | --- |
 | `event-project-time` | `project|shard`, `T(receivedAt)#E(eventId)` | All events / archival; `KEYS_ONLY`; merge 1..4 shard streams. |
 | `event-issue-time` | `project|issueId`, same time key | One issue's events; `KEYS_ONLY`; no fan-out. |
-| `issue-id` | `issueId`, `projectId` | Eventual cross-project index on issue items; the strong pointer path below prevents a false not-found while this index catches up. |
+| `issue-id` | `issueId`, `projectId`; pending bundles use a separate namespaced project key and expiry / bundle ID sort key | Eventual cross-project issue index and pending-bundle expiry queries; the strong issue pointer prevents a false not-found while this index catches up. |
 | `issue-last`, `issue-first`, `issue-count` | `project|status`, respective descending-sort/ascending-ID composite | One per sort, `KEYS_ONLY`; status-less list merges the three status partitions. |
-| `entity-list` | `entityKind|scope`, entity-ID key | Projects, keys, releases, bundles; `KEYS_ONLY`; sparse, scope per operation. |
+| `entity-list` | `entityKind|scope`, entity-ID key | Projects, keys, releases and bundles by project and release; `KEYS_ONLY`; sparse, scope per operation. |
 | `erasure-all`, `erasure-project`, `erasure-state`, `erasure-project-state` | applicable global/project/state PK, project/erasure-ID SK | Four `KEYS_ONLY` sparse indexes, one chosen for each metadata filter combination. |
 
 The issue-ID GSI is retained as requested alongside the strong pointer. `getById` uses the

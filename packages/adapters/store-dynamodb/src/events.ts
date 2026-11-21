@@ -13,13 +13,21 @@ import { eventKey } from "./record-event.js";
 import {
   type Driver,
   get,
+  hydrateRows,
   type Item,
   itemData,
   primary,
+  queryIndex,
   s,
 } from "./repository-base.js";
 
-type Stream = { hash: string; done: boolean; start?: Item; next?: Item };
+type Stream = {
+  hash: string;
+  done: boolean;
+  start?: Item;
+  buffer?: Item[];
+  terminal?: boolean;
+};
 async function list(
   d: Driver,
   shards: number,
@@ -109,10 +117,15 @@ async function list(
     upper = explicitAfter;
   if (lower && upper && lower >= upper) return { items: [], nextCursor: null };
   const items: StoredEvent[] = [];
-  let examined = 0;
-  while (items.length < limit && examined < 100) {
+  const hydrated = new Map<string, Item>();
+  while (items.length < limit) {
+    const fetched: Item[] = [];
     for (const stream of streams) {
-      if (stream.done || stream.next) continue;
+      if (stream.done || stream.buffer?.length) continue;
+      if (stream.terminal) {
+        stream.done = true;
+        continue;
+      }
       let streamLower = lower,
         streamUpper = upper;
       if (
@@ -133,7 +146,7 @@ async function list(
         stream.done = true;
         continue;
       }
-      const response = await d.request("Query", {
+      const response = await queryIndex(d, {
         TableName: d.table,
         IndexName: index,
         ScanIndexForward: order === "asc",
@@ -147,52 +160,45 @@ async function list(
           ...(streamLower ? { ":lower": s(streamLower) } : {}),
           ...(streamUpper ? { ":upper": s(streamUpper) } : {}),
         },
-        Limit: 1,
+        Limit: Math.min(100, limit - items.length),
         ...(stream.start ? { ExclusiveStartKey: stream.start } : {}),
       });
-      stream.next = (response.Items as Item[] | undefined)?.[0];
-      if (!stream.next) stream.done = true;
+      stream.buffer = (response.Items as Item[] | undefined) ?? [];
+      stream.terminal = !response.LastEvaluatedKey;
+      if (!stream.buffer.length) {
+        stream.done = true;
+        continue;
+      }
+      fetched.push(...stream.buffer);
     }
+    for (const [key, value] of await hydrateRows(d, fetched))
+      hydrated.set(key, value);
     const available = streams
-      .filter((x) => x.next)
+      .filter((x) => x.buffer?.length)
       .sort((a, b) => {
-        const x = a.next?.[range]?.S ?? "",
-          y = b.next?.[range]?.S ?? "";
+        const x = a.buffer?.[0]?.[range]?.S ?? "",
+          y = b.buffer?.[0]?.[range]?.S ?? "";
         return (x < y ? -1 : x > y ? 1 : 0) * (order === "asc" ? 1 : -1);
       });
     const selected = available[0];
-    if (!selected?.next) break;
-    const row = selected.next;
-    selected.next = undefined;
+    if (!selected?.buffer?.length) break;
+    const row = selected.buffer.shift() as Item;
     selected.start = row;
-    examined++;
+    if (!selected.buffer.length && selected.terminal) selected.done = true;
     const key = row[range]?.S;
+    const hydrationKey = JSON.stringify([row.PK?.S, row.SK?.S]);
+    const full = hydrated.get(hydrationKey);
+    if (
+      !streams.some((stream) =>
+        stream.buffer?.some(
+          (entry) => entry.PK?.S === row.PK?.S && entry.SK?.S === row.SK?.S,
+        ),
+      )
+    )
+      hydrated.delete(hydrationKey);
     if (!key || (after && (order === "asc" ? key <= after : key >= after)))
       continue;
     boundary = key;
-    let keys = [{ PK: row.PK, SK: row.SK }],
-      full: Item | undefined;
-    for (let attempt = 0; keys.length && attempt < 10; attempt++) {
-      const response = await d.request("BatchGetItem", {
-        RequestItems: { [d.table]: { Keys: keys, ConsistentRead: true } },
-      });
-      const values = response.Responses as Record<string, Item[]> | undefined;
-      full ??= values?.[d.table]?.[0];
-      const pending = response.UnprocessedKeys as
-        | Record<string, { Keys?: typeof keys }>
-        | undefined;
-      keys = pending?.[d.table]?.Keys ?? [];
-      if (keys.length)
-        await new Promise((resolve) =>
-          setTimeout(resolve, Math.random() * Math.min(250, 10 * 2 ** attempt)),
-        );
-    }
-    if (keys.length)
-      throw new DynamoStoreError(
-        "Unprocessed event hydration",
-        undefined,
-        true,
-      );
     const event = itemData<StoredEvent>(full);
     if (
       event &&

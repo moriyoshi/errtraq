@@ -6,6 +6,77 @@ import { type Driver, type Item, primary, s } from "./repository-base.js";
 
 const projectId = "project" as ProjectId;
 describe("DynamoDB issue index pagination", () => {
+  it.each([25, 130])(
+    "hydrates %i issues in bounded batches rather than one request per row",
+    async (size) => {
+      const rows: Item[] = Array.from({ length: size }, (_, i) => {
+        const id = String(i).padStart(2, "0");
+        const time = "2025-01-01T00:00:00.000Z" as Issue["lastSeen"];
+        const issue: Issue = {
+          id: id as Issue["id"],
+          projectId,
+          fingerprint: id,
+          status: "unresolved",
+          title: "t",
+          culprit: "",
+          level: "error",
+          type: "error",
+          metadata: {},
+          firstSeen: time,
+          lastSeen: time,
+          count: 1,
+          lastEventId: "event" as Issue["lastEventId"],
+          lastEventReceivedAt: time,
+        };
+        return {
+          ...primary(id),
+          ...issueAttributes(issue),
+          data: s(JSON.stringify(issue)),
+        };
+      });
+      const counts: Record<string, number> = {};
+      const request: Driver["request"] = async (action, input) => {
+        counts[action] = (counts[action] ?? 0) + 1;
+        if (action === "Query") {
+          const hash = (
+            input.ExpressionAttributeValues as Record<string, { S: string }>
+          )[":hash"]?.S;
+          const candidates = hash === rows[0]?.GSI4PK?.S ? rows : [];
+          const start = (input.ExclusiveStartKey as Item | undefined)?.PK?.S;
+          const offset = start
+            ? candidates.findIndex((row) => row.PK?.S === start) + 1
+            : 0;
+          const items = candidates.slice(offset, offset + Number(input.Limit));
+          return {
+            Items: items,
+            ...(offset + items.length < candidates.length
+              ? { LastEvaluatedKey: items.at(-1) }
+              : {}),
+          };
+        }
+        const keys = (
+          input.RequestItems as { table: { Keys: { PK: { S: string } }[] } }
+        ).table.Keys;
+        return {
+          Responses: {
+            table: rows.filter((row) =>
+              keys.some((key) => key.PK.S === row.PK?.S),
+            ),
+          },
+        };
+      };
+      const page = await issueRepository({ table: "table", request }).list({
+        projectId,
+        sort: "lastSeen",
+        limit: size,
+      });
+      expect(page.items).toHaveLength(size);
+      expect(counts).toEqual({
+        Query: size === 25 ? 3 : 4,
+        BatchGetItem: size === 25 ? 1 : 2,
+      });
+    },
+  );
   it("advances over stale entries without advancing a prefetched status stream", async () => {
     const issue = (
       id: string,
@@ -53,15 +124,23 @@ describe("DynamoDB issue index pagination", () => {
                 ? [other]
                 : [];
           const index = start ? rows.findIndex((x) => x.PK.S === start) + 1 : 0;
-          return { Items: rows.slice(index, index + 1) };
+          const items = rows.slice(index, index + Number(input.Limit));
+          return {
+            Items: items,
+            ...(index + items.length < rows.length
+              ? { LastEvaluatedKey: items.at(-1) }
+              : {}),
+          };
         }
         if (action === "BatchGetItem") {
           const requests = input.RequestItems as {
             table: { Keys: { PK: { S: string } }[]; ConsistentRead: boolean };
           };
           expect(requests.table.ConsistentRead).toBe(true);
-          const item = byId[requests.table.Keys[0]?.PK.S ?? ""];
-          return { Responses: { table: item ? [item] : [] } };
+          const items = requests.table.Keys.map((key) => byId[key.PK.S]).filter(
+            Boolean,
+          );
+          return { Responses: { table: items } };
         }
         throw new Error(`Unexpected ${action}`);
       },

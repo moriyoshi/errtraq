@@ -81,6 +81,75 @@ export function conflict(): never {
   throw new ConflictError("Natural key already exists");
 }
 
+/** Full jitter spreads contending writers over a window capped at 500 ms. */
+export async function contentionDelay(attempt: number): Promise<void> {
+  await new Promise((resolve) =>
+    setTimeout(
+      resolve,
+      Math.random() * Math.min(500, 2 ** Math.min(attempt, 9)),
+    ),
+  );
+}
+
+/** Strongly hydrate index rows in DynamoDB's maximum batch size. */
+export async function hydrateRows(
+  driver: Driver,
+  rows: Item[],
+): Promise<Map<string, Item>> {
+  const hydrated = new Map<string, Item>();
+  const unique = [
+    ...new Map(
+      rows.map((row) => [JSON.stringify([row.PK?.S, row.SK?.S]), row]),
+    ).values(),
+  ];
+  for (let offset = 0; offset < unique.length; offset += 100) {
+    let keys = unique
+      .slice(offset, offset + 100)
+      .map(({ PK, SK }) => ({ PK, SK }));
+    for (let attempt = 0; keys.length && attempt < 10; attempt++) {
+      const result = await driver.request("BatchGetItem", {
+        RequestItems: { [driver.table]: { Keys: keys, ConsistentRead: true } },
+      });
+      const values = result.Responses as Record<string, Item[]> | undefined;
+      for (const item of values?.[driver.table] ?? [])
+        hydrated.set(JSON.stringify([item.PK?.S, item.SK?.S]), item);
+      const pending = result.UnprocessedKeys as
+        | Record<string, { Keys?: typeof keys }>
+        | undefined;
+      keys = pending?.[driver.table]?.Keys ?? [];
+      if (keys.length)
+        await new Promise((resolve) =>
+          setTimeout(resolve, Math.random() * Math.min(250, 10 * 2 ** attempt)),
+        );
+    }
+    if (keys.length)
+      throw new DynamoStoreError(
+        "DynamoDB did not process index hydration",
+        undefined,
+        true,
+      );
+  }
+  return hydrated;
+}
+
+/** DynamoDB rejects some syntactically valid but tampered exclusive start keys. */
+export async function queryIndex(
+  driver: Driver,
+  input: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  try {
+    return await driver.request("Query", input);
+  } catch (error) {
+    if (
+      input.ExclusiveStartKey &&
+      error instanceof DynamoStoreError &&
+      error.providerCode === "ValidationException"
+    )
+      throw new InvalidCursorError("Invalid DynamoDB index cursor");
+    throw error;
+  }
+}
+
 /** Query a sparse GSI, strongly hydrate candidates and advance only over examined keys. */
 export async function pageIndex<T>(
   driver: Driver,
@@ -91,6 +160,7 @@ export async function pageIndex<T>(
   scope: string,
   cursor?: Cursor,
   limit?: number,
+  upper?: string,
 ): Promise<Page<T>> {
   const size = pageLimit(limit),
     position = readIndexCursor(scope, cursor);
@@ -106,12 +176,18 @@ export async function pageIndex<T>(
     throw new InvalidCursorError("Cursor does not match index partition");
   const items: T[] = [];
   for (let batch = 0; batch < 32; batch++) {
-    const result = await driver.request("Query", {
+    const result = await queryIndex(driver, {
       TableName: driver.table,
       IndexName: index,
-      KeyConditionExpression: "#pk = :pk",
-      ExpressionAttributeNames: { "#pk": hashAttribute },
-      ExpressionAttributeValues: { ":pk": s(hash) },
+      KeyConditionExpression: `#pk = :pk${upper ? " AND #sk <= :upper" : ""}`,
+      ExpressionAttributeNames: {
+        "#pk": hashAttribute,
+        ...(upper ? { "#sk": rangeAttribute } : {}),
+      },
+      ExpressionAttributeValues: {
+        ":pk": s(hash),
+        ...(upper ? { ":upper": s(upper) } : {}),
+      },
       Limit: Math.min(100, size - items.length),
       ...(start ? { ExclusiveStartKey: start } : {}),
     });
