@@ -648,6 +648,33 @@ function inspect(input: unknown): {
       })),
     };
   const stack = parsed.data as StackConfig;
+  if (stack.recordMode === undefined) {
+    const grouped =
+      stack.platform.manifest.id === "aws-lambda" &&
+      stack.queue.manifest.id === "queue-sqs";
+    stack.recordMode = grouped ? "grouped" : "direct";
+    if (
+      grouped &&
+      stack.platform.config &&
+      typeof stack.platform.config === "object"
+    ) {
+      const config = stack.platform.config as {
+        roles?: string[];
+        split?: string[];
+      };
+      stack.platform.config = {
+        ...config,
+        ...(Array.isArray(config.roles) && !config.roles.includes("record")
+          ? { roles: [...config.roles, "record"] }
+          : {}),
+        ...(Array.isArray(config.split) &&
+        config.split.includes("consumer") &&
+        !config.split.includes("record")
+          ? { split: [...config.split, "record"] }
+          : {}),
+      };
+    }
+  }
   const issues: StackValidationIssue[] = [];
   const fail = (path: string, message: string) =>
     issues.push({ path, message });

@@ -369,6 +369,7 @@ export interface CreateContext<
   config: C;
   bindings: B;
   dependencies: D;
+  recordMode?: "direct" | "grouped";
   /** Runtime environment supplied by the host; the adapter may read refreshed credentials lazily. */
   environment?: Readonly<Record<string, string | undefined>>;
   /** Resolve secret identifiers only when an adapter needs the secret bytes. */

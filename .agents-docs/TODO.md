@@ -83,3 +83,5 @@ item should be resolved or removed once addressed. Milestone work itself is trac
 - [x] M3: test SQS partial-batch failures with real-shaped AWS events. — *source: M2 final review section B; resolved in M3c*
 - [ ] M3: test EventBridge event handling against real AWS event shapes. — *source: M2 final review section B*
 - [ ] M3 / M3h (store-dynamodb): implement the owner-selected issue-keyed FIFO stage using the completed batched `recordEvents`, then measure 200 / 500 writers through that path on DynamoDB Local and real AWS. — *source: owner queue-first decision*
+
+- [ ] M3 / M4: add retention-safe cleanup for grouped-record claim-check blobs after queue retention, DLQ and redrive windows; content-addressed retries can leave orphaned blobs. — *source: issue-keyed queue turn 5*

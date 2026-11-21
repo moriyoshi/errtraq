@@ -2,6 +2,7 @@ export { createSecretsManagerSource, SecretReadError } from "./secrets.js";
 
 import {
   type ActiveStore,
+  type BatchHandler,
   type BlobStore,
   type Clock,
   ConsumerService,
@@ -13,6 +14,7 @@ import {
   type KV,
   type Logger,
   type Queue,
+  RecordHandler,
   toTimestamp,
 } from "@errtraq/core";
 import { createApiApp, createIngestApp } from "@errtraq/http";
@@ -21,6 +23,7 @@ import { handle, type LambdaEvent } from "hono/aws-lambda";
 
 export interface HandlerOptions {
   roles: readonly FunctionRole[];
+  recordMode?: "direct" | "grouped";
   http: readonly FunctionRole[];
   adapters: { store?: ActiveStore; blob?: BlobStore; queue?: Queue; kv?: KV };
   clock?: Clock;
@@ -87,13 +90,45 @@ export function createHandler(
   }
   const http = handle(app);
   const consumer =
-    roles.includes("consumer") && adapters.store && adapters.blob
+    roles.includes("consumer") &&
+    adapters.blob &&
+    (options.recordMode === "grouped" ? adapters.queue : adapters.store)
       ? new ConsumerService({
+          store: adapters.store,
+          blobs: adapters.blob,
+          recordMode: options.recordMode,
+          queue: adapters.queue,
+          logger: log,
+        })
+      : undefined;
+  const record =
+    roles.includes("record") && adapters.store && adapters.blob
+      ? new RecordHandler({
           store: adapters.store,
           blobs: adapters.blob,
           logger: log,
         })
       : undefined;
+  const dispatch: BatchHandler = async (batch) => {
+    const results: Awaited<ReturnType<BatchHandler>> = [];
+    for (const topic of ["ingest", "record"]) {
+      const selected = batch.filter((delivery) => delivery.topic === topic);
+      if (!selected.length) continue;
+      const handler = topic === "ingest" ? consumer?.handle : record?.handle;
+      if (!handler)
+        results.push(
+          ...selected.map((delivery) => ({
+            deliveryId: delivery.id,
+            action: "retry" as const,
+          })),
+        );
+      else results.push(...(await handler(selected)));
+    }
+    for (const delivery of batch)
+      if (delivery.topic !== "ingest" && delivery.topic !== "record")
+        results.push({ deliveryId: delivery.id, action: "retry" });
+    return results;
+  };
   return async (event: unknown) => {
     if (!event || typeof event !== "object") {
       if (roles.includes("cron")) {
@@ -103,9 +138,9 @@ export function createHandler(
       throw new Error("Invalid Lambda event");
     }
     if ("Records" in event) {
-      if (!consumer || !adapters.queue?.push)
+      if ((!consumer && !record) || !adapters.queue?.push)
         throw new Error("Queue consumer is unavailable");
-      return adapters.queue.push.handle(event, consumer.handle);
+      return adapters.queue.push.handle(event, dispatch);
     }
     if (
       "job" in event ||

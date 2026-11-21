@@ -1074,3 +1074,17 @@ copy omitting only the discarded settings, checks the FIFO queue and DLQ through
 them; production HCL is unchanged. The named gap is in WINTERBAUME_GAPS.md and is not yet filed
 upstream. Actual FIFO ordering, event attributes, poison handling and throughput remain real-AWS
 checks; the record handler and pipeline are the next implementation turn.
+
+
+## 2026-11-22 — Issue-keyed recording pipeline
+
+The normalizing consumer publishes a versioned normalized record before deleting the staged
+envelope. Large records use content-addressed claim checks; grouped overflow payloads are also
+content-addressed so conflicting duplicate deliveries cannot overwrite the first event's data.
+The record handler commits valid same-issue prefixes in batches of at most ten and 3 MiB,
+retries a poison record and its group remainder, and lets other groups advance. Claim checks
+must survive queue retention and redrive; their cleanup remains a TODO.
+
+Lambda + SQS defaults to grouped recording and adds a record function alongside split consumers;
+standalone remains direct unless explicitly configured with the record role. Neither mode emits
+notifications yet. Terraform validation uses the real derived grants and both queue triggers.

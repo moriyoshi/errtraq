@@ -32,16 +32,16 @@ const baseConfigSchema = z.strictObject({
   rateLimit: z.number().int().positive().nullable().default(60),
   rateWindowSec: z.number().int().positive().default(60),
   roles: z
-    .array(z.enum(["ingest", "api", "consumer", "cron"]))
+    .array(z.enum(["ingest", "api", "consumer", "record", "cron"]))
     .default(["ingest", "api", "consumer", "cron"]),
   split: z
-    .array(z.enum(["ingest", "api", "consumer", "cron"]))
+    .array(z.enum(["ingest", "api", "consumer", "record", "cron"]))
     .max(0)
     .default([]),
   http: z.array(z.enum(["ingest", "api"])).default(["ingest", "api"]),
   settings: z
     .partialRecord(
-      z.enum(["ingest", "api", "consumer", "cron"]),
+      z.enum(["ingest", "api", "consumer", "record", "cron"]),
       z.strictObject({
         memoryMb: z.number().int().positive().optional(),
         timeoutSec: z.number().int().positive().optional(),
@@ -55,7 +55,12 @@ const portWithReference = configReference(
 ).default(8787);
 export const configSchema = baseConfigSchema
   .refine(
-    (config) => config.roles.length === 4 && new Set(config.roles).size === 4,
+    (config) =>
+      config.roles.length >= 4 &&
+      new Set(config.roles).size === config.roles.length &&
+      ["ingest", "api", "consumer", "cron"].every((role) =>
+        config.roles.includes(role as "ingest" | "api" | "consumer" | "cron"),
+      ),
     { message: "Standalone deploys all roles in one process" },
   )
   .refine(
@@ -71,7 +76,12 @@ const stackConfigSchema = baseConfigSchema
     tokenDirectory: configReference(z.string().min(1)).default(".errtraq"),
   })
   .refine(
-    (config) => config.roles.length === 4 && new Set(config.roles).size === 4,
+    (config) =>
+      config.roles.length >= 4 &&
+      new Set(config.roles).size === config.roles.length &&
+      ["ingest", "api", "consumer", "cron"].every((role) =>
+        config.roles.includes(role as "ingest" | "api" | "consumer" | "cron"),
+      ),
     { message: "Standalone deploys all roles in one process" },
   )
   .refine(

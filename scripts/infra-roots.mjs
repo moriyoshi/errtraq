@@ -83,6 +83,7 @@ export const fixtures = {
     },
   }),
   "postgres-vpc": variant(shared, {
+    recordMode: "direct",
     store: postgres({
       mode: "iam",
       host: "db.example.rds.amazonaws.com",
@@ -109,6 +110,8 @@ export const fixtures = {
     },
   }),
   existing: variant(shared, {
+    recordMode: "direct",
+    platform: awsLambda(),
     store: {
       ...shared.store,
       existing: {
@@ -134,8 +137,12 @@ export const fixtures = {
       },
     },
   }),
-  "nothing-split": variant(shared, { platform: awsLambda({ split: [] }) }),
+  "nothing-split": variant(shared, {
+    recordMode: "direct",
+    platform: awsLambda({ split: [] }),
+  }),
   "everything-split": variant(perTopic, {
+    recordMode: "direct",
     platform: awsLambda({ split: ["ingest", "api", "consumer", "cron"] }),
   }),
   disposable: variant(shared, { protection: "disposable" }),

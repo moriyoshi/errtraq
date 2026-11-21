@@ -54,7 +54,7 @@ it("validates IAM configuration and requires AWS credentials from the platform",
   );
   const view = deriveDeployment(resolveStack(stack));
   for (const fn of view.functions.filter((item) =>
-    item.roles.some((role) => ["ingest", "api", "consumer"].includes(role)),
+    item.roles.some((role) => ["ingest", "api", "record"].includes(role)),
   )) {
     expect(
       fn.envBindings

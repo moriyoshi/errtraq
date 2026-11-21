@@ -57,18 +57,17 @@ exports[`Terraform generator > renders the full per-topic stack deterministicall
           "auth_type": "NONE",
           "environment": {
             "ERRTRAQ_BLOB_BUCKET": "\${module.blob.bucket_name}",
-            "ERRTRAQ_QUEUE_SOURCE_INGEST": "\${module.queue.queues[\\"ingest\\"][\\"arn\\"]}",
-            "ERRTRAQ_STORE_TABLE": "\${module.store.table_name}"
+            "ERRTRAQ_QUEUE_RECORD_URL": "\${module.queue.queues[\\"record\\"][\\"url\\"]}",
+            "ERRTRAQ_QUEUE_SOURCE_INGEST": "\${module.queue.queues[\\"ingest\\"][\\"arn\\"]}"
           },
           "http": [],
           "memory_mb": 512,
           "policies": [
-            "\${module.store.policies[\\"read\\"][\\"primary\\"]}",
-            "\${module.store.policies[\\"write\\"][\\"primary\\"]}",
             "\${module.blob.policies[\\"read\\"][\\"primary\\"]}",
             "\${module.blob.policies[\\"write\\"][\\"primary\\"]}",
             "\${module.blob.policies[\\"delete\\"][\\"primary\\"]}",
-            "\${module.queue.policies[\\"consume\\"][\\"ingest\\"]}"
+            "\${module.queue.policies[\\"consume\\"][\\"ingest\\"]}",
+            "\${module.queue.policies[\\"produce\\"][\\"record\\"]}"
           ],
           "roles": [
             "consumer"
@@ -127,6 +126,31 @@ exports[`Terraform generator > renders the full per-topic stack deterministicall
           "secret_reads": [],
           "secrets": {},
           "timeout_sec": 30
+        },
+        "record": {
+          "architecture": "x86_64",
+          "artifact": "build/record.zip",
+          "auth_type": "NONE",
+          "environment": {
+            "ERRTRAQ_BLOB_BUCKET": "\${module.blob.bucket_name}",
+            "ERRTRAQ_QUEUE_SOURCE_RECORD": "\${module.queue.queues[\\"record\\"][\\"arn\\"]}",
+            "ERRTRAQ_STORE_TABLE": "\${module.store.table_name}"
+          },
+          "http": [],
+          "memory_mb": 512,
+          "policies": [
+            "\${module.store.policies[\\"read\\"][\\"primary\\"]}",
+            "\${module.store.policies[\\"write\\"][\\"primary\\"]}",
+            "\${module.blob.policies[\\"read\\"][\\"primary\\"]}",
+            "\${module.blob.policies[\\"list\\"][\\"primary\\"]}",
+            "\${module.queue.policies[\\"consume\\"][\\"record\\"]}"
+          ],
+          "roles": [
+            "record"
+          ],
+          "secret_reads": [],
+          "secrets": {},
+          "timeout_sec": 30
         }
       },
       "handler": "index.handler",
@@ -138,6 +162,15 @@ exports[`Terraform generator > renders the full per-topic stack deterministicall
           "resource": "\${module.queue.queues[\\"ingest\\"][\\"arn\\"]}",
           "topics": [
             "ingest"
+          ],
+          "visibility_timeout_sec": 180
+        },
+        "record": {
+          "batch_size": 10,
+          "function_id": "record",
+          "resource": "\${module.queue.queues[\\"record\\"][\\"arn\\"]}",
+          "topics": [
+            "record"
           ],
           "visibility_timeout_sec": 180
         }
@@ -155,6 +188,12 @@ exports[`Terraform generator > renders the full per-topic stack deterministicall
       "physical_queues": {
         "ingest": {
           "dlq_enabled": true,
+          "max_receive_count": 5,
+          "visibility_timeout_sec": 180
+        },
+        "record": {
+          "dlq_enabled": true,
+          "fifo": true,
           "max_receive_count": 5,
           "visibility_timeout_sec": 180
         }
@@ -278,18 +317,17 @@ exports[`Terraform generator > renders the full shared stack deterministically 1
           "auth_type": "NONE",
           "environment": {
             "ERRTRAQ_BLOB_BUCKET": "\${module.blob.bucket_name}",
-            "ERRTRAQ_QUEUE_SOURCE_SHARED": "\${module.queue.queues[\\"shared\\"][\\"arn\\"]}",
-            "ERRTRAQ_STORE_TABLE": "\${module.store.table_name}"
+            "ERRTRAQ_QUEUE_RECORD_URL": "\${module.queue.queues[\\"record\\"][\\"url\\"]}",
+            "ERRTRAQ_QUEUE_SOURCE_SHARED": "\${module.queue.queues[\\"shared\\"][\\"arn\\"]}"
           },
           "http": [],
           "memory_mb": 512,
           "policies": [
-            "\${module.store.policies[\\"read\\"][\\"primary\\"]}",
-            "\${module.store.policies[\\"write\\"][\\"primary\\"]}",
             "\${module.blob.policies[\\"read\\"][\\"primary\\"]}",
             "\${module.blob.policies[\\"write\\"][\\"primary\\"]}",
             "\${module.blob.policies[\\"delete\\"][\\"primary\\"]}",
-            "\${module.queue.policies[\\"consume\\"][\\"shared\\"]}"
+            "\${module.queue.policies[\\"consume\\"][\\"shared\\"]}",
+            "\${module.queue.policies[\\"produce\\"][\\"record\\"]}"
           ],
           "roles": [
             "consumer"
@@ -348,11 +386,45 @@ exports[`Terraform generator > renders the full shared stack deterministically 1
           "secret_reads": [],
           "secrets": {},
           "timeout_sec": 30
+        },
+        "record": {
+          "architecture": "x86_64",
+          "artifact": "build/record.zip",
+          "auth_type": "NONE",
+          "environment": {
+            "ERRTRAQ_BLOB_BUCKET": "\${module.blob.bucket_name}",
+            "ERRTRAQ_QUEUE_SOURCE_RECORD": "\${module.queue.queues[\\"record\\"][\\"arn\\"]}",
+            "ERRTRAQ_STORE_TABLE": "\${module.store.table_name}"
+          },
+          "http": [],
+          "memory_mb": 512,
+          "policies": [
+            "\${module.store.policies[\\"read\\"][\\"primary\\"]}",
+            "\${module.store.policies[\\"write\\"][\\"primary\\"]}",
+            "\${module.blob.policies[\\"read\\"][\\"primary\\"]}",
+            "\${module.blob.policies[\\"list\\"][\\"primary\\"]}",
+            "\${module.queue.policies[\\"consume\\"][\\"record\\"]}"
+          ],
+          "roles": [
+            "record"
+          ],
+          "secret_reads": [],
+          "secrets": {},
+          "timeout_sec": 30
         }
       },
       "handler": "index.handler",
       "name": "aws-dynamodb",
       "queue_triggers": {
+        "record": {
+          "batch_size": 10,
+          "function_id": "record",
+          "resource": "\${module.queue.queues[\\"record\\"][\\"arn\\"]}",
+          "topics": [
+            "record"
+          ],
+          "visibility_timeout_sec": 180
+        },
         "shared": {
           "batch_size": 10,
           "function_id": "consumer",
@@ -374,6 +446,12 @@ exports[`Terraform generator > renders the full shared stack deterministically 1
     "queue": {
       "name": "aws-dynamodb",
       "physical_queues": {
+        "record": {
+          "dlq_enabled": true,
+          "fifo": true,
+          "max_receive_count": 5,
+          "visibility_timeout_sec": 180
+        },
         "shared": {
           "dlq_enabled": true,
           "max_receive_count": 5,

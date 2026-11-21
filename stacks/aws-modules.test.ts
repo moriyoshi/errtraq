@@ -68,8 +68,8 @@ describe("AWS module descriptor contracts", () => {
         selectedStack.queue.config,
         view,
       );
-      expect(inputs.physical_queues).toEqual(
-        Object.fromEntries(
+      expect(inputs.physical_queues).toEqual({
+        ...Object.fromEntries(
           (selectedStack.queue.infra.topics?.mode === "shared"
             ? ["shared"]
             : ["ingest"]
@@ -82,7 +82,13 @@ describe("AWS module descriptor contracts", () => {
             },
           ]),
         ),
-      );
+        record: {
+          visibility_timeout_sec: 180,
+          dlq_enabled: true,
+          max_receive_count: 5,
+          fifo: true,
+        },
+      });
     });
     for (const selection of [
       selectedStack.platform,

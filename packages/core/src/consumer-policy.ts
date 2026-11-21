@@ -5,7 +5,7 @@ export function assertImplementedConsumerTopics(
   topics: readonly string[],
 ): void {
   for (const topic of topics)
-    if (topic !== "ingest")
+    if (topic !== "ingest" && topic !== "record")
       throw new Error(
         `Queue topic ${topic} has no implemented consumer handler`,
       );

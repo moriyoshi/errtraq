@@ -215,7 +215,7 @@ CF Cron Triggers, Cloud Scheduler) or an in-process timer on the standalone plat
 2. **Consumer** — parse envelope items; drop unsupported item types; normalize event;
    symbolicate JS frames (debug-ID lookup → artifact bundle in BlobStore → `@jridgewell/trace-mapping`);
    compute grouping hash (client `fingerprint` → exception type + in-app frames → message fallback);
-   in current direct mode call atomic `store.recordEvent(occurrence, event)` (a redelivered event returns `inserted: false` and is dropped). The proposed grouped mode hands normalized records to the issue-keyed stage below; notifications remain a future feature.
+   in direct mode call atomic `store.recordEvent(occurrence, event)` (a redelivered event returns `inserted: false` and is dropped). Grouped mode hands normalized records to the issue-keyed stage below; notifications remain a future feature.
 3. **API app** — Sentry-compatible subset under `/api/0/`: what sentry-cli needs (auth token
    check, chunk-upload, artifact bundle assemble, releases CRUD/finalize/deploys) plus
    issue/event list/get/update for a later UI.
@@ -226,13 +226,13 @@ CF Cron Triggers, Cloud Scheduler) or an in-process timer on the standalone plat
 `recordMode` is a stack-level setting: `direct` retains the current consumer write path;
 `grouped` adds a `record` topic, produced by the normalizing consumer and consumed by a new
 `record` role. The separate role permits independent scaling, grants and timeouts; it can share
-a physical function through the normal split configuration. Stacks currently default to direct;
-future Lambda + SQS helpers will explicitly default to grouped. Validation rejects grouped mode unless the record queue declares grouped
+a physical function through the normal split configuration. Lambda stacks using SQS default to grouped; standalone stacks default to direct. Validation
+rejects grouped mode unless the record queue declares grouped
 delivery, the record role is deployed, the active store supports the operation, and all record
 bindings, policies, triggers and limits are available. It never silently falls back to direct.
 
 ```ts
-// Proposed additions; packages/core/src/ports.ts still describes the current implementation.
+// Simplified sketch; packages/core/src/ports.ts defines the full contracts.
 interface Message { key: string; body: unknown; groupKey?: string }
 type QueueGrouping = "none" | "per-key-serial";
 interface RecordInput { occurrence: Occurrence; event: StoredEvent }

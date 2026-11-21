@@ -1,5 +1,6 @@
 import {
   type ActiveStore,
+  type BatchHandler,
   type BlobStore,
   bootstrapProject,
   type Clock,
@@ -11,6 +12,7 @@ import {
   type KV,
   type Logger,
   type Queue,
+  RecordHandler,
   recoverStagedEnvelopes,
   toTimestamp,
   WebCryptoIdGen,
@@ -100,6 +102,7 @@ export function create({
   bindings: runtimeBindings,
   dependencies,
   cronJobs = [],
+  recordMode = "direct",
 }: CreateContext<StandaloneConfig, Partial<Bindings>, Bindings>) {
   const bindings = { ...dependencies, ...runtimeBindings };
   const cfg = configSchema.parse(config);
@@ -163,6 +166,8 @@ export function create({
         store: bindings.store,
         blobs: bindings.blob,
         kv: bindings.kv,
+        queue: bindings.queue,
+        recordMode,
         logger,
         maxEnvelopeBytes: limit,
       });
@@ -195,7 +200,35 @@ export function create({
         server.once("error", reject);
       });
       const abort = new AbortController();
-      const running = bindings.queue.pull.run(consumer.handle, abort.signal);
+      const record =
+        recordMode === "grouped"
+          ? new RecordHandler({
+              store: bindings.store,
+              blobs: bindings.blob,
+              logger,
+            })
+          : undefined;
+      const dispatch: BatchHandler = async (batch) => {
+        const result: Awaited<ReturnType<BatchHandler>> = [];
+        for (const topic of ["ingest", "record"]) {
+          const selected = batch.filter((item) => item.topic === topic);
+          if (!selected.length) continue;
+          const handler = topic === "ingest" ? consumer.handle : record?.handle;
+          if (handler) result.push(...(await handler(selected)));
+          else
+            result.push(
+              ...selected.map((item) => ({
+                deliveryId: item.id,
+                action: "retry" as const,
+              })),
+            );
+        }
+        for (const item of batch)
+          if (item.topic !== "ingest" && item.topic !== "record")
+            result.push({ deliveryId: item.id, action: "retry" });
+        return result;
+      };
+      const running = bindings.queue.pull.run(dispatch, abort.signal);
       let minute = -1;
       const timer = setInterval(() => {
         const now = new Date();

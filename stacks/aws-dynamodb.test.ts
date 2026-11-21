@@ -26,15 +26,56 @@ import { postgres } from "@errtraq/store-sql/postgres/stack";
 import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { assertSafeStackImports } from "../scripts/adapter-stack-check.js";
-import shared from "./aws-dynamodb.js";
-import perTopic from "./aws-dynamodb-per-topic.js";
+import groupedShared from "./aws-dynamodb.js";
+import groupedPerTopic from "./aws-dynamodb-per-topic.js";
 
 const copyStack = <T extends object>(value: T): T =>
   Object.fromEntries(Object.entries(value)) as T;
 
+const direct = (stack: typeof groupedShared) =>
+  resolveStack({
+    ...copyStack(stack),
+    recordMode: "direct",
+    platform: awsLambda(),
+  });
+const shared = direct(groupedShared);
+const perTopic = direct(groupedPerTopic);
+
 const names = (items: { binding: { name: string } }[]) =>
   items.map((item) => item.binding.name).sort();
 describe("AWS descriptor stacks", () => {
+  it("defaults Lambda SQS stacks to grouped recording with isolated permissions", () => {
+    for (const stack of [groupedShared, groupedPerTopic]) {
+      const view = deriveDeployment(stack);
+      expect(stack.recordMode).toBe("grouped");
+      const consumer = view.functions.find((fn) => fn.id === "consumer");
+      const record = view.functions.find((fn) => fn.id === "record");
+      expect(consumer?.policies.some((p) => p.selection === "store")).toBe(
+        false,
+      );
+      expect(
+        consumer?.policies.some(
+          (p) =>
+            p.selection === "queue" &&
+            p.capability === "produce" &&
+            p.purpose === "record",
+        ),
+      ).toBe(true);
+      expect(
+        record?.policies.some(
+          (p) => p.selection === "store" && p.capability === "write",
+        ),
+      ).toBe(true);
+      expect(
+        view.triggers.some(
+          (t) =>
+            t.kind === "queue" &&
+            t.functionId === "record" &&
+            t.topics.includes("record"),
+        ),
+      ).toBe(true);
+    }
+  });
   it("authorizes external Postgres with a scoped secret binding for every required role", () => {
     const base = copyStack(shared);
     const selected = postgres(variable("POSTGRES_SECRET_ARN"));

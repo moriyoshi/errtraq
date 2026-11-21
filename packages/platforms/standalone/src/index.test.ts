@@ -102,3 +102,17 @@ describe("standalone platform", () => {
     expect(() => cronMatches("invalid", at)).toThrow();
   });
 });
+
+it("accepts grouped recording with the in-memory queue and record role", async () => {
+  const { default: local } = await import("../../../../stacks/local.js");
+  const { resolveStack, deriveDeployment } = await import("@errtraq/core");
+  const { standalone } = await import("./stack.js");
+  const stack = resolveStack({
+    ...Object.fromEntries(Object.entries(local)),
+    recordMode: "grouped",
+    platform: standalone({
+      roles: ["ingest", "api", "consumer", "record", "cron"],
+    }),
+  });
+  expect(deriveDeployment(stack).functions[0]?.roles).toContain("record");
+});

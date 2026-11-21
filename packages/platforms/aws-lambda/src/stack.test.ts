@@ -25,6 +25,7 @@ it("preserves stack variable references for existing VPC IDs", () => {
   const stack = {
     ...Object.fromEntries(Object.entries(shared)),
     platform,
+    recordMode: "direct",
     variables: {
       SUBNETS: {
         type: "string[]",

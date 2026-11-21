@@ -15,10 +15,13 @@ import type {
   BlobStore,
   KV,
   Logger,
+  Queue,
 } from "./ports.js";
 
 export interface ConsumerOptions {
-  store: ActiveStore;
+  store?: ActiveStore;
+  recordMode?: "direct" | "grouped";
+  queue?: Queue;
   blobs: BlobStore;
   kv?: KV;
   logger: Logger;
@@ -81,6 +84,8 @@ export class ConsumerService {
   private readonly overflowBytes: number;
   private readonly maxEnvelopeBytes: number;
   constructor(private readonly options: ConsumerOptions) {
+    if (options.recordMode === "grouped" ? !options.queue : !options.store)
+      throw new Error("Missing consumer adapter for record mode");
     this.overflowBytes = options.overflowBytes ?? 200000;
     this.maxEnvelopeBytes = options.maxEnvelopeBytes ?? 1024 * 1024;
     if (
@@ -159,11 +164,26 @@ export class ConsumerService {
           );
           // TODO(M4): consult erasure suppression records before storing queued events.
           if (await this.options.shouldSuppress?.(normalized.event)) continue;
-          if (await this.options.store.events.get(claim.projectId, eventId))
+          if (
+            this.options.recordMode !== "grouped" &&
+            (await this.options.store?.events.get(claim.projectId, eventId))
+          )
             continue;
           let overflowKey: string | undefined;
           if (item.payload.byteLength > this.overflowBytes) {
             overflowKey = `payloads/${claim.projectId}/${eventId}`;
+            if (this.options.recordMode === "grouped") {
+              const digest = Array.from(
+                new Uint8Array(
+                  await crypto.subtle.digest(
+                    "SHA-256",
+                    new Uint8Array(item.payload),
+                  ),
+                ),
+                (b) => b.toString(16).padStart(2, "0"),
+              ).join("");
+              overflowKey += `/${digest}`;
+            }
             await this.options.blobs.put(overflowKey, item.payload, {
               size: item.payload.length,
               contentType: "application/json",
@@ -171,10 +191,55 @@ export class ConsumerService {
             normalized.event.payload = {};
             normalized.event.payloadBlobKey = overflowKey;
           }
-          await this.options.store.recordEvent(
-            normalized.occurrence,
-            normalized.event,
-          );
+          if (this.options.recordMode === "grouped") {
+            const queue = this.options.queue;
+            if (!queue) throw new Error("Missing record queue");
+            const record: unknown = JSON.parse(
+              JSON.stringify({
+                version: 1,
+                occurrence: normalized.occurrence,
+                event: normalized.event,
+              }),
+            );
+            let message = {
+              key: eventId,
+              groupKey: normalized.event.issueId,
+              body: record as unknown,
+            };
+            const encode = (value: unknown) =>
+              new TextEncoder().encode(
+                JSON.stringify(value)
+                  .replaceAll("\ufffe", "\\ufffe")
+                  .replaceAll("\uffff", "\\uffff"),
+              );
+            if (
+              encode({ topic: "record", message }).length >
+              queue.capabilities.maxBytes
+            ) {
+              const bytes = encode(record);
+              if (bytes.length > 8 * 1024 * 1024)
+                throw new Error("Normalized record exceeds limit");
+              const digest = Array.from(
+                new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)),
+                (b) => b.toString(16).padStart(2, "0"),
+              ).join("");
+              const blobKey = `payloads/records/${claim.projectId}/${eventId}/${digest}`;
+              await this.options.blobs.put(blobKey, bytes, {
+                size: bytes.length,
+                contentType: "application/json",
+              });
+              message = {
+                key: eventId,
+                groupKey: normalized.event.issueId,
+                body: { version: 1, blobKey },
+              };
+            }
+            await queue.producer.send("record", [message]);
+          } else {
+            const store = this.options.store;
+            if (!store) throw new Error("Missing consumer store");
+            await store.recordEvent(normalized.occurrence, normalized.event);
+          }
         }
         if (dropped)
           this.options.logger.info("Dropped unsupported envelope items", {

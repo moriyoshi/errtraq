@@ -100,6 +100,7 @@ function configValue(
 
 /** Serializable-by-code construction plan: references in config remain in-process values. */
 export interface DeployedPlan {
+  recordMode?: "direct" | "grouped";
   variables: StackConfig["variables"];
   selections: {
     path: string;
@@ -203,6 +204,7 @@ export function deployedPlan(
       };
     });
   return {
+    recordMode: stack.recordMode ?? "direct",
     variables: stack.variables,
     selections: ordered,
     topics,

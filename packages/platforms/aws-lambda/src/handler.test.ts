@@ -102,6 +102,46 @@ it("delegates SQS to the queue push source with the consumer handler", async () 
   expect(await handler(event)).toEqual({ batchItemFailures: [] });
   expect(push).toHaveBeenCalledWith(event, expect.any(Function));
 });
+it("routes record deliveries to the record handler in grouped mode", async () => {
+  const memory = new MemoryQueue();
+  const push = vi.fn(
+    async (_event: unknown, handler: import("@errtraq/core").BatchHandler) => {
+      const results = await handler([
+        {
+          id: "poison",
+          topic: "record",
+          attempt: 1,
+          message: { key: "bad", groupKey: "issue", body: {} },
+        },
+      ]);
+      return {
+        batchItemFailures: results
+          .filter((result) => result.action === "retry")
+          .map((result) => ({ itemIdentifier: result.deliveryId })),
+      };
+    },
+  );
+  const handler = createHandler({
+    roles: ["record"],
+    recordMode: "grouped",
+    http: [],
+    adapters: {
+      store: new MemoryActiveStore(),
+      blob: new MemoryBlobStore(),
+      queue: {
+        ...memory,
+        producer: memory.producer,
+        capabilities: memory.capabilities,
+        push: { handle: push },
+      },
+    },
+    logger: { debug() {}, info() {}, warn() {}, error() {} },
+  });
+  expect(await handler({ Records: [] })).toEqual({
+    batchItemFailures: [{ itemIdentifier: "poison" }],
+  });
+  expect(push).toHaveBeenCalledOnce();
+});
 it("does not add ingest CORS to API routes when roles are combined", async () => {
   const adapters = {
     store: new MemoryActiveStore(),

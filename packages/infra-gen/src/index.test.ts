@@ -32,7 +32,7 @@ const options: GenerateOptions = {
   modulesDirectory: "infra/modules",
   generationEnv: {},
   artifactPaths: Object.fromEntries(
-    ["ingest", "api", "consumer", "cron", "shared"].map((id) => [
+    ["ingest", "api", "consumer", "record", "cron", "shared"].map((id) => [
       id,
       `build/${id}.zip`,
     ]),
@@ -444,8 +444,14 @@ describe("Terraform generator", () => {
     base.queue = {
       ...base.queue,
       existing: {
-        queues: { shared: { arn: "arn:existing", url: "https://existing" } },
-        policies: { produce: { shared: policy }, consume: { shared: policy } },
+        queues: {
+          shared: { arn: "arn:existing", url: "https://existing" },
+          record: { arn: "arn:record", url: "https://record" },
+        },
+        policies: {
+          produce: { shared: policy, record: policy },
+          consume: { shared: policy, record: policy },
+        },
       },
     };
     const files = terraform(resolveStack(base));
@@ -471,8 +477,12 @@ describe("Terraform generator", () => {
             arn: output("blob", "bucket_arn"),
             url: variable("QUEUE_URL"),
           },
+          record: { arn: "arn:record", url: "https://record" },
         },
-        policies: { produce: { shared: policy }, consume: { shared: policy } },
+        policies: {
+          produce: { shared: policy, record: policy },
+          consume: { shared: policy, record: policy },
+        },
       },
     };
     const files = terraform(resolveStack(base));

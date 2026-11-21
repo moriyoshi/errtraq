@@ -16,6 +16,7 @@ import {
   normalizeEvent,
   parseEnvelope,
   parseEventPayload,
+  RecordHandler,
   recoverStagedEnvelopes,
   WebCryptoIdGen,
 } from "@errtraq/core";
@@ -37,6 +38,7 @@ async function setup(
     rateLimit?: number | null;
     maxBytes?: number;
     overflowBytes?: number;
+    recordMode?: "direct" | "grouped";
   } = {},
 ) {
   const store = new MemoryActiveStore();
@@ -76,6 +78,8 @@ async function setup(
     logger,
     overflowBytes: options.overflowBytes,
     maxEnvelopeBytes: options.maxBytes,
+    recordMode: options.recordMode,
+    queue,
   });
   const service = new IngestService({
     store,
@@ -131,6 +135,204 @@ async function withConsumer(
 }
 
 describe("in-process ingest pipeline", () => {
+  it("stores oversized normalized records as durable claim checks", async () => {
+    const c = await setup({ recordMode: "grouped" });
+    c.queue.capabilities.maxBytes = 500;
+    expect(
+      (
+        await c.send(
+          body(id(18), "large", { extra: { value: "x".repeat(3000) } }),
+        )
+      ).status,
+    ).toBe(200);
+    const message = c.sent[0];
+    if (!message) throw new Error("missing ingest message");
+    const send = vi.spyOn(c.queue.producer, "send");
+    expect(
+      await c.consumer.handle([
+        { id: "in", topic: "ingest", attempt: 1, message },
+      ]),
+    ).toEqual([{ deliveryId: "in", action: "ack" }]);
+    const queued = send.mock.calls[0]?.[1][0];
+    if (!queued) throw new Error("missing record message");
+    expect(queued.body).toMatchObject({
+      version: 1,
+      blobKey: expect.stringContaining("payloads/records/"),
+    });
+    const record = new RecordHandler({
+      store: c.store,
+      blobs: c.blobs,
+      logger: c.logger,
+    });
+    expect(
+      await record.handle([
+        { id: "out", topic: "record", attempt: 1, message: queued },
+      ]),
+    ).toEqual([{ deliveryId: "out", action: "ack" }]);
+    expect(
+      await c.store.events.get(c.project.project.id, id(18) as EventId),
+    ).not.toBeNull();
+  });
+  it("retains the staged envelope when publishing a grouped record fails", async () => {
+    const c = await setup({ recordMode: "grouped" });
+    expect((await c.send(body(id(19), "retry"))).status).toBe(200);
+    const message = c.sent[0];
+    if (!message) throw new Error("missing ingest message");
+    const send = vi
+      .spyOn(c.queue.producer, "send")
+      .mockRejectedValueOnce(new Error("unavailable"));
+    const delivery: Delivery = {
+      id: "delivery",
+      topic: "ingest",
+      attempt: 1,
+      message,
+    };
+    expect(await c.consumer.handle([delivery])).toEqual([
+      { deliveryId: "delivery", action: "retry" },
+    ]);
+    const claim = message.body as { blobKey: string };
+    expect(await c.blobs.get(claim.blobKey)).not.toBeNull();
+    expect(await c.consumer.handle([{ ...delivery, attempt: 2 }])).toEqual([
+      { deliveryId: "delivery", action: "ack" },
+    ]);
+    expect(await c.blobs.get(claim.blobKey)).toBeNull();
+    expect(send).toHaveBeenCalledTimes(2);
+  });
+  it("records valid prefixes, isolates poison and keeps other issue groups moving", async () => {
+    const c = await setup({ recordMode: "grouped" });
+    const record = new RecordHandler({
+      store: c.store,
+      blobs: c.blobs,
+      logger: c.logger,
+    });
+    const first = await normalizeEvent(
+      c.project.project.id,
+      id(21) as EventId,
+      c.clock.now(),
+      { message: "same" },
+    );
+    const later = await normalizeEvent(
+      c.project.project.id,
+      id(22) as EventId,
+      c.clock.now(),
+      { message: "same" },
+    );
+    const other = await normalizeEvent(
+      c.project.project.id,
+      id(23) as EventId,
+      c.clock.now(),
+      { message: "other" },
+    );
+    const delivery = (name: string, value: typeof first): Delivery => ({
+      id: name,
+      topic: "record",
+      attempt: 1,
+      message: {
+        key: value.event.eventId,
+        groupKey: value.event.issueId,
+        body: JSON.parse(JSON.stringify({ version: 1, ...value })),
+      },
+    });
+    const good = delivery("first", first),
+      after = delivery("later", later),
+      independent = delivery("other", other);
+    const poison: Delivery = {
+      id: "poison",
+      topic: "record",
+      attempt: 1,
+      message: { key: "broken", groupKey: first.event.issueId, body: {} },
+    };
+    const outcome = await record.handle([good, independent, poison, after]);
+    expect(outcome).toEqual([
+      { deliveryId: "first", action: "ack" },
+      { deliveryId: "other", action: "ack" },
+      { deliveryId: "poison", action: "retry" },
+      { deliveryId: "later", action: "retry" },
+    ]);
+    expect(
+      await c.store.events.get(c.project.project.id, first.event.eventId),
+    ).not.toBeNull();
+    expect(
+      await c.store.events.get(c.project.project.id, later.event.eventId),
+    ).toBeNull();
+    expect(
+      await c.store.events.get(c.project.project.id, other.event.eventId),
+    ).not.toBeNull();
+    await record.handle([
+      { ...poison, attempt: 2 },
+      { ...after, attempt: 2 },
+    ]);
+    expect(
+      vi
+        .mocked(c.logger.error)
+        .mock.calls.filter(
+          ([message]) => message === "Invalid record delivery",
+        ),
+    ).toHaveLength(1);
+  });
+  it.each(["direct", "grouped"] as const)(
+    "records interleaved issues and duplicates in %s mode",
+    async (recordMode) => {
+      const c = await setup({ recordMode });
+      const record = new RecordHandler({
+        store: c.store,
+        blobs: c.blobs,
+        logger: c.logger,
+      });
+      await withConsumer(
+        c.queue,
+        async (batch) => {
+          const result: Awaited<ReturnType<BatchHandler>> = [];
+          for (const topic of ["ingest", "record"]) {
+            const items = batch.filter((item) => item.topic === topic);
+            if (items.length)
+              result.push(
+                ...(await (topic === "ingest"
+                  ? c.consumer.handle(items)
+                  : record.handle(items))),
+              );
+          }
+          return result;
+        },
+        async () => {
+          for (const payload of [
+            body(id(1), "first"),
+            body(id(2), "second"),
+            body(id(3), "first"),
+            body(id(1), "first"),
+          ])
+            expect((await c.send(payload)).status).toBe(200);
+          await vi.waitFor(async () => {
+            const issues = await c.store.issues.list({
+              projectId: c.project.project.id,
+              sort: "lastSeen",
+            });
+            expect(issues.items.map((item) => item.count).sort()).toEqual([
+              1, 2,
+            ]);
+          });
+          if (recordMode === "grouped") {
+            await c.queue.producer.send("record", [
+              { key: "poison", groupKey: "bad", body: {} },
+            ]);
+            await vi.waitFor(() =>
+              expect(c.logger.error).toHaveBeenCalledWith(
+                "Invalid record delivery",
+                expect.anything(),
+              ),
+            );
+            expect(
+              vi
+                .mocked(c.logger.error)
+                .mock.calls.filter(
+                  ([message]) => message === "Invalid record delivery",
+                ),
+            ).toHaveLength(1);
+          }
+        },
+      );
+    },
+  );
   it("posts envelopes, groups events and handles duplicates and redelivery", async () => {
     const c = await setup();
     await withConsumer(c.queue, c.consumer.handle, async () => {

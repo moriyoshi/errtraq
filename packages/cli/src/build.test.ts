@@ -142,6 +142,7 @@ describe("built stacks", () => {
       "cron",
       "ingest",
       "manifest.json",
+      "record",
     ]);
     await writeFile(join(output, "api", "personal.txt"), "keep");
     await expect(buildStack(combined, repo, output, stackFile)).rejects.toThrow(
