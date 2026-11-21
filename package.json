@@ -20,7 +20,8 @@
     "infra:probe-emulated": "node scripts/aws-emulated/probe-terraform.mjs",
     "infra:apply-emulated": "node scripts/aws-emulated/apply-emulated.mjs",
     "aws-emulator:install-s3-patched": "node scripts/aws-emulated/install-s3-patched.mjs",
-    "test:workers-smoke": "node scripts/workers-smoke.mjs"
+    "test:workers-smoke": "node scripts/workers-smoke.mjs",
+    "test:postgres": "node scripts/test-postgres.mjs"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.15",

@@ -9,7 +9,9 @@ import {
   type SqliteDialectConfig,
   SqliteDriver,
   type SqliteStatement,
+  sql,
 } from "kysely";
+import { createIndexIfAbsent } from "./dialect.js";
 
 class ImmediateDriver extends SqliteDriver {
   override async beginTransaction(
@@ -69,6 +71,12 @@ export function sqliteDialect(path: string): SqliteDialect {
 export const sqliteStoreDialect: import("./dialect.js").SqlStoreDialect = {
   kind: "sqlite",
   maxParameters: 900,
+  createIndex: createIndexIfAbsent,
+  didUpdate: (count) => count === 1n,
+  keyType: sql`text collate binary`,
+  jsonType: "text",
+  integerType: "integer",
+  async lock() {},
   async insertIfAbsent(db, table, values, key = "pk") {
     const result = await db
       .insertInto(table)

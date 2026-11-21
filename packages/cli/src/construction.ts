@@ -110,6 +110,14 @@ export async function constructStack(
         bindings: resolveRoleBindings(stack, roles, path, environment),
         dependencies,
         environment,
+        secretSource: {
+          read: async (identifier: string) => {
+            const value = environment[identifier];
+            if (value === undefined)
+              throw new Error(`Missing local secret: ${identifier}`);
+            return value;
+          },
+        },
         ...queueContext,
         ...(selection.manifest.kind === "platform"
           ? {

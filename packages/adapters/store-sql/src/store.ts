@@ -29,6 +29,16 @@ export interface SqlStoreOptions {
 const pk = (...parts: string[]) => JSON.stringify(parts);
 const decode = <T>(data: unknown): T => JSON.parse(String(data)) as T;
 const limitOf = pageLimit;
+const encoder = new TextEncoder();
+function compareUtf8(left: string, right: string): number {
+  const a = encoder.encode(left),
+    b = encoder.encode(right);
+  for (let i = 0; i < Math.min(a.length, b.length); i++) {
+    const delta = (a[i] ?? 0) - (b[i] ?? 0);
+    if (delta) return delta;
+  }
+  return a.length - b.length;
+}
 function cursorKeys(
   cursor: Cursor | undefined,
   scope: string,
@@ -59,6 +69,7 @@ export function createSqlStore({ db, dialect }: SqlStoreOptions): ActiveStore {
       const e = error as { errcode?: number; message?: string };
       if (
         e.errcode === 2067 ||
+        (error as { code?: string }).code === "23505" ||
         /unique constraint failed/i.test(e.message ?? "")
       )
         throw new ConflictError("Natural key already exists");
@@ -117,6 +128,8 @@ export function createSqlStore({ db, dialect }: SqlStoreOptions): ActiveStore {
         const busy =
           (typeof e.errcode === "number" && (e.errcode & 255) === 5) ||
           e.code === "SQLITE_BUSY" ||
+          e.code === "40001" ||
+          e.code === "40P01" ||
           /database is (?:locked|busy)/i.test(e.message ?? "");
         if (!busy || attempt >= 7) throw error;
         await new Promise<void>((resolve) =>
@@ -139,6 +152,10 @@ export function createSqlStore({ db, dialect }: SqlStoreOptions): ActiveStore {
       )
         throw new Error("Occurrence and event mismatch");
       return transaction(async (trx) => {
+        await dialect.lock(
+          trx,
+          `issue:${pk(occurrence.projectId, occurrence.issueId)}`,
+        );
         const inserted = await dialect.insertIfAbsent(trx, "events", {
           pk: pk(event.projectId, event.eventId),
           project_id: event.projectId,
@@ -210,7 +227,7 @@ export function createSqlStore({ db, dialect }: SqlStoreOptions): ActiveStore {
         if (
           occurrence.receivedAt > issue.lastSeen ||
           (occurrence.receivedAt === issue.lastSeen &&
-            occurrence.eventId > issue.lastEventId)
+            compareUtf8(occurrence.eventId, issue.lastEventId) > 0)
         ) {
           issue.lastSeen = occurrence.receivedAt;
           issue.lastEventReceivedAt = occurrence.receivedAt;
@@ -286,6 +303,7 @@ export function createSqlStore({ db, dialect }: SqlStoreOptions): ActiveStore {
         }),
       getOrCreateActiveKey: async (key) =>
         transaction(async (trx) => {
+          await dialect.lock(trx, `keys:${key.projectId}`);
           const rows = await trx
             .selectFrom("keys")
             .select("data")
@@ -401,6 +419,7 @@ export function createSqlStore({ db, dialect }: SqlStoreOptions): ActiveStore {
       },
       update: async (projectId, id, patch) =>
         transaction(async (trx) => {
+          await dialect.lock(trx, `issue:${pk(projectId, id)}`);
           const row = await trx
             .selectFrom("issues")
             .select("data")
@@ -415,12 +434,13 @@ export function createSqlStore({ db, dialect }: SqlStoreOptions): ActiveStore {
             .where("pk", "=", pk(projectId, id))
             .where("data", "=", String(row.data))
             .executeTakeFirst();
-          if (Number(updated.numUpdatedRows) !== 1)
+          if (!dialect.didUpdate(updated.numUpdatedRows))
             throw new VersionConflictError("Issue changed concurrently");
           return issue;
         }),
       repairAfterErasure: async (projectId, id, count) =>
         transaction(async (trx) => {
+          await dialect.lock(trx, `issue:${pk(projectId, id)}`);
           const row = await trx
             .selectFrom("issues")
             .select("data")
@@ -448,7 +468,7 @@ export function createSqlStore({ db, dialect }: SqlStoreOptions): ActiveStore {
             .where("pk", "=", pk(projectId, id))
             .where("data", "=", String(row.data))
             .executeTakeFirst();
-          if (Number(updated.numUpdatedRows) !== 1)
+          if (!dialect.didUpdate(updated.numUpdatedRows))
             throw new VersionConflictError("Issue changed concurrently");
           return issue;
         }),
@@ -575,8 +595,8 @@ export function createSqlStore({ db, dialect }: SqlStoreOptions): ActiveStore {
                 const x = decode<StoredEvent>(a.data),
                   y = decode<StoredEvent>(b.data);
                 return (
-                  x.receivedAt.localeCompare(y.receivedAt) ||
-                  x.eventId.localeCompare(y.eventId)
+                  compareUtf8(x.receivedAt, y.receivedAt) ||
+                  compareUtf8(x.eventId, y.eventId)
                 );
               })
               .slice(0, limit + 1);
@@ -734,7 +754,7 @@ export function createSqlStore({ db, dialect }: SqlStoreOptions): ActiveStore {
           .where("version", "=", expected)
           .executeTakeFirst(),
       );
-      if (Number(r.numUpdatedRows) !== 1)
+      if (!dialect.didUpdate(r.numUpdatedRows))
         throw new VersionConflictError("Version mismatch");
     }
   }

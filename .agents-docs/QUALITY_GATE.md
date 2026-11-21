@@ -36,6 +36,27 @@ Every adapter runs the matching suite from `packages/testing` (`activeStoreContr
 `queueContract`, `blobStoreContract`, `archiveStoreContract`). When you change a port, extend
 the contract suite first, then make every existing adapter pass it.
 
+Postgres SQL-store contracts and query plans are opt-in:
+
+```sh
+pnpm test:postgres
+```
+
+This starts the pinned `postgres:17.6-alpine` image by digest on a random loopback-only port,
+creates a separate schema for each contract instance, runs the complete active-store contract,
+concurrent migrations and two-pool writes, byte-order, timeout/pool and large-table EXPLAIN
+checks, and stops its container. It skips clearly when Docker is unavailable; the first run may
+pull the image. The planner tests use default cost settings after `ANALYZE`; plans can differ
+with other statistics, distributions and PostgreSQL configurations.
+
+A standalone stack can select `postgres(variable("postgres_secret"))` from
+`@errtraq/store-sql/postgres/stack`. Declare `postgres_secret` as a non-sensitive string
+stack variable holding the *name* of an environment variable, such as `DATABASE_URL`;
+set that named environment variable to the connection URL. The standalone constructor resolves
+that identifier locally without putting the URL in the stack or Terraform. This is an existing
+external database and produces no module. Lambda still needs the M3g deployed secret source
+and config-reference delivery before this selection is usable there.
+
 AWS emulator probes and the namespace lifecycle are opt-in:
 
 ```sh

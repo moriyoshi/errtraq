@@ -775,3 +775,16 @@ durable erasure receipts across a commit/response crash, and the broader `Delete
 needed for mutable lookup rows. The current 200,000-byte payload overflow threshold does not
 bound the complete DynamoDB item. The emulator's conditional-write race cannot establish CAS or
 transaction concurrency correctness; the proposed upstream pin bump needs separate gap checks.
+
+## 2026-11-21 — M3f Postgres SQL store
+
+The SQL store now runs against Postgres with byte-wise `C` collation and bigint decoding,
+transaction-scoped advisory locks and a small reusable `pg` pool. Record insertion takes the
+issue lock before the event write, so concurrent issue updates do not lose bumps; same-project
+initial key creation and schema migration have separate locks. Server-side statement and idle
+transaction timeouts let Postgres cancel work before a connection is returned to the pool.
+Postgres correlation statistics on event issue and bundle scope are necessary for the tested
+large-table distributions to choose ordered index paths under default planner settings. The
+planner can still choose other plans with different statistics or settings. The 255-character
+indexed key boundary needs a deliberate port-level treatment. Standalone secret identifiers
+resolve through the supplied environment; deployed secret resolution remains M3g.

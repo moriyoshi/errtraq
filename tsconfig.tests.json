@@ -66,6 +66,12 @@
       "@errtraq/core/queue": ["packages/core/src/queue.ts"],
       "@errtraq/store-dynamodb/runtime": [
         "packages/adapters/store-dynamodb/src/runtime.ts"
+      ],
+      "@errtraq/store-sql/postgres": [
+        "packages/adapters/store-sql/src/postgres.ts"
+      ],
+      "@errtraq/store-sql/postgres/stack": [
+        "packages/adapters/store-sql/src/postgres-stack.ts"
       ]
     }
   },
