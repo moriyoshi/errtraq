@@ -764,3 +764,14 @@ integration while the existing validation gate continues to cover both provider 
   DynamoDB store stub now has a separate runtime entry. Workerd smoke exercises delayed SQS
   push retry as well as production. The emulator driver uses full receive attributes and tests
   handler and entry failures, redelivery attempts and DLQ redrive in both queue modes.
+
+## 2026-11-21 — M3e DynamoDB design for review
+
+The proposed single-table design uses 16-way event partitions and transactional base-table
+lookup items rather than eventually consistent GSIs, preserving immediate event discovery at
+the cost of extra writes, reads and issue-level contention. The design flags three decisions
+that need review before implementation: a bound or new atomic protocol for bundle debug IDs,
+durable erasure receipts across a commit/response crash, and the broader `DeleteItem` permission
+needed for mutable lookup rows. The current 200,000-byte payload overflow threshold does not
+bound the complete DynamoDB item. The emulator's conditional-write race cannot establish CAS or
+transaction concurrency correctness; the proposed upstream pin bump needs separate gap checks.
