@@ -50,6 +50,10 @@ run "kv_without_indexes" {
     protection = "disposable"
   }
   assert {
+    condition     = jsonencode(jsondecode(output.policies.write.primary)) == jsonencode({ Version = "2012-10-17", Statement = [{ Effect = "Allow", Action = ["dynamodb:PutItem", "dynamodb:UpdateItem", "dynamodb:GetItem"], Resource = [aws_dynamodb_table.this.arn] }] })
+    error_message = "KV writes require only PutItem, UpdateItem and the strongly consistent GetItem used by increment."
+  }
+  assert {
     condition     = length(aws_dynamodb_table.this.global_secondary_index) == 0 && !aws_dynamodb_table.this.deletion_protection_enabled
     error_message = "The KV table does not need store indexes."
   }

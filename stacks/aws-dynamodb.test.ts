@@ -480,7 +480,6 @@ describe("AWS descriptor stacks", () => {
     const context = { config: {}, bindings: {}, dependencies: {} };
     for (const [name, module] of [
       ["store-dynamodb", storeModule],
-      ["kv-dynamodb", kvModule],
       ["platform-aws-lambda", lambdaModule],
     ] as const) {
       expect(Object.keys(module).sort()).toEqual([
@@ -492,6 +491,12 @@ describe("AWS descriptor stacks", () => {
         `${name} runtime not implemented until M3`,
       );
     }
+    expect(Object.keys(kvModule).sort()).toEqual([
+      "create",
+      "infra",
+      "manifest",
+    ]);
+    expect(() => kvModule.create(context)).toThrow("table binding");
     expect(Object.keys(queueModule).sort()).toEqual([
       "create",
       "infra",

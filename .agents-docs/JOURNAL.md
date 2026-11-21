@@ -718,3 +718,20 @@ integration while the existing validation gate continues to cover both provider 
 - Delivered blob bindings define primary and staging access in code. List prefixes and keys
   must stay within those purposes, and the staging prefix binding is required and checked.
   The staged-envelope recovery job already lists the permitted envelopes/ prefix.
+
+## 2026-11-21 — M3d DynamoDB KV runtime
+
+- KV stores the original string, a numeric counter for decimal safe integers, a mode marker,
+  and a revision. Strongly consistent GetItem and conditional UpdateItem protect strict
+  integer and overflow semantics; UpdateItem uses atomic ADD and returns its new counter.
+  TTL is stored in exact milliseconds plus the module's `expiresAt` seconds attribute,
+  preserving the original expiry on increments and treating an expired row as absent.
+- KV write policy now includes table-scoped GetItem: a write-only role must be able to run
+  increment's validation read. KV uses only GetItem, PutItem, UpdateItem and DeleteItem.
+  A retried increment whose successful response may have been lost uses its revision to
+  recognize success; if another write obscures the result it reports an ambiguous outcome
+  instead of applying the increment again.
+- Winterbaume's UpdateItem handler checks conditions separately from the backend update.
+  The native ADD result lets the 50-way contract pass, but conditional-update races,
+  expiry resets and safe-integer boundaries need real DynamoDB verification. The injected
+  future clock demonstrates logical TTL expiration while the physical item remains.

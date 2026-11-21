@@ -42,6 +42,15 @@ const server = createServer(async (req, res) => {
     );
     return;
   }
+  if (
+    req.url === "/" &&
+    req.headers["x-amz-target"] === "DynamoDB_20120810.PutItem"
+  ) {
+    seen.push("dynamodb");
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end("{}");
+    return;
+  }
   res.writeHead(404);
   res.end();
 });
@@ -62,13 +71,13 @@ try {
   if (
     response.status !== 200 ||
     (await response.text()) !== "ok" ||
-    seen.join(",") !== "s3,sqs"
+    seen.join(",") !== "s3,sqs,dynamodb"
   )
     throw new Error(
       `Workers smoke failed: HTTP ${response.status}; requests ${seen.join(",")}`,
     );
   console.log(
-    "PASS workerd executes signed S3 and SQS requests against local fake services",
+    "PASS workerd executes signed S3, SQS and DynamoDB requests against local fake services",
   );
 } finally {
   await mf?.dispose();

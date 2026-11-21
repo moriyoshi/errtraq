@@ -74,6 +74,17 @@ stated; successful creation by itself does not prove all settings were retained.
   No API error is returned. The emulator cannot establish tag persistence or a truly empty
   unfiltered repeat plan for these resources.
 
+## DynamoDB conditional updates are not atomic with their checks
+
+- Revision: `69fed1d7fb0eb9a2738ff3274197c7591129c4cb`. `UpdateItem` reads and
+  evaluates `ConditionExpression` in the request handler, then separately calls the backend
+  update. Concurrent requests can both pass the same old revision. During the KV contract,
+  50 concurrent revision-guarded increments initially returned only 49 distinct results.
+  The handler implementation confirms the check and write are separate awaited operations.
+  The KV runtime returns the atomic `ADD` result, which lets the contract pass, but this
+  emulator cannot prove the atomicity of conditional changes, expiry resets or overflow
+  guards under concurrent writes. Real DynamoDB verification remains necessary.
+
 ## Lambda resource policy conditions are discarded
 
 - Resource: `aws_lambda_permission` for a public function URL. `AddPermission` accepts

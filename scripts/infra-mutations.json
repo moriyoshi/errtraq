@@ -10,8 +10,8 @@
     "id": "ddb-write-missing-put",
     "module": "dynamodb",
     "file": "main.tf",
-    "find": "\"dynamodb:PutItem\", \"dynamodb:UpdateItem\"",
-    "replace": "\"dynamodb:UpdateItem\""
+    "find": "[\"dynamodb:PutItem\", \"dynamodb:UpdateItem\", \"dynamodb:ConditionCheckItem\"]",
+    "replace": "[\"dynamodb:UpdateItem\", \"dynamodb:ConditionCheckItem\"]"
   },
   {
     "id": "ddb-read-missing-index",
@@ -170,5 +170,12 @@
     "file": "main.tf",
     "find": "write  = [\"s3:PutObject\", \"s3:AbortMultipartUpload\"]",
     "replace": "write  = [\"s3:PutObject\"]"
+  },
+  {
+    "id": "ddb-kv-write-missing-get",
+    "module": "dynamodb",
+    "file": "main.tf",
+    "find": "[\"dynamodb:PutItem\", \"dynamodb:UpdateItem\", \"dynamodb:GetItem\"]",
+    "replace": "[\"dynamodb:PutItem\", \"dynamodb:UpdateItem\"]"
   }
 ]

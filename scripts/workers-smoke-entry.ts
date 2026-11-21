@@ -1,4 +1,5 @@
 import { S3BlobStore } from "../packages/adapters/blob-s3/src/runtime.js";
+import { DynamoKV } from "../packages/adapters/kv-dynamodb/src/runtime.js";
 import { SqsQueue } from "../packages/adapters/queue-sqs/src/runtime.js";
 export default {
   async fetch(_request: Request, env: { ENDPOINT: string }) {
@@ -25,8 +26,15 @@ export default {
       topics: { ingest: { physical: "shared", producerBinding: "URL" } },
       consumers: [],
     });
+    const kv = new DynamoKV({
+      table: "table",
+      region: "us-east-1",
+      environment,
+      endpoint: env.ENDPOINT,
+    });
     await blob.put("object", new Uint8Array([1]));
     await queue.producer.send("ingest", [{ key: "key", body: 1 }]);
+    await kv.put("key", "value");
     return new Response("ok");
   },
 };

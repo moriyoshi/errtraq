@@ -12,11 +12,14 @@ export function capabilityPolicy(grant, resources) {
     const arn = resources[selection];
     const actions = {
       read: ["dynamodb:GetItem", "dynamodb:BatchGetItem", "dynamodb:Query"],
-      write: [
-        "dynamodb:PutItem",
-        "dynamodb:UpdateItem",
-        "dynamodb:ConditionCheckItem",
-      ],
+      write:
+        selection === "kv"
+          ? ["dynamodb:PutItem", "dynamodb:UpdateItem", "dynamodb:GetItem"]
+          : [
+              "dynamodb:PutItem",
+              "dynamodb:UpdateItem",
+              "dynamodb:ConditionCheckItem",
+            ],
       delete: ["dynamodb:DeleteItem"],
     }[capability];
     if (!arn || !actions)

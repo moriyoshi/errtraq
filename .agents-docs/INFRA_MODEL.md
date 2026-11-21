@@ -436,5 +436,7 @@ ordinary local runs default to loopback. Standalone's optional `publicUrl` confi
 printed DSN's public HTTP(S) origin; otherwise a wildcard listener uses localhost with a note.
 Deployed construction first derives
 `deployedPlan` and then runs `constructDeployedPlan`, preserving the same role and binding scopes
-as `constructDeployedStack` while allowing entrypoints to import only needed adapters. AWS S3 and SQS selections use their `/runtime` exports, which omit the stack schema and Zod; their `/stack` exports remain for stack authors. The S3 and SQS runtime adapters are implemented; the remaining AWS runtime adapters and secret
-sources are M3 work.
+as `constructDeployedStack` while allowing entrypoints to import only needed adapters. AWS S3,
+SQS and DynamoDB KV selections use their `/runtime` exports, which omit the stack schema and
+Zod; their `/stack` exports remain for stack authors. Their runtime adapters are implemented;
+the active-store AWS runtime adapter and secret sources are M3 work.

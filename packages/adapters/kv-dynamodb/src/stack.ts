@@ -7,13 +7,17 @@ import {
 } from "@errtraq/core";
 import { z } from "zod";
 
-export const configSchema = z.strictObject({});
+export const configSchema = z.strictObject({
+  region: z.string().min(1).optional(),
+  endpoint: z.url().optional(),
+  requestTimeoutMs: z.number().int().min(1).max(300000).optional(),
+});
 export type Config = z.input<typeof configSchema>;
 export const manifest: AdapterManifest = {
   id: "kv-dynamodb",
   kind: "kv",
   configSchema,
-  runtimes: ["node"],
+  runtimes: ["node", "workers"],
   requires: [],
   capabilities: {},
 };
@@ -50,5 +54,10 @@ export const infra: InfraDescriptor<Config> = {
   ],
 };
 export function dynamoKv(config: Config = {}): AdapterSelection<Config> {
-  return { manifest, infra, config, runtimeModule: "@errtraq/kv-dynamodb" };
+  return {
+    manifest,
+    infra,
+    config,
+    runtimeModule: "@errtraq/kv-dynamodb/runtime",
+  };
 }

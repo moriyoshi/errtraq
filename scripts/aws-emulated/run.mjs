@@ -155,6 +155,31 @@ try {
     if (!removed) throw new Error("Namespace cleanup left a resource behind");
   }
   console.log("PASS namespace cleanup");
+  console.log("Running DynamoDB KV contract against the unmodified emulator");
+  const kvContract = spawn(
+    "pnpm",
+    [
+      "exec",
+      "vitest",
+      "run",
+      "packages/adapters/kv-dynamodb/src/contract.emulated.test.ts",
+    ],
+    {
+      stdio: "inherit",
+      env: {
+        ...process.env,
+        ERRTRAQ_DYNAMO_EMULATOR: endpoint,
+        ERRTRAQ_DYNAMO_KV_SHAPE: JSON.stringify(shapes.kv),
+        ERRTRAQ_DYNAMO_TTL_ATTRIBUTE: shapes.ttl,
+      },
+    },
+  );
+  const kvStatus = await new Promise((resolve, reject) => {
+    kvContract.once("error", reject);
+    kvContract.once("exit", resolve);
+  });
+  if (kvStatus !== 0)
+    throw new Error(`DynamoDB KV contract failed (${kvStatus})`);
   console.log(
     "Running SQS shared and per-topic contracts against the unmodified emulator",
   );

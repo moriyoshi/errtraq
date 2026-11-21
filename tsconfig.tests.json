@@ -58,7 +58,11 @@
       "@errtraq/queue-sqs/runtime": [
         "packages/adapters/queue-sqs/src/runtime.ts"
       ],
-      "@errtraq/core/blob": ["packages/core/src/blob.ts"]
+      "@errtraq/core/blob": ["packages/core/src/blob.ts"],
+      "@errtraq/core/kv": ["packages/core/src/kv.ts"],
+      "@errtraq/kv-dynamodb/runtime": [
+        "packages/adapters/kv-dynamodb/src/runtime.ts"
+      ]
     }
   },
   "include": ["packages/core/src/**/*.ts", "packages/http/src/**/*.ts"]

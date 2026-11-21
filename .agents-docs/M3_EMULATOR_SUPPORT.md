@@ -99,3 +99,13 @@ DynamoDB table and SQS queue creation and deletion. All passed against the pinne
 These results do not prove Terraform can apply the modules: provider discovery and every
 other API, policy, tagging, waiter and update operation still need to be exercised by M3a2.
 Control-plane probe failures are reported separately and do not fail the adapter probe gate.
+
+## DynamoDB KV contract
+
+`pnpm test:aws-emulated` runs the KV contract on isolated, module-shaped tables with TTL
+enabled. An injected clock starts in 2090, so advancing it expires records logically while
+the actual emulator clock and its asynchronous TTL sweeper leave the rows present. A direct
+GetItem assertion verifies that logical expiration does not depend on physical deletion.
+KV uses consistent GetItem reads, conditional UpdateItem with atomic ADD, PutItem and
+DeleteItem. Winterbaume checks UpdateItem conditions separately from its backend write; see
+[WINTERBAUME_GAPS.md](./WINTERBAUME_GAPS.md) for what the emulator cannot prove.

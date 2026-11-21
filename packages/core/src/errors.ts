@@ -62,3 +62,27 @@ export class BlobUnavailableError extends BlobError {
 export class BlobBucketNotFoundError extends BlobError {
   override name = "BlobBucketNotFoundError";
 }
+
+/** DynamoDB or other remote KV backend failure, excluding invalid counter contents. */
+export class KVError extends Error {
+  override name = "KVError";
+  constructor(
+    message: string,
+    readonly providerCode?: string,
+    readonly ambiguous = false,
+  ) {
+    super(message);
+  }
+}
+export class KVUnavailableError extends KVError {
+  override name = "KVUnavailableError";
+}
+export class KVThrottledError extends KVError {
+  override name = "KVThrottledError";
+}
+export class KVAccessDeniedError extends KVError {
+  override name = "KVAccessDeniedError";
+}
+export class KVInvalidKeyError extends KVError {
+  override name = "KVInvalidKeyError";
+}

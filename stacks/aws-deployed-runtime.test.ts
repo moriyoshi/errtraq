@@ -3,12 +3,53 @@ import {
   deriveDeployment,
   output,
 } from "@errtraq/core";
+import { create as createKv } from "@errtraq/kv-dynamodb/runtime";
 import { create as createSqs } from "@errtraq/queue-sqs/runtime";
 import { describe, expect, it, vi } from "vitest";
 import shared from "./aws-dynamodb.js";
 import perTopic from "./aws-dynamodb-per-topic.js";
 
 describe.each([shared, perTopic])("deployed runtime: $name", (stack) => {
+  it("constructs the DynamoDB KV adapter from its delivered table binding", async () => {
+    const fn = deriveDeployment(stack).functions.find(
+      (item) => item.id === "ingest",
+    );
+    if (!fn) throw new Error("missing ingest function");
+    const environment = Object.fromEntries(
+      fn.envBindings.map(({ binding }) => [binding.name, "binding"]),
+    );
+    Object.assign(environment, {
+      ERRTRAQ_KV_TABLE: "kv-table",
+      AWS_REGION: "us-east-1",
+      AWS_ACCESS_KEY_ID: "fixture",
+      AWS_SECRET_ACCESS_KEY: "fixture",
+    });
+    const requests: Record<string, unknown>[] = [];
+    vi.stubGlobal("fetch", async (_url: unknown, init: RequestInit) => {
+      requests.push(JSON.parse(String(init.body)));
+      return new Response("{}");
+    });
+    try {
+      const built = await constructDeployedStack(
+        stack,
+        "ingest",
+        environment,
+        async (module) =>
+          module === "@errtraq/kv-dynamodb/runtime"
+            ? { create: createKv }
+            : { create: () => ({}) },
+      );
+      const kv = built.instances.get("kv") as ReturnType<typeof createKv>;
+      expect(await kv.get("key")).toBeNull();
+      expect(requests[0]).toMatchObject({
+        TableName: "kv-table",
+        ConsistentRead: true,
+      });
+      await built.close();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
   it("constructs the SQS producer from the delivered queue binding", async () => {
     const fn = deriveDeployment(stack).functions.find(
       (item) => item.id === "ingest",
@@ -113,7 +154,7 @@ describe.each([shared, perTopic])("deployed runtime: $name", (stack) => {
     ]);
     expect(calls.map((item) => item.module).sort()).toEqual([
       "@errtraq/blob-s3/runtime",
-      "@errtraq/kv-dynamodb",
+      "@errtraq/kv-dynamodb/runtime",
       "@errtraq/queue-sqs/runtime",
       "@errtraq/store-dynamodb",
     ]);

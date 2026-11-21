@@ -39,8 +39,8 @@ AWS emulator probes and the namespace lifecycle are opt-in:
 ```sh
 pnpm aws-emulator:install              # build the verified, unmodified pinned server
 pnpm aws-emulator:install-s3-patched   # build the verified local UTF-8 patch for S3 contracts
-pnpm test:aws-emulated                 # runs probes plus SQS and S3 contracts; skips absent builds
-pnpm test:workers-smoke                # runs bundled S3 and SQS against local fakes in workerd
+pnpm test:aws-emulated                 # runs probes plus KV, SQS and S3 contracts; skips absent builds
+pnpm test:workers-smoke                # runs bundled S3, SQS and KV against local fakes in workerd
 ```
 
 The installer keeps its source, Cargo cache and build under `.agents-workspace/tmp`. The
@@ -92,7 +92,7 @@ listen address; it defaults to `127.0.0.1`. The generated container explicitly s
 For a deployed stack, `pnpm exec errtraq build --stack stacks/aws-dynamodb.ts` builds ZIPs and
 `pnpm exec errtraq infra generate --stack stacks/aws-dynamodb.ts` renders their paths and verifies
 their hashes. Generation writes only inside the repository and requires an empty or marked output
-directory. AWS runtime adapters are still M3 stubs.
+directory. The active-store AWS runtime adapter is still an M3 stub.
 
 ```sh
 pnpm infra:validate

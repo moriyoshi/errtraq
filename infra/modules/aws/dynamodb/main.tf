@@ -52,7 +52,7 @@ locals {
   table_and_indexes = [aws_dynamodb_table.this.arn, "${aws_dynamodb_table.this.arn}/index/*"]
   policies = {
     read   = { primary = jsonencode({ Version = "2012-10-17", Statement = [{ Effect = "Allow", Action = ["dynamodb:GetItem", "dynamodb:BatchGetItem", "dynamodb:Query"], Resource = local.table_and_indexes }] }) }
-    write  = { primary = jsonencode({ Version = "2012-10-17", Statement = [{ Effect = "Allow", Action = ["dynamodb:PutItem", "dynamodb:UpdateItem", "dynamodb:ConditionCheckItem"], Resource = [aws_dynamodb_table.this.arn] }] }) }
+    write  = { primary = jsonencode({ Version = "2012-10-17", Statement = [{ Effect = "Allow", Action = var.purpose == "kv" ? ["dynamodb:PutItem", "dynamodb:UpdateItem", "dynamodb:GetItem"] : ["dynamodb:PutItem", "dynamodb:UpdateItem", "dynamodb:ConditionCheckItem"], Resource = [aws_dynamodb_table.this.arn] }] }) }
     delete = { primary = jsonencode({ Version = "2012-10-17", Statement = [{ Effect = "Allow", Action = ["dynamodb:DeleteItem"], Resource = [aws_dynamodb_table.this.arn] }] }) }
   }
 }
