@@ -197,6 +197,47 @@ describe.skipIf(!endpoint)("SQS emulator", () => {
     for (const queue of live.splice(0))
       await api("DeleteQueue", { QueueUrl: queue.url });
   });
+  it("sends FIFO records and observes basic deduplication on the emulator", async () => {
+    const name = `errtraq-${randomUUID().replaceAll("-", "")}.fifo`;
+    const created = await api("CreateQueue", {
+      QueueName: name,
+      Attributes: { FifoQueue: "true", ContentBasedDeduplication: "false" },
+    });
+    const attrs = await api("GetQueueAttributes", {
+      QueueUrl: created.QueueUrl,
+      AttributeNames: ["QueueArn"],
+    });
+    live.push({ url: created.QueueUrl, arn: attrs.Attributes.QueueArn });
+    const queue = new SqsQueue({
+      region: "us-east-1",
+      environment,
+      endpoint,
+      bindings: { URL: created.QueueUrl },
+      topics: {
+        record: {
+          physical: "record",
+          producerBinding: "URL",
+          grouping: "per-key-serial",
+        },
+      },
+      consumers: [],
+    });
+    await queue.producer.send("record", [
+      { key: "event", groupKey: "issue", body: 1 },
+    ]);
+    await queue.producer.send("record", [
+      { key: "event", groupKey: "issue", body: 1 },
+    ]);
+    const received = await api("ReceiveMessage", {
+      QueueUrl: created.QueueUrl,
+      MaxNumberOfMessages: 10,
+      AttributeNames: ["All"],
+    });
+    expect(received.Messages).toHaveLength(1);
+    expect(JSON.parse(received.Messages[0].Body).message.groupKey).toBe(
+      "issue",
+    );
+  });
   for (const mode of ["shared", "per-topic"] as const)
     describe(mode, () => {
       queueContract(() => makeQueue(mode), { deliverPush: deliver });

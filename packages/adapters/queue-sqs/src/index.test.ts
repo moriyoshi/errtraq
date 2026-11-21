@@ -51,6 +51,54 @@ const response = (data: unknown) =>
   });
 
 describe("SQS producer", () => {
+  it("sends FIFO group and event deduplication IDs without per-message delay", async () => {
+    const calls: Record<string, unknown>[][] = [];
+    const q = new SqsQueue({
+      region: "us-east-1",
+      environment: env,
+      bindings: { URL: "https://example.test/record.fifo" },
+      topics: {
+        record: {
+          physical: "record",
+          producerBinding: "URL",
+          grouping: "per-key-serial",
+        },
+      },
+      consumers: [],
+      fetch: async (_url, init) => {
+        const entries = JSON.parse(String(init?.body)).Entries as Record<
+          string,
+          unknown
+        >[];
+        calls.push(entries);
+        return response({
+          Successful: entries.map((entry) => ({ Id: entry.Id })),
+        });
+      },
+    });
+    expect(q.capabilities.physicalQueues?.record).toEqual({
+      grouping: "per-key-serial",
+      delay: false,
+    });
+    await q.producer.send("record", [
+      { key: "e1", groupKey: "issue", body: 1 },
+      { key: "e2", groupKey: "issue", body: 2 },
+    ]);
+    expect(calls).toHaveLength(2);
+    expect(calls[0]?.[0]).toMatchObject({
+      MessageGroupId: "issue",
+      MessageDeduplicationId: "e1",
+    });
+    expect(calls[0]?.[0]).not.toHaveProperty("DelaySeconds");
+    await expect(
+      q.producer.send("record", [{ key: "e", body: 1 }]),
+    ).rejects.toThrow("group");
+    await expect(
+      q.producer.send("record", [{ key: "e", groupKey: "issue", body: 1 }], {
+        delaySec: 1,
+      }),
+    ).rejects.toThrow("delay");
+  });
   it("escapes SQS-forbidden Unicode noncharacters in the wire body", async () => {
     let wire = "";
     const queue = make(async (_url, init) => {
@@ -190,6 +238,53 @@ describe("SQS producer", () => {
     ).rejects.toThrow("exhausted");
     expect(transient).toHaveBeenCalledTimes(4);
   });
+});
+
+it("preserves FIFO groups and fails all unprocessed records after a poison record", async () => {
+  const fifoArn = `${arn}.fifo`;
+  const q = new SqsQueue({
+    region: "us-east-1",
+    environment: env,
+    bindings: {},
+    topics: {},
+    consumers: [
+      { physical: "record", topics: ["record"], eventSource: fifoArn },
+    ],
+    fetch: vi.fn(),
+  });
+  const record = (id: string, group: string) =>
+    documentedExampleRecord(id, {
+      eventSourceARN: fifoArn,
+      attributes: { ApproximateReceiveCount: "1", MessageGroupId: group },
+      body: JSON.stringify({
+        topic: "record",
+        message: { key: id, groupKey: group, body: null },
+      }),
+    });
+  const handler = vi.fn(async (items: Delivery[]) =>
+    items.map((item) => ({
+      deliveryId: item.id,
+      action: item.id === "poison" ? ("retry" as const) : ("ack" as const),
+    })),
+  );
+  const result = await q.push.handle(
+    {
+      Records: [
+        record("ok", "a"),
+        record("poison", "a"),
+        record("later", "a"),
+        record("other", "b"),
+      ],
+    },
+    handler,
+  );
+  expect(handler).toHaveBeenCalledTimes(1);
+  expect(
+    handler.mock.calls[0]?.[0].map((item) => item.message.groupKey),
+  ).toEqual(["a", "a", "a"]);
+  expect(
+    result.batchItemFailures.map((failure) => failure.itemIdentifier),
+  ).toEqual(["poison", "later", "other"]);
 });
 describe("Lambda SQS events", () => {
   it("logs dropped delays and failed visibility changes without sensitive data", async () => {

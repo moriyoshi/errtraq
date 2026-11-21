@@ -1,19 +1,25 @@
 resource "aws_sqs_queue" "dlq" {
-  for_each                  = { for key, queue in var.physical_queues : key => queue if queue.dlq_enabled }
-  name                      = "${var.name}-${each.key}-dlq"
-  sqs_managed_sse_enabled   = true
-  message_retention_seconds = 1209600
-  tags                      = var.tags
+  for_each                    = { for key, queue in var.physical_queues : key => queue if queue.dlq_enabled }
+  name                        = "${var.name}-${each.key}-dlq${each.value.fifo ? ".fifo" : ""}"
+  fifo_queue                  = each.value.fifo
+  content_based_deduplication = each.value.fifo ? false : null
+  sqs_managed_sse_enabled     = true
+  message_retention_seconds   = 1209600
+  tags                        = var.tags
 }
 resource "aws_sqs_queue" "queue" {
-  for_each                   = var.physical_queues
-  name                       = "${var.name}-${each.key}"
-  sqs_managed_sse_enabled    = true
-  visibility_timeout_seconds = each.value.visibility_timeout_sec
-  message_retention_seconds  = 345600
-  max_message_size           = 1048576
-  redrive_policy             = each.value.dlq_enabled ? jsonencode({ deadLetterTargetArn = aws_sqs_queue.dlq[each.key].arn, maxReceiveCount = each.value.max_receive_count }) : null
-  tags                       = var.tags
+  for_each                    = var.physical_queues
+  name                        = "${var.name}-${each.key}${each.value.fifo ? ".fifo" : ""}"
+  fifo_queue                  = each.value.fifo
+  content_based_deduplication = each.value.fifo ? false : null
+  deduplication_scope         = each.value.fifo ? "messageGroup" : null
+  fifo_throughput_limit       = each.value.fifo ? "perMessageGroupId" : null
+  sqs_managed_sse_enabled     = true
+  visibility_timeout_seconds  = each.value.visibility_timeout_sec
+  message_retention_seconds   = 345600
+  max_message_size            = 1048576
+  redrive_policy              = each.value.dlq_enabled ? jsonencode({ deadLetterTargetArn = aws_sqs_queue.dlq[each.key].arn, maxReceiveCount = each.value.max_receive_count }) : null
+  tags                        = var.tags
 }
 locals {
   queues = { for key, queue in aws_sqs_queue.queue : key => { arn = queue.arn, url = queue.url } }

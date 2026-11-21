@@ -23,7 +23,7 @@ item should be resolved or removed once addressed. Milestone work itself is trac
 
 - [ ] M3h: verify actual SQS throttling status and error codes, U+FFFE / U+FFFF rejection, 1 MiB message-size support, receive-count increments and DLQ redrive timing against AWS. — *source: M3c2 review section B*
 - [ ] M3h: capture scrubbed real Lambda SQS, function URL and EventBridge events as fixtures. — *source: M3c2 review section B*
-- [ ] M3: implement SQS FIFO grouped delivery for the issue-keyed record stage, as planned in `.agents-docs/ISSUE_KEYED_QUEUE_PLAN.md`. — *source: owner queue-first decision*
+- [ ] M3h: verify SQS FIFO grouping, high-throughput settings, Lambda partial failures, poison redrive and visibility races on real AWS; the pinned Winterbaume has FIFO gaps. — *source: issue-keyed turn 4*
 
 - [ ] M3h: verify DynamoDB conditional update atomicity, expiry-reset races, overflow guards and TTL retention against real AWS; Winterbaume evaluates conditions separately from its write. — *source: M3d emulator finding*
 

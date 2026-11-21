@@ -33,5 +33,10 @@
     "heading": "DynamoDB conditional updates are not atomic with their checks",
     "effect": "emulator tests cannot prove conditional-write atomicity",
     "issue": "https://github.com/moriyoshi/winterbaume/issues/61"
+  },
+  "sqs-fifo": {
+    "heading": "FIFO settings and delivery are incomplete",
+    "effect": "test FIFO creation and deduplication only; exclude unsupported settings and ordering assertions",
+    "issue": null
   }
 }

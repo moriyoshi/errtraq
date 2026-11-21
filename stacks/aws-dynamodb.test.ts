@@ -372,6 +372,9 @@ describe("AWS descriptor stacks", () => {
       dlq: true,
       visibilityTimeout: true,
     });
+    expect(
+      sqsQueue({ dlq: false }).infra.topics?.settings?.record?.dlq,
+    ).toEqual({ enabled: true, maxReceiveCount: 5 });
     expect(dynamoStore().manifest.capabilities).toEqual({
       textSearch: false,
       lastSeenRangeOnOtherSort: false,

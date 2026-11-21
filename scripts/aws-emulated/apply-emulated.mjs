@@ -11,6 +11,7 @@ import {
 import { createServer } from "node:net";
 import { resolve } from "node:path";
 import { client, element } from "./client.mjs";
+import { applyFifo } from "./fifo-apply.mjs";
 import {
   assertPartialBatchSupport,
   checkConditionalUpdateGap,
@@ -28,6 +29,8 @@ import { providerOverride, terraformEnvironment } from "./terraform-config.mjs";
 import { verifyCleanup, verifyDeployment } from "./verify-deployment.mjs";
 
 const postgresOnly = process.argv.includes("--postgres-only");
+const fifoOnly = process.argv.includes("--fifo-only");
+const fifoOnlyComplete = Symbol("fifo-only complete");
 const root = resolve(".");
 const scratch = resolve(".agents-workspace/tmp");
 const revision = "79c452d2bb2844abf771cfa4a497275c24b46489";
@@ -125,6 +128,10 @@ try {
   }
   if (!ready) throw new Error(`Emulator did not start: ${serverError}`);
   const c = client(endpoint);
+  if (fifoOnly) {
+    await applyFifo({ c, gaps, temp, modules, version, cache, endpoint, tf });
+    throw fifoOnlyComplete;
+  }
   await checkStandaloneGaps(c);
   skipped(gaps, "s3-ownership-delete");
   await checkConditionalUpdateGap(c);
@@ -138,6 +145,8 @@ try {
   const account = element(sts.text, "Account");
   if (!account) throw new Error("Missing emulator account");
   await checkEventbridgeGap(c, account);
+  if (!postgresOnly)
+    await applyFifo({ c, gaps, temp, modules, version, cache, endpoint, tf });
   if (!postgresOnly)
     await runStandalone({
       c,
@@ -550,6 +559,8 @@ try {
   tf(pgDir, "destroy", "-auto-approve", "-input=false");
   await verifyCleanup(c, pgStack.name);
   console.log("PASS PostgreSQL IAM stack destroy and API inventory");
+} catch (error) {
+  if (error !== fifoOnlyComplete) throw error;
 } finally {
   server.kill("SIGTERM");
   await new Promise((yes) => {

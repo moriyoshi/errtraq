@@ -38,6 +38,7 @@ export const manifest: AdapterManifest = {
     delay: true,
     dlq: true,
     visibilityTimeout: true,
+    grouping: "per-key-serial",
   },
 };
 function descriptor(config: ResolvedConfig): InfraDescriptor<Config> {
@@ -53,7 +54,7 @@ function descriptor(config: ResolvedConfig): InfraDescriptor<Config> {
           "archive.project": "archive_project",
           notifications: "notifications",
         };
-  const keys = [...new Set(Object.values(physical))];
+  const keys = [...new Set([...Object.values(physical), "record"])];
   const bindings: Binding[] = keys.map((key) => ({
     name: `ERRTRAQ_QUEUE_${key.toUpperCase()}_URL`,
     kind: "env",
@@ -76,6 +77,11 @@ function descriptor(config: ResolvedConfig): InfraDescriptor<Config> {
         physical: physical.notifications,
         producerBinding: `ERRTRAQ_QUEUE_${physical.notifications.toUpperCase()}_URL`,
       },
+      record: {
+        physical: "record",
+        producerBinding: "ERRTRAQ_QUEUE_RECORD_URL",
+        grouping: "per-key-serial",
+      },
     },
     settings: Object.fromEntries(
       keys.map((key) => [
@@ -86,9 +92,10 @@ function descriptor(config: ResolvedConfig): InfraDescriptor<Config> {
           ...(config.maxConcurrency === undefined
             ? {}
             : { maxConcurrency: config.maxConcurrency }),
-          dlq: config.dlq
-            ? { enabled: true, maxReceiveCount: config.maxReceiveCount }
-            : { enabled: false },
+          dlq:
+            config.dlq || key === "record"
+              ? { enabled: true, maxReceiveCount: config.maxReceiveCount }
+              : { enabled: false },
         },
       ]),
     ),
@@ -115,8 +122,9 @@ function descriptor(config: ResolvedConfig): InfraDescriptor<Config> {
         ].map((key) => [
           key,
           {
+            ...(key === "record" ? { fifo: true } : {}),
             visibility_timeout_sec: config.visibilityTimeoutSec,
-            dlq_enabled: config.dlq,
+            dlq_enabled: config.dlq || key === "record",
             max_receive_count: config.maxReceiveCount,
           },
         ]),

@@ -16,6 +16,7 @@ variable "tags" {
 }
 variable "physical_queues" {
   type = map(object({
+    fifo                   = optional(bool, false)
     visibility_timeout_sec = number
     dlq_enabled            = bool
     max_receive_count      = number

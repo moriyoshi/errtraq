@@ -176,6 +176,7 @@ The opt-in emulator apply workflow is:
 ```sh
 pnpm infra:apply-emulated
 pnpm infra:apply-emulated --postgres-only  # focused IAM Postgres fixture
+pnpm infra:apply-emulated --fifo-only      # FIFO queue and DLQ with named emulator exceptions
 ```
 
 It uses pinned AWS provider 6.73.0 and loopback-only provider settings, with
@@ -188,8 +189,11 @@ self-verifying named exception omits that block only from a temporary module cop
 make this a lengthy opt-in run. A feature-enabled fixture checks the three-topic
 queue transition; the actual examples enable only `ingest`. Named exceptions are listed in
 `scripts/aws-emulated/gaps.json`, logged visibly, linked to
-[WINTERBAUME_GAPS.md](./WINTERBAUME_GAPS.md), and checked to ensure each gap still reproduces. Temporary module overrides exclude only the
-unusable ownership-control resource; tracked modules and generator output are unchanged.
+[WINTERBAUME_GAPS.md](./WINTERBAUME_GAPS.md), and checked to ensure each gap still reproduces. Temporary module overrides exclude the unusable ownership-control resource and unsupported FIFO
+settings; tracked modules and generator output are unchanged.
+For FIFO, a temporary SQS module copy omits high-throughput settings that the emulator discards;
+the test applies and destroys the FIFO queue and FIFO DLQ, and checks their API readback. It
+cannot prove FIFO group exclusion or event group attributes on the pinned emulator.
 Lifecycle header, DynamoDB encryption and deletion protection, EventBridge retry/DLQ settings and partial-batch readback
 are exercised by the updated pin rather than excluded.
 

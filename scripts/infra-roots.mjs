@@ -29,6 +29,20 @@ function variant(base, changes) {
 export const fixtures = {
   shared,
   "per-topic": perTopic,
+  "grouped-shared": variant(shared, {
+    recordMode: "grouped",
+    platform: awsLambda({
+      roles: ["ingest", "api", "consumer", "record", "cron"],
+      split: ["ingest", "api", "consumer", "record", "cron"],
+    }),
+  }),
+  "grouped-per-topic": variant(perTopic, {
+    recordMode: "grouped",
+    platform: awsLambda({
+      roles: ["ingest", "api", "consumer", "record", "cron"],
+      split: ["ingest", "api", "consumer", "record", "cron"],
+    }),
+  }),
   "config-refs": variant(shared, {
     store: {
       ...shared.store,

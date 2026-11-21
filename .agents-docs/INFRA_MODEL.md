@@ -214,15 +214,15 @@ missing job names log an error and return without retrying.
 ### Grouped recording (M3; model implemented, runtime stage planned)
 
 Core now models stack `recordMode: "direct" | "grouped"` and a `record` function role; the
-record handler and SQS FIFO implementation remain future work; SQLite, Postgres and DynamoDB
-now support batched writes. An
+record handler remains future work; SQS FIFO, SQLite, Postgres and DynamoDB
+now implement their respective parts. An
 omitted mode currently defaults to direct for every stack. Future stack helpers will explicitly
 default standalone to direct and AWS Lambda/SQS to grouped; validation
 must reject a grouped stack that lacks per-key serial delivery, a deployed record role, the
 batched store operation, or any required binding, policy or trigger. Direct mode does not activate
 `record`, its queue, trigger or grants. Do not silently downgrade a grouped stack.
 
-The future core-owned route and requirement rows are (other current rows remain as above):
+The core-owned route and requirement rows are (other current rows remain as above):
 
 | Condition | Role | Port / topic | Required capabilities / scope |
 | --- | --- | --- | --- |
@@ -240,10 +240,14 @@ Derivation must not coalesce FIFO and standard queues, policies, bindings, event
 or DLQs. Only enabled topics and their functions receive resources and grants. The queue runtime
 mapping retains event-source identifier -> physical queue -> topics and adds its delivery kind;
 producer bindings and per-resource produce/consume policies cover exactly the derived resources.
+The SQS runtime exposes `physicalQueues` capabilities by physical key: FIFO uses
+`per-key-serial` and does not accept per-message send delay; standard queues are ungrouped and
+accept delay. FIFO producer batches never contain two entries from the same group, avoiding
+reordering if an earlier entry fails while a later entry succeeds.
 The record role becomes an ordinary physical-function role subject to split/settings/conflict and
 artifact rules. Cron recovery and bundle cleanup stay separately activated by their actual jobs.
 
-The SQS module needs typed per-queue FIFO settings, `.fifo` names for record and its FIFO DLQ,
+The SQS module has typed per-queue FIFO settings, `.fifo` names for record and its FIFO DLQ,
 content-based deduplication off, `DeduplicationScope = messageGroup` and
 `FifoThroughputLimit = perMessageGroupId` for high-throughput mode, redrive, encryption and the
 same least-privilege per-queue policy shapes. The Lambda module gets a mapping for each derived
@@ -251,10 +255,9 @@ queue; its normal FIFO mapping uses batch size <=10 and `ReportBatchItemFailures
 visibility against the receiving **record function** timeout with the existing six-times safety
 factor. A FIFO queue cannot use per-message delay; apply any retry delay via visibility changes,
 without releasing later messages in the group. Reject impossible mode/settings combinations.
-Add module and generated-root shape/security contracts, mutation entries, standard+FIFO and split
-variants, and real-provider emulated apply checks. Probe Winterbaume FIFO send/receive ordering,
-deduplication, visibility, redrive and Terraform resource attributes first; name unimplemented or
-incorrect behavior as emulator gaps instead of weakening production HCL. Real AWS is required for
+Module and generated-root contracts and mutation checks cover the FIFO topology. A real-provider
+emulated apply uses a scratch copy that omits unsupported high-throughput settings; FIFO ordering
+and group attributes remain emulator gaps documented in WINTERBAUME_GAPS.md. Real AWS is required for
 FIFO ordering under load, visibility-expiry overlap, DLQ/redrive, IAM enforcement and throughput.
 [The implementation plan](./ISSUE_KEYED_QUEUE_PLAN.md) tracks those checks and rollout.
 

@@ -42,7 +42,7 @@ variable "functions" {
   validation {
     condition = alltrue([for id, fn in var.functions :
       can(regex("^[a-zA-Z0-9_-]{1,23}$", id)) &&
-      length(fn.roles) > 0 && alltrue([for role in fn.roles : contains(["ingest", "api", "consumer", "cron"], role)]) &&
+      length(fn.roles) > 0 && alltrue([for role in fn.roles : contains(["ingest", "api", "consumer", "record", "cron"], role)]) &&
       alltrue([for role in fn.http : contains(["ingest", "api"], role) && contains(fn.roles, role)]) &&
       fn.memory_mb >= 128 && fn.memory_mb <= 10240 && floor(fn.memory_mb) == fn.memory_mb &&
       fn.timeout_sec >= 1 && fn.timeout_sec <= 900 && floor(fn.timeout_sec) == fn.timeout_sec &&

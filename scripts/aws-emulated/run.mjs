@@ -9,6 +9,7 @@ import { checkConditionalUpdateGap } from "./gap-checks.mjs";
 import { loadGaps, skipped } from "./gaps.mjs";
 import { probeControl } from "./probe-control.mjs";
 import { probeDynamo } from "./probe-dynamodb.mjs";
+import { probeFifo } from "./probe-fifo.mjs";
 import { probeS3 } from "./probe-s3.mjs";
 import { probeSqs } from "./probe-sqs.mjs";
 import { moduleShapes } from "./shapes.mjs";
@@ -92,6 +93,8 @@ try {
       );
       if (!result.supported) failed = true;
     }
+  await probeFifo(endpoint);
+  skipped(loadGaps(), "sqs-fifo");
   const control = await probeControl(endpoint);
   for (const [name, result] of Object.entries(control)) {
     console.log(

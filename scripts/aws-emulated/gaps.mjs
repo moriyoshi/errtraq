@@ -9,6 +9,7 @@ export function loadGaps() {
   const expected = [
     "s3-ownership-delete",
     "dynamodb-conditional-atomicity",
+    "sqs-fifo",
     "tags-dynamodb",
     "tags-iam",
     "tags-s3",

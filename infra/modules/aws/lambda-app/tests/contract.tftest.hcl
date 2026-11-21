@@ -26,7 +26,7 @@ run "functions_triggers_and_urls" {
     tags = {}
     functions = {
       shared = {
-        roles                = ["ingest", "api", "consumer"]
+        roles                = ["ingest", "api", "consumer", "record"]
         http                 = ["ingest", "api"]
         artifact             = "tests/artifact.txt"
         memory_mb            = 512
@@ -54,10 +54,15 @@ run "functions_triggers_and_urls" {
     }
     queue_triggers = {
       ingest = { function_id = "shared", resource = "arn:aws:sqs:us-east-1:000000000000:queue", topics = ["ingest"], batch_size = 5, max_concurrency = 7, visibility_timeout_sec = 180 }
+      record = { function_id = "shared", resource = "arn:aws:sqs:us-east-1:000000000000:record.fifo", topics = ["record"], batch_size = 10, visibility_timeout_sec = 180 }
     }
     cron_triggers = { retention = { function_id = "worker", schedule = "0 * * * *", retry_attempts = 4, max_event_age_seconds = 3600, dlq_arn = "arn:aws:sqs:us-east-1:000000000000:cron-dlq" } }
     runtime       = "nodejs20.x"
     handler       = "app.handle"
+  }
+  assert {
+    condition     = aws_lambda_event_source_mapping.queue["record"].event_source_arn == "arn:aws:sqs:us-east-1:000000000000:record.fifo" && aws_lambda_event_source_mapping.queue["record"].batch_size == 10 && aws_lambda_event_source_mapping.queue["record"].function_response_types == toset(["ReportBatchItemFailures"])
+    error_message = "FIFO record delivery must use the derived ARN, batch size and partial failures."
   }
   assert {
     condition     = length(data.aws_iam_policy_document.assume.statement) == 1 && length(data.aws_iam_policy_document.assume.statement[0].condition) == 0 && length(data.aws_iam_policy_document.assume.statement[0].not_principals) == 0 && data.aws_iam_policy_document.assume.statement[0].not_actions == null && coalesce(data.aws_iam_policy_document.assume.statement[0].effect, "Allow") == "Allow" && aws_iam_role.function["shared"].assume_role_policy == data.aws_iam_policy_document.assume.json && aws_iam_role.function["worker"].assume_role_policy == data.aws_iam_policy_document.assume.json && jsonencode(data.aws_iam_policy_document.assume.statement[0].actions) == jsonencode(["sts:AssumeRole"]) && length(data.aws_iam_policy_document.assume.statement[0].principals) == 1 && one(data.aws_iam_policy_document.assume.statement[0].principals).type == "Service" && toset(one(data.aws_iam_policy_document.assume.statement[0].principals).identifiers) == toset(["lambda.amazonaws.com"])

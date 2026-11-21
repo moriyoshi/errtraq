@@ -7,7 +7,7 @@ import {
 } from "@errtraq/core";
 import { z } from "zod";
 
-const role = z.enum(["ingest", "api", "consumer", "cron"]);
+const role = z.enum(["ingest", "api", "consumer", "record", "cron"]);
 const settings = z.strictObject({
   memoryMb: z.number().int().min(128).max(10240).optional(),
   timeoutSec: z.number().int().min(1).max(900).optional(),
@@ -52,6 +52,9 @@ export const configSchema = z
     settings: {
       ...config.settings,
       consumer: { timeoutSec: 30, ...config.settings.consumer },
+      ...(config.roles.includes("record")
+        ? { record: { timeoutSec: 30, ...config.settings.record } }
+        : {}),
     },
   }));
 export type Config = z.input<typeof configSchema>;

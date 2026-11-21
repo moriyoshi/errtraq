@@ -10,6 +10,7 @@ run "queues_and_policies" {
       notifications   = { visibility_timeout_sec = 270, dlq_enabled = false, max_receive_count = 3 }
       archive_project = { visibility_timeout_sec = 180, dlq_enabled = false, max_receive_count = 5 }
       shared          = { visibility_timeout_sec = 180, dlq_enabled = false, max_receive_count = 5 }
+      record          = { visibility_timeout_sec = 180, dlq_enabled = true, max_receive_count = 5, fifo = true }
     }
   }
   assert {
@@ -33,8 +34,12 @@ run "queues_and_policies" {
     error_message = "SQS source and DLQ retention must be explicit."
   }
   assert {
-    condition     = length(output.queues) == 4 && length(aws_sqs_queue.dlq) == 1 && aws_sqs_queue.queue["notifications"].visibility_timeout_seconds == 270
+    condition     = length(output.queues) == 5 && length(aws_sqs_queue.dlq) == 2 && aws_sqs_queue.queue["notifications"].visibility_timeout_seconds == 270
     error_message = "Each physical queue must retain its own configuration."
+  }
+  assert {
+    condition     = aws_sqs_queue.queue["record"].name == "example-record.fifo" && aws_sqs_queue.queue["record"].fifo_queue && !aws_sqs_queue.queue["record"].content_based_deduplication && aws_sqs_queue.queue["record"].deduplication_scope == "messageGroup" && aws_sqs_queue.queue["record"].fifo_throughput_limit == "perMessageGroupId" && aws_sqs_queue.dlq["record"].name == "example-record-dlq.fifo" && aws_sqs_queue.dlq["record"].fifo_queue && jsondecode(aws_sqs_queue.queue["record"].redrive_policy).deadLetterTargetArn == aws_sqs_queue.dlq["record"].arn
+    error_message = "The record queue and its DLQ must be FIFO with explicit deduplication and high-throughput settings."
   }
   assert {
     condition     = jsondecode(output.policies.produce.ingest).Statement[0].Resource == aws_sqs_queue.queue["ingest"].arn && !contains(jsondecode(output.policies.produce.ingest).Statement[0].Action, "sqs:ReceiveMessage")

@@ -298,7 +298,9 @@ export type BatchResult = Array<
 /** Deliveries are at-least-once. Grouped queues preserve acceptance order per
  * key and do not intentionally dispatch another batch for a key while its lease
  * is live. Lease expiry, retries and redelivery can overlap: this is not a lock.
- * Different groups can run concurrently. Handlers must be idempotent. */
+ * Different groups can run concurrently. Handlers must be idempotent and must
+ * stop processing a FIFO group after its first failure, returning retries for
+ * that delivery and every later unprocessed delivery in the group. */
 export type BatchHandler = (batch: Delivery[]) => Promise<BatchResult>;
 
 export interface QueueProducer {
@@ -326,6 +328,10 @@ export interface QueueCapabilities {
   dlq: boolean;
   /** Omitted by adapters not yet migrated; omission means no grouping. */
   grouping?: "per-key-serial" | "none";
+  /** Physical queues may differ, notably FIFO queues without per-message delay. */
+  physicalQueues?: Readonly<
+    Record<string, { grouping: "per-key-serial" | "none"; delay: boolean }>
+  >;
 }
 
 /** Sources must match capabilities.delivery: push, pull, or both. */

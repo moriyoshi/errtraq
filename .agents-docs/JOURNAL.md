@@ -1057,3 +1057,20 @@ for 200 events and 50 for 500 events (0.10 transactions/event, no retries in eit
 measures the batched store path only, not FIFO throughput or real-AWS contention; the queue-stage
 and M3h measurements remain open. Winterbaume issue #61 still requires the concurrency contracts
 to run on DynamoDB Local.
+
+## 2026-11-22 — Issue-keyed SQS FIFO and infrastructure
+
+The SQS descriptor derives a dedicated record FIFO queue and FIFO DLQ alongside standard
+queues, with per-queue policies and a Lambda event-source mapping. The runtime sends explicit
+group and deduplication IDs; same-group entries are not placed in one send request because
+partial batch success could reorder them. FIFO push dispatch groups records and conservatively
+returns failed and subsequent unprocessed records after the first failure, as Lambda guidance
+requires. The future record handler must itself stop processing a group at its first failure.
+
+Winterbaume revision `79c452d2bb2844abf771cfa4a497275c24b46489` retains FIFO creation and basic
+send deduplication but drops high-throughput attributes, omits group attributes and permits a
+second receive from an in-flight group. The opt-in real-provider FIFO apply uses a scratch module
+copy omitting only the discarded settings, checks the FIFO queue and DLQ through APIs, and destroys
+them; production HCL is unchanged. The named gap is in WINTERBAUME_GAPS.md and is not yet filed
+upstream. Actual FIFO ordering, event attributes, poison handling and throughput remain real-AWS
+checks; the record handler and pipeline are the next implementation turn.

@@ -232,3 +232,21 @@ prove Lambda networking or its provider readback. The apply harness reproduces t
 every run before omitting only the VPC block in its temporary module copy; the network role
 policy and all other generated resources remain in the emulated apply. Terraform mock tests
 cover the intended block. Filed as [issue #62](https://github.com/moriyoshi/winterbaume/issues/62).
+
+## FIFO settings and delivery are incomplete
+
+Pinned revision `79c452d2bb2844abf771cfa4a497275c24b46489`, loopback SQS JSON API,
+2026-11-21. `CreateQueue` for `fifo-probe.fifo` with `FifoQueue=true`,
+`ContentBasedDeduplication=false`, `DeduplicationScope=messageGroup` and
+`FifoThroughputLimit=perMessageGroupId` returned HTTP 200. `GetQueueAttributes(All)` returned
+`FifoQueue=true`, but `DeduplicationScope=queue` and `FifoThroughputLimit=perQueue`; the
+requested high-throughput attributes were discarded. Two `SendMessage` calls with the same
+`MessageGroupId=group` and distinct deduplication IDs returned HTTP 200. After receiving the
+first with `MaxNumberOfMessages=1` and leaving it in flight, a second `ReceiveMessage` returned
+the next message from the same group immediately. Returned `Attributes(All)` omitted both
+`MessageGroupId` and `MessageDeduplicationId`. A repeated deduplication ID did return the first
+message ID, so basic five-minute send deduplication was observed; this does not establish its
+scope, timing or delivery correctness. No AWS error text was returned: the service silently
+accepted the requests and returned the incorrect values above. FIFO ordering, group exclusion,
+Lambda event attributes, high-throughput settings and full Terraform convergence remain unproven
+by this emulator; mock-provider tests and ultimately a real AWS deployment must cover them.

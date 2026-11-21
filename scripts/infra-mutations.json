@@ -66,8 +66,8 @@
     "id": "sqs-encryption-off",
     "module": "sqs",
     "file": "main.tf",
-    "find": "sqs_managed_sse_enabled    = true",
-    "replace": "sqs_managed_sse_enabled    = false"
+    "find": "sqs_managed_sse_enabled     = true\n  visibility_timeout_seconds",
+    "replace": "sqs_managed_sse_enabled     = false\n  visibility_timeout_seconds"
   },
   {
     "id": "sqs-redrive-count-one",
@@ -345,5 +345,47 @@
     "file": "main.tf",
     "find": "count      = var.purpose == \"store\" && var.protection == \"disposable\" ? 1 : 0",
     "replace": "count      = var.protection == \"disposable\" ? 1 : 0"
+  },
+  {
+    "id": "sqs-fifo-source-disabled",
+    "module": "sqs",
+    "file": "main.tf",
+    "find": "fifo_queue                  = each.value.fifo\n  content_based_deduplication = each.value.fifo ? false : null\n  deduplication_scope",
+    "replace": "fifo_queue                  = false\n  content_based_deduplication = each.value.fifo ? false : null\n  deduplication_scope"
+  },
+  {
+    "id": "sqs-fifo-dlq-disabled",
+    "module": "sqs",
+    "file": "main.tf",
+    "find": "fifo_queue                  = each.value.fifo\n  content_based_deduplication = each.value.fifo ? false : null\n  sqs_managed_sse_enabled",
+    "replace": "fifo_queue                  = false\n  content_based_deduplication = each.value.fifo ? false : null\n  sqs_managed_sse_enabled"
+  },
+  {
+    "id": "sqs-fifo-dedup-scope",
+    "module": "sqs",
+    "file": "main.tf",
+    "find": "deduplication_scope         = each.value.fifo ? \"messageGroup\" : null",
+    "replace": "deduplication_scope         = each.value.fifo ? \"queue\" : null"
+  },
+  {
+    "id": "sqs-fifo-throughput",
+    "module": "sqs",
+    "file": "main.tf",
+    "find": "fifo_throughput_limit       = each.value.fifo ? \"perMessageGroupId\" : null",
+    "replace": "fifo_throughput_limit       = each.value.fifo ? \"perQueue\" : null"
+  },
+  {
+    "id": "sqs-fifo-content-dedup",
+    "module": "sqs",
+    "file": "main.tf",
+    "find": "content_based_deduplication = each.value.fifo ? false : null\n  deduplication_scope",
+    "replace": "content_based_deduplication = each.value.fifo ? true : null\n  deduplication_scope"
+  },
+  {
+    "id": "sqs-fifo-name-suffix",
+    "module": "sqs",
+    "file": "main.tf",
+    "find": "name                        = \"${var.name}-${each.key}${each.value.fifo ? \".fifo\" : \"\"}\"",
+    "replace": "name                        = \"${var.name}-${each.key}\""
   }
 ]

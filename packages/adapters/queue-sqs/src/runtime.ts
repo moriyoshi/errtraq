@@ -10,7 +10,11 @@ import { validateQueueBody } from "@errtraq/core/queue";
 import { SQS_MAX_BYTES } from "./constants.js";
 import type { Config } from "./stack.js";
 
-type Route = { physical: string; producerBinding?: string };
+type Route = {
+  physical: string;
+  producerBinding?: string;
+  grouping?: "none" | "per-key-serial";
+};
 type ConsumerRoute = {
   physical: string;
   topics: readonly string[];
@@ -55,15 +59,40 @@ export interface SqsOptions {
   logger?: Pick<Logger, "warn" | "error">;
 }
 export class SqsQueue implements Queue<SqsEvent, SqsResponse> {
-  readonly capabilities = {
-    delivery: "push" as const,
-    maxBytes: SQS_MAX_BYTES,
-    delay: true,
-    dlq: true,
-  };
+  readonly capabilities: Queue["capabilities"];
   private readonly sleep: (ms: number) => Promise<void>;
   private readonly endpoint: string;
   constructor(private readonly options: SqsOptions) {
+    const physicalQueues: Record<
+      string,
+      { grouping: "per-key-serial" | "none"; delay: boolean }
+    > = {};
+    for (const route of Object.values(options.topics)) {
+      const grouping = route.grouping ?? "none";
+      const old = physicalQueues[route.physical];
+      if (old && old.grouping !== grouping)
+        throw new Error("Conflicting physical queue grouping");
+      physicalQueues[route.physical] = { grouping, delay: grouping === "none" };
+    }
+    for (const route of options.consumers) {
+      const grouping =
+        typeof route.eventSource === "string" &&
+        route.eventSource.endsWith(".fifo")
+          ? "per-key-serial"
+          : "none";
+      const old = physicalQueues[route.physical];
+      if (old && old.grouping !== grouping)
+        throw new Error("Conflicting physical queue grouping");
+      physicalQueues[route.physical] = { grouping, delay: grouping === "none" };
+    }
+    this.capabilities = {
+      delivery: "push",
+      maxBytes: SQS_MAX_BYTES,
+      delay: true,
+      dlq: true,
+      grouping: "per-key-serial",
+      physicalQueues,
+    };
     if (!options.region) throw new Error("Missing SQS region");
     const endpoint = new URL(
       options.endpoint ??
@@ -130,16 +159,38 @@ export class SqsQueue implements Queue<SqsEvent, SqsResponse> {
         throw new RangeError(
           "SQS delay must be an integer from 0 to 900 seconds",
         );
+      const fifo = route.grouping === "per-key-serial";
+      if (fifo && delay !== 0)
+        throw new RangeError("FIFO queues do not support per-message delay");
       const encoder = new TextEncoder();
       const entries = messages.map((message, index) => {
         if (typeof message.key !== "string")
           throw new Error("Message key must be a string");
+        if (
+          fifo &&
+          (!message.groupKey ||
+            !/^[\x21-\x7e]{1,128}$/.test(message.groupKey) ||
+            !/^[\x21-\x7e]{1,128}$/.test(message.key))
+        )
+          throw new Error(
+            "FIFO messages require valid group and deduplication keys",
+          );
         validateQueueBody(message.body);
         const MessageBody = serialize({ topic, message });
         const bytes = encoder.encode(MessageBody).byteLength;
         if (bytes > SQS_MAX_BYTES)
           throw new Error("Message exceeds queue maxBytes");
-        return { Id: String(index), MessageBody, DelaySeconds: delay, bytes };
+        return {
+          Id: String(index),
+          MessageBody,
+          ...(fifo
+            ? {
+                MessageGroupId: message.groupKey,
+                MessageDeduplicationId: message.key,
+              }
+            : { DelaySeconds: delay }),
+          bytes,
+        };
       });
       let batch: typeof entries = [],
         size = 0;
@@ -185,7 +236,17 @@ export class SqsQueue implements Queue<SqsEvent, SqsResponse> {
         size = 0;
       };
       for (const entry of entries) {
-        if (batch.length === 10 || size + entry.bytes > SQS_MAX_BYTES)
+        if (
+          batch.length === 10 ||
+          size + entry.bytes > SQS_MAX_BYTES ||
+          (fifo &&
+            "MessageGroupId" in entry &&
+            batch.some(
+              (item) =>
+                "MessageGroupId" in item &&
+                item.MessageGroupId === entry.MessageGroupId,
+            ))
+        )
           await flush();
         batch.push(entry);
         size += entry.bytes;
@@ -209,7 +270,16 @@ export class SqsQueue implements Queue<SqsEvent, SqsResponse> {
       const deadline = Date.now() + (this.options.overallTimeoutMs ?? 25_000);
       const failed = new Set<string>();
       const deliveries: Delivery[] = [];
-      const metadata = new Map<string, { arn: string; receipt: string }>();
+      const metadata = new Map<
+        string,
+        { arn: string; receipt: string; group?: string }
+      >();
+      const order: string[] = [];
+      const fifoEvent = event.Records.some(
+        (raw) =>
+          typeof object(raw)?.eventSourceARN === "string" &&
+          String(object(raw)?.eventSourceARN).endsWith(".fifo"),
+      );
       const seen = new Set<string>();
       const logger = this.options.logger ?? {
         warn: (message: string, fields?: Record<string, unknown>) =>
@@ -224,6 +294,7 @@ export class SqsQueue implements Queue<SqsEvent, SqsResponse> {
           throw new Error("Invalid SQS message ID");
         if (seen.has(id)) continue;
         seen.add(id);
+        order.push(id);
         try {
           const arn = record?.eventSourceARN,
             receipt = record?.receiptHandle,
@@ -263,13 +334,30 @@ export class SqsQueue implements Queue<SqsEvent, SqsResponse> {
             !Object.hasOwn(message, "body")
           )
             throw new Error("invalid envelope");
+          const fifo = arn.endsWith(".fifo");
+          const group = attrs?.MessageGroupId;
+          if (
+            fifo &&
+            (typeof group !== "string" || !group || message.groupKey !== group)
+          )
+            throw new Error("invalid FIFO group");
           deliveries.push({
             id,
             topic,
-            message: { key: message.key, body: message.body },
+            message: {
+              key: message.key,
+              body: message.body,
+              ...(typeof message.groupKey === "string"
+                ? { groupKey: message.groupKey }
+                : {}),
+            },
             attempt: Number(attemptText),
           });
-          metadata.set(id, { arn, receipt });
+          metadata.set(id, {
+            arn,
+            receipt,
+            ...(typeof group === "string" ? { group } : {}),
+          });
         } catch (error) {
           failed.add(id);
           const reasons = [
@@ -278,6 +366,7 @@ export class SqsQueue implements Queue<SqsEvent, SqsResponse> {
             "invalid JSON",
             "invalid receive count",
             "invalid envelope",
+            "invalid FIFO group",
           ];
           logger.warn("Invalid SQS record", {
             messageId: id,
@@ -294,16 +383,25 @@ export class SqsQueue implements Queue<SqsEvent, SqsResponse> {
         receipt: string;
         delay: number;
       }[] = [];
-      if (deliveries.length) {
+      const apply = async (
+        batch: Delivery[],
+        ordered: boolean,
+      ): Promise<boolean> => {
+        let blocked = false;
         try {
-          const results = await handler(deliveries);
-          for (const delivery of deliveries) {
+          const results = await handler(batch);
+          for (const delivery of batch) {
+            if (blocked) {
+              failed.add(delivery.id);
+              continue;
+            }
             const matching = results.filter(
               (result) => result.deliveryId === delivery.id,
             );
             const result = matching.length === 1 ? matching[0] : undefined;
             if (result?.action === "ack") continue;
             failed.add(delivery.id);
+            if (ordered) blocked = true;
             if (result?.action === "retry" && result.delaySec !== undefined) {
               const delay = result.delaySec;
               if (typeof delay !== "number" || !Number.isFinite(delay)) {
@@ -326,7 +424,53 @@ export class SqsQueue implements Queue<SqsEvent, SqsResponse> {
             }
           }
         } catch {
-          for (const delivery of deliveries) failed.add(delivery.id);
+          for (const delivery of batch) failed.add(delivery.id);
+          return true;
+        }
+        return blocked;
+      };
+      if (!fifoEvent) {
+        if (deliveries.length) await apply(deliveries, false);
+      } else {
+        const byId = new Map(
+          deliveries.map((delivery) => [delivery.id, delivery]),
+        );
+        let blocked = false;
+        for (let index = 0; index < order.length; ) {
+          const id = order[index];
+          if (!id) {
+            index++;
+            continue;
+          }
+          if (blocked || failed.has(id)) {
+            failed.add(id);
+            blocked = true;
+            index++;
+            continue;
+          }
+          const first = byId.get(id);
+          if (!first) {
+            failed.add(id);
+            blocked = true;
+            index++;
+            continue;
+          }
+          const group = metadata.get(id)?.group;
+          const batch: Delivery[] = [];
+          while (index < order.length) {
+            const nextId = order[index];
+            if (
+              !nextId ||
+              failed.has(nextId) ||
+              metadata.get(nextId)?.group !== group
+            )
+              break;
+            const next = byId.get(nextId);
+            if (!next) break;
+            batch.push(next);
+            index++;
+          }
+          blocked = await apply(batch, true);
         }
       }
       let index = 0;
