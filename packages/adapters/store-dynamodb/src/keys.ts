@@ -26,6 +26,47 @@ export function sortKey(value: string): string {
     throw new RangeError("DynamoDB sort key exceeds 1024 bytes");
   return key;
 }
+/** Descending timestamp with an ascending, UTF-8 ordered issue-ID tie break. */
+export function issueTimeSort(timestamp: string, issueId: string): string {
+  const millis = Date.parse(timestamp);
+  if (
+    timestamp.length !== 24 ||
+    !Number.isFinite(millis) ||
+    new Date(millis).toISOString() !== timestamp
+  )
+    throw new TypeError("Expected a canonical UTC millisecond timestamp");
+  const descending = timestamp.replace(/[0-9]/g, (digit) =>
+    String(9 - Number(digit)),
+  );
+  const key = `${descending}#${sortKey(issueId)}`;
+  if (new TextEncoder().encode(key).length > 1024)
+    throw new RangeError("DynamoDB sort key exceeds 1024 bytes");
+  return key;
+}
+
+/** Descending safe-integer count with an ascending issue-ID tie break. */
+export function issueCountSort(count: number, issueId: string): string {
+  if (!Number.isSafeInteger(count) || count < 0)
+    throw new RangeError("Invalid issue count");
+  const key = `${String(Number.MAX_SAFE_INTEGER - count).padStart(16, "0")}#${sortKey(issueId)}`;
+  if (new TextEncoder().encode(key).length > 1024)
+    throw new RangeError("DynamoDB sort key exceeds 1024 bytes");
+  return key;
+}
+
+export function eventTimeSort(timestamp: string, eventId: string): string {
+  const millis = Date.parse(timestamp);
+  if (
+    timestamp.length !== 24 ||
+    !Number.isFinite(millis) ||
+    new Date(millis).toISOString() !== timestamp
+  )
+    throw new TypeError("Expected a canonical UTC millisecond timestamp");
+  const key = `${timestamp}#${sortKey(eventId)}`;
+  if (new TextEncoder().encode(key).length > 1024)
+    throw new RangeError("DynamoDB sort key exceeds 1024 bytes");
+  return key;
+}
 export interface IndexPosition {
   PK: string;
   SK: string;

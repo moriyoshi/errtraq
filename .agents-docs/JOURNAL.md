@@ -901,3 +901,32 @@ means these tests do not establish real conditional-write atomicity; verify conc
 on a faithful DynamoDB service as already planned for M3h. Query and BatchGetItem need
 store read, PutItem and UpdateItem need write, and marker/chunk deletion needs the
 separate metadata-delete capability.
+
+## 2026-11-21 — DynamoDB stage 1 step D in progress
+
+Implemented the per-event issue/count transaction, the strong issue-ID pointer and sparse
+issue lists. A deterministic fake HTTP transport covers a condition failure with a returned
+issue image and a duplicate event without relying on emulator timing. Transaction cancellation
+images are deliberately non-enumerable because they can contain user data.
+
+The pinned winterbaume's issue #61 is a concrete blocker for the unchanged 40-concurrent
+shared contract: it produced a numeric count of 2 alongside a serialized issue count of 1,
+so the count preimage guard correctly exhausted its bounded retries. One diagnostic measured
+2,510 attempts for 40 events, with 9 fulfilled and 31 failed; this is not an AWS contention
+measurement. The opt-in emulator command runs the diagnostic and explicitly names the skipped
+shared 40-concurrent assertion. A faithful DynamoDB implementation is needed to verify it;
+this environment has no Java runtime for DynamoDB Local. Step D remains unverified.
+
+## 2026-11-21 — DynamoDB conditional-write fallback
+
+The earlier Java limitation was resolved without installing tools: a cached, digest-pinned
+DynamoDB Local Docker image runs the unchanged shared 40-writer, concurrent issue-update,
+and duplicate-delivery cases. The 40-writer case passed with 439 transactions for 40 events
+(10.97 attempts/event) in this run. This is local-emulator contention, not an AWS prediction.
+The opt-in AWS emulator command uses the cached image only and prints a skip if it or Docker
+is unavailable; winterbaume's issue #61 diagnostic remains separate and visibly non-authoritative.
+
+Winterbaume also admitted both writers in the existing concurrent metadata CAS case under
+load. The harness therefore runs the unchanged CAS and active-key concurrency cases on the
+same DynamoDB Local fallback as the issue transactions, while retaining the winterbaume
+gap probe. This prevents a known emulator race from making the opt-in gate flaky.

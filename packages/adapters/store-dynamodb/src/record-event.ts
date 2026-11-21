@@ -1,0 +1,275 @@
+import type {
+  ActiveStore,
+  Issue,
+  Occurrence,
+  StoredEvent,
+} from "@errtraq/core";
+import { DynamoStoreError, DynamoTransactionCanceledError } from "./errors.js";
+import { issueKey, issuePointerKey, issuePointerSort } from "./issues.js";
+import {
+  component,
+  eventTimeSort,
+  issueCountSort,
+  issueTimeSort,
+  partition,
+  sortKey,
+} from "./keys.js";
+import {
+  assertItemSize,
+  type Driver,
+  dataItem,
+  get,
+  type Item,
+  itemData,
+  primary,
+  s,
+} from "./repository-base.js";
+
+export const eventKey = (project: string, id: string) =>
+  partition("EV", project, id);
+export const issueStatusPartition = (project: string, status: string) =>
+  partition("ISSUE", project, status);
+export function issueAttributes(issue: Issue): Item {
+  const group = issueStatusPartition(issue.projectId, issue.status);
+  return {
+    GSI3PK: s(partition("ISSUEID", issue.id)),
+    GSI3SK: s(sortKey(issue.projectId)),
+    GSI4PK: s(group),
+    GSI4SK: s(issueTimeSort(issue.lastSeen, issue.id)),
+    GSI5PK: s(group),
+    GSI5SK: s(issueTimeSort(issue.firstSeen, issue.id)),
+    GSI6PK: s(group),
+    GSI6SK: s(issueCountSort(issue.count, issue.id)),
+  };
+}
+async function eventShard(id: string, shards: number) {
+  const hash = new Uint8Array(
+    await crypto.subtle.digest("SHA-256", new TextEncoder().encode(id)),
+  );
+  return ((hash[0] ?? 0) % shards).toString();
+}
+async function eventItem(event: StoredEvent, shards: number) {
+  const value: Item = {
+    ...dataItem(eventKey(event.projectId, event.eventId), event),
+    GSI1PK: s(
+      partition(
+        "EVENTPROJECT",
+        event.projectId,
+        await eventShard(event.eventId, shards),
+      ),
+    ),
+    GSI1SK: s(eventTimeSort(event.receivedAt, event.eventId)),
+    GSI2PK: s(partition("EVENTISSUE", event.projectId, event.issueId)),
+    GSI2SK: s(eventTimeSort(event.receivedAt, event.eventId)),
+  };
+  assertItemSize(value);
+  return value;
+}
+function nextIssue(occ: Occurrence, previous: Issue | null) {
+  if (
+    previous &&
+    (previous.id !== occ.issueId || previous.fingerprint !== occ.fingerprint)
+  )
+    throw new Error("Issue identity does not match fingerprint");
+  const isNew = !previous;
+  const regression =
+    previous?.status === "resolved" &&
+    (!previous.resolvedAt || occ.receivedAt > previous.resolvedAt);
+  const issue: Issue = previous
+    ? { ...previous }
+    : {
+        id: occ.issueId,
+        projectId: occ.projectId,
+        fingerprint: occ.fingerprint,
+        status: "unresolved",
+        title: occ.title,
+        culprit: occ.culprit,
+        level: occ.level,
+        type: occ.type,
+        metadata: occ.metadata,
+        firstSeen: occ.receivedAt,
+        lastSeen: occ.receivedAt,
+        count: 0,
+        lastEventId: occ.eventId,
+        lastEventReceivedAt: occ.receivedAt,
+      };
+  if (
+    !Number.isSafeInteger(issue.count) ||
+    issue.count < 0 ||
+    issue.count === Number.MAX_SAFE_INTEGER
+  )
+    throw new RangeError("Invalid issue count");
+  issue.count++;
+  if (occ.receivedAt < issue.firstSeen) issue.firstSeen = occ.receivedAt;
+  if (
+    occ.receivedAt > issue.lastSeen ||
+    (occ.receivedAt === issue.lastSeen &&
+      component(occ.eventId) > component(issue.lastEventId))
+  ) {
+    issue.lastSeen = occ.receivedAt;
+    issue.lastEventReceivedAt = occ.receivedAt;
+    issue.lastEventId = occ.eventId;
+  }
+  if (regression) {
+    issue.status = "unresolved";
+    delete issue.resolvedAt;
+  }
+  return { issue, isNew, isRegression: !!regression };
+}
+export function recordEvent(
+  d: Driver,
+  shards: () => number | undefined,
+): ActiveStore["recordEvent"] {
+  return async (occ, event) => {
+    if (
+      occ.projectId !== event.projectId ||
+      occ.issueId !== event.issueId ||
+      occ.eventId !== event.eventId ||
+      occ.receivedAt !== event.receivedAt
+    )
+      throw new Error("Occurrence and event mismatch");
+    const count = shards();
+    if (!count)
+      throw new Error(
+        "DynamoDB store must be migrated before recording events",
+      );
+    const PK = issueKey(occ.projectId, occ.issueId),
+      evPK = eventKey(event.projectId, event.eventId);
+    const eventRow = await eventItem(event, count);
+    let old = await get(d, PK);
+    for (let attempt = 0; attempt < 80; attempt++) {
+      const previous = itemData<Issue>(old),
+        next = nextIssue(occ, previous),
+        attrs = issueAttributes(next.issue);
+      const candidate = {
+        ...primary(PK),
+        data: s(JSON.stringify(next.issue)),
+        count: { N: String(next.issue.count) },
+        ...attrs,
+      };
+      assertItemSize(candidate);
+      const names: Record<string, string> = {
+        "#data": "data",
+        "#count": "count",
+      };
+      const values: Record<string, unknown> = {
+        ":data": candidate.data,
+        ":one": { N: "1" },
+      };
+      const sets = ["#data = :data"];
+      for (const [name, value] of Object.entries(attrs)) {
+        names[`#${name}`] = name;
+        values[`:${name}`] = value;
+        sets.push(`#${name} = :${name}`);
+      }
+      const condition = previous
+        ? "#count = :oldCount AND #data = :oldData"
+        : "attribute_not_exists(PK)";
+      if (previous) {
+        values[":oldCount"] = { N: String(previous.count) };
+        values[":oldData"] = old?.data;
+      }
+      const writes: object[] = [
+        {
+          Put: {
+            TableName: d.table,
+            Item: eventRow,
+            ConditionExpression: "attribute_not_exists(PK)",
+            ReturnValuesOnConditionCheckFailure: "ALL_OLD",
+          },
+        },
+        {
+          Update: {
+            TableName: d.table,
+            Key: primary(PK),
+            UpdateExpression: `SET ${sets.join(", ")} ADD #count :one`,
+            ConditionExpression: condition,
+            ExpressionAttributeNames: names,
+            ExpressionAttributeValues: values,
+            ReturnValuesOnConditionCheckFailure: "ALL_OLD",
+          },
+        },
+      ];
+      if (next.isNew)
+        writes.push({
+          Put: {
+            TableName: d.table,
+            Item: {
+              ...primary(
+                issuePointerKey(occ.issueId),
+                issuePointerSort(occ.projectId),
+              ),
+              owner: s(PK),
+            },
+            ConditionExpression: "attribute_not_exists(PK)",
+            ReturnValuesOnConditionCheckFailure: "ALL_OLD",
+          },
+        });
+      try {
+        await d.request("TransactWriteItems", {
+          TransactItems: writes,
+          ClientRequestToken: crypto.randomUUID(),
+        });
+        const saved = itemData<Issue>(await get(d, PK));
+        if (!saved) throw new Error("Committed issue is missing");
+        return {
+          inserted: true,
+          issue: saved,
+          isNew: next.isNew,
+          isRegression: next.isRegression,
+        };
+      } catch (error) {
+        if (!(error instanceof DynamoTransactionCanceledError)) throw error;
+        const reasons = error.reasons;
+        const unexpected = reasons.find(
+          ({ code }) =>
+            code &&
+            ![
+              "None",
+              "ConditionalCheckFailed",
+              "TransactionConflict",
+              "ProvisionedThroughputExceeded",
+              "ThrottlingError",
+            ].includes(code),
+        );
+        if (unexpected?.code)
+          throw new DynamoStoreError(
+            "DynamoDB transaction rejected",
+            unexpected.code,
+          );
+        if (reasons[0]?.code === "ConditionalCheckFailed" || !reasons.length) {
+          const duplicate = itemData<StoredEvent>(
+            (reasons[0]?.item as Item | undefined) ?? (await get(d, evPK)),
+          );
+          if (duplicate) {
+            const issue = itemData<Issue>(
+              await get(d, issueKey(duplicate.projectId, duplicate.issueId)),
+            );
+            if (!issue) throw new Error("Stored event has no issue");
+            return {
+              inserted: false,
+              issue,
+              isNew: false,
+              isRegression: false,
+            };
+          }
+        }
+        old = (reasons[1]?.item as Item | undefined) ?? (await get(d, PK));
+        if (reasons[2]?.code === "ConditionalCheckFailed" && !old)
+          throw new DynamoStoreError("Issue pointer already exists");
+        if (attempt < 79)
+          await new Promise((resolve) =>
+            setTimeout(
+              resolve,
+              Math.random() * Math.min(25, 2 ** Math.min(attempt, 5)),
+            ),
+          );
+      }
+    }
+    throw new DynamoStoreError(
+      "DynamoDB transaction contention limit reached",
+      "TransactionConflict",
+      true,
+    );
+  };
+}

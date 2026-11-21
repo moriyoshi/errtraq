@@ -6,9 +6,12 @@ import {
   DynamoStoreError,
   DynamoStoreThrottledError,
   DynamoStoreUnavailableError,
+  DynamoTransactionCanceledError,
 } from "./errors.js";
+import { issueRepository } from "./issues.js";
 import { metaRepository } from "./meta.js";
 import { projectRepository } from "./projects.js";
+import { recordEvent } from "./record-event.js";
 import { releaseRepository } from "./releases.js";
 import type { Config } from "./stack.js";
 
@@ -100,6 +103,9 @@ export class DynamoStore implements ActiveStore {
           sessionToken: this.options.environment.AWS_SESSION_TOKEN,
         }),
         fetch: this.options.fetch,
+        allowHttpErrors:
+          action === "TransactWriteItems" &&
+          typeof input.ClientRequestToken === "string",
       });
       let result: unknown;
       try {
@@ -109,6 +115,38 @@ export class DynamoStore implements ActiveStore {
       }
       const data = object(result);
       if (!data) throw new DynamoStoreError("Invalid DynamoDB response");
+      if (!response.ok) {
+        const code = response.headers.get("x-amz-error-code");
+        if (code === "TransactionCanceledException") {
+          const reasons = Array.isArray(data.CancellationReasons)
+            ? data.CancellationReasons.map((value: unknown) => {
+                const reason = object(value);
+                return {
+                  ...(typeof reason?.Code === "string" &&
+                  /^[A-Za-z]+$/.test(reason.Code)
+                    ? { code: reason.Code }
+                    : {}),
+                  ...(reason?.Item ? { item: reason.Item } : {}),
+                };
+              })
+            : [];
+          throw new DynamoTransactionCanceledError(reasons);
+        }
+        throw new AwsRequestError(
+          "dynamodb",
+          code ?? undefined,
+          response.status,
+          response.status === 429 ||
+            response.status >= 500 ||
+            [
+              "ProvisionedThroughputExceededException",
+              "ThrottlingException",
+              "RequestLimitExceeded",
+              "Throttling",
+            ].includes(code ?? ""),
+          response.status >= 500,
+        );
+      }
       return data;
     } catch (error) {
       if (!(error instanceof AwsRequestError)) throw error;
@@ -160,15 +198,12 @@ export class DynamoStore implements ActiveStore {
   get indexShards(): number | undefined {
     return this.shards;
   }
-  recordEvent: ActiveStore["recordEvent"] = unimplemented;
+  recordEvent: ActiveStore["recordEvent"] = recordEvent(
+    this,
+    () => this.shards,
+  );
   projects: ActiveStore["projects"] = projectRepository(this);
-  issues: ActiveStore["issues"] = {
-    getById: unimplemented,
-    get: unimplemented,
-    list: unimplemented,
-    repairAfterErasure: unavailableErasure,
-    update: unimplemented,
-  };
+  issues: ActiveStore["issues"] = issueRepository(this);
   events: ActiveStore["events"] = {
     capabilities: { deleteStrategy: "explicit", deleteBySubject: false },
     get: unimplemented,

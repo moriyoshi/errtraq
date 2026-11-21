@@ -15,6 +15,18 @@ export interface Driver {
 export type Item = Record<string, { S?: string; N?: string }>;
 export const s = (value: string) => ({ S: value });
 export const primary = (PK: string, SK = "DATA") => ({ PK: s(PK), SK: s(SK) });
+/** Reject oversized string/number-only table items before submitting a transaction. */
+export function assertItemSize(item: Item): void {
+  const encoder = new TextEncoder();
+  let bytes = 0;
+  for (const [name, value] of Object.entries(item)) {
+    bytes += encoder.encode(name).length;
+    if (value.S !== undefined) bytes += encoder.encode(value.S).length;
+    else if (value.N !== undefined) bytes += encoder.encode(value.N).length;
+    else throw new TypeError("Unsupported DynamoDB item attribute");
+  }
+  if (bytes > 400 * 1024) throw new RangeError("DynamoDB item exceeds 400 KiB");
+}
 export function itemData<T>(item: Item | undefined): T | null {
   if (!item) return null;
   if (typeof item.data?.S !== "string")

@@ -4,6 +4,7 @@ import { createServer } from "node:net";
 import { fileURLToPath } from "node:url";
 import { createAwsTestNamespace } from "../../packages/testing/src/aws-emulator.ts";
 import { client } from "./client.mjs";
+import { testDynamoConcurrency } from "./dynamodb-local.mjs";
 import { checkConditionalUpdateGap } from "./gap-checks.mjs";
 import { loadGaps, skipped } from "./gaps.mjs";
 import { probeControl } from "./probe-control.mjs";
@@ -178,17 +179,22 @@ try {
   await checkConditionalUpdateGap(api);
   skipped(loadGaps(), "dynamodb-conditional-atomicity");
   console.log("Running implemented DynamoDB store repository contract cases");
+  console.log(
+    "SKIPPED concurrent store and CAS contracts on winterbaume: issue #61 violates conditional atomicity; a diagnostic runs separately (https://github.com/moriyoshi/winterbaume/issues/61)",
+  );
   const storePattern = [
-    "uses compare-and-set for creation and competing writers, and lists erasures",
-    "pages erasures by state and serializes concurrent erasure transitions",
     "stores and retrieves organizations and pages projects",
     "pages releases without crossing projects",
     "rejects duplicate natural keys owned by another record",
-    "atomically creates one initial active project key",
     "activates only a verified manifest after idempotent chunks and cleans pending bundles",
     "resumes pending bundle cleanup after blob deletion fails",
     "looks up keys, hashed tokens, releases and debug ids",
     "resumes an interrupted active bundle deletion from strongly read chunks",
+    "lists issues sorted and paged without gaps and filters status/time",
+    "rejects unsupported issue filters",
+    "does not repeat issues when earlier entries are inserted or bumped",
+    "looks up matching issue IDs across projects",
+    "measures forty concurrent writes without treating emulator atomicity as proof",
   ].join("|");
   const storeContract = spawn(
     "pnpm",
@@ -197,6 +203,9 @@ try {
       "vitest",
       "run",
       "packages/adapters/store-dynamodb/src/contract.emulated.test.ts",
+      "--disableConsoleIntercept",
+      "--testTimeout",
+      "30000",
       "--testNamePattern",
       storePattern,
     ],
@@ -217,6 +226,7 @@ try {
     throw new Error(
       `DynamoDB store repository contract failed (${storeStatus})`,
     );
+  await testDynamoConcurrency(shapes.table);
   console.log("Running DynamoDB KV contract against the unmodified emulator");
   const kvContract = spawn(
     "pnpm",

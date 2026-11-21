@@ -64,6 +64,24 @@ async function makeStore() {
     endpoint,
   });
   await store.migrate();
+  if (process.env.ERRTRAQ_MEASURE_ISSUE_WRITES === "1") {
+    const request = store.request.bind(store);
+    let writes = 0,
+      completed = 0;
+    vi.spyOn(store, "request").mockImplementation(async (action, input) => {
+      if (action === "TransactWriteItems") writes++;
+      return request(action, input);
+    });
+    const record = store.recordEvent.bind(store);
+    store.recordEvent = async (occurrence, event) => {
+      const result = await record(occurrence, event);
+      if (++completed === 40)
+        console.log(
+          `DYNAMODB 40-EVENT CONTRACT: ${writes} transaction attempts, ${(writes / 40).toFixed(2)} attempts/event`,
+        );
+      return result;
+    };
+  }
   return store;
 }
 describe.skipIf(!endpoint)("DynamoDB store emulator", () => {
@@ -72,6 +90,56 @@ describe.skipIf(!endpoint)("DynamoDB store emulator", () => {
       await api("DeleteTable", { TableName: table });
   });
   activeStoreContract(makeStore);
+  it("measures forty concurrent writes without treating emulator atomicity as proof", async () => {
+    const store = await makeStore();
+    const request = store.request.bind(store);
+    let transactions = 0;
+    vi.spyOn(store, "request").mockImplementation(async (action, input) => {
+      if (action === "TransactWriteItems") transactions++;
+      return request(action, input);
+    });
+    const projectId = "benchmark" as import("@errtraq/core").ProjectId;
+    const issueId = "issue" as import("@errtraq/core").IssueId;
+    const receivedAt =
+      "2025-01-01T00:00:00.000Z" as import("@errtraq/core").Timestamp;
+    const outcomes = await Promise.allSettled(
+      Array.from({ length: 40 }, (_, n) => {
+        const eventId = `event-${n}` as import("@errtraq/core").EventId;
+        return store.recordEvent(
+          {
+            projectId,
+            issueId,
+            eventId,
+            timestamp: receivedAt,
+            receivedAt,
+            fingerprint: "fp",
+            title: "test",
+            culprit: "",
+            level: "error",
+            type: "error",
+            metadata: {},
+          },
+          {
+            projectId,
+            issueId,
+            eventId,
+            timestamp: receivedAt,
+            receivedAt,
+            level: "error",
+            tags: {},
+            payload: {},
+          },
+        );
+      }),
+    );
+    const succeeded = outcomes.filter(
+      (outcome) => outcome.status === "fulfilled",
+    ).length;
+    console.log(
+      `WINTERBAUME #61 DIAGNOSTIC: ${transactions} transaction attempts / 40 events (${(transactions / 40).toFixed(2)} per event); ${succeeded} fulfilled, ${40 - succeeded} failed; not an atomicity assertion`,
+    );
+    expect(outcomes).toHaveLength(40);
+  }, 30000);
   it("resumes an interrupted active bundle deletion from strongly read chunks", async () => {
     const store = await makeStore();
     const ids = Array.from({ length: 150 }, (_, i) => `debug-${i}`);

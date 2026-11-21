@@ -1,5 +1,6 @@
 import { UnsupportedQueryError } from "@errtraq/core/store";
 import { describe, expect, it, vi } from "vitest";
+import { DynamoTransactionCanceledError } from "./errors.js";
 import {
   create,
   DynamoStore,
@@ -13,6 +14,37 @@ const environment = {
   AWS_SESSION_TOKEN: "session-token",
 };
 describe("DynamoDB store runtime", () => {
+  it("retains transaction cancellation images without exposing them through serialization", async () => {
+    const store = new DynamoStore({
+      table: "table",
+      region: "us-east-1",
+      environment,
+      fetch: async () =>
+        Response.json(
+          {
+            __type: "TransactionCanceledException",
+            CancellationReasons: [
+              {
+                Code: "ConditionalCheckFailed",
+                Item: { data: { S: "sensitive-event-data" } },
+              },
+            ],
+          },
+          { status: 400 },
+        ),
+    });
+    const error = await store
+      .request("TransactWriteItems", { ClientRequestToken: "stable-token" })
+      .catch((value: unknown) => value);
+    expect(error).toBeInstanceOf(DynamoTransactionCanceledError);
+    expect((error as DynamoTransactionCanceledError).reasons).toEqual([
+      {
+        code: "ConditionalCheckFailed",
+        item: { data: { S: "sensitive-event-data" } },
+      },
+    ]);
+    expect(JSON.stringify(error)).not.toContain("sensitive-event-data");
+  });
   it("reads the persisted shard count consistently and rejects a mismatch", async () => {
     const fetcher = vi.fn(
       async (_url: RequestInfo | URL, init?: RequestInit) => {

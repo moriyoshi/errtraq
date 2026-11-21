@@ -20,3 +20,15 @@ export class DynamoStoreThrottledError extends DynamoStoreError {
 export class DynamoStoreUnavailableError extends DynamoStoreError {
   override name = "DynamoStoreUnavailableError";
 }
+
+/** Reasons are deliberately non-enumerable: old images can contain user data. */
+export class DynamoTransactionCanceledError extends DynamoStoreError {
+  declare readonly reasons: readonly { code?: string; item?: unknown }[];
+  constructor(reasons: readonly { code?: string; item?: unknown }[]) {
+    super("DynamoDB transaction canceled", "TransactionCanceledException");
+    Object.defineProperty(this, "reasons", {
+      value: reasons,
+      enumerable: false,
+    });
+  }
+}

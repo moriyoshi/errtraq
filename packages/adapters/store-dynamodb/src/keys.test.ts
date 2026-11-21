@@ -2,7 +2,10 @@ import { InvalidCursorError } from "@errtraq/core/store";
 import { describe, expect, it } from "vitest";
 import {
   component,
+  eventTimeSort,
   indexCursor,
+  issueCountSort,
+  issueTimeSort,
   partition,
   readIndexCursor,
   sortKey,
@@ -36,5 +39,16 @@ describe("DynamoDB key encoding", () => {
     expect(() => readIndexCursor("query-b", cursor)).toThrow(
       InvalidCursorError,
     );
+  });
+  it("encodes descending issue order and ascending event order with bytewise ties", () => {
+    const earlier = "2026-01-01T00:00:00.000Z";
+    const later = "2026-01-02T00:00:00.000Z";
+    expect(issueTimeSort(later, "z") < issueTimeSort(earlier, "a")).toBe(true);
+    expect(issueTimeSort(later, "a") < issueTimeSort(later, "aa")).toBe(true);
+    expect(issueCountSort(10, "z") < issueCountSort(9, "a")).toBe(true);
+    expect(issueCountSort(10, "a") < issueCountSort(10, "é")).toBe(true);
+    expect(eventTimeSort(earlier, "é") < eventTimeSort(later, "a")).toBe(true);
+    expect(() => issueCountSort(Number.MAX_SAFE_INTEGER + 1, "a")).toThrow();
+    expect(() => eventTimeSort("2026-01-01", "a")).toThrow();
   });
 });

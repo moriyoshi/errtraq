@@ -74,9 +74,17 @@ AWS emulator probes and the namespace lifecycle are opt-in:
 ```sh
 pnpm aws-emulator:install              # build the verified, unmodified pinned server
 pnpm aws-emulator:install-s3-patched   # build the verified local UTF-8 patch for S3 contracts
-pnpm test:aws-emulated                 # runs probes plus KV, SQS and S3 contracts; skips absent builds
+pnpm test:aws-emulated                 # probes and adapter contracts; skips absent builds
 pnpm test:workers-smoke                # runs S3, SQS producer / delayed push and KV against local fakes in workerd
 ```
+
+Winterbaume issue #61 prevents the store's concurrent transaction and CAS contracts from proving
+atomicity. The command runs those unchanged cases against a cached, digest-pinned DynamoDB
+Local Docker image when available and prints a skip otherwise; it never pulls an image.
+The Winterbaume 40-writer diagnostic records the gap separately and is not a correctness or
+contention benchmark. DynamoDB Local likewise does not replace the M3h real AWS check.
+To populate the cache explicitly, pull
+`amazon/dynamodb-local@sha256:6ada631ec7aa5fc83446855eb17233e3dad184fec47477e8140c6c569cfe0c86`.
 
 The installer keeps its source, Cargo cache and build under `.agents-workspace/tmp`. The
 first build needs network access and substantial disk space; subsequent runs are offline.

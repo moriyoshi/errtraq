@@ -60,6 +60,7 @@
       ],
       "@errtraq/core/blob": ["packages/core/src/blob.ts"],
       "@errtraq/core/kv": ["packages/core/src/kv.ts"],
+      "@errtraq/core/store": ["packages/core/src/store.ts"],
       "@errtraq/kv-dynamodb/runtime": [
         "packages/adapters/kv-dynamodb/src/runtime.ts"
       ],
