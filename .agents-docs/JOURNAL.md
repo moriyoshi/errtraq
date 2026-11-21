@@ -823,3 +823,16 @@ references, so VPC input support does not silently enable undelivered adapter co
 The pinned Winterbaume accepts but drops `VpcConfig` on Lambda create/readback; the emulated
 Postgres fixture reprobes this before excluding the block in its temporary module copy. Real
 networking, IAM authentication, token expiry and the Lambda CA bundle remain M3h checks.
+
+## 2026-11-21 — M3e final design revision
+
+The owner chose an inline, separate Parquet-in-blob subject index and all-time issue counts;
+DynamoDB stores no subject-index items. The implementation plan is staged so the per-event
+store and bundle lifecycle can proceed without the later batch, rate-limit or erasure work.
+A strong issue pointer avoids an eventual-index false 404. Exact composite count ordering
+requires a conditional count preimage, which the peer's 500-writer DynamoDB Local experiment
+did not exercise; measure that added contention. A visibility wait, two empty index passes
+and an empty DLQ cannot prove a committed but unindexed event is absent from the main queue.
+Stage 4 must resolve that completion guarantee or explicitly narrow it before claiming erasure.
+Manifest CAS also needs an atomic lease-fencing check: a version check alone does not fence a
+stale holder after lease takeover.

@@ -10,8 +10,10 @@ item should be resolved or removed once addressed. Milestone work itself is trac
 - [ ] M3f2: file the Winterbaume Lambda VPC readback gap upstream and remove the emulator-only override when the fix is pinned. — *source: M3f2 part 2*
 - [ ] M3h: verify real Lambda-to-RDS/Aurora IAM authentication, the Lambda runtime CA bundle and hostname verification, new connections after 15 minutes, and RDS Proxy IAM/TLS behavior and permissions; verify VPC attachment, ENI role permissions and service reachability through the selected NAT or endpoints. — *source: M3f2*
 
-- [ ] M3e / M4 design review: resolve the erasure admission fence versus two-action DynamoDB event transaction, certified active/index/archive counts, durable receipts and the cross-adapter subject/reducer and bundle lifecycle contracts before implementation. — *source: M3e step 1b*
-- [ ] M3h: measure 500 concurrent same-issue writes in both modes, transaction/GSI write units and index backpressure, and verify the revised IAM policies and multi-attribute index queries on real AWS. — *source: M3e step 1b R10*
+- [x] M3e / M4: replace the earlier subject-index ledger proposal with the owner-selected inline Parquet index, optional sharded fence and staged port changes. — *source: M3e step 1c*
+- [ ] M3e stage 1: verify exact count-sort key updates with the conditional count preimage under contention; the earlier DynamoDB Local concurrency experiment did not exercise that extra guard. — *source: M3e step 1c*
+- [ ] M4: resolve the main-queue drain proof before claiming erasure completion; waiting and inspecting the DLQ and index cannot prove that a committed, unindexed event is not still retrying in the main queue. Verify blob list/read consistency and lease-fenced manifest operations for the Parquet index. — *source: M3e step 1c*
+- [ ] M3h: measure 500 concurrent same-issue writes in both modes, transaction/GSI write units and index backpressure, and verify the revised IAM policies, composite key queries and fence ConditionCheck conflict rates on real AWS. — *source: M3e step 1c*
 
 - [ ] M3h: verify actual SQS throttling status and error codes, U+FFFE / U+FFFF rejection, 1 MiB message-size support, receive-count increments and DLQ redrive timing against AWS. — *source: M3c2 review section B*
 - [ ] M3h: capture scrubbed real Lambda SQS, function URL and EventBridge events as fixtures. — *source: M3c2 review section B*
@@ -56,11 +58,11 @@ item should be resolved or removed once addressed. Milestone work itself is trac
 
 - [x] M3: implement SQS partial batch failures. — *source: M2b step 2; resolved in M3c*
 - [ ] M3: implement lazy Secrets Manager ARN resolution and verify EventBridge job dispatch with AWS runtime adapters. — *source: M2b step 2*
-- [ ] M3: implement and test the DynamoDB sparse-index and lookup-item layout documented in `infra/modules/aws/README.md`, including eventual-consistency limits and explicit erasure. — *source: M2b step 2*
+- [ ] M3e: implement and test the staged DynamoDB layout in `.agents-docs/DYNAMODB_DESIGN.md`, then update the module README and policies; erasure belongs to stage 4. — *source: M2b step 2; revised M3e step 1c*
 
 - [ ] M3 / M6: address second-review follow-ups N9 and N12-N15, including Cloudflare binding authorization and runtime limitations. — *source: `.agents-workspace/tmp/m2a2-review-fixes.md`*
 
-- [ ] M3: evaluate DynamoDB sortable encodings for numeric counts / timestamps, GSI projection cost, project write sharding, transaction fan-out under 100 items and PITR retention of erased data for up to 35 days. — *source: M2b HCL review section B*
+- [ ] M3e / M3h: implement and verify the selected sortable encodings, projections, sharding and transaction limits; document PITR retention of erased data for up to 35 days. — *source: M2b HCL review section B; M3e step 1c*
 - [ ] M3: ensure secret identifiers contain the full Secrets Manager ARN including its random suffix, or safely support suffix matching. — *source: M2b HCL review section B*
 - [x] M3: never map an S3 403 directly to missing; use an authorized exact-prefix list to establish absence and propagate real access failures. — *source: M2b HCL review section B*
 - [ ] M3: schedule cron-based staged-envelope recovery for deployed stacks; keep idempotency and a recovery window longer than the sweep interval. — *source: M2b HCL review A3*

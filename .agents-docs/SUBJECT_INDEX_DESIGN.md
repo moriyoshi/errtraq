@@ -1,400 +1,394 @@
-# Subject reduction, background indexing and hot-issue policy (M3e step 1b)
+# Subject index, erasure and rate policy (M3e step 1c)
 
-Status: design for review. This proposes cross-adapter changes; none are implemented. It
-updates the erasure and consumer architecture only after owner review. The DynamoDB-specific
-layout and operation map are in [DYNAMODB_DESIGN.md](./DYNAMODB_DESIGN.md). Proposed
-TypeScript below is illustrative, but signatures and semantics are intended as the complete
-contract-change checklist. There is no claim that a timestamp or an eventually consistent GSI
-alone can prove that all earlier writes were indexed.
+Status: proposed stage 4 design, except the stage 1 and 3 contract changes listed below. The owner chose an independent `SubjectIndex`
+port written **inline by the consumer**, with a default Parquet-on-BlobStore implementation. It is not a DynamoDB index. The DynamoDB
+design and staged order are in [DYNAMODB_DESIGN.md](./DYNAMODB_DESIGN.md). No background builder, admission ledger, epochs,
+completeness certificate, `SubjectIndexCoordinator`, `ErasureWork` port, rejection ledger or sample policy is part of this design.
+ARCHITECTURE.md / current ports must be updated at the corresponding implementation stages, not assumed changed now.
 
-## PII reducer: choices and recommendation
+## Concrete correctness blocker to resolve before stage 4 completes
 
-Reduce each of `user.id`, `user.email`, `user.username`, `user.ipAddress` in core after
-normalization and before making index work. Apply exactly the same versioned reducer to a
-selector; domain-separate HMAC-SHA-256 by tenant/project, field, reducer version and normalized
-value. The pepper is a secret-store value obtained by `SecretSource`, never a stack literal,
-Terraform value, environment output, log message or raw index key. Use WebCrypto, constant-time
-verification where needed, and length-framed UTF-8 inputs. HMAC keys are still personal data
-for access control and retention; pepper compromise enables guessing and equality correlation.
+The owner's prescribed protocol is useful but its completion test is insufficient on the current SQS/Queue interfaces. Example: an
+event commits before the fence, the consumer crashes before appending its index file, and that message remains delayed or is repeatedly
+retried in the **main queue**. After `visibilityTimeout + functionTimeout`, the subject index and the DLQ can both be empty for two
+passes while the committed event still exists. It may later be redelivered, when suppression purges it, but marking the erasure
+complete beforehand is false. A stalled/disabled consumer, long backlog, multiple retries or replay extends that interval. An empty DLQ
+is necessary under the requested rule, not proof the main queue has no such work. SQS queue metrics are approximate, invisible/delayed
+messages exist, and the DLQ oldest-age metric measures time since redrive rather than original event `receivedAt`; see [SQS queue
+metrics](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/sqs-available-cloudwatch-metrics.html) and [DLQ
+retention](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/setting-up-dead-letter-queue-retention.html).
+`Queue` currently exposes neither a durable complete old-work inventory nor a provable drain.
 
-| Configuration | Index behavior | Storage / disclosure trade-off |
-| --- | --- | --- |
-| `hmac` | Normalize then keyed digest. Recommended for each enabled field. | Preserves exact-match erasure without raw identifiers in key material; loses plaintext search/display if raw fields are not retained. |
-| `ip-prefix-hmac` | Canonicalize IP, then truncate IPv4 /24 or IPv6 /64 before HMAC. | Groups many people: a prefix match cannot uniquely identify the person and **must not be treated as exact erasure**. Recommend analytics only, not an enabled `ipAddress` selector unless caller explicitly requests group erasure. |
-| `none` | No key generated. | No erasure by that selector; reject clearly as unsupported at request creation. Other indexed selectors and event IDs still work. |
+**Proposed safe behavior:** execute the requested wait, two empty passes and DLQ gate, keep suppression durable, and leave the request
+in `active-purging` / pending until an operator or a future queue capability can establish that all pre-request work, including
+invisible, delayed, main-queue and DLQ messages, is resolved. Approximate zero metrics / two empty polls can be an operational signal
+but are not a proof. Alternatively the owner can explicitly accept a weaker, eventually reconciled completion guarantee and its privacy
+consequence. Do not add the discarded work-ledger/epoch/coordinator design under another name. This blocker applies to claiming stage 4
+erasure completion, **not** to beginning the stage 1 DynamoDB store.
 
-Normalization must be deterministic and versioned: trim and Unicode-normalize strings with an
-explicit chosen form; email domain case-folding and IDNA need a defined implementation. The
-local-part is not universally case-insensitive. Recommend conservative normalization: trim,
-normalize domain and lowercase domain only, preserve local-part case; a project may explicitly
-choose case-insensitive local-parts with a documented collision / over-erasure risk. Preserve
-case for user ID and username by default. Parse IP as IPv4/IPv6 to canonical binary; collapse
-IPv4-mapped IPv6 only by an explicit versioned rule. Reject malformed values rather than
-produce a misleading key. Preserve absence separately from empty value. A `none` field is not
-silently replaced by a different selector.
-
-**Store raw versus reduced:** recommend independently configurable per-field
-`storage: "raw" | "reduced" | "drop"`, default **drop** for IP and **reduced** for user ID,
-email and username. Enable **raw** for any field only after an explicit product/privacy review. `raw` supports
-UI display but PII must be removed from promoted columns, event JSON, payload blobs, staged raw
-envelopes and archive files/snapshots/backups. `reduced` supports equality but cannot display
-or recover the original; it remains pseudonymous personal data. `drop` removes that promoted
-field, but the reducer may still index the value computed transiently before deletion if
-`index: hmac`; this distinction is explicit. The raw incoming envelope and arbitrary nested
-payload may contain the same PII: changing promoted fields **does not sanitize the payload**.
-A real privacy guarantee requires a separate payload scrubber, raw-envelope lifecycle and
-archive rewrite policy; do not claim that `drop` alone erases PII. The archive receives the
-same configured representation and reducer version for promoted columns and the same scrubbed
-payload, not a different adapter-specific transformation. Any raw mode requires policy
-approval and documented retention, access and deletion semantics.
-
-Pepper rotation uses immutable key IDs / reducer versions: make the new version write-active,
-continue query/suppression for all old read-active versions, and reindex under a barrier while
-keeping old secrets available. Backfill needs original normalized values, which are unavailable
-if they were dropped or only old HMAC is retained: either dual-write before removal and retain
-the old pepper until all old data/queue/archive retention expires, or explicitly refuse full
-rotation / selector support for that historical interval. Never HMAC an old digest as though it
-were a digest of the original. Compromise or emergency destruction of the old pepper can make
-old entries unsearchable; report affected ranges and fail closed. Changing normalization or IP
-prefix is a new version with the same migration constraints.
-
-## Trigger comparison and chosen builder
-
-- **Consumer queue topic (recommend):** portable to SQLite, Postgres, memory and DynamoDB;
-  independent retry and horizontal workers. Queue is at-least-once/unordered and may expire or
-  DLQ, so it is a wake-up mechanism, not proof of completeness. Admission ledger / repair
-  below is mandatory; a producer crash between store commit and publish is recoverable.
-- **DynamoDB Streams:** efficient commit-ordered change feed without producer publication, but
-  AWS-specific, shard resharding / retention and outage recovery are required, no direct SQL
-  equivalent, and Streams alone cannot prove old DLQ work complete. Optional optimization after
-  its cursor and recovery contract is demonstrated, not the portable source of truth.
-- **Periodic recent-event sweep:** portable only if every adapter can enumerate all committed
-  events with a provably complete strong cursor. It adds repeated reads; a DynamoDB GSI scan
-  cannot certify completeness and an arbitrary time lookback loses late events. Use a bounded
-  reconciliation sweep of the durable work ledger, not a filtered event scan per erasure.
-
-Recommend a dedicated `subject.index` queue topic and worker, plus a durable, strongly
-consistent admission/work ledger with idempotent records. A queue publish after `recordEvent`
-is retried before acknowledging its original delivery; on a crash between store commit and
-publish a ledger sweeper recovers the work. Also publish/recover after a duplicate result if
-its indexing work is not complete. Store a task ID based on `(projectId,eventId,generation)`;
-workers re-read the authoritative event, derive indexed keys and write idempotent entries, then
-mark the task complete only after every entry is durably committed. An event deleted in between
-is handled by the deletion protocol below, not indexed back into existence. An event that has
-no enabled subject fields still completes a task. Queue delivery ordering does not affect
-correctness, and retry/DLQ alarms plus reconciliation remain required.
-
-Each index entry is keyed by `(project, field, reducerVersion, HMAC, shard, receivedAt,eventId)`
-and points to issue ID and event location, without payload. Recommend 16 deterministic shards
-from event ID, independently query all and merge; a popular shared IP or `anonymous` value then
-has bounded logical fan-out and spread writes, not a promise of 16 physical partitions. Index
-entry puts/deletes are idempotent. Index rows need an **authoritative strongly consistent
-lookup path**, not an eventually consistent GSI pretending to be complete; DynamoDB can use
-base-table PK `SUBJECT|project|version|field|digest|shard` and sort `(time,eventId)` for these
-background-written entries. A separate strongly readable per-event reverse entry records its
-subject keys; where durable work is still present, it can supply them. SQLite/Postgres use an
-indexed table with transactional unique keys; memory fake uses an ordered map. Indexing writes
-are **outside** the two-action event transaction. Topic route, platform triggers, worker
-capabilities and IAM are new work; validate them before enabling the feature.
-
-## Completion barrier: admission, suppression and late events
-
-A GSI, SQS approximate depth, a maximum observed timestamp, or "all messages seen so far"
-cannot prove that an event with an earlier `receivedAt` is not delayed, in flight, DLQed, or
-committed before a producer crash. A wall-clock `T` alone is therefore insufficient.
-
-Recommend a **durable per-project admission epoch / work ledger** with a linearizable fence:
-
-1. Before an event can reach `recordEvent`, core idempotently registers its unique event ID,
-   receivedAt, issue and epoch as `pending` in a strongly consistent durable ledger. The
-   registration and reading of the project's open-epoch/suppression state are atomic with
-   respect to closing that epoch. This may require a new transactional coordination port or a
-   per-project admission sequencer; `KV.increment` and the existing Queue port do **not**
-   provide it. It is a deliberate new dependency and potential hot-project bottleneck.
-2. On erasure request, durably install versioned suppression for all enabled selector keys,
-   close an admission epoch at a linearizable barrier, and capture the closed epoch ID and
-   requestedAt. Every earlier registration is visible in the ledger; every later admission
-   checks suppression before recording. Messages already in the ingress queue but not yet
-   admitted are suppressed when finally admitted, including late and DLQ redrives, even if
-   their receivedAt predates the request. Keep suppression for the maximum redrive horizon or
-   indefinitely if messages can be reintroduced without a bounded horizon. An arbitrary TTL
-   or user-supplied historical timestamp cannot safely shorten this period.
-3. The reconciler drains every closed-epoch registration to terminal `indexed`, `suppressed`
-   or explicitly `not committed`. A crash before/after store commit is reconciled by a strong
-   event-ID read; racing commits require a fenced state transition or a transaction spanning
-   admission and event status. Do not mark `not committed` while an old writer can still
-   commit: revoke its fencing token and wait for its bounded lease / completion, with a store
-   condition preventing stale commits. The two-action DynamoDB issue transaction needs its
-   issue/event condition to participate in that fence, or an equivalent port guarantee;
-   this is **not yet demonstrated**. Until then the barrier is blocked, not "complete".
-4. Only when every admitted task through the closed epoch is terminal, all entry writes are
-   acknowledged on the strong index, and any old writer is fenced may the coordinator advance
-   a durable `indexedThrough` certificate `(epoch, requestedAt, reducerVersions)`. It may lag
-   without bound on outage, expired DLQ or unresolved work. Expose lag / age metrics and alarms;
-   recommend a 60-second operational target, **not** a correctness bound. Reconciliation must
-   preserve the ledger longer than all retries, archive/erasure operations and retention.
-5. The erasure worker, holding the existing project archive lease, finishes/reconciles any
-   in-flight staged archive batch, waits for or drives the certificate past its captured epoch,
-   queries every subject shard and retained reducer version through `receivedAt <= requestedAt`,
-   verifies authoritative base events and deletes bounded pages. With the suppression fence,
-   a late old event cannot appear outside this set. Existing architecture's archive lease also
-   prevents a staged batch from being committed after the archive mask.
-
-**Review blocker:** A read of an external epoch followed by the prescribed two-action
-DynamoDB transaction does not itself prevent a stale writer from committing after the epoch is
-closed. Adding a DynamoDB `ConditionCheck` guard is a third transaction action and can create
-a hot project key; implementing the ledger inside the same event item without a guard does not
-close the race. Alternatives are (a) add the condition check and accept changing R2's exact
-shape, (b) a linearizable admission service that leases and fences every writer with a proven
-commit protocol, or (c) quiesce writers and wait for verifiably terminated in-flight work.
-Recommend **(a)** as the smallest provable choice when erasure is enabled, and keep the
-two-action transaction when it is disabled, subject to explicit owner approval. Shard guards
-only with a real cross-shard closure protocol; merely hashing them makes closure non-atomic.
-This exception conflicts with the literal two-action requirement but is necessary for an
-honest completeness claim; no implementation should assume it away.
-
-Bootstrap/backfill of pre-existing data requires a separate authoritative inventory: SQL can
-use a repeatable-read database snapshot with write fencing; DynamoDB must have a strongly
-consistent, complete inventory path (for example a designed export/backup checkpoint plus a
-captured change stream with proven retention), or temporarily quiesce writes and enumerate via
-a separately approved base-table process. Neither an eventual GSI nor a background sweep can
-prove completeness. Until backfill and catch-up are certified, reject/wait erasure; do not report
-success. This is an implementation prerequisite, not an unbounded Scan hidden in an API call.
-
-## Deletion, crash recovery and repairs
-
-Keep the archive lease throughout active purge and archive mask. Query the strongly readable
-subject index in bounded pages across shards/versions and lookahead. For each event, a durable
-erasure-operation work record records `(requestId,eventId,issueId,payloadBlobKey,indexKeys)`
-**before** deletion; deletion is idempotent and subject index entries/reverse entries are
-removed idempotently. A stale entry whose event is absent is cleaned without increasing removed
-counts. A worker crash after base deletion or index cleanup resumes from the work record, which
-retains blob keys and affected issue IDs. Subject entry deletion must not race a pending index
-builder: barrier and a tombstone/generation fence prevent re-creation. If transactions cannot
-atomically fence the builder and deletion across ports, this is another required coordination
-operation, not a best-effort promise. Pending deletion work is reconciled before completion.
-
-Overflow blob keys are also returned best-effort from a page for prompt cleanup, but a durable
-receipt is the primary recovery; independently sweep orphaned payload blobs while holding the
-project archive lease. The sweep requires a safe age floor longer than any in-flight upload and
-a complete authoritative live-reference inventory; a GSI-only absence check is not proof that
-a blob is orphaned. Do not delete a blob on a merely eventual negative read. Raw envelopes,
-Iceberg masking, hard rewrite, snapshot expiry and PITR retain the caveats in ARCHITECTURE.md.
-
-Issue repair is idempotent **recomputation**, not subtracting a supplied removed count. Under
-an issue mutation/admission fence and the archive lease, derive the surviving active IDs/count
-and latest from a complete durable ledger / strong subject-independent issue index, and the
-archived surviving count/latest from an archive baseline with a proven erasure update; calculate
-`issue.count = active + archived` and repoint latest to the max surviving active/archive event
-(or retain the prior pointer if none). The DynamoDB issue GSI is a candidate enumeration; its
-strongly checked results must match the independently certified active ID set/control count.
-If no complete ledger, archive baseline, or required index catch-up exists, return pending; do
-not pretend a count query on the eventual index is exact. Repeating the same completed repair
-has the same result. If product instead approves count as *active-only*, that changes current
-issue semantics and needs a separate architecture decision.
-
-## Per-issue rate policy
-
-**Recommendation:** opt-in per-project fixed-window limit, default disabled; a stack can provide
-a default and bounds, with a project override. The consumer knows the fingerprint/issue ID
-only after parsing and grouping, so rejection happens **after ingest already returned 200**;
-no `X-Sentry-Rate-Limits` can honestly describe this decision for that request. An optional
-separate ingest-side project/key limit can return that header, but cannot predict a fingerprint
-without moving parsing/grouping into the hot path and changing the architecture.
-
-Use `KV.increment` on a project+issue+window key with TTL established on creation, using
-server clock and a versioned window ID. IDs, not raw fingerprint/PII, appear in keys. Config
-includes positive integer `maxEvents`, `windowSec`, burst semantics (fixed window allows up to
-nearly twice the threshold around a boundary), and policy. `validateStack` checks bounded
-integers, known mode/policy, KV increment capability, delivery roles and worker/secret support;
-project writes validate an override against stack ceilings. Fail closed with a retryable delivery
-on KV failure by default; fail-open is an explicit operator choice with metrics. During a
-project setting change, specify the version in the key and accept a new window/burst; clock
-skew and independent regions weaken precision.
-
-Recommend **drop above threshold**, not deterministic 1-in-N sampling as a default. Rejected
-events are acknowledged after a durable rejection decision and counted in an idempotent,
-sharded per-issue `dropped` aggregate exposed separately from accepted issue `count`; do not
-insert the event, update first/lastSeen, or trigger a regression/notification. Consequently an
-outage storm can hide its newest time or a true regression: report this in UI/API and metrics.
-Accepted samples, if an operator chooses `sample { every:N }`, follow normal occurrence rules;
-the separately counted dropped total remains approximate until its durable aggregate catches
-up. An issue that has only rejected concurrent events needs a pending summary or another
-explicit representation; do not create an issue with a false accepted count.
-
-A retryable delivery must reuse its persisted decision; index it by event ID so duplicates do not
-increment the dropped counter twice. However KV increment and a durable decision are not a
-single transaction: a crash after increment but before storing the decision can charge the
-window twice. Recommend documenting this as conservative approximate admission and testing the
-crash point; exact token accounting requires a new atomic limiter/idempotency port or shared
-transactional backend. Likewise dropped totals require durable dedupe and sharded aggregation,
-not a counter increment in a best-effort queue callback. Rate limiting protects issue/GSI hot
-keys at the cost of loss, KV load and window-boundary bursts. Never falsely promise exact limits
-or exact counters during a partition.
-
-## Consolidated proposed core changes and contract cases
-
-These are **changes to be reviewed**, not current exported declarations. All examples use
-branded IDs/types already in core where available. The SQLite and Postgres SQL store and the
-memory ActiveStore fake must implement all changed ActiveStore operations; queue, consumer,
-archive, testing fakes, all other stores and platform build/requirements must change where
-indicated. Contract fakes must not simulate eventual index completeness with a wall clock.
-
-### 1. Batched record and explicit results
+## Port and consumer ordering
 
 ```ts
-type RecordInput = { occurrence: Occurrence; event: StoredEvent };
-type RecordResult = { inserted: boolean; issue: Issue; isNew: boolean; isRegression: boolean };
-type RecordOutcome = { ok: true; result: RecordResult } |
-  { ok: false; error: "retryable"; reason: string };
-interface ActiveStore {
-  recordEvent(o: Occurrence, e: StoredEvent): Promise<RecordResult>;
-  recordEvents(batch: readonly RecordInput[]): Promise<readonly RecordOutcome[]>;
-}
-```
-
-Results correspond one-for-one to input, including repeated IDs. `recordEvent` is the one-item
-case; successful inserted event+issue bump is atomic; duplicates change nothing. Each issue
-batch has deterministic input-order new/regression ownership; groups/chunks may partially
-commit. `issue` is a post-commit strong read that may contain concurrent later changes, not a
-transaction snapshot. Retryable errors never say an uncommitted event was inserted. Tests:
-empty / mixed projects, same-ID duplicates in same/across batches, input mismatch, 40+ concurrent
-same-issue events, late timestamps, ties, resolved races, >99 and >4 MiB chunking, partial
-commit/retry, cancellation reasons, crash/ambiguous token, independent issues, admission fence.
-SQL uses one database transaction per bounded issue group with stable lock ordering; memory
-fake implements the same semantics. The consumer groups deliveries only after normalizing and
-preserves per-message ack/retry. Confirm notification delivery semantics on ambiguous commit.
-
-### 2. Issue list consistency and rate policy
-
-```ts
-type IssueRatePolicy =
-  | { mode: "off" }
-  | { mode: "drop"; maxEvents: number; windowSec: number; onKvError: "retry" | "allow" }
-  | { mode: "sample"; maxEvents: number; windowSec: number; every: number; onKvError: "retry" | "allow" };
-type StoreWriteMode = "per-event" | "batched";
-interface Issue { /* existing fields */ droppedCount?: number; droppedCountAsOf?: Timestamp }
-interface Project { /* existing fields */ issueRatePolicy?: IssueRatePolicy }
-```
-
-Stack defaults and project overrides, merge/ceiling and validation must be explicit schema
-changes; counts use a new durable `IssueRejectionLedger` with idempotent `(project,eventId)`
-decisions and sharded aggregate read, not the exact accepted occurrence counter. Add an
-approximation/freshness marker. `IssueRepo.list` JSDoc: GSIs may lag, even after strong base
-hydration; count order may use a delayed index key, and the 10-second refresh target is not a
-maximum. Every adapter must either honor this weaker minimum or advertise stronger consistency.
-Tests cover threshold, window boundaries, max/burst, replay, crash between increment/decision,
-clock skew, KV failure policy, missing issue, scope isolation, accepted/rejected regression,
-sampling determinism, exact count vs delayed rank, trailing refresh, stale/missing index rows
-and config rejection. SQL/memory may implement immediate count order; DynamoDB must pass eventual
-consistency contracts using explicit index advancement and never a sleep-based guarantee.
-
-### 3. Reducer and subject indexing
-
-```ts
-type SubjectKind = "userId" | "email" | "username" | "ipAddress";
-type ReducedSubject = { kind: SubjectKind; version: string; key: string };
-interface SubjectReducer {
-  reduce(project: ProjectId, subject: { kind: SubjectKind; value: string }): Promise<readonly ReducedSubject[]>;
-  supported(project: ProjectId, kind: SubjectKind): Promise<boolean>;
-}
-type SubjectRef = { projectId: ProjectId; eventId: EventId; issueId: IssueId; receivedAt: Timestamp };
+type SubjectField = "userId" | "email" | "username" | "ipAddress";
+type ReducedSubjectKey = { field: SubjectField; version: string; digest: string };
+type SubjectEntry = {
+  projectId: ProjectId; subject: ReducedSubjectKey; issueId: IssueId;
+  eventId: EventId; receivedAt: Timestamp;
+  ordinal?: bigint; // optional future adapter optimization, never required for correctness
+};
+type SubjectEventRef = { projectId: ProjectId; issueId: IssueId; eventId: EventId; receivedAt: Timestamp };
+type ProjectLeaseToken = { projectId: ProjectId; owner: string; version: number; until: Timestamp };
 interface SubjectIndex {
-  put(ref: SubjectRef, keys: readonly ReducedSubject[], taskId: string): Promise<void>;
-  remove(ref: SubjectRef, taskId: string): Promise<void>;
-  find(project: ProjectId, keys: readonly ReducedSubject[], before: Timestamp,
-       cursor?: Cursor, limit?: number): Promise<Page<SubjectRef>>;
+  /** Idempotent by logical entry even when queue batches are regrouped on retry. */
+  append(entries: readonly SubjectEntry[], deliveryIds: readonly string[]): Promise<void>;
+  /** Exact matching keys and receivedAt <= before; page until nextCursor is null. */
+  lookup(projectId: ProjectId, keys: readonly ReducedSubjectKey[], before: Timestamp,
+         options: { lease: ProjectLeaseToken; cursor?: Cursor; limit?: number }): Promise<Page<SubjectEventRef>>;
+  /** Idempotent logical removal for these event IDs across all fields and files. */
+  remove(projectId: ProjectId, refs: readonly SubjectEventRef[]): Promise<void>;
+  /** Publish compacted output safely; appenders may still write to the day. */
+  compact(projectId: ProjectId, day: Day, lease: ProjectLeaseToken): Promise<void>;
+  /** Delete only closed days strictly older than the project's safe retention cutoff. */
+  expire(projectId: ProjectId, beforeDay: Day, lease: ProjectLeaseToken): Promise<void>;
 }
-type IndexCertificate = { projectId: ProjectId; closedEpoch: string; through: Timestamp; reducerVersions: string[] };
-interface SubjectIndexCoordinator {
-  register(input: RecordInput): Promise<{ taskId: string; epoch: string; fence: string }>;
-  closeAndSuppress(projectId: ProjectId, selector: SubjectSelector, at: Timestamp): Promise<{ epoch: string }>;
-  advance(projectId: ProjectId, epoch: string): Promise<IndexCertificate | null>;
-}
-```
-
-`SubjectIndex.find` is strongly complete **only within a completed certificate** and under its
-fences; it is not an eventually consistent query. `SubjectIndexCoordinator` signatures above
-are a starting surface, **not a proved atomic implementation**: the event commit needs to
-consume/verify the fence, closed epochs need durable enumeration of all registered tasks, and
-stale leases must be uncommittable. Add explicit `complete`, `reconcile`, `fence` and
-`retire` operations once the cross-store transaction design is chosen. The `RecordInput` must
-carry the resulting admission token when this feature is enabled. Extend `StoredEvent` and
-archive row schema with stored field representation, reducer version and index task reference;
-never store raw PII in index keys. Add stack schemas for per-field normalization, mode, secret
-reference and rotation versions, plus required topic/worker bindings. Tests include Unicode /
-IDNA / IP vectors, absent/empty, collisions and field isolation, disabled selectors, raw vs
-reduced payload behavior, secret non-disclosure, pepper rotation, duplicate/late tasks,
-popular-key sharding, task crash before/after put, deletion versus delayed builder, missing
-queue delivery, DLQ, a stale writer after barrier, backfill, and old queued messages. The SQL,
-memory, DynamoDB and future archive implementations must share reducer vectors and the subject
-index/coordinator contract. A real fence proof and durable backend are prerequisites for
-claiming completeness.
-
-### 4. Erasure and repair ports
-
-```ts
-interface EventRepo {
-  // Replaces deleteBySubject: IDs come from SubjectIndex after an IndexCertificate.
-  deleteBatch(projectId: ProjectId, ids: EventId[]): Promise<void>;
-}
-interface ErasureWork {
-  recordCandidates(requestId: ErasureId, events: readonly SubjectRef[]): Promise<void>;
-  pagePending(requestId: ErasureId, cursor?: Cursor, limit?: number): Promise<Page<ErasureWorkItem>>;
-  markDeleted(requestId: ErasureId, eventId: EventId): Promise<void>;
-}
-interface IssueRepo {
-  repairAfterErasure(projectId: ProjectId, issueId: IssueId,
-    certificate: IndexCertificate): Promise<{ state: "done"; issue: Issue } | { state: "pending" }>;
+type SubjectManifestRef = { projectId: ProjectId; day: Day; version: number; blobKey: string };
+interface MetaRepo {
+  getSubjectManifest(projectId: ProjectId, day: Day): Promise<SubjectManifestRef | null>;
+  compareAndSetSubjectManifest(projectId: ProjectId, day: Day,
+    expectedVersion: number | null, next: SubjectManifestRef, lease: ProjectLeaseToken): Promise<void>;
 }
 ```
 
-`ErasureWorkItem` must include the durable blob keys, subject-entry keys, prior event location,
-issue ID, idempotent state and operation/generation fence. The archive lease and baseline are
-also required inputs/dependencies, even though not shown as arguments above; refine the API so
-it cannot be called without them. `deleteBySubject` is removed rather than left with its old
-false completeness semantics. Repair recalculates active plus archived survivors and latest,
-never takes removedCount; use a certificate tied to the specific issue snapshot/fence, not a
-reusable stale project certificate. `deleteBatch` must schedule or complete subject-index
-cleanup safely for archive retention as well as erasure. Tests inject crashes before/after every
-write and blob deletion, repeat repair twice, verify no double count, concurrent ingest,
-archive staged/commit race, stale GSI, missing base item, subject-index resurrection, backlog
-and DLQ, suppressed queued events, snapshot/PITR caveats, per-project isolation and disabled
-selectors. Update SQL sqlite/Postgres, memory, DynamoDB, archive orchestration and their shared
-contracts; explicitly migrate existing call sites.
+This interface belongs in core and is independent of `ActiveStore`. `SubjectEntry`'s HMAC key is not a reversible subject; event IDs
+remain the canonical 128-bit identities. The optional ordinal is an optimization only and must not truncate or hash away identity. A
+page cursor is scoped to project, keys, reducer versions, cutoff and snapshot/lease; reject malformed or cross-scope cursors.
+Lease-taking operations validate the project and current fencing version and fail if the lease is lost. `lookup` dedupes event
+references across fields, files and versions, validates `<= before`, and never treats a missing/corrupt file as an empty match.
 
-### 5. Artifact-bundle lifecycle
+For each consumer delivery batch: parse, normalize, check durable suppression **before** rate limiting, then execute `recordEvent` or a
+bounded `recordEvents` issue group. Build entries from the committed stored event's normalized fields for every successful insertion
+**and for an already-committed duplicate**; a crash after commit but before append must be repaired by redelivery. Existing
+`events.get` early-continue in `consumer.ts` must therefore change in stage 4: on duplicate read the actual persisted event and append
+its entries, not the new possibly different payload. Group entries by project and receivedAt day, append each group, then ack that
+delivery only after its required writes succeeded. If one delivery has several projects/days or several envelope items, all its appends
+must succeed before its ack; partial batch failures retry only affected deliveries. Suppressed deliveries whose events already exist
+purge those event IDs, remove index entries, and remove associated blobs before ack. Never log raw PII, digests, peppers, receipt
+handles or payloads. This ordering does not by itself solve the completion blocker above.
+
+## PII reducer and archive representation
+
+`SubjectReducer` is a core WebCrypto transformation, shared by all adapters and archive. The project config specifies per field `index:
+"hmac" | "none"`, `storage: "raw" | "reduced" | "drop"`, normalization version and secret-store pepper ID. No IP-prefix HMAC in this
+slice. Use HMAC-SHA-256, domain-separated and length-framed by project, field and version; a digest is not encryption, and index
+entries remain personal data to erase. Defaults proposed: index all four using HMAC if a pepper is configured; store user ID, email and
+username reduced and IP promoted field dropped. If no pepper / worker is configured, do not pretend indexed erasure is available:
+validate configuration and return unsupported for `none` selectors.
+
+- Trim, normalize Unicode consistently and record the exact normalization version. Email:
+IDNA and lowercase the domain; preserve local-part case by default because case folding is not universally
+correct. Opt-in local-part folding risks over-erasure. User ID/username keep case by default. Parse IPv4 and
+IPv6 to canonical bytes; define IPv4-mapped IPv6 behavior explicitly. Reject invalid values, distinguish
+absent and empty and use identical reducer logic for ingestion, selector and archive.
+- The pepper prevents practical offline guessing **only while secret**. IPv4 addresses and
+numeric user IDs are readily enumerable if it leaks; low-entropy email/username values can be guessed too.
+Never put raw fields or pepper bytes in object names, stack variables, logs, metadata, metrics labels or
+Terraform state.
+- `raw` permits UI display and requires erasing the raw promoted value. `reduced` stores the
+digest, permits equality but not plaintext display; `drop` removes only the promoted field. **Neither `drop`
+nor `reduced` scrubs nested event JSON, overflow payload blobs, raw staged envelopes or arbitrary attachment
+data.** Raw values can remain there until a separate payload scrubber / deletion / archive rewrite; defaults
+are not a payload privacy guarantee. The archive stores the configured representation with reducer version and
+must support `archive.deleteWhere` using reduced keys for reduced fields, not compare plaintext to hashes.
+Backups/PITR, snapshots and raw envelope retention require their own deletion policies.
+- Rotation adds a version: write the new pepper/version, keep all old versions queryable and
+suppressible, and dual-write/backfill where originals exist. If data was only reduced or dropped, HMAC cannot
+be reversed to derive a new digest: keep the old key until all related index, archive, queue and backup data
+expire, or declare historic selector erasure unsupported if it is destroyed. Never hash an old digest as a
+substitute for the original value.
+
+Suggested stage 4 port surface:
 
 ```ts
-type BundleState = "pending" | "active" | "abandoned";
-interface ArtifactBundle { /* existing fields */ state: BundleState; generation: string }
+interface SubjectReducer {
+  reduce(projectId: ProjectId, field: SubjectField, value: string): Promise<readonly ReducedSubjectKey[]>;
+  supports(projectId: ProjectId, field: SubjectField): Promise<boolean>;
+}
+type ArchiveErasureSelector =
+  | { kind: "reduced"; keys: readonly ReducedSubjectKey[] }
+  | { kind: "eventIds"; eventIds: readonly EventId[] };
+// ArchiveStore.deleteWhere changes its selector to ArchiveErasureSelector for reduced storage.
+```
+
+`reduce` returns all active read versions for erasure, with a distinct write-version selection for ingestion; refine its signature
+before implementation so the two cannot be confused. Test pepper isolation/rotation, same input across projects/fields,
+email/IP/Unicode vectors, `none`, raw/reduced/drop payload behavior and secret non-disclosure. `SecretSource` provides the pepper; AWS
+deployed secret resolution is M3g, and no pepper goes in the index filename.
+
+## Default Parquet files and idempotency
+
+A pure-JS writer usable in Workers is required; [hyparquet-writer](https://github.com/hyparam/hyparquet-writer) is a candidate and
+documents split-block per-column bloom filters and row-group statistics. Its matching [reader](https://github.com/hyparam/hyparquet)
+supports range-based Parquet reads; the cited README does not establish bloom-filter pruning. Stage 4 must pin a reviewed version,
+verify Workers bundling, streaming/memory bounds, actual bloom filter read/pruning and Parquet interoperability, or implement/test the
+missing bloom reader. No dependency is selected now. Never claim the range savings until those tests pass; fall back to reading all row
+groups, not false negatives. Bloom filters are probabilistic accelerators, never correctness filters when missing/invalid.
+
+Use distinct literal purpose prefix `subject-index/`, and percent-safe/encoded project and day components with no raw subject or email:
+
+```text
+subject-index/v1/p/<encoded-project>/d/<YYYY-MM-DD>/append/<batchHash>-<contentHash>.parquet
+subject-index/v1/p/<encoded-project>/d/<YYYY-MM-DD>/compact/<contentHash>.parquet
+subject-index/v1/p/<encoded-project>/d/<YYYY-MM-DD>/tombstone/<removalHash>.parquet
+```
+
+Sort/dedupe entries in canonical byte order; `batchHash = SHA256` of length-framed sorted stable logical delivery IDs (including source
+namespace); `contentHash` hashes the canonical logical entries and reducer versions. Split mixed projects/days into separate files.
+Repeating the same batch and content overwrites the same logical file with equivalent complete Parquet bytes; different content cannot
+overwrite it. Regrouped retries can create more files, so lookup and compaction dedupe by `(project, field, reducerVersion, digest,
+eventId)` and never infer idempotency merely from the batch ID. Ensure Parquet bytes are deterministic or at least semantically
+identical on replay. A delivery ID or an event body alone is not a safe key when batch membership/partial failures change. Avoid
+partial publication: `BlobStore.put` must atomically publish a whole object, with no acknowledged partial result. Do not append to an
+existing Parquet object or rely on rename/CAS absent from `BlobStore`.
+
+**Port precondition:** AWS S3 and R2 document strong read-after-write and listing for completed writes
+([S3](https://docs.aws.amazon.com/AmazonS3/latest/userguide/), [R2](https://developers.cloudflare.com/r2/reference/consistency/)). The
+present `BlobStore` contract does not yet promise either, a cross-page snapshot, or atomic whole-object publication. Stage 4 must add
+explicit capability/contract tests for each selected adapter, including blob-fs concurrent put/list, or reject it for this
+implementation. Strong per-request LIST is not a cross-page snapshot: a concurrent compaction can delete an unread source and publish a
+replacement lexically behind a paging cursor. The archive lease below serializes erasure lookups with compaction; other callers must
+also obtain the same lease or restart against a stable generation. Strong object storage cannot reveal an append not yet acknowledged
+or one never attempted.
+
+## Compaction, tombstones and retention
+
+The cron compactor selects a **closed UTC day**, holds the project's existing archive lease, reads the current manifest and captures a
+specific list of completed append files for that day. Sort/dedupe by `(field,version,digest,receivedAt,eventId)`, apply all durable
+removal tombstones, and write an immutable new compact file, with a tested bloom filter on the reduced key and row-group min/max
+statistics. For bounded memory / large days, stream/spill in bounded runs where the platform permits; a Workers-only writer must prove
+the memory/time bound, or split the day into deterministic compact segments rather than claim one arbitrarily large file fits. Readers
+prune by metadata and bloom, then range-read matching row groups and filter exactly.
+
+Use a **per-project/day manifest**, not an admission/work ledger: store an immutable manifest body in BlobStore and atomically CAS its
+reference/version via a narrowly added `MetaRepo` operation. It names the current compact file(s) and captured input object
+keys/hashes. Write and verify compact output and manifest first, then CAS-publish the new manifest; only afterward delete the exact
+captured append files and superseded compact inputs. A crash before publish leaves harmless orphan output; a crash after publish leaves
+duplicates until cleanup. A source that vanished while reading causes abort/re-list, never a partial publish. A concurrent append not
+in the captured key list remains visible under `append/` even for that old day; a later compaction incorporates it. Content-derived
+immutable names prevent a stale cleanup deleting a new file with different content under the same name. Manifest publication atomically
+checks the current lease fencing token as well as its expected version; manifest CAS alone cannot fence a stale holder after lease
+takeover. Test cleanup interleavings and do not delete an input unless a durable published output contains it; stop cleanup on lease
+loss and ensure a new holder cannot reference obsolete inputs. A lookup is serialized with compaction using the same archive lease,
+because a manifest read and paginated LIST are not an atomic snapshot. Keep the lease for the full paginated operation or restart
+safely after lease loss. One compaction per day is the normal result; late arrivals produce additional append files/temporary segments
+until the next compaction, not guaranteed one file forever.
+
+`remove` writes an immutable **tombstone** for `(project,eventId)` for each bounded removal batch, before reporting success; lookup
+filters tombstoned IDs from every append/compact file, including later duplicate appends. Repeated removals produce the same logical
+tombstones; compaction applies them. Keep tombstones at least as long as matching index files **and** every possible retry/redrive
+horizon; removing them too early can resurrect an erased entry. A removal tombstone logically masks entries immediately but does not
+physically erase their PII from old Parquet bytes. Erasure must compact/rewrite affected files, publish and verify the new manifest,
+and delete old versions/objects, tombstones and relevant backups when safe before claiming physical index erasure. Handle bucket
+versioning, caches, snapshots and PITR; a delete marker alone does not erase old versions. If another retry can still recreate a masked
+file, completion is blocked by the queue gap above. Archive deletion calls `remove` on archived IDs; retention deletes closed days
+older than the active-store retention cutoff only after archive commit / lease checks. Archived events are searched via the archive's
+reduced-key columns, not this active index. Late old deliveries must be suppressed or individually indexed until safe; do not expire
+their only index before they are archived or deleted.
+
+## Requested erasure protocol and race table
+
+1. Persist an erasure request and a **durable, strongly readable suppression** for the reduced
+   selector keys covering events with `receivedAt <= requestedAt`, before closing the fence.
+   On every queued delivery, check suppression before rate limiting; if suppressed and the
+   event is already in the active store, delete it and remove its index entries before ack.
+   Check all active reducer/pepper versions. Keep suppression through the full queue/DLQ replay
+   horizon; if replay is unbounded, retain it or reject replay of older messages.
+2. Use K=8..16 deterministic project fence items, selected by hash of event ID. A writer reads
+   its fence value **before** reading suppression, then its event TX condition-checks that same
+   value when erasure is enabled. The request atomically closes/advances all K items in one
+   transaction after suppression is durable. Thus a writer with the old fence cannot commit
+   after closure; a writer reading the new fence must then see suppression. Strong reads and no
+   stale suppression cache are required. This is O4's extra ConditionCheck only when enabled.
+   Concurrent closures condition/retry safely. It does not depend on read-only
+   ConditionCheck/ConditionCheck transactions being conflict-free: retries are bounded and
+   exhaustion is retryable, not data loss. Verify actual conflict rates on real DynamoDB.
+   SQL and memory implementations need equivalent atomic transaction fencing. A failure to
+   establish the suppression/fence ordering keeps the request pending.
+3. Wait at least queue visibility timeout + function timeout after the fence; hold the project's
+   archive lease, finish any staged archive batch to commit, then `lookup` all subject keys /
+   versions through `requestedAt` and delete returned active IDs with `deleteBatch`; write
+   tombstones with `remove` and clean overflow blobs. Repeat until **two consecutive complete
+   passes** are empty. Idempotently repair latest-event pointers only; never decrement the
+   all-time issue count. After active purge use `archive.deleteWhere` with reduced keys and
+   continue the existing mask/hard-erase/snapshot-expiry protocol.
+4. Do not mark complete while a DLQ contains a message older than the request; inspect and
+   preserve original message metadata rather than use DLQ age as original `receivedAt`. The
+   Queue port currently has no exact inspection facility; add a platform-specific capability
+   and fail closed when unavailable. Also resolve the main-queue gap at the top before claiming
+   completion. Two empty index passes are a check of the files visible in those passes, not a
+   certificate of all messages ever accepted.
+
+| Race | Intended catch and remaining limit |
+| --- | --- |
+| Queued at request time, not committed | Durable suppression is checked on delivery; suppress/purge before ack, including DLQ redrive. Until the queued work is resolved, an empty index is not proof of completion. |
+| Mid-`recordEvent` at fence | Old shard condition fails if closure wins; if write wins it is a committed pre-fence event. Read fence before suppression so a new-fence writer cannot use an old suppression read. |
+| Committed before fence, not yet indexed | The wait covers an in-flight invocation; redelivery appends or suppressed retry purges. A message delayed/retrying in the main queue after the wait may escape two passes and not yet be in DLQ: **completion blocker**. |
+| In a staged archive batch | Hold archive lease, complete the staged batch first, then mask archive using reduced keys; no later staged commit may reintroduce it. |
+| Arrives after request | New writer sees suppression and drops `receivedAt <= requestedAt`; newer events are permitted by that request's boundary. Keep suppression over all redrive/replay horizons. |
+| Index append races compaction / erasure | Append has immutable content-derived name; compaction removes only captured inputs after manifest CAS. Tombstones mask late copies; serialize lookups/compaction with the lease, but the queued-work blocker still applies. |
+
+## Access requirements and example cost
+
+Introduce a distinct blob purpose `subject-index` with prefix-scoped policies, not a DynamoDB resource or grant. Core requirement
+tables, bindings, manifest capability validation, S3 policies / FS and R2 implementations, Terraform output keys and deployment tests
+need updating when stage 4 is implemented. S3 `read` already includes prefix-scoped `ListBucket` for missing-key disambiguation;
+reflect the concrete extra list permission in the IAM policy.
+
+| Role / operation | Abstract `blob` capabilities on `subject-index` | Notes |
+| --- | --- | --- |
+| consumer append | write | Per-project/day file publication before ack; suppressed duplicate cleanup may need the erasure-worker permissions below. |
+| cron compaction / retention | read, write, delete, list | Read source/tombstones, publish compact+manifest, delete inputs and expired files under lease. |
+| erasure worker | read, list, write | Lookup and tombstone; physical rewriting/deletion can be delegated to cron with a durable completion check, or grant delete if the worker does it itself. |
+| archive worker removing active index entries | write | Tombstone archived event IDs; coordinate with archive lease. |
+
+Also grant metadata CAS for the per-day manifest, suppression/fence storage, and archive / active-store / primary-blob permissions to
+the roles that actually perform those operations. A consumer that purges suppressed duplicates needs delete access as well; role-scoped
+grants must reflect the selected implementation, not the smallest illustrative table alone. The S3 prefix policy must not grant general
+access to envelopes, artifacts or archive staging.
+
+For 1 million events/day, 50 projects, 30 active days, assume **10 events per project/day batch**, all events indexable, no retries,
+and 1,000-object LIST pages. Mixed-project/day batches yield more files, while larger batches reduce them:
+
+- Append: 100,000 small files / PUTs per day, **3 million PUTs and files over 30 days** before
+compaction. At illustrative S3 Standard $0.005 per 1,000 PUTs, ~$15 for those PUTs. Four indexed fields make
+~40 rows/file; they do not make four object PUTs per batch.
+- One project's 30-day lookup before compaction: 2,000 files/day = 60,000 files; with each
+day listed separately, about **60 LIST requests** and **60,000 GETs** if each small file is read once,
+excluding tombstones / continuation retries. Illustrative request cost ~$0.0003 LIST + ~$0.024 GET. More
+ranges/HEADs, duplicates, mixed batches and 31 touched calendar days raise this. Listing all projects for an
+operation is 50 times the per-project work.
+- After full compaction: 50 projects * 30 days = **1,500 compact files / PUTs per 30 days**,
+plus ~3 million source-file GETs and deletes to compact those files once. A single-project 30-day lookup has
+~30 LIST + ~30 footer/metadata GETs, **plus** matching / false-positive row-group and bloom-filter range GETs
+and tombstone reads. The exact GET count depends on row-group size, number of columns/ranges, multiple keys,
+late append files and false-positive rate; it can be much larger than 30. Bloom/statistics pruning must never
+skip a match.
+- At the same prices, 3m compaction GETs add ~$1.20, 1,500 compact PUTs ~$0.0075, and source
+deletes are free in the illustrative S3 class; 1,500 or more paginated LISTs, manifest CAS / puts, tombstones,
+retries, storage, transfer, CPU and late-file recompaction add cost. These are estimates from [S3
+pricing](https://aws.amazon.com/s3/pricing/), not whole-system costs. Use range-read measurements and actual
+pagination rather than treating one compact file as one request. Non-S3 adapters have different economics;
+blob-fs listing may scan a local directory even though no DynamoDB Scan is used.
+
+## Rate-based rejection (stage 3)
+
+Choose per-issue/per-window fixed-window `KV.increment` after suppression; the decision occurs in the consumer after the SDK already
+received HTTP 200, so it cannot return an `X-Sentry-Rate-Limits` response for that event. A separate earlier project limit is possible
+but cannot know a fingerprint without changing ingest. Default issue limit and per-project new-issue cap are **disabled** until
+configured; stack provides bounded defaults/ceilings and projects may override within them. In `batched` mode count events per issue in
+the batch and increment once by that count; if only part fits the budget, deterministic input order decides which are accepted. Fixed
+windows permit boundary bursts; clocks, distributed KV contention and retries affect precision. A rejected event is acknowledged, not
+stored, never advances `lastSeen` and cannot cause a regression/notification.
+
+For each rejected event increment a per-project/issue/window KV dropped counter and surface it as a **windowed, approximate** API
+field, separately from `Issue.count`. No durable rejection ledger: double counting on redelivery and increments lost on a crash are
+accepted; this must not be labeled an exact total. Fail open on KV failure by default and emit an aggregate failure metric without PII;
+per stack an operator can choose retry instead. Project-level new-issue cap limits rotating fingerprints. The existing KV has no atomic
+"first fingerprint in this window" operation: if cap decisions count candidates that observe an absent issue, simultaneous candidates
+and retries can overcount. This is a conservative approximate cap, not an exact unique-issue quota; using a durable dedupe ledger would
+contradict the cut. A project with a hard quota needs a separately reviewed atomic primitive. Count the issue-rate increment before
+rejection; project-cap and dropped-count increments add further KV requests. A previously persisted duplicate should be recognized
+without re-bumping its issue; rate counters may still be charged twice on redelivery under the accepted policy.
+
+At 1m events/day and 12 WRU/event baseline, one <=1 KiB DynamoDB KV write per event adds about 8.3% write units; the current
+`kv-dynamodb` also performs a strong read per increment and can retry conditional races. Those extra reads, project-cap /
+dropped-counter operations and failures cost more. Tests cover window/batch boundaries, failure policy, doubled redelivery, project
+scope and rotating fingerprints, suppression first, rejected regression, and API freshness/expiry; no sampling or rejection-ledger
+tests should be added.
+
+## Consolidated core/domain/contract changes by implementation stage
+
+### Stage 1 — deployable DynamoDB store, common erasure unavailable
+
+- Add `EventRepo.capabilities.deleteBySubject: false` (or an equivalent named capability) to
+all stores and route the erasure API to a clear unsupported error; retain the old method only as an optional
+migration shim and never invoke it. SQL sqlite/Postgres and memory must not provide a bypass. Remove the
+method entirely in stage 4.
+- `Issue.count` JSDoc and API field description: accepted event insertions ever recorded;
+archive/retention/erasure never decrement. Keep `repairAfterErasure` unavailable until stage 4 rather than
+exposing the old subtraction semantics. Migrate existing SQL and memory tests.
+- Page/`EventQuery`/`EventPage` JSDoc and cursor shape: last examined per GSI stream, including
+zero-result continuation; preserve source-local cursor separately from federation's global
+`(receivedAt,eventId)` keyset. Test stale-only pages, prefetched shard rows, empty progress, ties, direction,
+filters, invalid cursors and cross-adapter parity.
+- Replace the single bundle put with a manifest-based lifecycle. Proposed shape:
+
+```ts
+type BundleState = "pending" | "active";
+type BundleManifest = { blobKey: string; digest: string; debugIdCount: number };
 interface ReleaseRepo {
-  beginBundle(bundle: ArtifactBundle): Promise<void>;
+  beginBundle(bundle: ArtifactBundle, manifest: BundleManifest): Promise<void>;
   putBundleDebugIds(projectId: ProjectId, bundleId: ArtifactBundleId,
-    generation: string, debugIds: readonly string[]): Promise<void>;
-  activateBundle(projectId: ProjectId, bundleId: ArtifactBundleId,
-    generation: string): Promise<void>;
+                    debugIds: readonly string[]): Promise<void>;
+  verifyAndActivateBundle(projectId: ProjectId, bundleId: ArtifactBundleId): Promise<void>;
   deleteBundle(projectId: ProjectId, bundleId: ArtifactBundleId): Promise<void>;
   findBundleByDebugId(projectId: ProjectId, debugId: string): Promise<ArtifactBundle | null>;
 }
 ```
 
-Replace `putBundle` or retain it only as a convenience wrapper around this lifecycle; no
-adapter may expose partial pending markers as active. The manifest of all expected IDs and
-owner/expiry/fencing rules need explicit arguments and a durable storage abstraction before
-implementation; an ID list of thousands cannot live unbounded in one DynamoDB item. Add a GC
-port/job for fenced abandoned generations. Contract: 1,000+ IDs, chunk retries, duplicate IDs,
-conflicting owners, previous active generation during replacement, crash at each phase,
-activation validation, delete versus activate, lookup only active, TTL/GC cannot delete active
-markers, two projects and adapter parity. Implement lifecycle in both SQL dialects and memory,
-not just DynamoDB.
+`ArtifactBundle` gains state/manifest metadata. Idempotent chunks, pending TTL and final conditional activation are described in the
+DynamoDB design; lifecycle tests include thousands of IDs, retry, conflict, crashes and the TTL-clearing caveat. Blob manifest access
+requires appropriate core requirement rows. Also add role-scoped `metadata-delete` as described there; SQL/memory implement the common
+capability semantics without IAM. Add schema migration tests.
 
-### 6. Cross-cutting coordination and unresolved approval
+### Stage 2 — batch writes
 
-Add an explicit transactional admission/fence capability and durable per-issue control totals /
-archive baseline, or narrow the completeness promises. Decide ownership, TTL, IAM grants,
-provider-neutral transaction boundaries, versioned migrations, operator backfill, and whether
-the optional third DynamoDB action is accepted. Existing `KV`, Queue and `MetaRepo` alone do
-not atomically couple a queue delivery, admission fence, event commit and index completion.
-All port changes require shared tests and updates to SQLite, Postgres, in-memory fakes,
-DynamoDB and every call site before implementation is declared complete.
+```ts
+type RecordInput = { occurrence: Occurrence; event: StoredEvent };
+type RecordResult = { inserted: boolean; issue: Issue; isNew: boolean; isRegression: boolean };
+interface ActiveStore {
+  recordEvent(o: Occurrence, e: StoredEvent): Promise<RecordResult>;
+  /** Homogeneous bounded issue group; all new items and issue update commit atomically. */
+  recordEvents(group: readonly RecordInput[]): Promise<readonly RecordResult[]>;
+}
+```
+
+Require same project/issue/fingerprint, reject oversize before write, deterministic per-input results and one transaction per bounded
+group. Update SQL sqlite, Postgres and memory as well as DynamoDB and the consumer. Shared contracts cover duplicate combinations, one
+isNew, regressions, concurrent groups and whole-group rollback; partial commits across separately submitted groups and ambiguous
+transport outcomes belong in adapter fault-injection tests.
+
+### Stage 3 — portable rate limits
+
+```ts
+type RatePolicy = { maxEvents: number; windowSec: number;
+  maxNewIssues?: number; onKvError?: "allow" | "retry" } | null;
+interface Project { /* existing fields */ issueRatePolicy?: RatePolicy }
+// API issue output adds the approximate per-window dropped count and window bounds.
+```
+
+Add stack default/ceiling and project-override schemas, `KV` consumer read/write and API read requirements, response shape and the
+fixed-window contract above. Null/off is default; `onKvError` defaults to allow + metric. Implement/test with memory and DynamoDB KV
+and any other selected KV adapter. No sample policy or rejection ledger.
+
+### Stage 4 — index, suppression and erasure
+
+Add the `SubjectIndex`, `SubjectReducer`, `SubjectEntry` and archive selector signatures above, blob consistency capabilities and
+per-day manifest CAS; add an optional K-sharded fence check to `recordEvent(s)` transactions **only when erasure is enabled**, with
+equivalent SQL/memory semantics. Add `subject-index` blob policy rows, runtime construction and compaction cron; update consumer ack
+behavior, duplicate indexing, retention and archive removal. Remove `EventRepo.deleteBySubject` entirely and change
+`IssueRepo.repairAfterErasure(projectId, issueId)` to best-effort pointer repair with no removed-count argument and no count change.
+Update `ArchiveStore.deleteWhere` to accept reduced keys, SQL sqlite/Postgres, memory, DynamoDB, archive and every shared contract.
+Tests include append regrouping, duplicate redelivery, small/compacted files and bloom false positives, concurrent append/compaction
+and lease loss, crash before/after manifest CAS, tombstone resurrection, physical file deletion, retention, pepper rotation,
+suppression/fence ordering, DLQ/main-queue counterexample and archive-stage races. Do not mark a request complete until the completion
+blocker is resolved or its guarantee explicitly narrowed.
+
+## Later optional yesnodb adapter
+
+[yesnodb](https://github.com/moriyoshi/yesnodb) is a pre-release persistent Rust inverted index mapping 64-bit keys to sets of 64-bit
+ordinals, with Roaring-style containers and Arrow Flight. It suits a long-lived disk-backed process (standalone/container/Kubernetes),
+not the serverless function default. errtraq's event IDs are 128-bit and have no stable 64-bit ordinal space; a future adapter needs
+collision-safe mappings and possibly a per-project ordinal, which the proposed port permits but does not require. yesnodb documents no
+conditional writes or durable mutation idempotency keys; retrying an insert after an intervening delete can resurrect it. Reads are
+snapshots, not automatically linearizable; bind a read to the committed version when read-your-write is required, and handle snapshot
+expiry. It could also help the unresolved issue-tag/faceted-search TODO, but neither that adapter nor tag search is part of M3.

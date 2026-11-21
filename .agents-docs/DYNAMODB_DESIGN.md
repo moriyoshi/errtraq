@@ -1,320 +1,381 @@
-# DynamoDB active-store design (M3e step 1b, review draft)
+# DynamoDB active-store design (M3e step 1c)
 
-This is a proposed revision, not implemented behavior. The owner selected sparse GSIs,
-both per-event and batched ingestion, configurable hot-issue rejection, and asynchronous
-subject indexing. This draft proposes changes to the current port and ARCHITECTURE.md; their
-current wording remains authoritative until this design is reviewed and the corresponding
-contracts and architecture are changed. [SUBJECT_INDEX_DESIGN.md](./SUBJECT_INDEX_DESIGN.md)
-is part of this design and contains the consolidated proposed interfaces, rate policy,
-completion barriers and adapter contract changes. No `Scan` is an access path.
+Status: approved direction with the decisions and open correctness questions below. This is a
+plan, not current implementation. `ports.ts` and ARCHITECTURE.md remain authoritative until
+stage 1 makes the proposed contract changes. The default erasure-index design is independent
+of DynamoDB: see [SUBJECT_INDEX_DESIGN.md](./SUBJECT_INDEX_DESIGN.md). No port operation uses
+DynamoDB `Scan` or a filtered full-table scan.
 
-## Review decisions and non-negotiable limitations
+## Decisions and concrete issues for review
 
-- **Sparse, eventual GSIs:** no transactional event/issue-list pointer rows. Every GSI result
-  is a candidate, re-read strongly from the base table and checked for current membership,
-  filters and sort position. Hydration removes stale positives but cannot discover a missing
-  index entry or make an eventual GSI strongly consistent. Lists can omit recent writes,
-  return short pages, and move records across cursors. APIs must say so explicitly; a lag is
-  not bounded by AWS's eventual-consistency contract.
-- **R6 cannot safely mean "the issue GSI count is authoritative" by itself.** A GSI query
-  can miss a committed event indefinitely, and archived events have left the active store
-  while issue count historically includes them. A correct repair needs the independent durable
-  admission/index barrier and active-ID control total in the companion document, plus a
-  separately maintained archived baseline. Until those prerequisites are available, repair
-  remains pending and cannot claim exact success. This qualifies, rather than silently
-  implements, the suggested issue-GSI count query. A pure GSI count is only a candidate.
-- `ADD` avoids comparing count/revision on ordinary inserts; branch conditions are still needed
-  for first/last/latest and regression. A bounded retry budget protects the invocation; it
-  cannot guarantee all 500 simultaneous writes succeed. Throttle exhausted conflicts and
-  let the queue redeliver, never report an inserted event as successful without its issue bump.
-- Base event identity is `project + eventId`, distributed by distinct base partition keys,
-  not 16 fixed base shards or event pointer rows. Only the project-time GSI has fixed shards.
-  A single hot issue and hot issue-sort GSI partition remain physical bottlenecks.
-- Exact notification semantics after an ambiguous commit, atomic admission barriers across
-  ports, destructive repair during ongoing writes, and debug-marker takeover require the
-  additional interfaces below. These are approval items, not solved by eventual reads.
+- Sparse `KEYS_ONLY` GSIs are eventually consistent. Strongly hydrate every candidate and
+  check its current scope, filters and sort key; hydration removes stale positives but cannot
+  reveal missing index entries. Lists are not snapshots and may temporarily omit new items or
+  repeat/miss rows moving across cursors. Project-time uses 1 to 4 stable shards; an issue-time
+  query uses one GSI partition. There is exactly one intentional issue-ID pointer per issue.
+- `Issue.count` is the number of accepted event insertions ever recorded for that issue;
+  archival, retention and erasure do not decrement it. API docs must call it an all-time count,
+  not a surviving-event count. Latest-event repair only best-effort repoints the pointer and is
+  idempotent. A duplicate does not bump while the event item exists. **Remaining limitation:**
+  after its event item is deleted, a redelivery of the same event ID can be inserted and
+  counted again. An exactly-once *distinct IDs for all time* interpretation would need a
+  retained dedupe record and extra cost/action; the current port and two-action write do not
+  provide it. Define queue/erasure suppression and retention horizons before promising more.
+- **Exact composite count order requires a count guard.** DynamoDB cannot concatenate/pad the
+  result of `ADD count :n` into a string sort key in the same update expression. To maintain
+  `countSort = fixedWidth(count) | issueId` exactly, read count `c`, set the computed key for
+  `c+n`, perform `ADD count :n`, and condition on `count = c` (or absence for creation). This
+  is **not a revision CAS**, but it does compare count, so the previous claim that ordinary
+  writes need no count comparison cannot coexist with exact string count ordering. Do not
+  silently use stale keys or a numeric-only GSI with unspecified tie order. Measure the
+  resulting extra conflicts; the reviewer's 2.7 transactions/event did not establish the cost
+  of this additional condition. Alternative multi-attribute keys or an unbounded tie-group
+  sort conflict with the selected constraints and need a new decision.
+- **Erasure completion has a separate concrete gap.** A message can commit an event, crash
+  before indexing, be retried repeatedly in the main queue, and not yet be in the DLQ when the
+  worker sees two empty index passes. The specified wait and DLQ check alone cannot prove the
+  event is absent. The stage 4 design describes the prescribed protocol and fails closed until
+  the queue can prove a drain or the owner accepts a weaker guarantee. This does not prevent
+  implementing stages 1 to 3, but it blocks a claim of completed physical erasure.
+- A bundle's expiring pending markers must be made non-expiring before activation. Clearing
+  thousands of marker TTLs and activating the bundle is not atomic; an interrupted preparation
+  can leave non-expiring orphan markers. The simple resumable manifest cleanup below avoids a
+  generation-fenced GC protocol, but cannot promise unconditional crash-safe reclamation if
+  the pending bundle/manifest itself expires first. Retain them until cleanup completes and
+  test this boundary; do not silently impose a 48-ID limit.
 
-## Encoding, base items, indexes
+## Keys, items and sparse indexes
 
-All base PK/SK values are typed strings. Components are collision-free length-framed or
-escaped, with a separate order-preserving terminated UTF-8 byte encoding for sort components.
-Keys are validated against DynamoDB's 2048-byte PK / 1024-byte SK and 400 KiB item limits
-before writing. Timestamps are canonical four-digit-year UTC milliseconds; string lexicographic
-order is chronological. Count is a non-negative safe integer stored as `N` (reject overflow).
-Use descending count and an **order-reversed, prefix-safe byte encoding of issueId** as a
-second range component: descending scan then produces count descending, issue ID ascending.
-A single native `(count, issueId)` descending scan would reverse *both* components and violate
-the tie rule. For equal-count paging query the equality-count / tie range first, then the
-strictly smaller count range, merging pages without skipping; multi-key Query inequalities
-must be the final key condition. Event time pagination likewise needs an equality-time /
-exclusive event-ID query for a tie, followed by the strict earlier/later time range; apply
-half-open [from,to) bounds and direction to both without relying on a tuple inequality that
-DynamoDB cannot express. Date-sort issue lists can instead use an encoded composite
-`descending timestamp | ascending issueId` in a single string scanned forward. Validate all
-bounds, IDs and cursor encodings with ties, prefixes, non-ASCII and minimum/maximum time.
+Every table item has string `PK` and `SK`. The base event key is a distinct partition key
+`EV|project|eventId` / `DATA`; issue is `IS|project|issueId` / `DATA`. These distribute event
+items without a fixed set of base-table shards. Other items are org, project, token, release,
+bundle, archive state, erasure state, active-key guard and natural-key markers. Components use
+collision-free framing; equality hashes are domain separated and verified against the stored
+original where appropriate. Validate UTF-8 key sizes (PK <=2048, SK <=1024 bytes) and actual
+DynamoDB item size <=400 KiB before writing. Overflow still starts in core at 200,000 raw
+payload bytes, which is not itself a proof the final item fits; reject an oversized item
+clearly, never truncate. Measure compression of the payload attribute as the main size/cost
+lever; JSON and non-payload fields can still exceed the limit.
 
-The provider minimum is **6.32.1**. Its [source](https://github.com/hashicorp/terraform-provider-aws/blob/v6.32.1/internal/service/dynamodb/table.go)
-implements GSI `key_schema` as a list; a local `terraform init` from the existing plugin cache
-and `terraform validate` succeeded on a keys-only GSI with one HASH and two RANGE entries,
-one numeric. AWS documents [multi-attribute GSI keys](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/GSI.html).
-This validates provider schema only, not real create/query behavior, GSI ordering, or
-Winterbaume support. Test both pinned providers and actual AWS before relying on it.
+`KEY|publicKey` / `DATA` makes `getKey` one strong GetItem. Maintain a key-ID ownership marker
+and project key-list GSI; changing a public key transactionally moves its direct item and
+markers. Strong unique marker items protect org slug, `(org, project slug)`, token hash,
+`(project, release version)`, public/key IDs and debug ID. Conditions allow the existing
+owner and reject another with `ConflictError`; rename conditionally deletes the old marker.
+An active-key guard makes `getOrCreateActiveKey` atomic even with concurrent candidates.
 
-| Base item | PK / SK (conceptual) | Notes |
+For `issues.getById`, each new issue transaction also creates one immutable pointer at
+`ISSUEID|issueId` / `projectId`, guarded absent. Strong `Query` on that PK returns pointers for
+all projects, followed by strongly consistent BatchGetItem; it does not wait for a GSI. This is
+O3's deliberate exception, not one pointer per event or per sort. Account for the extra action
+and WCU only on issue creation. Pointer lifetime matches issue lifetime; all-project lookup
+still needs access control by the caller.
+
+Use **one composite string range key per GSI**, not multi-attribute keys. Event time keys are
+`T(receivedAt)#E(eventId)`, where T is the exact canonical 24-byte UTC millisecond form and E
+is a prefix-safe, order-preserving UTF-8 byte encoding with an unambiguous terminator. Compare
+composites directly for `(receivedAt,eventId)`, both directions, with precise exclusive cursor
+and `[from,to)` bounds. Issue sort keys scan **forward**: complemented fixed-width timestamp
+or `MAX_SAFE_INTEGER - count` as a zero-padded 16-digit decimal, followed by E(issueId). Thus
+sort value is descending and equal-value issue IDs ascend. Count is separately stored as a
+safe integer `N`. Validate encoding against SQLite, archive, Unicode, prefixes, empty IDs,
+range endpoints and ties. Exact `countSort` changes on every accepted event; no refresh job,
+dirty index or count-sort lag policy. Eventual GSI propagation still causes temporary lag.
+Coalescing **both** last-seen and count sort updates is a possible later optimization only if
+real load tests justify changing list semantics.
+
+| Index | PK and SK | Query / projection |
 | --- | --- | --- |
-| Event | `EV | project | eventId` / `DATA` | One immutable event, idempotency key ignores receivedAt. GSI1 and GSI2 attributes; minimal subject-builder references, no raw PII in index keys. |
-| Issue | `IS | project | issueId` / `DATA` | Mutable fields are top-level DynamoDB attributes, not an opaque JSON blob: count `N`, first/last/latest, status, resolution, optional countSort and dirty generation. Assemble the `Issue` from those attributes on read. GSI3..6 attributes. |
-| Org, project, token, release, bundle, metadata | `type | scope | id` / `DATA` | Natural-key markers and a private entity version where needed. |
-| Project key | `KEY | publicKey` / `DATA` | Hot ingest `getKey` is one strong GetItem. A separate project/key-ID unique marker plus project listing index supports mutable put/list and detects conflict. Key rotation/public-key changes are transactional. |
-| Natural-key marker | `UNIQ | kind | scope | hash(value)` / `OWNER` | Exact normalized value and owner; strong reads/conditional ownership. Slug, project slug, token hash, release version, key identity and public-key rename. Hash is not encryption. |
-| Active-key guard | `ACTIVE | project` / `DATA` | Serializes get-or-create/revocation and identifies current active key; atomic owner checks. |
-| Debug marker | `DEBUG | project | debugId` / `OWNER` | Owner bundle ID and generation; staged in background chunks; no raw user data. |
-| Subject entry and admission work | See companion document | Durable asynchronous indexing records, never written as pointers inside `recordEvent`'s transaction. |
+| `event-project-time` | `project|shard`, `T(receivedAt)#E(eventId)` | All events / archival; `KEYS_ONLY`; merge 1..4 shard streams. |
+| `event-issue-time` | `project|issueId`, same time key | One issue's events; `KEYS_ONLY`; no fan-out. |
+| `issue-id` | `issueId`, `projectId` | Eventual cross-project index on issue items; the strong pointer path below prevents a false not-found while this index catches up. |
+| `issue-last`, `issue-first`, `issue-count` | `project|status`, respective descending-sort/ascending-ID composite | One per sort, `KEYS_ONLY`; status-less list merges the three status partitions. |
+| `entity-list` | `entityKind|scope`, entity-ID key | Projects, keys, releases, bundles; `KEYS_ONLY`; sparse, scope per operation. |
+| `erasure-all`, `erasure-project`, `erasure-state`, `erasure-project-state` | applicable global/project/state PK, project/erasure-ID SK | Four `KEYS_ONLY` sparse indexes, one chosen for each metadata filter combination. |
 
-Each GSI below is `KEYS_ONLY` unless stated, so no event payload is copied. DynamoDB always
-projects the base primary key and GSI key attributes. Results require strong `BatchGetItem`
-chunks of <=100 keys, retrying unprocessed keys; validate current values and suppress stale
-entries. A batch get is not a snapshot. `INCLUDE` is optional only after measurement; D1 still
-requires a strong read of each base item. Scope and event type prefixes make indexes sparse.
+The issue-ID GSI is retained as requested alongside the strong pointer. `getById` uses the
+strong pointer as its authoritative path; the GSI is redundant for this operation but is
+available for index parity and backfill validation. Its extra write/storage cost is deliberate
+and a future simplification can remove it only with a reviewed schema migration. These are
+**11 GSIs**, within the default table quota of 20; no count-refresh GSI. Verify quota and
+provider replacement behavior. All index attributes are `S`; no multi-attribute GSI key is
+required. A `KEYS_ONLY` entry includes table/GSI keys but not event payload or mutable entity
+data. Each GSI Query is eventual; BGet in chunks <=100 with `ConsistentRead:true`, retry
+`UnprocessedKeys`, restore ordering, then verify current values. Strong reads cannot prove a
+missing GSI entry absent. The issue-time key can itself become hot under an extreme fingerprint.
 
-| GSI | Partition key | Sort key / entries | Purpose and write pressure |
-| --- | --- | --- | --- |
-| 1 `event-project-time` | `project | H16(eventId)` | `(receivedAt, eventId)` | Project events and archival; 16 queries per page, merge ordered streams. GSI sharding is stable for the table's lifetime. |
-| 2 `event-issue-time` | `project | issueId` | `(receivedAt, eventId)` | Single issue events and candidate repair count/latest; no fan-out, but one very hot issue remains a hot partition. |
-| 3 `issue-id` | `issueId` | `projectId` | Cross-project issue lookup. |
-| 4 `issue-last` | `project | status` | encoded lastSeen desc / ID asc | Issue list with optional lastSeen range. |
-| 5 `issue-first` | `project | status` | encoded firstSeen desc / ID asc | First-seen list. |
-| 6 `issue-count` | `project | status` | numeric `countSort`, inverted ID | Approximate count list; refresh below. |
-| 7 `entity-list` | `kind | scope` | entity ID | Sparse projects, keys, releases, bundles and other enumerations. Strong direct reads and natural markers remain base-table. |
-| 8 `erasure-list` | `ALL or project | ALL or state` | encoded project / ID | One item cannot carry four keys for one GSI. Use four sparse **metadata list items**, written atomically with the erasure state, or use four distinct GSI attributes/indexes on the erasure item; recommend four GSIs to honor D1's no pointer rows. See below. |
-| 12 `dirty-count` | `refresh | H16(issueId)` | `(refreshDue, issueId)` | Sparse issue attributes flag count-sort work. A background reconciler polls all shards; a queue is only a wake-up hint. |
+Project-time shard count defaults to **4**, configurable only on an empty/new table and stored
+as durable table metadata; existing readers/writers use that value, never silently change it.
+At 1 million events/day across 50 projects the overall average is ~11.6 events/sec, only ~0.23
+per project/sec; 1 shard is a valid cheaper choice, 2 or 4 absorb some uneven project traffic.
+Each page incurs up to K queries and a merge. Four logical keys are not a throughput guarantee:
+physical placement, bursts, event sizes and issue/GSI hotspots still matter. Re-sharding needs
+an explicit dual-read/backfill migration, not a mutable runtime flag.
 
-For GSI8, choose **four sparse indexes** `erasure-all`, `erasure-project`, `erasure-state`,
-`erasure-project-state`, each with its own PK and the same sort key. They apply only to the
-small metadata item, not events. Together with the dirty-count index, total is **12 GSIs**,
-under the default table limit 20; confirm quota and lifecycle on replacement. No per-event subject GSI: asynchronous inverted
-index entries and its own query layout are defined separately. The conceptual GSI7 must be
-implemented with distinct type/scope keys and a globally scoped project listing; project keys
-must be unique across scopes. Bundle list keys include project+release. `KEYS_ONLY` GSI
-entries do not provide index values for non-key filters, so hydrate before evaluating.
+## Pagination rule and consistency
 
-Status-less issue lists merge exactly the three status partitions. Read issue GSI entries,
-hydrate and verify current status, indexed sort value and project, keep the last **emitted**
-composite key in a scoped opaque cursor, and refill when stale candidates are discarded. The
-`from` bound is inclusive and `to` exclusive. A status change or delayed propagation can
-cause a row to be skipped or repeated; non-snapshot cursors cannot repair that. For
-`countSort`, display the true count separately and expose that ordering is approximate.
-Unsupported text and lastSeen-range-on-other-sort queries throw `UnsupportedQueryError`.
+For issue lists, `events.listByIssue`, `scanOlderThan`, entity lists and erasure-state lists,
+the opaque continuation records **the last examined index key per stream**, not only the last
+emitted result. Refill after stale/deleted candidates until `limit` valid rows have been emitted
+or every stream is exhausted; a page of only stale candidates must advance, never loop or end
+prematurely. At an execution/time budget boundary, return an explicit continuation even with
+zero items. Query pages can prefetch: do not advance a shard's cursor past an unconsumed
+candidate; either buffer it in a bounded cursor or resume from its predecessor. Merge by full
+composite key and preserve each stream's consumed position. Validate cursor scope, shape,
+filter, sort and shard count; retry unprocessed keys, don't report exhaustion on failure.
 
-## Event writes, batching and count-sort refresh
+The current `EventPage` exposes `after` based on a returned event, which cannot represent an
+empty-but-progressed page. Stage 1 must add a scoped opaque source continuation while retaining
+`EventPosition` for the active/archive federation boundary; the federated merger keeps pulling
+empty partial pages before comparing streams and must not use a source cursor as a global
+keyset. The change needs a contract test so source-level examined progress never skips
+prefetched candidates. Concurrent writes/sort changes can move rows around a cursor; there is
+no snapshot or finite GSI propagation bound. `Page.nextCursor` likewise remains non-null when
+an execution budget ends before exhaustion.
 
-`recordEvent` delegates to `recordEvents` with one event. In `per-event` mode each transaction
-has exactly two actions: conditional `Put` event (attribute absent), and `Update` issue with
-`ADD count :one` plus the branch-specific `SET`/`REMOVE` fields. No issue revision equality
-check or transactionally maintained pointer item is added. A strong pre-read chooses one of:
+## Writes, duplicates and bundle lifecycle
 
-1. **Absent issue:** update conditioned absent, initialize identity, fingerprint, issue
-   details, unresolved status, first/last/latest and count via `if_not_exists` / `ADD`.
-2. **Existing, newer:** require same fingerprint and guarded last/latest tuple; advance latest
-   only for larger `(receivedAt,eventId)`. A late event cannot overwrite a newer pointer.
-3. **Out of order:** require the branch's tuple comparison, leave last/latest unchanged; set
-   firstSeen only under a separate guarded minimum branch when the incoming time is earlier.
-4. **Regression:** require current status resolved and unchanged resolvedAt (or absence), and
-   incoming receivedAt strictly greater than resolvedAt; set unresolved and remove resolvedAt.
-   Otherwise preserve status. Issue `update` and repair must cooperate with those same
-   conditions/fences, so no event overwrites a concurrent resolve or erasure repair.
+### Per-event transaction (stage 1)
 
-DynamoDB update expressions do **not** have a general conditional `SET` expression: choose a
-branch and put its predicate in the transaction condition. Compose branches for simultaneous
-firstSeen/latest/status changes. If a condition fails, inspect ordered cancellation reasons
-and `ReturnValuesOnConditionCheckFailure: ALL_OLD` to recompute the branch without an extra
-read *when the service returns the item*; if unavailable, strong GetItem. An event-exists
-failure returns a duplicate and never applies `ADD`; read the saved event's actual issue.
-Retry conditional races, conflicts and throttling with bounded jitter; fail retryably after
-budget exhaustion. Strong-read preimages classify `isNew`/`isRegression` only if the branch
-condition actually commits. A successful `TransactWriteItems` has no returned issue image:
-strongly read the issue after commit and document that concurrent later updates may be visible.
-Use a stable idempotency token per identical request, never reuse with changed conditions;
-ambiguous response beyond the token window cannot determine whether this delivery or an older
-one inserted the event. Preserve the duplicate check and mark notification certainty as an
-open contract issue.
+The consumer currently calls strong `events.get` before every write; **keep it in stage 1**
+so overflow blob behavior is unchanged, and count it below. It is only an optimization: the
+conditional event put remains the authority. Read issue strongly, choose a branch from its
+actual fields, then `TransactWriteItems`: (1) conditional Put event with attribute absent;
+(2) conditional Update issue with `ADD count :one`, exact computed count sort key and guarded
+firstSeen / lastSeen / latest / resolution fields; (3) on issue creation only, the conditional
+issue-ID pointer Put. With erasure enabled in stage 4, add (4) a ConditionCheck on one of K
+fence items. No standalone ConditionCheck targets the same issue item as its Update. Validate
+occurrence/event IDs and `receivedAt` match and fingerprint matches an existing issue.
 
-In `batched` mode group a delivery's occurrences by `(project, issue, fingerprint)`, retain
-the input order for per-event flags and split to <=99 event puts + one issue update, <=4 MiB
-aggregate and <=400 KiB per item. Distinct event IDs only per transaction; duplicate input
-IDs get one candidate, then duplicate results in input order. Strong pre-read known IDs in
-`BatchGetItem`, filter already-present events, then conditional event puts and one guarded
-issue `ADD count :N`. Derive first/last/latest and any regression by applying the same rules
-in deterministic input order to only newly inserted members. A duplicate race makes the whole
-transaction fail: inspect cancellation reasons, reread failed/ambiguous IDs, remove committed
-duplicates and retry the remaining set; split on repeated conflicts and honor the retry budget.
-A branch may fail on an independently changed issue; refresh the branch without count CAS.
-The issue's `isNew` belongs to the first inserted member if the issue was absent; the first
-member whose receivedAt crosses a still-resolved resolution owns `isRegression`. Return one
-result for every input, with duplicate flags false. Different issue groups / chunks are not
-one atomic batch: on an error return/throw a retryable per-item outcome for uncommitted work;
-retry after crash is safe by event ID. Chunks must be serial for a single issue. Discuss the
-new response shape and ambiguous notification behavior before implementing.
+Variants are absent issue, existing newer/equal-tie winner, older event, firstSeen minimum,
+and regression; compose the necessary conditions. Regression means current status is resolved
+and `resolvedAt` absent or `receivedAt > resolvedAt`; update status only when the guarded
+preimage still matches. `if_not_exists` handles creation fields, but conditional SET requires
+an actual transaction condition: DynamoDB does not provide arbitrary conditional update
+expressions. `ReturnValuesOnConditionCheckFailure: ALL_OLD` supplies an updated issue image
+when available; otherwise reread. On event-exists cancellation, strongly read the persisted
+event and its real issue, return `inserted:false`, both flags false, no issue update. On an
+issue/count/fence race, re-evaluate branch and retry with bounded jitter; retry exhaustion is a
+retryable error, never partial success. Use a unique request token per identical transaction;
+reusing a token after changing parameters fails. A successful transaction returns no issue
+image, so a subsequent strong issue read may include later concurrent updates: define this on
+the return type. Unknown commit after the token window can be indistinguishable from another
+writer's duplicate; notification certainty is not guaranteed without a separate outbox.
 
-For count ordering, keep exact `count` on the issue. Maintain indexed `countSort = count` for
-counts <=100; above that update `countSort` at most once per 10 seconds and schedule an
-idempotent trailing refresh. A refresh uses a guarded `SET` of a freshly read count and only
-clears dirty state if no later count changes were missed; retry until caught up. When countSort
-becomes dirty, the issue update atomically sets a sparse dirty-count GSI key
-and due time on the issue itself; a queue message is a latency hint and the reconciler queries
-all 16 dirty-index shards. A refresh conditionally copies a strongly read count and clears the
-dirty key only if that count is still current; otherwise it retains the flag and retries.
-Eventual propagation can delay or temporarily hide this work and rekeying adds WCU. It does
-not provide a hard deadline. A timer in the writer is not a guarantee. A 10-second target is
-an SLO, **not an enforceable maximum** during outage,
-GSI lag or retry failures. Even small counts can be temporarily stale due to GSI propagation.
-The number of lastSeen GSI writes is not reduced by count coalescing. Counter exactness and
-rate of count-index writes must be measured under concurrent events. See companion document
-for portable rate rejection; default rejection is disabled, so users opt into data loss.
+The second reviewer observed exactly one `isNew` and correct counts under 200 and 500
+concurrent DynamoDB Local transactions (random, tie, monotone, regression storm and 25
+duplicates), around **2.7 transaction attempts/event** under storm. That is useful evidence,
+not a DynamoDB Local proof of real DynamoDB contention or of the newly required count-key guard.
+Real AWS must test the precise final expressions, bounded retries and hot-index backpressure.
+
+### Batched transaction (stage 2)
+
+`recordEvents` takes one bounded homogeneous `(project, issue, fingerprint)` group and returns
+one outcome per input in deterministic input order. The group is **all-or-nothing for all new
+event/issue mutations**, including one issue `ADD count N` and pointer if new; input duplicates
+and IDs already committed are no-ops. Reject malformed or too-large groups before writes: up
+to 99 event items minus an issue-creation pointer and, when enabled, a fence action, with <=100
+actions, <=4 MiB combined and <=400 KiB/item. The consumer explicitly divides larger inputs
+into separate issue groups before calling; separate groups are not one global transaction.
+
+Do not pre-read each event in batch mode: conditional event puts and ordered transaction
+cancellation reasons identify existing or racing duplicate IDs; remove them and retry the
+remaining **entire** new-ID group, preserving outcomes. Read the issue to choose one branch,
+compute count key for `c+N`, and guard count c; recompute on conflicts. Exactly one first new
+member gets `isNew`, and the first member in input order whose receivedAt causes a valid
+regression gets `isRegression`. If conditions cannot be resolved within the bound, fail the
+whole group retryably; do not claim some of that group's new items committed. SQL sqlite and
+Postgres implement the group in one DB transaction and the memory fake atomically applies it.
+The shared contract tests group atomicity; adapter-level fault injection covers ambiguous
+network outcomes / caller retries across separately committed groups.
+
+### Bundle lifecycle (stage 1)
+
+No 48-debug-ID cap. Store the full immutable debug-ID manifest in BlobStore under a stable
+bundle key. Persist a pending bundle with manifest key, expected count/digest and numeric TTL;
+write conditional debug-ID ownership markers in idempotent chunks, each with a pending TTL.
+Verify every expected marker strongly, and clear marker TTLs in bounded chunks before a final
+conditional activation of the bundle. `findBundleByDebugId` reads marker then bundle and returns
+only an active matching owner. A retry repeats chunks/verification; conflicts with another
+owner fail clearly. Clean abandoned pending bundles/markers by replaying their manifest before
+allowing pending metadata and manifest to expire. On delete, make the bundle unavailable first,
+then remove its markers/manifest in resumable chunks. Do not hide the TTL-clearing crash gap
+identified above, or promise atomic replacement of thousands of markers without a protocol;
+concurrent replacement/ownership and cleanup must be tested. The required blob and store
+capabilities must be reflected in stack validation and IAM. This is the simple lifecycle, not
+the previous generation-fenced garbage collector.
 
 ## Operation-to-access-pattern map
 
-Notation: `G` strong GetItem, `B` strong BatchGetItem, `Qn` eventual Query GSI n followed by
-strong B and validation, `TX` TransactWriteItems, `BW` BatchWriteItem with retry of unprocessed
-items. Every list validates cursor scope / shape and limit, handles 1 MiB Query boundaries,
-retries unprocessed B/BW keys, and fails on exhausted retries instead of claiming completeness.
-No client-side full-project filtering or Scan. Costs: strong read `ceil(itemBytes/4 KiB)` R,
-eventual GSI query `0.5 * ceil(evaluatedBytes/4 KiB)` R per page (plus service minimum),
-transaction writes `2 * ceil(itemBytes/1 KiB)` W per action, ordinary writes/deletes
-`ceil(itemBytes/1 KiB)` W; GSI writes are separate, rounded per index entry. Updates that
-change an index key delete the old and write the new entry. Failed conditions, empty queries,
-retries, large items, stale candidates and pagination add cost. A list has no fixed total worst
-case under unbounded churn, stale entries or input size; 100-action / 4 MiB transaction and
-400 KiB/item limits still apply. The formulas, not a fictitious universal bound, apply.
+Notation: `G` strong GetItem, `B` strong BatchGetItem, `Q` GSI Query then B/validate, `P`
+strong base-table Query, `TX` TransactWriteItems, `BW` BatchWriteItem with `UnprocessedItems`
+retry. All GSI list operations use the examined-key rule above. One strong read of an item up
+to 4 KiB is 1 RRU; eventual index pages use 0.5 RRU per 4 KiB (minimum applies); ordinary writes
+cost ceil(bytes/1 KiB) WRU and transactional writes twice that. Each GSI entry written or
+removed is billed separately. Costs below exclude contention/retries and use small items;
+worst case is the stated 400 KiB item / 100-action, 4 MiB transaction limits per request;
+page and input counts have no finite total bound. A failed condition or transaction also costs
+capacity. User-visible pages may be eventually incomplete even after hydration.
 
-| Operation | Exact planned access path | Typical / upper-bound cost |
-| --- | --- | --- |
-| `getOrg`, project `get` | G entity. | 1 R / 100 R per 400 KiB item. |
-| `getOrgBySlug`, `getProjectBySlug`, `getTokenByHash`, `getReleaseByVersion` | G unique marker then G entity; verify owner/value. | 2 R / 200 R. |
-| `getKey(publicKey)` | G directly at public-key primary key; verify key not replaced. | 1 R / 100 R. |
-| `putOrg`, project `put`, `putToken`, release `put`, `putKey` | G old data; TX entity and uniqueness markers, remove old marker if renamed; project/key/release gets sparse list GSI fields. Condition owner is absent or self; foreign owner is ConflictError. Updating a public key moves its primary item and marker atomically. | ~1 R + 4..8 W + affected GSI writes / TX 100 actions, 4 MiB, retries extra. |
-| `getOrCreateActiveKey` | G active guard and key; TX guard + new direct key and ownership marker under conditions; on conflict reread winner. Key revocations and other active-key writes must update/fence guard. | ~2 R + 6 W / transaction bound. |
-| `projects.list`, `listKeys`, `releases.list`, `listBundles` | Q7 scoped entity list, then B; keyset ascending ID, validate type/scope. `listKeys` drains. | one or more eventual index pages + n strong item reads; unbounded across all rows. |
-| `issues.get` | G issue. | 1 R / 100 R. |
-| `issues.getById` | Q3(issueId), B issues, validate ID; all pages. | index pages + one strong read per candidate; eventual, unbounded. |
-| `issues.list` | Q4/5/6 on one status or merge 3; B, verify indexed key and filters. Count-sort uses refreshed countSort, not exact count. | 1 or 3 minimum index queries + B per candidate; no finite bound with churn. |
-| `issues.update` | G issue; conditional UpdateItem status/resolvedAt, retry branch changes; update GSI partition attrs on status change. | ~1 R + 1 W + old/new issue-list GSI entries / item size and retries. |
-| `repairAfterErasure` | Under issue write fence and archive lease, Q2 count/latest + B and dedupe; compare candidates to the **strong, complete** indexed-ledger active-ID control total; add archived baseline and account for archive erasures. If not equal, wait/retry; never infer completeness from an empty GSI. Conditional issue update against fenced mutation generation; preserve last pointer if no active event. | Q2 all issue entries + B each + ledger check + conditional W; unbounded wait/cost under GSI lag. |
-| `events.get` | G exact project+eventId. | 1 R / 100 R. |
-| `listByIssue` | Q2 for specified issue, or 16-way Q1 for no issue; time range and after keyset, merge ordered candidates then B and validate. | 1 or 16 minimum index queries + B per candidate; eventual and unbounded refill. |
-| `scanOlderThan` | Q1 16 shards, ascending and cutoff exclusive; merge, B, validate; last-emitted cursor. | 16 minimum index queries + B; cannot prove empty while GSI lags. |
-| `deleteBatch` | BW exact event keys in groups <=25, retry `UnprocessedItems`; remove associated subject entries via the independently durable idempotent background deletion task. Archives must not advance a completeness watermark from one empty eventual query. | Per <=2 KiB event ~2 W base + 1 W per removed event GSI; unbounded IDs/retries. |
-| `deleteBySubject` | Replace by background-index cursor lookup plus explicit event-ID deletion and durable receipt/recompute protocol; see companion. | Sharded subject queries + B + deletions; cannot treat a lagging empty index as complete. |
-| `releases.putBundle`, `deleteBundle`, `findBundleByDebugId` | Pending-generation marker protocol below; G debug marker + G bundle, active-generation check. Bundle enumeration via Q7. | O(debug IDs) ordinary/conditional writes and reads, chunked; no 48-ID limit. |
-| `meta.getArchiveState`, `getErasureRequest` | G scoped metadata. | 1 R / 100 R. |
-| `meta.compareAndSetArchiveState` | Conditional Put/Update with version 0 on absent or exact expected+1, else `VersionConflictError`. | 1 W / 400 W plus failures. |
-| `meta.compareAndSetErasureRequest` | Conditional Put/Update of metadata with four sparse GSI attributes; no list pointers; validate project, ID, version. | 1 W + up to 4 new/changed index entries / item size and failures. |
-| `meta.listErasureRequests` | Query exactly one of four erasure GSIs for project/state combination; B then verify. | index pages + one strong read per candidate, eventual. |
-| `recordEvent`, `recordEvents` | Two-action or N+1 TX as above, event condition, issue atomic ADD. | Per-event example below; transaction limits and bounded retries. |
-| `migrate` | No automatic data scan; infra owns schema and versioned backfills. | 0 data R/W. |
+| Port operation | One access pattern and typical cost |
+| --- | --- |
+| `projects.getOrg`, `get` | G entity: ~1 RRU. |
+| `getOrgBySlug`, `getProjectBySlug`, `getTokenByHash` | G unique marker then G entity: ~2 RRU. |
+| `getKey` | G `KEY|publicKey`: ~1 RRU on ingest. |
+| `putOrg`, `projects.put`, `putKey`, `putToken` | G existing entity; TX conditional entity + natural markers, and old marker delete on rename. ~1 RRU + 4..8 WRU plus entity-list GSI changes; API role needs metadata delete permission. |
+| `getOrCreateActiveKey` | G active guard and current key; TX guarded guard/direct key/markers; retry loser. ~2 RRU + >=6 WRU. |
+| `projects.list`, `listKeys` | Q `entity-list` global project / project-key scope and B candidates; listKeys drains pages. Page cost = eventual Q + one strong item read per candidate. |
+| `issues.get` | G project/issue: ~1 RRU. |
+| `issues.getById` | P `ISSUEID|issueId`, then B issues and check IDs. ~1 strong Query + 1 RRU/candidate; no GSI lag. |
+| `issues.list` | Q `issue-last/first/count`, one status or merge three, then B/validate; lastSeen `[from,to)`. Q per stream + one RRU/candidate; reject text and lastSeen range on other sort. |
+| `issues.update` | G issue, conditional UpdateItem guarded against concurrent writes, update status/sort attributes; ~1 RRU + 1 WRU + affected GSI entries. |
+| `issues.repairAfterErasure` | Stage 4: Q issue-time newest surviving active event plus B, optionally query archive for newer retained event, conditional update latest pointer only; keep previous pointer if none. Best effort under eventual lag, idempotent and never alters count. |
+| `events.get` | G project/event: ~1 RRU. |
+| `events.listByIssue` | Q single issue-time partition, or merge K project-time shards without issue; B/validate, composite ranges in requested direction. ~1 or K GSI queries + 1 RRU/candidate. |
+| `events.scanOlderThan` | Q K project-time partitions ascending with cutoff exclusive, B/validate and merge. ~K queries + 1 RRU/candidate. Empty GSI is not proof no old committed event exists. |
+| `events.deleteBatch` | BW exact IDs in <=25 chunks, retry unprocessed; idempotent. ~ceil(itemBytes/1 KiB) WRU per item plus event GSI removals; archive/erasure orchestration coordinates external index removal in stage 4. |
+| `events.deleteBySubject` | Stage 1: optional capability unavailable for **all** stores; reject API request clearly. Remove the method in stage 4 when the common index port is added. No fallback scan. |
+| `releases.get`, `getReleaseByVersion`, `findBundleByDebugId` | G release or G natural/debug marker + G active entity; ~1 or 2 RRU. |
+| `releases.put` | G old release then TX conditional entity/version markers and old-marker removal on rename; ~1 RRU + >=4 WRU plus GSI. |
+| `releases.list`, `listBundles` | Q `entity-list` by project / project+release, B/validate; page cost as above. |
+| bundle create, marker chunks, activate, delete | G / conditional writes and manifest blob operations above; O(debug ID count), no fixed 48-ID limit. See stage 1 proposed signatures below. |
+| `meta.getArchiveState`, `getErasureRequest` | G scoped item: ~1 RRU. |
+| `meta.compareAndSetArchiveState`, `compareAndSetErasureRequest` | Conditional Put/Update with expected-null creates version 0, else expected+1; invalid/mismatched -> `VersionConflictError`. Erasure metadata updates four sparse GSI keys; ~1 WRU + affected index writes. |
+| `meta.listErasureRequests` | Q one of four erasure GSIs depending on project/state, then B/validate. Page cost as above. |
+| `recordEvent`, `recordEvents` | TX and cancellation/branch rules above. Per-event cost example below; batch in stage 2. |
+| `migrate` | Schema is provisioned by infra; no implicit table scan; explicit versioned migration for future schema changes. 0 data R/W. |
 
-## Bundles, TTL and erasure
+Subject erasure is disabled consistently across sqlite, Postgres, memory and DynamoDB in stage
+1; do **not** retain SQL's current direct delete as a hidden optional capability. A single
+common unavailable response avoids different security/erasure promises by stack and avoids
+shipping a path that stage 4 will replace. Existing in-memory / SQL contracts are migrated
+accordingly; non-erasure store functionality stays usable.
 
-Bundles have an immutable ID and generation with state `pending`, `active`, or `abandoned`.
-Create a pending generation with expected debug-ID count and digest; reserve each debug ID with
-a conditional owner+generation marker in idempotent chunks. Collisions with another **active**
-owner are conflicts; a pending owner is a retryable reservation, not silently stolen. Verify
-all expected markers via strong reads/checkpointed manifest, then atomically transition the
-same generation to active with a guard; `findBundleByDebugId` returns only an active owner
-whose generation matches. On replacement, keep the previous generation active until the new
-one is fully prepared; generation-specific markers and a single active-generation switch are
-needed. A conflict with the *same* bundle's previous generation must not destroy its visibility.
-Delete marks the active generation unavailable first and removes markers in resumable chunks.
-GC fences abandoned generations against later activation, then deletes only still-owned markers.
-Use a TTL backstop **only after** fencing a pending generation as abandoned: a marker whose TTL
-is set while it can become active can be asynchronously deleted after activation. Active
-markers never expire. A durable blob manifest or equivalent is needed for thousands of IDs so
-one bundle item stays below 400 KiB. There is no silent 48-ID limit. Atomic replacement,
-concurrent delete / reservation, duplicate IDs, crash after each chunk and GC races are required
-contract tests. This lifecycle is a proposed cross-adapter domain/port change.
+## TTL, infrastructure and capability policies
 
-Explicit event deletion stays primary. With no archival, a numeric TTL backstop can be
-retention + configured margin; TTL is asynchronous and not precise. With archival enabled,
-**do not set an event TTL that can expire before its archive batch is durably committed**:
-set/enable it only after commit, or leave it absent. A fixed retention+margin cannot guarantee
-the architecture's no-delete-before-archive invariant during an unbounded outage. Pending
-markers use the fenced TTL rule above; KV retains its independent TTL. The subject index,
-suppression, fencing and crashed-worker blob cleanup protocol are in the companion design.
-PITR may preserve erased bytes for up to the configured 35 days and is not undone by item delete.
+Use numeric epoch-seconds `ttlEpoch` as the table TTL attribute, distinct from the domain's
+ISO `StoredEvent.expiresAt` string. Change `infra/modules/aws/dynamodb` TTL declaration and
+mock/emulator contract fixtures; keep the KV table's existing `expiresAt` numeric TTL by
+making the TTL attribute purpose-specific. Explicit deletion remains primary. Without archival,
+an event can have a retention + margin TTL backstop; with archival, set the numeric TTL only
+after the archive batch is durably committed, because a fixed margin cannot prove the
+no-delete-before-commit invariant during an unbounded outage. Pending bundle and debug markers
+use `ttlEpoch`, subject to the activation caveat above; permanent/active markers have no TTL.
+PITR/backups can retain deleted bytes until their retention expires.
 
-## HCL, descriptor, IAM and emulator
+Replace the current eight GSIs with the 11 string-key schemas listed above and `KEYS_ONLY`
+projections; update key attributes, purpose-specific TTL, mock policy/index tests, descriptor
+and emulator table derivation. Record shard count in table metadata. Descriptor declares
+`textSearch:false`, `lastSeenRangeOnOtherSort:false`, `deleteStrategy:explicit`, and stage 1
+subject erasure unavailable. Versioned migration/backfill is needed for an existing table; do
+not reinterpret old keys in place. Module output names can remain stable.
 
-Replace the existing eight store GSIs with the 12 explicit sparse schemas above, keyed
-attribute definitions (including `N` for countSort), `KEYS_ONLY` projections and descriptive
-names. Add/adjust module tests, mocked output-shape and generated-root expectations, emulator
-table derivation and both provider-version tests. The KV purpose stays without these GSIs.
-Add configuration for `per-event | batched`, batch limits, count refresh, 16 fixed time-index
-shards and rate/reducer configuration at the appropriate portable core level; reject unsupported
-configurations and missing subject index / secret / worker capabilities in stack validation.
-The table output keys can remain unchanged, but new worker resources, ports and permissions
-must be represented by the infra model before generation.
+- `read`: `GetItem`, `BatchGetItem`, `Query` on table and named GSI ARNs, required by ingest,
+  API and consumer as derived by core. `getKey` is a direct table read.
+- `write`: `PutItem`, `UpdateItem`, **`GetItem`** (issue branch reads) and any required
+  transaction item actions, on the table; `Query` on required indexes via read grant. Ordinary
+  event recording uses no `DeleteItem`. When the stage 4 fence is enabled, add
+  `dynamodb:ConditionCheckItem` to the writer policy.
+- `delete`: `BatchWriteItem` on table for event batches, with retry; never assume this action
+  can be replaced by `DeleteItem`. Restrict to the roles that delete active events.
+- The **API** performs natural-key renames and bundle-marker removal, which need conditional
+  `DeleteItem`. Add a distinct `metadata-delete` capability/policy restricted to metadata key
+  namespaces where IAM `dynamodb:LeadingKeys` permits it; do not hide table-wide DeleteItem in
+  ordinary write. If IAM cannot safely enforce the desired namespace restriction, surface that
+  broader grant explicitly for review. Blob manifests need separate purpose-scoped grants.
+  Core requirement tables, descriptor output keys and generated-role tests must change together.
 
-Read policy needs `GetItem`, `BatchGetItem`, `Query` for table and the relevant index ARNs.
-Write policy needs `PutItem`, `UpdateItem`, `GetItem`, `BatchGetItem` and `Query` as required
-by admission and branch reads; `TransactWriteItems` is authorized by its underlying actions.
-Do not grant `DeleteItem` to the ordinary event-write role. Natural-key rename, bundle GC and
-subject maintenance **do** require conditional `DeleteItem`, and event deletion requires
-`BatchWriteItem`; place these in distinct capabilities/roles and check actual grants for API,
-consumer and cron rather than smuggling them into the event-write policy. This can require a
-core requirements change because current generic `store.write` also covers metadata renames.
-No `Scan`; consider table vs index resource scopes and the subject-index backend separately.
+## Costs at the review's example scale
 
-Pinned Winterbaume can exercise request shapes and ordinary GSI calls, but its conditional
-check/update is not atomic and cannot establish concurrent branch, CAS, transaction or fence
-correctness. Its pinned GSI-projection behavior is insufficient for this design; upstream main
-honors projections. Bump to a specific immutable revision only after verifying its checksum,
-projection semantics, old gap probes, and multi-key behavior, and update gap expectations.
-Use DynamoDB Local if a named missing emulator feature blocks a required contract, while real
-AWS remains necessary for production claims. See [WINTERBAUME_GAPS.md](./WINTERBAUME_GAPS.md).
+Assume 1 million events/day across 50 projects, 30-day steady state, 2 KiB event, <=1 KiB
+issue and keys-only GSI entries, one successful transaction per event, every event advances
+lastSeen and exact count sort. Use AWS on-demand example prices $0.625/million WRU and
+$0.125/million RRU; actual prices/region, item sizes, failed requests and GSI sizes vary.
 
-M3h real-DynamoDB checklist: (1) 500 same-issue concurrent events, both modes, including
-p99, throttles, retries, correctness and failure rate; (2) measure transaction base and GSI
-write units, including an unchanged sparse key and key replacement; (3) force GSI throttling
-and observe base-write backpressure; (4) IAM simulator and actual least-privilege checks for
-each read, write, delete, subject builder, refresh and GC action; (5) multi-attribute numeric
-GSI query/tie behavior and lag; (6) crash/replay barrier, TTL and erasure behavior. No finite
-observed GSI lag is a correctness guarantee.
+| Cost component | Monthly quantity and approximate cost |
+| --- | --- |
+| Per-event write | 4 WRU event TX + 2 issue TX + 2 event GSI inserts + 2 lastSeen GSI key replacement + 2 count GSI key replacement = 12 WRU/event; 360m WRU = **$225**. Extra pointer write for newly created issues is not included. |
+| Existing reads | 30m strong issue pre-reads + 30m consumer `events.get`, each <=4 KiB = 60m RRU = **$7.50**; reads after success and pointer/new-issue work add more. |
+| Explicit retention | 30m * (2 WRU base event + 2 GSI deletes) = 120m WRU = **$75**, assuming one full cycle and no retries. |
+| Optional issue rate counter | One `KV.increment` per event adds ~30m 1 KiB writes = **$18.75**, about **8.3%** of 360m ingest WRU. The current DynamoDB KV also strongly reads before its conditional update: another ~30m RRU = **$3.75**, plus contention/retries, new-issue caps and dropped counters. Batched in-memory counting reduces increments only when its semantics permit; see companion. |
+| Index blob requests | At an average 10 events per project-specific consumer batch, 100k immutable file PUTs/day, **3m PUT/month**; plus LIST/GET/compaction costs. A 30-day single-project lookup before compaction is roughly **60 LIST + 60,000 GET**, after a successful closed-day compaction ~**30 LIST + 30 footer GET** plus matching/bloom false-positive range GETs. These are object-store requests, **not DynamoDB WRU**. See companion for assumptions and full counts. |
+| Storage / PITR | 30m * 2 KiB base = ~57.2 GiB, plus two 0.25 KiB index entries/event ~14.3 GiB = ~71.5 GiB before overhead, issues and blobs. At illustrative $0.25/GB-month and $0.20/GB-month PITR on 76.8 GB decimal: ~$19.20 + $15.36. Confirm regional billing/backup size. |
 
-## Illustrative cost (30 days)
+Baseline listed write+read+delete+storage/PITR is ~$342.06. + optional counter ~$22.50 before
+object-store traffic, index storage, issue creation, Lambda, queue, blobs, archive, network,
+read-after-commit, retries and free tier. Actual GSI transactional accounting must be measured.
+The storm's observed ~2.7 **transaction attempts/event** includes failures that can consume
+capacity; it does **not** mean exactly 2.7x the whole bill, because failure stage/size/index
+updates differ. Measure per-action consumed units and p99 with the final count guard. Batch of
+10 gives a theoretical 66 WRU / 10 events (40 event TX + 2 issue TX + 20 event-GSI + 4 issue
+GSI), before pointer/fence and duplicates, but only for full same-issue groups. Item size
+rounding makes payload compression the major lever. Postgres can be cheaper or comparable;
+DynamoDB's trade is managed on-demand operation, not an asserted price win. Prices are
+illustrative, not a quote: [DynamoDB pricing](https://aws.amazon.com/dynamodb/pricing/) and
+[S3 pricing](https://aws.amazon.com/s3/pricing/).
 
-Assume 1 million events/day across 50 projects, 30-day steady state, 2 KiB event, 1 KiB issue,
-<=1 KiB index entries, four user identifiers, and every event advances lastSeen. Use AWS's
-published example prices of $0.625/million W and $0.125/million R; storage/PITR vary by region
-and billing class. Exclude retries, metadata, subject index, queue, Lambda, blobs, archive,
-refresh jobs, dirty-count GSI writes and reads until explicitly added below. GSI charges are
-regular writes, not doubled transaction units; measure this assumption in M3h.
+## Stages and proposed changes by stage
 
-- Per event: event TX 4 W + issue TX 2 W + two new event GSI entries 2 W + lastSeen index
-  replacement 2 W + count index replacement 2 W = **12 W** while countSort refreshes every
-  event. 30 million events = **360 million W / $225**. First-seen and issue-ID keys unchanged.
-- Batch 10: event TX 40 W + issue TX 2 W + 20 event GSI W + 2 lastSeen GSI W + 2 count GSI W
-  = **66 W / 10 events**, or **198 million W / $123.75**. This assumes full batches for one
-  issue and every batch advances lastSeen; actual batching efficiency varies. Once count-sort
-  refresh coalesces, subtract up to 2 W per refresh avoided and add durable refresh-work cost.
-- After steady-state retention, deleting 30 million 2 KiB events with BW costs 2 base W plus
-  two 1 W GSI deletions = **120 million W / $75**. Explicit subject-index deletion and
-  eventual sweeps cost extra. Active-store strong issue pre-read alone is ~30 million R /
-  $3.75 in per-event mode; batch pre-reads and strongly hydrated list queries vary. The
-  subject admission ledger and four-field inverted index can be material and must be measured;
-  omitting them is **not** a total-system estimate.
-- Rough event base storage 30 million * 2 KiB = **57.2 GiB**, plus two <=1 KiB GSI entries
-  each (at 0.25 KiB estimated, **14.3 GiB**) = **71.5 GiB**, before DynamoDB storage overhead,
-  issues, index work, backups and lag. At an illustrative $0.25/GB-month and $0.20/GB-month
-  PITR on 76.8 GB decimal, about **$19.20 storage + $15.36 PITR**; verify region, byte billing,
-  free tier and PITR backup size. 30-day average on a new empty table is about half. With
-  assumptions above, the partial monthly sum is about **$338.31 per-event** ($225+$75+$3.75+
-  $19.20+$15.36), not including the listed workloads or traffic.
+**Stage 1 (M3, deployable store).** Implement the items, markers, strong issue-ID pointer,
+per-event transaction, exact count composite, indexes, examined-key cursors, batch deletion,
+CAS metadata, simple bundle lifecycle, HCL / IAM. All stores declare subject deletion
+unavailable and the API rejects it until stage 4. Contract changes needed now:
 
-A managed Postgres instance can be cheaper or comparable for this volume, depending on
-instance size, Multi-AZ, storage, backups, connection pooling and operations. No apples-to-apples
-benchmark or region-specific quote has been made; pricing an instance as free or pretending
-DynamoDB wins on cost would be misleading. DynamoDB's advantage here is no managed instance or
-VPC/database network setup and on-demand scaling, with the hot-key and index trade-offs above.
-Sources: [DynamoDB on-demand pricing](https://aws.amazon.com/dynamodb/pricing/),
-[transaction capacity](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/transaction-apis.html),
-[GSI costs and consistency](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/GSI.html).
+```ts
+interface Issue { /** Accepted event insertions ever recorded; erasure never decrements. */ count: number }
+interface EventRepo { readonly capabilities: { deleteStrategy: "explicit" | "ttl"; deleteBySubject: false } }
+interface EventQuery { /* existing fields */ cursor?: Cursor }
+interface EventPage { items: StoredEvent[]; hasMore: boolean; nextCursor: Cursor | null }
+// Existing deleteBySubject remains only as an optional legacy method while capability is false;
+// callers must not invoke it and the API reports unsupported. Remove it in stage 4.
+```
+
+Add JSDoc for examined per-stream cursor and lag; contract cases stale-only page, no looping,
+shard prefetch, empty with continuation, ties and malformed cursor, all-time counts and no
+subject deletion on each adapter. `IssueRepo.repairAfterErasure` remains unused/unavailable
+until its signature changes in stage 4; do not keep a callable decrement path in the API.
+Add bundle `pending`/`active` state, manifest reference, begin/chunk/verify/activate/delete
+operations and cross-adapter tests for hundreds/thousands of IDs, duplicate chunks, conflicts,
+crashes, TTL preparation and activation. Clarify exact input/return signatures in the stage 1
+implementation PR; proposed full typed lifecycle is in the companion document. SQL sqlite,
+Postgres and memory fakes must honor the capability and changed shared contracts. API docs must
+say count is all-time and subject erasure is not yet available. Verify migration versions and
+both Terraform provider versions; no Scan.
+
+**Stage 2 (M3).** Add `recordEvents(group: readonly RecordInput[]): Promise<readonly
+RecordResult[]>`, the all-or-nothing bounded per-issue-group semantics above, and mode config.
+`recordEvent` remains. Implement SQL sqlite/Postgres and memory plus DynamoDB, update consumer
+batch grouping and shared atomicity/duplicate/regression tests; use adapter-level fault
+injection for partial progress across separate groups. Explicitly enforce transaction size.
+
+**Stage 3 (M3).** Core rate checks on KV, stack defaults/project overrides, per-project new
+issue cap, fail-open by default and fail-retry option, API-visible per-window dropped count;
+no rejection ledger, no sample policy. Test suppression-before-rate, duplicate overcount,
+fixed windows, batch counting, failures, project cap and unchanged lastSeen/regression.
+
+**Stage 4 (M4).** Add reducer, independent Parquet-in-blob index and its compactor, inline
+consumer append before ack, durable suppression, K-sharded fence, erasure worker, common
+`deleteBySubject` removal, count-preserving pointer repair and archive reduced-key deletion.
+See companion for exact proposed port signatures, capability rows and race table. Close the
+SQS completion-proof gap before declaring erasure complete.
+
+Explicitly cut the prior admission ledger, epochs, certificates, coordinator, erasure-work port,
+archive baseline, rejection ledger, sample policy, count-refresh reconciler/index and
+multi-attribute GSI keys. The simple bundle lifecycle does not reinstate generation-fenced GC.
+
+## Emulator and real AWS checks
+
+Winterbaume at the pinned revision exercises ordinary API shape/order and basic conditions,
+but its conditional update check/write is not atomic and it cannot establish transaction
+concurrency, CAS, fence behavior, index propagation or precise capacity. Probe composite-key
+ordering, GSI projection support and failure reasons; bump the pin only after immutable revision
+and old gap checks, or use DynamoDB Local for a named missing feature. Local's 500-way result
+above remains informative but cannot substitute for AWS transaction contention.
+
+M3h: 500 concurrent same-issue writes in per-event and batched modes, including new count-key
+guard, retry/exhaustion rate, exact count and `isNew`, p99 and transaction/GSI consumed units;
+GSI throttling backpressure; index projection and examined-key cursor behavior under stale rows;
+role-specific IAM incl. `BatchWriteItem`, `metadata-delete` and optional fence; TTL attribute
+and archival safety; real `ConditionCheck` vs `ConditionCheck` contention and K-shard closure;
+active/archive latest-pointer repair. Stage 4's queue/DLQ proof and object-store assumptions are
+separate prerequisites, not established by a successful 500-way test.
