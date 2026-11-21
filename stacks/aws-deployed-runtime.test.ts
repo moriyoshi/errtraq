@@ -3,11 +3,63 @@ import {
   deriveDeployment,
   output,
 } from "@errtraq/core";
-import { describe, expect, it } from "vitest";
+import { create as createSqs } from "@errtraq/queue-sqs";
+import { describe, expect, it, vi } from "vitest";
 import shared from "./aws-dynamodb.js";
 import perTopic from "./aws-dynamodb-per-topic.js";
 
 describe.each([shared, perTopic])("deployed runtime: $name", (stack) => {
+  it("constructs the SQS producer from the delivered queue binding", async () => {
+    const fn = deriveDeployment(stack).functions.find(
+      (item) => item.id === "ingest",
+    );
+    if (!fn) throw new Error("missing ingest function");
+    const environment = Object.fromEntries(
+      fn.envBindings.map(({ binding }) => [
+        binding.name,
+        "https://sqs.us-east-1.amazonaws.com/123456789012/test",
+      ]),
+    );
+    Object.assign(environment, {
+      AWS_REGION: "us-east-1",
+      AWS_ACCESS_KEY_ID: "fixture",
+      AWS_SECRET_ACCESS_KEY: "fixture",
+    });
+    const requests: Record<string, unknown>[] = [];
+    vi.stubGlobal("fetch", async (_url: unknown, init: RequestInit) => {
+      const body = JSON.parse(String(init.body));
+      requests.push(body);
+      return new Response(
+        JSON.stringify({
+          Successful: body.Entries.map((entry: { Id: string }) => ({
+            Id: entry.Id,
+          })),
+        }),
+      );
+    });
+    try {
+      const built = await constructDeployedStack(
+        stack,
+        "ingest",
+        environment,
+        async (module) =>
+          module === "@errtraq/queue-sqs"
+            ? { create: createSqs }
+            : { create: () => ({}) },
+      );
+      const queue = built.instances.get("queue");
+      if (!queue || typeof queue !== "object" || !("producer" in queue))
+        throw new Error("missing queue");
+      const actual = queue as ReturnType<typeof createSqs>;
+      await actual.producer.send("ingest", [{ key: "test", body: 1 }]);
+      expect(requests[0]?.QueueUrl).toBe(
+        "https://sqs.us-east-1.amazonaws.com/123456789012/test",
+      );
+      await built.close();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
   it("rejects an empty deployed binding", async () => {
     const fn = deriveDeployment(stack).functions.find(
       (item) => item.id === "ingest",

@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
+import { signAwsRequest } from "@errtraq/aws-signing";
 import { blobStoreContract } from "@errtraq/testing";
-import { AwsV4Signer } from "aws4fetch";
 import { afterEach, describe, expect, it } from "vitest";
 import { S3BlobStore } from "./runtime.js";
 
@@ -11,13 +11,13 @@ if (local && (local.protocol !== "http:" || local.hostname !== "127.0.0.1"))
 const active: { bucket: string; store: S3BlobStore }[] = [];
 const credentials = { accessKeyId: "emulator", secretAccessKey: "emulator" };
 async function bucketRequest(bucket: string, method: string) {
-  const signed = await new AwsV4Signer({
+  const signed = await signAwsRequest({
     url: `${endpoint}/${bucket}`,
     method,
     ...credentials,
     service: "s3",
     region: "us-east-1",
-  }).sign();
+  });
   const response = await fetch(signed.url, { method, headers: signed.headers });
   if (!response.ok)
     throw new Error(`Bucket ${method} failed (${response.status})`);

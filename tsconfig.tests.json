@@ -52,7 +52,8 @@
       ],
       "@errtraq/platform-aws-lambda/stack": [
         "packages/platforms/aws-lambda/src/stack.ts"
-      ]
+      ],
+      "@errtraq/aws-signing": ["packages/aws-signing/src/index.ts"]
     }
   },
   "include": ["packages/core/src/**/*.ts", "packages/http/src/**/*.ts"]

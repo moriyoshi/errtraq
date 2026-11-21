@@ -1,3 +1,4 @@
+import { signAwsRequest } from "@errtraq/aws-signing";
 import {
   BlobCorruptError,
   type BlobMetadata,
@@ -9,7 +10,6 @@ import {
   InvalidCursorError,
   pageLimit,
 } from "@errtraq/core";
-import { AwsV4Signer } from "aws4fetch";
 import { XMLParser, XMLValidator } from "fast-xml-parser";
 import type { Config } from "./stack.js";
 
@@ -28,11 +28,7 @@ export interface S3Options {
   fetch?: typeof fetch;
   sleep?: (ms: number) => Promise<void>;
 }
-export async function signS3Request(
-  input: ConstructorParameters<typeof AwsV4Signer>[0],
-) {
-  return new AwsV4Signer(input).sign();
-}
+export const signS3Request = signAwsRequest;
 function compareUtf8(a: string, b: string): number {
   const left = new TextEncoder().encode(a),
     right = new TextEncoder().encode(b);

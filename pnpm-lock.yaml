@@ -236,12 +236,12 @@ importers:
 
   packages/adapters/blob-s3:
     dependencies:
+      '@errtraq/aws-signing':
+        specifier: workspace:*
+        version: link:../../aws-signing
       '@errtraq/core':
         specifier: workspace:*
         version: link:../../core
-      aws4fetch:
-        specifier: 1.0.20
-        version: 1.0.20
       fast-xml-parser:
         specifier: 5.3.8
         version: 5.3.8
@@ -290,12 +290,19 @@ importers:
 
   packages/adapters/queue-sqs:
     dependencies:
+      '@errtraq/aws-signing':
+        specifier: workspace:*
+        version: link:../../aws-signing
       '@errtraq/core':
         specifier: workspace:*
         version: link:../../core
       zod:
         specifier: 4.6.7
         version: 4.6.7
+    devDependencies:
+      '@errtraq/testing':
+        specifier: workspace:*
+        version: link:../../testing
 
   packages/adapters/store-dynamodb:
     dependencies:
@@ -321,6 +328,12 @@ importers:
       '@errtraq/testing':
         specifier: workspace:*
         version: link:../../testing
+
+  packages/aws-signing:
+    dependencies:
+      aws4fetch:
+        specifier: 1.0.20
+        version: 1.0.20
 
   packages/cli:
     dependencies:

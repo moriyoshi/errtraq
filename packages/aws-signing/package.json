@@ -1,0 +1,22 @@
+{
+  "name": "@errtraq/aws-signing",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "development": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": "^22.18.0 || >=23.6.0"
+  },
+  "dependencies": {
+    "aws4fetch": "1.0.20"
+  }
+}

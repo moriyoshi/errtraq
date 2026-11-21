@@ -481,7 +481,6 @@ describe("AWS descriptor stacks", () => {
     for (const [name, module] of [
       ["store-dynamodb", storeModule],
       ["kv-dynamodb", kvModule],
-      ["queue-sqs", queueModule],
       ["platform-aws-lambda", lambdaModule],
     ] as const) {
       expect(Object.keys(module).sort()).toEqual([
@@ -493,6 +492,14 @@ describe("AWS descriptor stacks", () => {
         `${name} runtime not implemented until M3`,
       );
     }
+    expect(Object.keys(queueModule).sort()).toEqual([
+      "create",
+      "infra",
+      "manifest",
+    ]);
+    expect(() => queueModule.create({ ...context, config: {} })).toThrow(
+      "Missing SQS region",
+    );
     expect(Object.keys(blobModule).sort()).toEqual([
       "create",
       "infra",

@@ -191,5 +191,5 @@ reproduces).
 | Tag readback: IAM `CreateRole` / `GetRole` omit `Role.Tags` | [#52](https://github.com/moriyoshi/winterbaume/issues/52) |
 | Tag readback: S3 `CreateBucket` drops `CreateBucketConfiguration.Tags` | [#53](https://github.com/moriyoshi/winterbaume/issues/53) |
 | Tag readback: Lambda event source mapping has no ARN and cannot be tagged | [#54](https://github.com/moriyoshi/winterbaume/issues/54) |
-| S3 percent-decoding corrupts UTF-8 keys | Not yet filed; local contract-only patch |
+| S3 percent-decoding corrupts UTF-8 keys | [#58](https://github.com/moriyoshi/winterbaume/issues/58); local contract-only patch until fixed |
 | S3 ranged GET in server release 0.2.6 | [#29](https://github.com/moriyoshi/winterbaume/issues/29) (closed; fixed at the pinned revision) |

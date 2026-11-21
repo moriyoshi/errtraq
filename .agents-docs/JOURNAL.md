@@ -670,3 +670,19 @@ integration while the existing validation gate continues to cover both provider 
   signature-enforcing emulator has yet been exercised.
 - Construction now passes the host environment through the adapter context, so S3 can
   refresh standard Lambda credentials without using Node globals in Workers-compatible code.
+
+## 2026-11-21 — M3c SQS runtime
+
+- S3 and SQS share the WebCrypto-based aws4fetch signer in the internal `aws-signing`
+  package. SQS signs JSON API requests using refreshable Lambda environment credentials.
+- Producers validate all entries before sending, count the UTF-8 envelope against the SQS
+  1 MiB limits, split at 10 entries or 1 MiB, and retry only transient failed entries.
+  Producer delay uses SQS integer seconds (0 through 900). A thrown batch request can have
+  been accepted before a network failure, so callers must tolerate duplicate messages.
+- Lambda consumes only ARN-mapped topics and returns partial failures; delayed retries use
+  ChangeMessageVisibility and fall back to the original visibility timeout if it fails.
+  Consumer queue URLs derive from the delivered ARN and region, avoiding additional bindings
+  or GetQueueUrl permission. Retry visibility is bounded to integer seconds up to 43200.
+- The unmodified Winterbaume push driver runs the queue contract in shared and per-topic
+  modes with polling, visibility and partial acknowledgements. It does not enforce real AWS
+  IAM or execute Lambda; deployed event-source behavior still needs M3h.

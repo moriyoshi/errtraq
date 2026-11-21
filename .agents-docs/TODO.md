@@ -34,9 +34,11 @@ item should be resolved or removed once addressed. Milestone work itself is trac
 
 - [ ] M3: integrate runtime secret sources for deployed functions. — *source: M2a2 review A4*
 
-- [ ] M3: implement the AWS runtime adapters; enforce the 1 MiB SQS body limit including serialization and envelope overhead, and make DynamoDB explicit deletion honor erasure semantics. — *source: M2b step 1*
+- [x] M3: enforce the 1 MiB SQS body limit including serialization and envelope overhead. — *source: M2b step 1; resolved in M3c*
+- [ ] M3: implement the remaining AWS runtime adapters and make DynamoDB explicit deletion honor erasure semantics. — *source: M2b step 1*
 
-- [ ] M3: implement SQS partial batch failures and lazy Secrets Manager ARN resolution, and verify EventBridge job dispatch with AWS runtime adapters. — *source: M2b step 2*
+- [x] M3: implement SQS partial batch failures. — *source: M2b step 2; resolved in M3c*
+- [ ] M3: implement lazy Secrets Manager ARN resolution and verify EventBridge job dispatch with AWS runtime adapters. — *source: M2b step 2*
 - [ ] M3: implement and test the DynamoDB sparse-index and lookup-item layout documented in `infra/modules/aws/README.md`, including eventual-consistency limits and explicit erasure. — *source: M2b step 2*
 
 - [ ] M3 / M6: address second-review follow-ups N9 and N12-N15, including Cloudflare binding authorization and runtime limitations. — *source: `.agents-workspace/tmp/m2a2-review-fixes.md`*
@@ -52,4 +54,5 @@ item should be resolved or removed once addressed. Milestone work itself is trac
 
 - [ ] M3 / packaging: support projects that depend on errtraq packages without requiring a `pnpm-workspace.yaml` repository or in-repository build and output directories. — *source: M2 final review section B*
 - [ ] M3: reduce Lambda bundle size; current bundles include most of core and Zod. — *source: M2 final review section B*
-- [ ] M3: test SQS partial-batch failure and EventBridge event handling against real AWS event shapes. — *source: M2 final review section B*
+- [x] M3: test SQS partial-batch failures with real-shaped AWS events. — *source: M2 final review section B; resolved in M3c*
+- [ ] M3: test EventBridge event handling against real AWS event shapes. — *source: M2 final review section B*

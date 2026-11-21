@@ -155,6 +155,28 @@ try {
     if (!removed) throw new Error("Namespace cleanup left a resource behind");
   }
   console.log("PASS namespace cleanup");
+  console.log(
+    "Running SQS shared and per-topic contracts against the unmodified emulator",
+  );
+  const sqsContract = spawn(
+    "pnpm",
+    [
+      "exec",
+      "vitest",
+      "run",
+      "packages/adapters/queue-sqs/src/contract.emulated.test.ts",
+    ],
+    {
+      stdio: "inherit",
+      env: { ...process.env, ERRTRAQ_SQS_EMULATOR: endpoint },
+    },
+  );
+  const sqsStatus = await new Promise((resolve, reject) => {
+    sqsContract.once("error", reject);
+    sqsContract.once("exit", resolve);
+  });
+  if (sqsStatus !== 0)
+    throw new Error(`SQS contract runner failed (${sqsStatus})`);
   const contract = spawn(
     process.execPath,
     ["scripts/aws-emulated/run-s3-contract.mjs"],

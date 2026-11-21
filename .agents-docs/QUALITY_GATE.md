@@ -39,7 +39,7 @@ AWS emulator probes and the namespace lifecycle are opt-in:
 ```sh
 pnpm aws-emulator:install              # build the verified, unmodified pinned server
 pnpm aws-emulator:install-s3-patched   # build the verified local UTF-8 patch for S3 contracts
-pnpm test:aws-emulated                 # runs probes and S3 contract; skips absent builds
+pnpm test:aws-emulated                 # runs probes plus SQS and S3 contracts; skips absent builds
 ```
 
 The installer keeps its source, Cargo cache and build under `.agents-workspace/tmp`. The
