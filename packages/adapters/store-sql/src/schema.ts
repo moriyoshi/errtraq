@@ -42,7 +42,7 @@ async function migrateLocked(
     .select("version")
     .orderBy("version", "desc")
     .executeTakeFirst();
-  if (Number(latest?.version ?? 0) > 3)
+  if (Number(latest?.version ?? 0) > 4)
     throw new UnsupportedSchemaVersionError(
       `Unsupported schema version ${String(latest?.version)}`,
     );
@@ -57,6 +57,48 @@ async function migrateLocked(
         ]);
       },
     },
+    {
+      version: 4,
+      run: async (db: SqlDatabase) => {
+        const rows = await db
+          .selectFrom("bundles")
+          .select(["pk", "data"])
+          .execute();
+        for (const row of rows) {
+          const bundle = JSON.parse(String(row.data)) as Record<
+            string,
+            unknown
+          >;
+          if (!bundle.state) {
+            const ids = Array.isArray(bundle.debugIds) ? bundle.debugIds : [];
+            bundle.state = "active";
+            bundle.manifest = {
+              blobKey: bundle.blobKey,
+              digest: "legacy",
+              debugIdCount: ids.length,
+            };
+            delete bundle.debugIds;
+            await db
+              .updateTable("bundles")
+              .set({ state: "active", data: JSON.stringify(bundle) })
+              .where("pk", "=", row.pk)
+              .execute();
+          }
+        }
+        await dialect.createIndex(
+          db,
+          "bundle_debug_owner_unique",
+          "bundle_debug_ids",
+          ["project_id", "debug_id"],
+          true,
+        );
+        await dialect.createIndex(db, "bundle_pending", "bundles", [
+          "project_id",
+          "state",
+          "pk",
+        ]);
+      },
+    },
   ];
   for (const step of steps) {
     const run = async (trx: SqlDatabase) => {
@@ -66,7 +108,7 @@ async function migrateLocked(
         .orderBy("version", "desc")
         .executeTakeFirst();
       const version = Number(current?.version ?? 0);
-      if (version > 3)
+      if (version > 4)
         throw new UnsupportedSchemaVersionError(
           `Unsupported schema version ${version}`,
         );

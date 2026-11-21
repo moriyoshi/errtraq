@@ -124,8 +124,8 @@ candidate; either buffer it in a bounded cursor or resume from its predecessor. 
 composite key and preserve each stream's consumed position. Validate cursor scope, shape,
 filter, sort and shard count; retry unprocessed keys, don't report exhaustion on failure.
 
-The current `EventPage` exposes `after` based on a returned event, which cannot represent an
-empty-but-progressed page. Stage 1 must add a scoped opaque source continuation while retaining
+`EventPage.nextCursor` exposes scoped source-local progress, including empty-but-progressed pages,
+while retaining
 `EventPosition` for the active/archive federation boundary; the federated merger keeps pulling
 empty partial pages before comparing streams and must not use a source cursor as a global
 keyset. The change needs a contract test so source-level examined progress never skips
@@ -326,7 +326,7 @@ interface Issue { /** Accepted event insertions ever recorded; erasure never dec
 interface EventRepo { readonly capabilities: { deleteStrategy: "explicit" | "ttl"; deleteBySubject: false } }
 interface EventQuery { /* existing fields */ cursor?: Cursor }
 interface EventPage { items: StoredEvent[]; hasMore: boolean; nextCursor: Cursor | null }
-// Existing deleteBySubject remains only as an optional legacy method while capability is false;
+// The legacy deleteBySubject method remains required but always throws while capability is false;
 // callers must not invoke it and the API reports unsupported. Remove it in stage 4.
 ```
 

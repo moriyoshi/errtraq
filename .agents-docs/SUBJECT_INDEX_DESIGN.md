@@ -310,8 +310,7 @@ tests should be added.
 ### Stage 1 — deployable DynamoDB store, common erasure unavailable
 
 - Add `EventRepo.capabilities.deleteBySubject: false` (or an equivalent named capability) to
-all stores and route the erasure API to a clear unsupported error; retain the old method only as an optional
-migration shim and never invoke it. SQL sqlite/Postgres and memory must not provide a bypass. Remove the
+all stores and route the erasure API to a clear unsupported error; retain the old method as a migration shim which always throws and never invoke it. SQL sqlite/Postgres and memory must not provide a bypass. Remove the
 method entirely in stage 4.
 - `Issue.count` JSDoc and API field description: accepted event insertions ever recorded;
 archive/retention/erasure never decrement. Keep `repairAfterErasure` unavailable until stage 4 rather than
@@ -328,8 +327,9 @@ type BundleManifest = { blobKey: string; digest: string; debugIdCount: number };
 interface ReleaseRepo {
   beginBundle(bundle: ArtifactBundle, manifest: BundleManifest): Promise<void>;
   putBundleDebugIds(projectId: ProjectId, bundleId: ArtifactBundleId,
-                    debugIds: readonly string[]): Promise<void>;
-  verifyAndActivateBundle(projectId: ProjectId, bundleId: ArtifactBundleId): Promise<void>;
+                    debugIds: readonly string[], manifestIds: readonly string[]): Promise<void>;
+  verifyAndActivateBundle(projectId: ProjectId, bundleId: ArtifactBundleId,
+                          manifestIds: readonly string[]): Promise<void>;
   deleteBundle(projectId: ProjectId, bundleId: ArtifactBundleId): Promise<void>;
   findBundleByDebugId(projectId: ProjectId, debugId: string): Promise<ArtifactBundle | null>;
 }

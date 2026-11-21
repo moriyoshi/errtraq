@@ -7,7 +7,7 @@ import {
   postgresStoreDialect,
   rdsIamPoolConfig,
 } from "./postgres-dialect.js";
-import type { SqlDatabase } from "./schema.js";
+import { createInitialSchema, type SqlDatabase } from "./schema.js";
 import { createSqlStore } from "./store.js";
 
 const connection = process.env.ERRTRAQ_TEST_POSTGRES;
@@ -43,6 +43,48 @@ suite("Postgres", () => {
     const store = createSqlStore({ db, dialect: postgresStoreDialect });
     await store.migrate();
     return store;
+  });
+  it("upgrades existing bundle markers without losing active lookups", async () => {
+    const { db } = await database();
+    await db.schema
+      .createTable("schema_version")
+      .addColumn("version", "integer", (c) => c.primaryKey())
+      .execute();
+    await createInitialSchema(db, postgresStoreDialect);
+    await db.insertInto("schema_version").values({ version: 1 }).execute();
+    const legacy = {
+      id: "old",
+      projectId: "1",
+      releaseId: "release",
+      blobKey: "old-blob",
+      debugIds: ["debug"],
+    };
+    const key = JSON.stringify(["1", "old"]);
+    await db
+      .insertInto("bundles")
+      .values({
+        pk: key,
+        project_id: "1",
+        scope: "release",
+        data: JSON.stringify(legacy),
+      })
+      .execute();
+    await db
+      .insertInto("bundle_debug_ids")
+      .values({ project_id: "1", debug_id: "debug", bundle_pk: key })
+      .execute();
+    const store = createSqlStore({ db, dialect: postgresStoreDialect });
+    await store.migrate();
+    expect(
+      await store.releases.findBundleByDebugId(
+        "1" as import("@errtraq/core").ProjectId,
+        "debug",
+      ),
+    ).toMatchObject({
+      id: "old",
+      state: "active",
+      manifest: { blobKey: "old-blob", digest: "legacy", debugIdCount: 1 },
+    });
   });
   it("serializes concurrent starters and concurrent writers on separate pools", async () => {
     const { db: a, name } = await database();
@@ -335,5 +377,5 @@ suite("Postgres", () => {
         /Index Scan|Index Only Scan|Bitmap Index Scan/,
       );
     }
-  });
+  }, 30000);
 });

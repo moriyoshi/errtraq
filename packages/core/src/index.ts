@@ -1,5 +1,6 @@
 export * from "./blob-key.js";
 export * from "./bootstrap.js";
+export * from "./bundle-cleanup.js";
 export * from "./consumer.js";
 export * from "./consumer-policy.js";
 export * from "./cron.js";

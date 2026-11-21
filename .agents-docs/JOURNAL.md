@@ -836,3 +836,18 @@ and an empty DLQ cannot prove a committed but unindexed event is absent from the
 Stage 4 must resolve that completion guarantee or explicitly narrow it before claiming erasure.
 Manifest CAS also needs an atomic lease-fencing check: a version check alone does not fence a
 stale holder after lease takeover.
+
+## 2026-11-21 — M3e stage 1 shared contracts
+
+Subject deletion and the old count-decrementing repair path now fail explicitly until M4.
+Event paging carries a source-local examined-key cursor independently of the federation
+boundary, so the API can return an empty page with a continuation. SQL migration 4 preserves
+legacy bundle lookups and rejects duplicate debug-ID ownership rather than silently choosing
+an owner. Bundle manifests use a canonical SHA-256 digest; marker chunks are capped at 100
+and validated against the immutable manifest. Pending cleanup uses a durable claim and progress
+marker before deleting its unique, never-reused manifest key, so blob-delete failures can be
+retried. The cleanup helper still needs scheduling and the unimplemented bundle API needs its
+separate metadata-delete and blob policies; their requirement rows are recorded but inactive.
+The SQL activation and cleanup API supplies the full manifest ID list, since a store adapter
+does not itself have a BlobStore dependency. The DynamoDB implementation must preserve bounded
+marker operations and the TTL-clearing crash caveat in the design.

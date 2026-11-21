@@ -12,6 +12,7 @@ import type {
 import {
   decodeCursor,
   encodeCursor,
+  eventCursorScope,
   InvalidCursorError,
   pageLimit,
 } from "@errtraq/core";
@@ -142,20 +143,36 @@ export function stream(data: Uint8Array): ReadableStream<Uint8Array> {
 /** Keyset pages remain usable after a federated merge emits only a prefix. */
 export function eventPage(rows: StoredEvent[], query: EventQuery): EventPage {
   const direction = query.order === "asc" ? 1 : -1;
-  const sorted = rows.sort((a, b) => direction * eventOrder(a, b));
-  const remaining = sorted.filter(
-    (row) =>
-      !query.after ||
-      direction *
-        (compareUtf8(row.receivedAt, query.after.receivedAt) ||
-          compareUtf8(row.eventId, query.after.eventId)) >
-        0,
-  );
+  const scope = eventCursorScope(query);
+  const keys = decodeCursor(query.cursor, scope);
+  if (
+    keys &&
+    (keys.length !== 2 ||
+      typeof keys[0] !== "string" ||
+      typeof keys[1] !== "string")
+  )
+    throw new InvalidCursorError("Invalid event cursor");
+  const boundary = keys
+    ? { receivedAt: String(keys[0]), eventId: String(keys[1]) }
+    : query.after;
+  const remaining = rows
+    .sort((a, b) => direction * eventOrder(a, b))
+    .filter(
+      (row) =>
+        !boundary ||
+        direction *
+          (compareUtf8(row.receivedAt, boundary.receivedAt) ||
+            compareUtf8(row.eventId, boundary.eventId)) >
+          0,
+    );
   const limit = pageLimit(query.limit);
-  return {
-    items: copy(remaining.slice(0, limit)),
-    hasMore: remaining.length > limit,
-  };
+  const selected = remaining.slice(0, limit);
+  const last = selected.at(-1);
+  const nextCursor =
+    remaining.length > limit && last
+      ? encodeCursor(scope, [last.receivedAt, last.eventId])
+      : null;
+  return { items: copy(selected), hasMore: nextCursor !== null, nextCursor };
 }
 
 /** Compare strings as unsigned UTF-8 bytes. */

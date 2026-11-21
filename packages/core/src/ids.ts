@@ -25,3 +25,29 @@ export async function hashApiToken(token: string): Promise<string> {
     b.toString(16).padStart(2, "0"),
   ).join("");
 }
+
+/** Canonical manifest digest: UTF-8 JSON of distinct debug IDs in byte order. */
+export async function bundleDebugIdsDigest(
+  ids: readonly string[],
+): Promise<string> {
+  const encoder = new TextEncoder();
+  const compare = (a: string, b: string) => {
+    const x = encoder.encode(a),
+      y = encoder.encode(b);
+    for (let i = 0; i < Math.min(x.length, y.length); i++) {
+      const d = (x[i] ?? 0) - (y[i] ?? 0);
+      if (d) return d;
+    }
+    return x.length - y.length;
+  };
+  const canonical = [...new Set(ids)].sort(compare);
+  return Array.from(
+    new Uint8Array(
+      await crypto.subtle.digest(
+        "SHA-256",
+        encoder.encode(JSON.stringify(canonical)),
+      ),
+    ),
+    (b) => b.toString(16).padStart(2, "0"),
+  ).join("");
+}

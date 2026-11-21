@@ -50,3 +50,16 @@ export function decodeCursor(
     throw new InvalidCursorError("Invalid cursor");
   }
 }
+
+/** Scope a source-local event cursor to all query filters and the federation boundary. */
+export function eventCursorScope(q: import("./ports.js").EventQuery): string {
+  return JSON.stringify([
+    "events",
+    q.projectId,
+    q.issueId ?? null,
+    q.from ?? null,
+    q.to ?? null,
+    q.after ?? null,
+    q.order ?? "desc",
+  ]);
+}

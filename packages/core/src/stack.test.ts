@@ -33,6 +33,7 @@ import {
   validateStack,
   variable,
 } from "./index.js";
+import { PORT_REQUIREMENTS } from "./stack-requirements.js";
 
 const roles = ["ingest", "api", "consumer", "cron"] as const;
 const route = () => ({ physical: "shared", producerBinding: "QUEUE_URL" });
@@ -1290,6 +1291,35 @@ describe("infrastructure model", () => {
           x.functionId === "ingest" &&
           x.selection === "store" &&
           x.capability === "write",
+      ),
+    ).toBe(false);
+  });
+  it("records planned bundle requirements without granting unavailable erasure access", () => {
+    expect(PORT_REQUIREMENTS).toContainEqual({
+      kind: "store",
+      role: "api",
+      capability: "metadata-delete",
+      purpose: "primary",
+      milestone: "M3",
+    });
+    const v = stack();
+    v.archive = selection("archive");
+    v.archive.manifest.capabilities = { rowDelete: "copy-on-write" };
+    const grants = deriveAccess(v).grants;
+    expect(
+      grants.some(
+        (g) =>
+          g.functionId === "api" &&
+          g.selection === "store" &&
+          g.capability === "metadata-delete",
+      ),
+    ).toBe(false);
+    expect(
+      grants.some(
+        (g) =>
+          g.functionId === "api" &&
+          g.selection === "kv" &&
+          g.capability === "write",
       ),
     ).toBe(false);
   });

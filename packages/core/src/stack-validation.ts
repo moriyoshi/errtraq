@@ -99,7 +99,7 @@ export function moduleName(path: string): string {
 function featureEnabled(
   stack: StackConfig,
   feature?: "archive" | "notifications",
-  milestone?: "M4",
+  milestone?: "M3" | "M4",
 ): boolean {
   return (
     (feature === undefined && milestone === undefined) ||

@@ -169,14 +169,17 @@ and `api` have HTTP apps. The standalone platform mounts exactly the configured 
 `PORT_REQUIREMENTS` and `TOPIC_ROUTES` in `stack-requirements.ts` own the role matrix. For M1,
 ingest needs store read, blob write/delete, KV read/write and queue produce; API needs store
 read/write and blob read; consumer needs store read/write and blob read/write/delete and queue
-consume. Blob read includes the prefix-scoped list access needed to distinguish missing objects.
+consume. Planned bundle handlers require API store `metadata-delete` and primary blob write/delete;
+those rows stay inactive until handlers and least-privilege policies exist. Subject erasure is
+unavailable until M4 and grants no active erasure capability. Blob read includes the
+prefix-scoped list access needed to distinguish missing objects.
 Deployed cron also needs primary blob read / list and ingest-queue produce to recover staged
 envelopes; M3 must schedule that job. `ingest` is produced by ingest and cron, and consumed by consumer. The M4 `notifications` route is
 produced and consumed by consumer and is enabled only by `features.notifications: true`; the M4
 `archive.project` route is enabled when archive is selected, produced by cron and consumer, and
 consumed by consumer. Archive selection adds the marked M4 store, blob staging and primary,
 archive and KV requirements in the table. In particular cron needs staging read/write/delete/list and also
-primary blob read/delete for erasure. These are model requirements, not implemented M4 handlers.
+primary blob read/delete to remove archived overflow blobs. These are model requirements, not implemented M4 handlers. The API receives no erasure suppression-write grant while subject erasure is unavailable.
 
 Core validates that selected adapters support each active role / capability / purpose, derives
 `DerivedGrant` records and binding scopes for physical functions, and groups duplicate grants.

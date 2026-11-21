@@ -2,6 +2,7 @@ import type {
   ApiToken,
   ArchiveState,
   ArtifactBundle,
+  BundleManifest,
   Cursor,
   Day,
   ErasureId,
@@ -44,6 +45,8 @@ export interface EventQuery {
   issueId?: IssueId;
   from?: Timestamp;
   to?: Timestamp;
+  /** Source-local examined-key cursor; independent of the federation after position. */
+  cursor?: Cursor;
   after?: EventPosition;
   order?: "asc" | "desc";
   limit?: number;
@@ -78,7 +81,7 @@ export interface IssueRepo {
    * Range with a non-lastSeen sort throws UnsupportedQueryError unless supported by capability.
    * Keysets do not provide a snapshot: changes crossing the cursor can be missed or repeated. */
   list(query: IssueQuery): Promise<Page<Issue>>;
-  /** Subtract removedCount and repoint to newest remaining active event; if none remain, leave the previous pointer. */
+  /** Unavailable until the M4 subject index; always throws UnsupportedQueryError. */
   repairAfterErasure(
     projectId: ProjectId,
     issueId: IssueId,
@@ -95,10 +98,13 @@ export interface IssueRepo {
 export interface EventRepo {
   readonly capabilities: {
     deleteStrategy: "explicit" | "ttl";
+    /** Subject erasure requires the M4 SubjectIndex and is unavailable in stage 1. */
+    deleteBySubject: false;
   };
 
   get(projectId: ProjectId, eventId: EventId): Promise<StoredEvent | null>;
-  /** Exclusive keyset after; order defaults to descending (receivedAt, eventId), range [from, to). */
+  /** Exclusive federation keyset after; order defaults to descending (receivedAt, eventId), range [from, to).
+   * The independent cursor advances by examined source keys, including stale rows; empty pages can continue. */
   listByIssue(query: EventQuery): Promise<EventPage>;
 
   /** Ascending (receivedAt, eventId); cutoff is exclusive, with cursor and limit for paging. */
@@ -108,8 +114,7 @@ export interface EventRepo {
     options?: { cursor?: Cursor; limit?: number },
   ): Promise<Page<StoredEvent>>;
   deleteBatch(projectId: ProjectId, ids: EventId[]): Promise<void>;
-  /** Deletes at most limit matches with receivedAt <= before; repeat while hasMore. Returns
-   * removed counts per issue and overflow blob keys so callers can clean up and repair. */
+  /** Unavailable until the M4 subject index; always throws UnsupportedQueryError. */
   deleteBySubject(
     projectId: ProjectId,
     selector: SubjectSelector,
@@ -137,7 +142,48 @@ export interface ReleaseRepo {
     cursor?: Cursor,
     limit?: number,
   ): Promise<Page<Release>>;
-  putBundle(bundle: ArtifactBundle): Promise<void>;
+  /** Begin or retry an identical pending bundle; competing IDs are rejected. */
+  beginBundle(bundle: ArtifactBundle, manifest: BundleManifest): Promise<void>;
+  /** Claim at most 100 IDs from the verified immutable manifest. A debug ID has one owner per project. */
+  putBundleDebugIds(
+    projectId: ProjectId,
+    bundleId: ArtifactBundle["id"],
+    debugIds: readonly string[],
+    manifestIds: readonly string[],
+  ): Promise<void>;
+  /** Caller loads the immutable manifest from BlobStore and supplies its IDs for verification. */
+  verifyAndActivateBundle(
+    projectId: ProjectId,
+    bundleId: ArtifactBundle["id"],
+    debugIds: readonly string[],
+  ): Promise<void>;
+  /** List expired pending bundles for cleanup; caller removes each manifest after deleting its markers. */
+  listPendingBundles(
+    projectId: ProjectId,
+    before: Timestamp,
+    cursor?: Cursor,
+    limit?: number,
+  ): Promise<Page<ArtifactBundle>>;
+  /** Atomically claim an expired pending bundle; null means missing, active or not expired.
+   * Clear markers, delete the manifest, then finish the claim; interrupted claims remain listed. */
+  claimPendingBundleCleanup(
+    projectId: ProjectId,
+    bundleId: ArtifactBundle["id"],
+    before: Timestamp,
+  ): Promise<ArtifactBundle | null>;
+  /** After claiming cleanup, remove this bundle's markers in retryable bounded chunks, then persist completion. */
+  clearPendingBundleDebugIds(
+    projectId: ProjectId,
+    bundleId: ArtifactBundle["id"],
+    debugIds: readonly string[],
+    cleanupId: string,
+  ): Promise<void>;
+  /** Finalize only the matching cleanup claim. */
+  finishPendingBundleCleanup(
+    projectId: ProjectId,
+    bundleId: ArtifactBundle["id"],
+    cleanupId: string,
+  ): Promise<void>;
   /** List bundles for a project and release. */
   listBundles(
     projectId: ProjectId,
@@ -145,7 +191,7 @@ export interface ReleaseRepo {
     cursor?: Cursor,
     limit?: number,
   ): Promise<Page<ArtifactBundle>>;
-  /** Delete a bundle; deleting a missing bundle is a no-op. */
+  /** Delete an active bundle; missing is a no-op. Pending bundles use the cleanup protocol. */
   deleteBundle(
     projectId: ProjectId,
     bundleId: ArtifactBundle["id"],

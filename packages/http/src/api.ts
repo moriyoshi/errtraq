@@ -4,10 +4,7 @@ import {
   type BlobStore,
   type Clock,
   type Cursor,
-  decodeCursor,
   type EventId,
-  type EventPosition,
-  encodeCursor,
   hashApiToken,
   InvalidCursorError,
   type Issue,
@@ -17,7 +14,6 @@ import {
   NotFoundError,
   type Project,
   type StoredEvent,
-  type Timestamp,
   UnsupportedQueryError,
   VersionConflictError,
 } from "@errtraq/core";
@@ -267,42 +263,31 @@ export function createApiApp(options: {
     }
     throw new VersionConflictError("Conflict");
   });
+  app.on(
+    ["GET", "POST"],
+    "/api/0/projects/:org/:project/erasure-requests",
+    async (c) => {
+      const p = await project(
+        c.req.param("org"),
+        c.req.param("project"),
+        c.get("token"),
+      );
+      if (!p) return c.json({ detail: "Not found" }, 404);
+      return c.json({ detail: "Subject erasure is unavailable until M4" }, 501);
+    },
+  );
   app.get("/api/0/issues/:id/events", async (c) => {
     allowed(c, ["cursor", "limit"]);
     const issue = await scopedIssue(c.req.param("id"), c.get("token"));
     if (!issue) return c.json({ detail: "Not found" }, 404);
-    const scope = `issue-events:${issue.projectId}:${issue.id}`;
-    const keys = decodeCursor(
-      (c.req.query("cursor") || undefined) as Cursor | undefined,
-      scope,
-    );
-    if (
-      keys &&
-      (keys.length !== 2 ||
-        typeof keys[0] !== "string" ||
-        typeof keys[1] !== "string")
-    )
-      throw new InvalidCursorError("Invalid event cursor");
-    const after = keys
-      ? ({
-          receivedAt: keys[0] as Timestamp,
-          eventId: keys[1] as EventId,
-        } satisfies EventPosition)
-      : undefined;
     const page = await store.events.listByIssue({
       projectId: issue.projectId,
       issueId: issue.id,
       order: "desc",
-      after,
+      cursor: (c.req.query("cursor") || undefined) as Cursor | undefined,
       limit: size(c.req.query("limit")),
     });
-    const last = page.items.at(-1);
-    link(
-      c,
-      page.hasMore && last
-        ? encodeCursor(scope, [last.receivedAt, last.eventId])
-        : null,
-    );
+    link(c, page.nextCursor);
     return c.json(
       await Promise.all(page.items.map((event) => renderEvent(event, issue))),
     );

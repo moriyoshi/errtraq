@@ -66,7 +66,7 @@ describe("SQLite migrations and indexes", () => {
     await migrate(db, sqliteStoreDialect);
     await migrate(db, sqliteStoreDialect);
     const rows = await db.selectFrom("schema_version").selectAll().execute();
-    expect(rows.map((r) => r.version)).toEqual([1, 2, 3]);
+    expect(rows.map((r) => r.version)).toEqual([1, 2, 3, 4]);
   });
   it("upgrades version one and rejects newer schemas", async () => {
     const db = database(":memory:");
@@ -85,10 +85,52 @@ describe("SQLite migrations and indexes", () => {
           .orderBy("version")
           .execute()
       ).map((r) => r.version),
-    ).toEqual([1, 2, 3]);
+    ).toEqual([1, 2, 3, 4]);
     await db.insertInto("schema_version").values({ version: 7 }).execute();
     await expect(migrate(db, sqliteStoreDialect)).rejects.toMatchObject({
       name: "UnsupportedSchemaVersionError",
+    });
+  });
+  it("migrates legacy bundles and retains active debug-id lookups", async () => {
+    const db = database(":memory:");
+    await db.schema
+      .createTable("schema_version")
+      .addColumn("version", "integer", (c) => c.primaryKey())
+      .execute();
+    await createInitialSchema(db, sqliteStoreDialect);
+    await db.insertInto("schema_version").values({ version: 1 }).execute();
+    const legacy = {
+      id: "old",
+      projectId: "1",
+      releaseId: "release",
+      blobKey: "old-blob",
+      debugIds: ["debug"],
+    };
+    const key = JSON.stringify(["1", "old"]);
+    await db
+      .insertInto("bundles")
+      .values({
+        pk: key,
+        project_id: "1",
+        scope: "release",
+        data: JSON.stringify(legacy),
+      })
+      .execute();
+    await db
+      .insertInto("bundle_debug_ids")
+      .values({ project_id: "1", debug_id: "debug", bundle_pk: key })
+      .execute();
+    const store = createSqlStore({ db, dialect: sqliteStoreDialect });
+    await store.migrate();
+    expect(
+      await store.releases.findBundleByDebugId(
+        "1" as import("@errtraq/core").ProjectId,
+        "debug",
+      ),
+    ).toMatchObject({
+      id: "old",
+      state: "active",
+      manifest: { blobKey: "old-blob", digest: "legacy", debugIdCount: 1 },
     });
   });
   it("uses indexes for issue and event access patterns", async () => {
@@ -185,20 +227,10 @@ it("retries interleaved writes from two connections without snapshot upgrade fai
     await hold;
   });
   await ready;
-  const repair = b.issues.repairAfterErasure(projectId, issueId, 0);
+  const update = b.issues.update(projectId, issueId, { status: "resolved" });
   setTimeout(() => release?.(), 30);
-  await Promise.all([lock, repair]);
+  await Promise.all([lock, update]);
   expect((await b.issues.get(projectId, issueId))?.count).toBe(1);
-  const [removed] = await Promise.all([
-    b.events.deleteBySubject(
-      projectId,
-      { kind: "email", value: "x" },
-      receivedAt,
-      10,
-    ),
-    a.issues.update(projectId, issueId, { status: "resolved" }),
-  ]);
-  expect(removed.deleted).toBe(1);
 });
 
 it("chunks large event ID lists and respects the deletion limit", async () => {
@@ -239,14 +271,6 @@ it("chunks large event ID lists and respects the deletion limit", async () => {
         payload: {},
       },
     );
-  const removed = await store.events.deleteBySubject(
-    projectId,
-    { kind: "eventIds", eventIds: ids },
-    receivedAt,
-    2,
-  );
-  expect(removed.deleted).toBe(2);
-  expect(removed.hasMore).toBe(true);
   await store.events.deleteBatch(projectId, ids);
   expect(
     await store.events.get(

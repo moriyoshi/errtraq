@@ -3,6 +3,7 @@ import {
   type ApiToken,
   type ArchiveState,
   type ArtifactBundle,
+  bundleDebugIdsDigest,
   type Clock,
   ConflictError,
   type ErasureRequest,
@@ -11,20 +12,12 @@ import {
   type Org,
   type Project,
   type ProjectKey,
-  pageLimit,
   type Release,
   type StoredEvent,
   UnsupportedQueryError,
   VersionConflictError,
 } from "@errtraq/core";
-import {
-  compareKeys,
-  copy,
-  eventOrder,
-  eventPage,
-  matchesSubject,
-  page,
-} from "./shared.js";
+import { compareKeys, copy, eventOrder, eventPage, page } from "./shared.js";
 
 export class MemoryActiveStore implements ActiveStore {
   readonly capabilities = {
@@ -39,6 +32,7 @@ export class MemoryActiveStore implements ActiveStore {
   private eventRows = new Map<string, StoredEvent>();
   private releaseRows = new Map<string, Release>();
   private bundles = new Map<string, ArtifactBundle>();
+  private bundleMarkers = new Map<string, string>();
   private states = new Map<string, ArchiveState>();
   private erasures = new Map<string, ErasureRequest>();
   private key(...parts: string[]) {
@@ -255,21 +249,10 @@ export class MemoryActiveStore implements ActiveStore {
           compareKeys([a[1] ?? ""], [b[1] ?? ""]),
       );
     },
-    repairAfterErasure: async (projectId, id, removedCount) => {
-      const issue = [...this.issueRows.values()].find(
-        (i) => i.projectId === projectId && i.id === id,
+    repairAfterErasure: async () => {
+      throw new UnsupportedQueryError(
+        "Subject erasure is unavailable until M4",
       );
-      if (!issue) throw new NotFoundError("Issue not found");
-      issue.count = Math.max(0, issue.count - removedCount);
-      const latest = [...this.eventRows.values()]
-        .filter((e) => e.projectId === projectId && e.issueId === id)
-        .sort(eventOrder)
-        .at(-1);
-      if (latest) {
-        issue.lastEventId = latest.eventId;
-        issue.lastEventReceivedAt = latest.receivedAt;
-      }
-      return copy(issue);
     },
     update: async (projectId, id, patch) => {
       const issue = [...this.issueRows.values()].find(
@@ -281,7 +264,7 @@ export class MemoryActiveStore implements ActiveStore {
     },
   };
   events: ActiveStore["events"] = {
-    capabilities: { deleteStrategy: "explicit" },
+    capabilities: { deleteStrategy: "explicit", deleteBySubject: false },
     get: async (projectId, eventId) => {
       this.purgeExpired();
       return copy(this.eventRows.get(this.key(projectId, eventId)) ?? null);
@@ -315,33 +298,10 @@ export class MemoryActiveStore implements ActiveStore {
     deleteBatch: async (projectId, ids) => {
       for (const id of ids) this.eventRows.delete(this.key(projectId, id));
     },
-    deleteBySubject: async (projectId, selector, before, limit) => {
-      pageLimit(limit);
-      const matches = [...this.eventRows.entries()]
-        .filter(
-          ([, e]) =>
-            e.projectId === projectId &&
-            e.receivedAt <= before &&
-            matchesSubject(e, selector),
-        )
-        .sort((a, b) => eventOrder(a[1], b[1]));
-      const selected = matches.slice(0, limit);
-      const counts = new Map<Issue["id"], number>();
-      const keys: string[] = [];
-      for (const [key, e] of selected) {
-        this.eventRows.delete(key);
-        counts.set(e.issueId, (counts.get(e.issueId) ?? 0) + 1);
-        if (e.payloadBlobKey) keys.push(e.payloadBlobKey);
-      }
-      return {
-        deleted: selected.length,
-        hasMore: matches.length > limit,
-        issueCounts: [...counts].map(([issueId, count]) => ({
-          issueId,
-          count,
-        })),
-        payloadBlobKeys: keys,
-      };
+    deleteBySubject: async () => {
+      throw new UnsupportedQueryError(
+        "Subject erasure is unavailable until M4",
+      );
     },
   };
   releases: ActiveStore["releases"] = {
@@ -378,8 +338,126 @@ export class MemoryActiveStore implements ActiveStore {
         (r) => [r.id],
         JSON.stringify(["releases", projectId]),
       ),
-    putBundle: async (bundle) => {
-      this.bundles.set(this.key(bundle.projectId, bundle.id), copy(bundle));
+    beginBundle: async (bundle, manifest) => {
+      if (
+        bundle.state !== "pending" ||
+        !bundle.pendingExpiresAt ||
+        JSON.stringify(bundle.manifest) !== JSON.stringify(manifest)
+      )
+        throw new ConflictError("Invalid pending bundle");
+      const key = this.key(bundle.projectId, bundle.id);
+      const old = this.bundles.get(key);
+      if (old && JSON.stringify(old) !== JSON.stringify(bundle))
+        throw new ConflictError("Bundle already exists");
+      this.bundles.set(key, copy(bundle));
+    },
+    putBundleDebugIds: async (projectId, bundleId, ids, manifestIds) => {
+      const digest = await bundleDebugIdsDigest(manifestIds);
+      const key = this.key(projectId, bundleId),
+        bundle = this.bundles.get(key);
+      if (bundle?.state !== "pending" || bundle.cleanupStarted)
+        throw new ConflictError("Bundle is not pending");
+      const expected = new Set(manifestIds);
+      if (
+        ids.length > 100 ||
+        expected.size !== manifestIds.length ||
+        manifestIds.length !== bundle.manifest.debugIdCount ||
+        digest !== bundle.manifest.digest ||
+        ids.some((id) => !expected.has(id))
+      )
+        throw new ConflictError("Chunk does not match bundle manifest");
+      for (const id of ids) {
+        const owner = this.bundleMarkers.get(this.key(projectId, id));
+        if (owner && owner !== key)
+          throw new ConflictError("Debug ID already owned");
+      }
+      for (const id of ids)
+        this.bundleMarkers.set(this.key(projectId, id), key);
+    },
+    verifyAndActivateBundle: async (projectId, bundleId, ids) => {
+      const key = this.key(projectId, bundleId);
+      const digest = await bundleDebugIdsDigest(ids);
+      const bundle = this.bundles.get(key);
+      if (!bundle || bundle.cleanupStarted)
+        throw new ConflictError("Bundle not found or being cleaned");
+      if (
+        new Set(ids).size !== ids.length ||
+        ids.length !== bundle.manifest.debugIdCount ||
+        digest !== bundle.manifest.digest ||
+        ids.some(
+          (id) => this.bundleMarkers.get(this.key(projectId, id)) !== key,
+        ) ||
+        [...this.bundleMarkers.values()].filter((owner) => owner === key)
+          .length !== ids.length
+      )
+        throw new ConflictError("Bundle manifest does not match markers");
+      bundle.state = "active";
+      delete bundle.pendingExpiresAt;
+    },
+    listPendingBundles: async (projectId, before, cursor, limit) =>
+      page(
+        [...this.bundles.values()]
+          .filter(
+            (b) =>
+              b.projectId === projectId &&
+              b.state === "pending" &&
+              !!b.pendingExpiresAt &&
+              b.pendingExpiresAt <= before,
+          )
+          .sort((a, b) => compareKeys([a.id], [b.id])),
+        cursor,
+        limit,
+        (b) => [b.id],
+        JSON.stringify(["pending-bundles", projectId, before]),
+      ),
+    claimPendingBundleCleanup: async (projectId, bundleId, before) => {
+      const bundle = this.bundles.get(this.key(projectId, bundleId));
+      if (
+        bundle?.state !== "pending" ||
+        !bundle.pendingExpiresAt ||
+        bundle.pendingExpiresAt > before
+      )
+        return null;
+      bundle.cleanupStarted = true;
+      bundle.cleanupId ??= crypto.randomUUID();
+      return copy(bundle);
+    },
+    clearPendingBundleDebugIds: async (projectId, bundleId, ids, cleanupId) => {
+      const digest = await bundleDebugIdsDigest(ids);
+      const key = this.key(projectId, bundleId),
+        bundle = this.bundles.get(key);
+      if (
+        bundle?.state !== "pending" ||
+        !bundle.cleanupStarted ||
+        bundle.cleanupId !== cleanupId
+      )
+        throw new ConflictError("Bundle cleanup not claimed");
+      if (bundle.cleanupMarkersCleared) return;
+      if (
+        ids.length !== bundle.manifest.debugIdCount ||
+        new Set(ids).size !== ids.length ||
+        digest !== bundle.manifest.digest
+      )
+        throw new ConflictError("Invalid bundle manifest");
+      const expected = new Set(ids.map((id) => this.key(projectId, id)));
+      for (const [marker, owner] of this.bundleMarkers)
+        if (owner === key && !expected.has(marker))
+          throw new ConflictError("Unexpected bundle marker");
+      for (const [marker, owner] of this.bundleMarkers)
+        if (owner === key) this.bundleMarkers.delete(marker);
+      bundle.cleanupMarkersCleared = true;
+    },
+    finishPendingBundleCleanup: async (projectId, bundleId, cleanupId) => {
+      const key = this.key(projectId, bundleId),
+        bundle = this.bundles.get(key);
+      if (!bundle) return;
+      if (
+        bundle.state !== "pending" ||
+        !bundle.cleanupMarkersCleared ||
+        bundle.cleanupId !== cleanupId
+      )
+        throw new ConflictError("Bundle cleanup claim changed");
+      this.bundles.delete(key);
     },
     listBundles: async (projectId, releaseId, cursor, limit) =>
       page(
@@ -392,12 +470,21 @@ export class MemoryActiveStore implements ActiveStore {
         JSON.stringify(["bundles", projectId, releaseId]),
       ),
     deleteBundle: async (projectId, bundleId) => {
-      this.bundles.delete(this.key(projectId, bundleId));
+      const key = this.key(projectId, bundleId);
+      if (this.bundles.get(key)?.state === "pending")
+        throw new ConflictError("Pending bundles require the cleanup protocol");
+      this.bundles.delete(key);
+      for (const [marker, owner] of this.bundleMarkers)
+        if (owner === key) this.bundleMarkers.delete(marker);
     },
     findBundleByDebugId: async (projectId, debugId) =>
       copy(
         [...this.bundles.values()].find(
-          (b) => b.projectId === projectId && b.debugIds.includes(debugId),
+          (b) =>
+            b.projectId === projectId &&
+            b.state === "active" &&
+            this.bundleMarkers.get(this.key(projectId, debugId)) ===
+              this.key(projectId, b.id),
         ) ?? null,
       ),
   };

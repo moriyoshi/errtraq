@@ -11,13 +11,35 @@ export interface PortRequirement {
   capability: string;
   purpose: string;
   feature?: "archive" | "notifications";
-  milestone?: "M4";
+  milestone?: "M3" | "M4";
 }
 /** M1 calls are unconditional; M4 rows model the archive and erasure design. */
 export const PORT_REQUIREMENTS: readonly PortRequirement[] = [
   { kind: "store", role: "ingest", capability: "read", purpose: "primary" },
   { kind: "store", role: "api", capability: "read", purpose: "primary" },
   { kind: "store", role: "api", capability: "write", purpose: "primary" },
+  // Future bundle endpoints/cleanup are not implemented yet; activate with their handlers.
+  {
+    kind: "store",
+    role: "api",
+    capability: "metadata-delete",
+    purpose: "primary",
+    milestone: "M3",
+  },
+  {
+    kind: "blob",
+    role: "api",
+    capability: "write",
+    purpose: "primary",
+    milestone: "M3",
+  },
+  {
+    kind: "blob",
+    role: "api",
+    capability: "delete",
+    purpose: "primary",
+    milestone: "M3",
+  },
   { kind: "store", role: "consumer", capability: "read", purpose: "primary" },
   { kind: "store", role: "consumer", capability: "write", purpose: "primary" },
   { kind: "blob", role: "ingest", capability: "write", purpose: "primary" },
@@ -78,14 +100,6 @@ export const PORT_REQUIREMENTS: readonly PortRequirement[] = [
     kind: "kv",
     role: "consumer",
     capability: "read",
-    purpose: "primary",
-    feature: "archive",
-    milestone: "M4",
-  },
-  {
-    kind: "kv",
-    role: "api",
-    capability: "write",
     purpose: "primary",
     feature: "archive",
     milestone: "M4",

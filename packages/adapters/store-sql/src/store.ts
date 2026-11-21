@@ -2,14 +2,15 @@ import {
   type ActiveStore,
   type ArchiveState,
   type ArtifactBundle,
+  bundleDebugIdsDigest,
   ConflictError,
   type Cursor,
   decodeCursor,
   type ErasureRequest,
   encodeCursor,
+  eventCursorScope,
   InvalidCursorError,
   type Issue,
-  type IssueId,
   NotFoundError,
   type Page,
   type ProjectId,
@@ -438,43 +439,14 @@ export function createSqlStore({ db, dialect }: SqlStoreOptions): ActiveStore {
             throw new VersionConflictError("Issue changed concurrently");
           return issue;
         }),
-      repairAfterErasure: async (projectId, id, count) =>
-        transaction(async (trx) => {
-          await dialect.lock(trx, `issue:${pk(projectId, id)}`);
-          const row = await trx
-            .selectFrom("issues")
-            .select("data")
-            .where("pk", "=", pk(projectId, id))
-            .executeTakeFirst();
-          if (!row) throw new NotFoundError("Issue not found");
-          const issue = decode<Issue>(row.data);
-          issue.count = Math.max(0, issue.count - count);
-          const latest = await trx
-            .selectFrom("events")
-            .select("data")
-            .where("project_id", "=", projectId)
-            .where("issue_id", "=", id)
-            .orderBy("received_at", "desc")
-            .orderBy("event_id", "desc")
-            .executeTakeFirst();
-          if (latest) {
-            const event = decode<StoredEvent>(latest.data);
-            issue.lastEventId = event.eventId;
-            issue.lastEventReceivedAt = event.receivedAt;
-          }
-          const updated = await trx
-            .updateTable("issues")
-            .set({ count: issue.count, data: JSON.stringify(issue) })
-            .where("pk", "=", pk(projectId, id))
-            .where("data", "=", String(row.data))
-            .executeTakeFirst();
-          if (!dialect.didUpdate(updated.numUpdatedRows))
-            throw new VersionConflictError("Issue changed concurrently");
-          return issue;
-        }),
+      repairAfterErasure: async () => {
+        throw new UnsupportedQueryError(
+          "Subject erasure is unavailable until M4",
+        );
+      },
     },
     events: {
-      capabilities: { deleteStrategy: "explicit" },
+      capabilities: { deleteStrategy: "explicit", deleteBySubject: false },
       get: (projectId, id) => byKey("events", pk(projectId, id)),
       listByIssue: async (q) => {
         let query = db
@@ -485,8 +457,18 @@ export function createSqlStore({ db, dialect }: SqlStoreOptions): ActiveStore {
         if (q.from) query = query.where("received_at", ">=", q.from);
         if (q.to) query = query.where("received_at", "<", q.to);
         const order = q.order ?? "desc";
-        if (q.after) {
-          const after = q.after;
+        const scope = eventCursorScope(q);
+        const keys = cursorKeys(q.cursor, scope, 2);
+        if (
+          keys &&
+          (typeof keys[0] !== "string" || typeof keys[1] !== "string")
+        )
+          throw new InvalidCursorError("Invalid event cursor");
+        const position = keys
+          ? { receivedAt: String(keys[0]), eventId: String(keys[1]) }
+          : q.after;
+        if (position) {
+          const after = position;
           query = query.where((eb) =>
             eb.or([
               eb("received_at", order === "asc" ? ">" : "<", after.receivedAt),
@@ -502,12 +484,15 @@ export function createSqlStore({ db, dialect }: SqlStoreOptions): ActiveStore {
           .orderBy("event_id", order)
           .limit(limitOf(q.limit) + 1)
           .execute();
-        return {
-          items: rows
-            .slice(0, limitOf(q.limit))
-            .map((r) => decode<StoredEvent>(r.data)),
-          hasMore: rows.length > limitOf(q.limit),
-        };
+        const items = rows
+          .slice(0, limitOf(q.limit))
+          .map((r) => decode<StoredEvent>(r.data));
+        const last = items.at(-1);
+        const nextCursor =
+          rows.length > limitOf(q.limit) && last
+            ? encodeCursor(scope, [last.receivedAt, last.eventId])
+            : null;
+        return { items, hasMore: nextCursor !== null, nextCursor };
       },
       scanOlderThan: async (projectId, cutoff, options) => {
         const scope = JSON.stringify(["scan", projectId, cutoff]);
@@ -561,88 +546,11 @@ export function createSqlStore({ db, dialect }: SqlStoreOptions): ActiveStore {
               .execute(),
           );
       },
-      deleteBySubject: async (projectId, selector, before, limit) =>
-        transaction(async (trx) => {
-          limitOf(limit);
-          const query = trx
-            .selectFrom("events")
-            .select(["pk", "data"])
-            .where("project_id", "=", projectId)
-            .where("received_at", "<=", before);
-          let rows: Array<{
-            pk: string | number | null;
-            data: string | number | null;
-          }>;
-          if (selector.kind === "eventIds") {
-            const found: typeof rows = [];
-            const ids = [...new Set(selector.eventIds)];
-            for (let i = 0; i < ids.length; i += dialect.maxParameters - 1) {
-              const chunk = ids
-                .slice(i, i + dialect.maxParameters - 1)
-                .map((id) => pk(projectId, id));
-              if (chunk.length)
-                found.push(
-                  ...(await trx
-                    .selectFrom("events")
-                    .select(["pk", "data"])
-                    .where("pk", "in", chunk)
-                    .where("received_at", "<=", before)
-                    .execute()),
-                );
-            }
-            rows = found
-              .sort((a, b) => {
-                const x = decode<StoredEvent>(a.data),
-                  y = decode<StoredEvent>(b.data);
-                return (
-                  compareUtf8(x.receivedAt, y.receivedAt) ||
-                  compareUtf8(x.eventId, y.eventId)
-                );
-              })
-              .slice(0, limit + 1);
-          } else {
-            const column = {
-              userId: "user_id",
-              email: "user_email",
-              username: "user_name",
-              ipAddress: "user_ip",
-            }[selector.kind];
-            rows = await query
-              .where(column, "=", selector.value)
-              .orderBy("received_at")
-              .orderBy("event_id")
-              .limit(limit + 1)
-              .execute();
-          }
-          const selected = rows.slice(0, limit);
-          for (let i = 0; i < selected.length; i += dialect.maxParameters)
-            await trx
-              .deleteFrom("events")
-              .where(
-                "pk",
-                "in",
-                selected
-                  .slice(i, i + dialect.maxParameters)
-                  .map((r) => String(r.pk)),
-              )
-              .execute();
-          const counts = new Map<IssueId, number>();
-          const keys: string[] = [];
-          for (const row of selected) {
-            const e = decode<StoredEvent>(row.data);
-            counts.set(e.issueId, (counts.get(e.issueId) ?? 0) + 1);
-            if (e.payloadBlobKey) keys.push(e.payloadBlobKey);
-          }
-          return {
-            deleted: selected.length,
-            hasMore: rows.length > limit,
-            issueCounts: [...counts].map(([issueId, count]) => ({
-              issueId,
-              count,
-            })),
-            payloadBlobKeys: keys,
-          };
-        }),
+      deleteBySubject: async () => {
+        throw new UnsupportedQueryError(
+          "Subject erasure is unavailable until M4",
+        );
+      },
     },
     releases: {
       get: (projectId, id) => byKey("releases", pk(projectId, id)),
@@ -664,35 +572,265 @@ export function createSqlStore({ db, dialect }: SqlStoreOptions): ActiveStore {
       },
       list: (projectId, cursor, limit) =>
         list("releases", { projectId, cursor, limit }),
-      putBundle: async (bundle) =>
+      beginBundle: async (bundle, manifest) =>
         transaction(async (trx) => {
+          await dialect.lock(trx, `bundles:${bundle.projectId}`);
+          if (
+            bundle.state !== "pending" ||
+            !bundle.pendingExpiresAt ||
+            JSON.stringify(bundle.manifest) !== JSON.stringify(manifest)
+          )
+            throw new ConflictError("Invalid pending bundle");
           const key = pk(bundle.projectId, bundle.id);
-          const values = {
-            pk: key,
-            project_id: bundle.projectId,
-            scope: bundle.releaseId,
-            data: JSON.stringify(bundle),
-          };
-          await dialect.upsert(trx, "bundles", values);
+          const existing = await trx
+            .selectFrom("bundles")
+            .select("data")
+            .where("pk", "=", key)
+            .executeTakeFirst();
+          if (existing) {
+            if (
+              JSON.stringify(decode<ArtifactBundle>(existing.data)) !==
+              JSON.stringify(bundle)
+            )
+              throw new ConflictError("Bundle already exists");
+            return;
+          }
+          await trx
+            .insertInto("bundles")
+            .values({
+              pk: key,
+              project_id: bundle.projectId,
+              scope: bundle.releaseId,
+              state: "pending",
+              data: JSON.stringify(bundle),
+            })
+            .execute();
+        }),
+      putBundleDebugIds: async (projectId, bundleId, ids, manifestIds) => {
+        const digest = await bundleDebugIdsDigest(manifestIds);
+        await transaction(async (trx) => {
+          await dialect.lock(trx, `bundles:${projectId}`);
+          const key = pk(projectId, bundleId);
+          const row = await trx
+            .selectFrom("bundles")
+            .select("data")
+            .where("pk", "=", key)
+            .executeTakeFirst();
+          const bundle = row ? decode<ArtifactBundle>(row.data) : null;
+          if (bundle?.state !== "pending" || bundle.cleanupStarted)
+            throw new ConflictError("Bundle is not pending");
+          const expected = new Set(manifestIds);
+          if (
+            ids.length > 100 ||
+            expected.size !== manifestIds.length ||
+            manifestIds.length !== bundle.manifest.debugIdCount ||
+            digest !== bundle.manifest.digest ||
+            ids.some((id) => !expected.has(id))
+          )
+            throw new ConflictError("Chunk does not match bundle manifest");
+          const chunk = [...new Set(ids)];
+          if (chunk.length) {
+            const owners = await trx
+              .selectFrom("bundle_debug_ids")
+              .select(["debug_id", "bundle_pk"])
+              .where("project_id", "=", projectId)
+              .where("debug_id", "in", chunk)
+              .execute();
+            if (owners.some((owner) => owner.bundle_pk !== key))
+              throw new ConflictError("Debug ID already owned");
+            const existing = new Set(
+              owners.map((owner) => String(owner.debug_id)),
+            );
+            const missing = chunk.filter((id) => !existing.has(id));
+            if (missing.length)
+              await trx
+                .insertInto("bundle_debug_ids")
+                .values(
+                  missing.map((id) => ({
+                    project_id: projectId,
+                    debug_id: id,
+                    bundle_pk: key,
+                  })),
+                )
+                .execute();
+          }
+        });
+      },
+      verifyAndActivateBundle: async (projectId, bundleId, ids) => {
+        const digest = await bundleDebugIdsDigest(ids);
+        await transaction(async (trx) => {
+          await dialect.lock(trx, `bundles:${projectId}`);
+          const key = pk(projectId, bundleId);
+          const row = await trx
+            .selectFrom("bundles")
+            .select("data")
+            .where("pk", "=", key)
+            .executeTakeFirst();
+          if (!row) throw new ConflictError("Bundle not found");
+          const bundle = decode<ArtifactBundle>(row.data);
+          if (bundle.cleanupStarted)
+            throw new ConflictError("Bundle is being cleaned");
+          const markers = await trx
+            .selectFrom("bundle_debug_ids")
+            .select("debug_id")
+            .where("bundle_pk", "=", key)
+            .execute();
+          const actual = new Set(markers.map((x) => String(x.debug_id)));
+          if (
+            new Set(ids).size !== ids.length ||
+            ids.length !== bundle.manifest.debugIdCount ||
+            digest !== bundle.manifest.digest ||
+            actual.size !== ids.length ||
+            ids.some((id) => !actual.has(id))
+          )
+            throw new ConflictError("Bundle manifest does not match markers");
+          bundle.state = "active";
+          delete bundle.pendingExpiresAt;
+          await trx
+            .updateTable("bundles")
+            .set({ state: "active", data: JSON.stringify(bundle) })
+            .where("pk", "=", key)
+            .execute();
+        });
+      },
+      listPendingBundles: async (projectId, before, cursor, limit) => {
+        const scope = JSON.stringify(["pending-bundles", projectId, before]);
+        const keys = cursorKeys(cursor, scope, 1);
+        if (keys && typeof keys[0] !== "string")
+          throw new InvalidCursorError("Invalid pending bundle cursor");
+        let q = db
+          .selectFrom("bundles")
+          .select(["pk", "data"])
+          .where("project_id", "=", projectId)
+          .where("state", "=", "pending");
+        if (keys) q = q.where("pk", ">", String(keys[0]));
+        // Existing generic schema does not index expiry; examine keys until a full page or exhaustion.
+        const size = limitOf(limit),
+          found: ArtifactBundle[] = [];
+        let last: string | undefined;
+        for (;;) {
+          const rows = await q.orderBy("pk").limit(100).execute();
+          if (!rows.length) return { items: found, nextCursor: null };
+          for (const row of rows) {
+            last = String(row.pk);
+            const bundle = decode<ArtifactBundle>(row.data);
+            if (bundle.pendingExpiresAt && bundle.pendingExpiresAt <= before)
+              found.push(bundle);
+            if (found.length === size)
+              return { items: found, nextCursor: encodeCursor(scope, [last]) };
+          }
+          if (rows.length < 100) return { items: found, nextCursor: null };
+          q = q.where("pk", ">", last as string);
+        }
+      },
+      claimPendingBundleCleanup: async (projectId, bundleId, before) =>
+        transaction(async (trx) => {
+          await dialect.lock(trx, `bundles:${projectId}`);
+          const key = pk(projectId, bundleId);
+          const row = await trx
+            .selectFrom("bundles")
+            .select("data")
+            .where("pk", "=", key)
+            .executeTakeFirst();
+          const bundle = row ? decode<ArtifactBundle>(row.data) : null;
+          if (
+            bundle?.state !== "pending" ||
+            !bundle.pendingExpiresAt ||
+            bundle.pendingExpiresAt > before
+          )
+            return null;
+          bundle.cleanupStarted = true;
+          bundle.cleanupId ??= crypto.randomUUID();
+          await trx
+            .updateTable("bundles")
+            .set({ data: JSON.stringify(bundle) })
+            .where("pk", "=", key)
+            .execute();
+          return bundle;
+        }),
+      clearPendingBundleDebugIds: async (
+        projectId,
+        bundleId,
+        ids,
+        cleanupId,
+      ) => {
+        const digest = await bundleDebugIdsDigest(ids);
+        await transaction(async (trx) => {
+          await dialect.lock(trx, `bundles:${projectId}`);
+          const key = pk(projectId, bundleId);
+          const row = await trx
+            .selectFrom("bundles")
+            .select("data")
+            .where("pk", "=", key)
+            .executeTakeFirst();
+          const bundle = row ? decode<ArtifactBundle>(row.data) : null;
+          if (
+            bundle?.state !== "pending" ||
+            !bundle.cleanupStarted ||
+            bundle.cleanupId !== cleanupId
+          )
+            throw new ConflictError("Bundle cleanup not claimed");
+          if (bundle.cleanupMarkersCleared) return;
+          if (
+            ids.length !== bundle.manifest.debugIdCount ||
+            new Set(ids).size !== ids.length ||
+            digest !== bundle.manifest.digest
+          )
+            throw new ConflictError("Invalid bundle manifest");
+          const markers = await trx
+            .selectFrom("bundle_debug_ids")
+            .select("debug_id")
+            .where("bundle_pk", "=", key)
+            .execute();
+          const expected = new Set(ids);
+          if (markers.some((marker) => !expected.has(String(marker.debug_id))))
+            throw new ConflictError("Unexpected bundle marker");
           await trx
             .deleteFrom("bundle_debug_ids")
             .where("bundle_pk", "=", key)
             .execute();
-          for (const debug of bundle.debugIds)
-            await trx
-              .insertInto("bundle_debug_ids")
-              .values({
-                project_id: bundle.projectId,
-                debug_id: debug,
-                bundle_pk: key,
-              })
-              .execute();
+          bundle.cleanupMarkersCleared = true;
+          await trx
+            .updateTable("bundles")
+            .set({ data: JSON.stringify(bundle) })
+            .where("pk", "=", key)
+            .execute();
+        });
+      },
+      finishPendingBundleCleanup: async (projectId, bundleId, cleanupId) =>
+        transaction(async (trx) => {
+          await dialect.lock(trx, `bundles:${projectId}`);
+          const key = pk(projectId, bundleId);
+          const row = await trx
+            .selectFrom("bundles")
+            .select("data")
+            .where("pk", "=", key)
+            .executeTakeFirst();
+          if (!row) return;
+          const bundle = decode<ArtifactBundle>(row.data);
+          if (
+            bundle.state !== "pending" ||
+            !bundle.cleanupMarkersCleared ||
+            bundle.cleanupId !== cleanupId
+          )
+            throw new ConflictError("Bundle cleanup claim changed");
+          await trx.deleteFrom("bundles").where("pk", "=", key).execute();
         }),
       listBundles: (projectId, releaseId, cursor, limit) =>
         list("bundles", { projectId, scope: releaseId, cursor, limit }),
       deleteBundle: async (projectId, id) =>
         transaction(async (trx) => {
+          await dialect.lock(trx, `bundles:${projectId}`);
           const key = pk(projectId, id);
+          const row = await trx
+            .selectFrom("bundles")
+            .select("data")
+            .where("pk", "=", key)
+            .executeTakeFirst();
+          if (row && decode<ArtifactBundle>(row.data).state === "pending")
+            throw new ConflictError(
+              "Pending bundles require the cleanup protocol",
+            );
           await trx
             .deleteFrom("bundle_debug_ids")
             .where("bundle_pk", "=", key)
@@ -706,6 +844,7 @@ export function createSqlStore({ db, dialect }: SqlStoreOptions): ActiveStore {
           .select("bundles.data")
           .where("bundle_debug_ids.project_id", "=", projectId)
           .where("bundle_debug_ids.debug_id", "=", debugId)
+          .where("bundles.state", "=", "active")
           .executeTakeFirst();
         return r ? decode<ArtifactBundle>(r.data) : null;
       },

@@ -86,18 +86,36 @@ interface IssueRepo {
   get(projectId, issueId): Promise<Issue | null>;
   list(q: IssueQuery): Promise<Page<Issue>>;   // project, status, [from, to) on lastSeen, sort ∈ {lastSeen, firstSeen, count} descending, cursor
   update(projectId, issueId, patch): Promise<Issue>;
-  repairAfterErasure(projectId, issueId, removedCount): Promise<Issue>;   // subtract count, repoint the latest-event pointer
+  repairAfterErasure(...): Promise<Issue>;   // unavailable until M4; no count-decrement path
 }
 interface EventRepo {
-  capabilities: { deleteStrategy: 'explicit' | 'ttl' };
+  capabilities: { deleteStrategy: 'explicit' | 'ttl'; deleteBySubject: false };
   get(projectId, eventId): Promise<StoredEvent | null>;
   listByIssue(q: EventQuery): Promise<EventPage>;                          // keyset paging, see Federation
   scanOlderThan(projectId, cutoff, { cursor?, limit? }): Promise<Page<StoredEvent>>;   // archival source, ascending, cutoff exclusive
   deleteBatch(projectId, ids): Promise<void>;
-  deleteBySubject(projectId, selector, before, limit): Promise<{ deleted; hasMore; issueCounts; payloadBlobKeys }>;   // erasure, bounded
+  deleteBySubject(...): Promise<{ deleted; hasMore; issueCounts; payloadBlobKeys }>; // always throws until M4
+}
+interface ReleaseRepo {
+  beginBundle(bundle, manifest): Promise<void>; // pending with an expiry and immutable manifest reference
+  putBundleDebugIds(projectId, bundleId, ids, manifestIds): Promise<void>; // <=100 verified IDs, exclusive ownership
+  verifyAndActivateBundle(projectId, bundleId, ids): Promise<void>;
+  findBundleByDebugId(projectId, debugId): Promise<ArtifactBundle | null>; // active only
+  listPendingBundles(...): Promise<Page<ArtifactBundle>>;
+  claimPendingBundleCleanup(...): Promise<ArtifactBundle | null>;
+  clearPendingBundleDebugIds(...): Promise<void>;
+  finishPendingBundleCleanup(...): Promise<void>;
+  deleteBundle(projectId, bundleId): Promise<void>;
 }
 ```
 
+- A bundle manifest is a JSON array of distinct debug IDs, with a SHA-256 digest of the UTF-8 JSON
+  array sorted in byte order. Manifest blob keys are immutable and must never be reused. Cleanup
+  claims an expired pending bundle, clears markers, deletes the manifest and finalizes the claim;
+  interrupted cleanup remains resumable. SQL schema version 4 marks legacy bundles active.
+- An issue count is accepted event insertions ever recorded; deletion, retention and erasure do
+  not decrement it. Event cursors advance by the last examined source key, even for an empty
+  page, while the federation `after` boundary remains separate.
 - **Issue ids are minted by core**, deterministically from `(projectId, fingerprint)`, so the
   id is known before any store call and `recordEvent` can be one conditional write on a
   key-value store. Project ids are decimal-digit strings, because Sentry SDKs reject DSNs whose
@@ -297,13 +315,11 @@ request path.
 `write.delete.mode = merge-on-read`, so row deletes are **deletion vectors** (one Puffin
 `deletion-vector-v1` blob per affected data file) instead of file rewrites.
 
-**Finding the subject's rows**: `user.id`, `user.email`, `user.username`, `user.ip_address`
-are promoted to columns in both tiers (`user_id`, `user_email`, `user_name`, `user_ip`).
-Active store: secondary index per (project, selector) — SQL index / DynamoDB sparse GSI /
-Firestore composite index. Archive: column bounds + Parquet bloom filters on those columns,
-and single-project files already limit the scan to one project. Supported selectors: those
-four fields, plus explicit event ids. PII buried in free text (message, breadcrumbs, extras)
-is not found by this; that is the job of ingest-time scrubbing rules (later milestone).
+**Finding the subject's rows**: subject erasure is unavailable until M4. The planned independent
+`SubjectIndex` is written inline by the consumer, with Parquet files in blob storage. Archive
+queries use reduced subject-key columns. See `.agents-docs/SUBJECT_INDEX_DESIGN.md`; proving
+completion in the presence of a committed but unindexed event still in the main queue is an M4
+blocker. Dropping a promoted field does not scrub a raw value from the nested payload.
 
 **Port additions**
 
@@ -316,11 +332,7 @@ interface ArchiveStore {
   expireSnapshots(olderThan: Timestamp): Promise<void>;                                  // + orphan file removal
   capabilities: { rowDelete: 'deletion-vector' | 'position-delete' | 'copy-on-write' };
 }
-interface EventRepo {   // bounded: repeat while hasMore
-  deleteBySubject(projectId, selector, before: Timestamp, limit: number):
-    Promise<{ deleted: number; hasMore: boolean; issueCounts: { issueId; count }[]; payloadBlobKeys: string[] }>;
-}
-interface IssueRepo { repairAfterErasure(projectId, issueId, removedCount): Promise<Issue>; }
+// M4 adds a separate SubjectIndex and count-preserving issue pointer repair.
 ```
 
 DynamoDB point-in-time recovery can retain erased active-store data for up to 35 days; the M3
@@ -330,12 +342,13 @@ erasure design must explicitly account for backup retention and operational dele
 every reader, but the bytes remain in the Parquet file and in older snapshots. So an erasure
 request is a two-phase ledger entry (`ErasureRequest` in `MetaRepo`, CAS transitions, exposed
 at `POST/GET /api/0/projects/{org}/{project}/erasure-requests/` — an errtraq extension, Sentry
-has no equivalent):
+has no equivalent). The state table below describes the planned M4 workflow; it is not a
+currently available endpoint. Main-queue drain proof remains a blocker to claiming completion.
 
 | State | Work | Timing |
 |---|---|---|
 | `received` | Persist request; publish selector to `KV` suppression list so the consumer drops still-queued events from that subject with `receivedAt ≤ requestedAt`. | Synchronous |
-| `active-purged` | Under the project's **archive lease** (serializes with the archival worker): first drive any in-flight archive batch to completion so nothing is sitting in staging, then `events.deleteBySubject` in bounded pages until `hasMore` is false, delete the returned overflow blobs and raw envelopes, and repair affected issues with `issues.repairAfterErasure`. | Minutes |
+| `active-purged` | Under the project's **archive lease** (serializes with the archival worker): first drive any in-flight archive batch to completion so nothing is sitting in staging, then use the planned SubjectIndex to identify active event IDs, delete them and their overflow blobs, and repair latest-event pointers without decrementing counts. Completion remains blocked on proving main-queue drain. | Minutes |
 | `archive-masked` | `archive.deleteWhere` → one snapshot adding DVs; record `maskSnapshotId` and a blob key holding the touched file list (the list can exceed a key-value store's item size). From here no query returns the data. | Minutes |
 | `archive-erased` | `archive.hardErase(files)` rewrites just the touched data files without the deleted rows (cheap: files are one project-batch each), then `expireSnapshots` once the pre-rewrite snapshots age past the table's max snapshot age (set to 7 days) and orphan files are removed. | Cron, well inside the 30-day GDPR window |
 | `done` | Stamp completion time; replace the stored selector with a salted hash so the ledger is an audit trail that holds no PII. | — |

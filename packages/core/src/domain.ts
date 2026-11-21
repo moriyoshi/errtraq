@@ -28,6 +28,9 @@ export type Day = Brand<string, "Day">;
 
 export type Cursor = Brand<string, "Cursor">;
 
+/** Cursor advances past the last examined key, including filtered or stale entries.
+ * A page may be empty with a continuation; null means the source is exhausted.
+ * For merged streams it preserves each stream's consumed position, not prefetched rows. */
 export interface Page<T> {
   items: T[];
   nextCursor: Cursor | null;
@@ -39,9 +42,11 @@ export interface EventPosition {
   eventId: EventId;
 }
 
+/** A page can be empty and still carry a continuation cursor. */
 export interface EventPage {
   items: StoredEvent[];
   hasMore: boolean;
+  nextCursor: Cursor | null;
 }
 
 export interface Org {
@@ -93,6 +98,7 @@ export interface Issue extends IssueDetails {
   resolvedAt?: Timestamp;
   firstSeen: Timestamp;
   lastSeen: Timestamp;
+  /** Accepted event insertions ever recorded; retention and erasure never decrement it. */
   count: number;
   lastEventId: EventId;
   lastEventReceivedAt: Timestamp;
@@ -136,12 +142,24 @@ export interface Release {
   finalizedAt?: Timestamp;
 }
 
+export interface BundleManifest {
+  blobKey: string;
+  digest: string;
+  debugIdCount: number;
+}
+
 export interface ArtifactBundle {
   id: ArtifactBundleId;
   projectId: ProjectId;
   releaseId: ReleaseId;
   blobKey: string;
-  debugIds: string[];
+  state: "pending" | "active";
+  manifest: BundleManifest;
+  pendingExpiresAt?: Timestamp;
+  /** A cleanup claim blocks activation and marker writes until deletion is finished. */
+  cleanupStarted?: boolean;
+  cleanupMarkersCleared?: boolean;
+  cleanupId?: string;
 }
 
 export type SubjectSelector =

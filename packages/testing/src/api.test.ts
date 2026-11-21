@@ -75,6 +75,40 @@ async function setup() {
   return { store, clock, boot, app, auth, seed, blobs, logger };
 }
 describe("minimal API", () => {
+  it("reports subject erasure as unavailable without mutating events", async () => {
+    const c = await setup();
+    await c.seed(1);
+    for (const method of ["GET", "POST"]) {
+      const response = await c.app.request(
+        "/api/0/projects/org/project/erasure-requests/",
+        { method, headers: c.auth },
+      );
+      expect(response.status).toBe(501);
+      expect(await response.json()).toEqual({
+        detail: "Subject erasure is unavailable until M4",
+      });
+    }
+    expect(
+      (await c.store.issues.get(c.boot.project.id, "issue-1" as IssueId))
+        ?.count,
+    ).toBe(1);
+  });
+
+  it("retains a continuation on an empty examined event page", async () => {
+    const c = await setup();
+    await c.seed(1);
+    vi.spyOn(c.store.events, "listByIssue").mockResolvedValueOnce({
+      items: [],
+      hasMore: true,
+      nextCursor: "opaque" as import("@errtraq/core").Cursor,
+    });
+    const response = await c.app.request("/api/0/issues/issue-1/events/", {
+      headers: c.auth,
+    });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual([]);
+    expect(response.headers.get("link")).toContain('cursor="opaque"');
+  });
   it("checks hashed bearer tokens, scopes and organization ownership", async () => {
     const c = await setup();
     await c.seed(1);

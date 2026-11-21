@@ -6,9 +6,11 @@ import {
   type ArchiveStore,
   BlobInvalidKeyError,
   type BlobStore,
+  bundleDebugIdsDigest,
   type Clock,
   ConflictError,
   type Cursor,
+  cleanupPendingBundle,
   type Day,
   type Delivery,
   type ErasureId,
@@ -39,6 +41,7 @@ import {
   VersionConflictError,
 } from "@errtraq/core";
 import { describe, expect, it, vi } from "vitest";
+import { MemoryBlobStore } from "./memory-other.js";
 import { bytes, stream } from "./shared.js";
 
 export type Factory<T> = () => T | Promise<T>;
@@ -411,63 +414,25 @@ export function activeStoreContract(
       expect(await s.events.get(project, "a" as EventId)).not.toBeNull();
       expect(await s.events.get(otherProject, "z" as EventId)).not.toBeNull();
     });
-    for (const selector of [
-      { kind: "userId", value: "subject" },
-      { kind: "email", value: "subject" },
-      { kind: "username", value: "subject" },
-      { kind: "ipAddress", value: "subject" },
-      {
-        kind: "eventIds",
-        eventIds: [
-          "target" as EventId,
-          "boundary" as EventId,
-          "late" as EventId,
-        ],
-      },
-    ] as SubjectSelector[])
-      it(`deletes by ${selector.kind} without affecting later events or other projects`, async () => {
-        const s = await factory();
-        const user = {
-          id: "subject",
-          email: "subject",
-          username: "subject",
-          ipAddress: "subject",
-        };
-        for (const e of [
-          event("target", 1, { user, payloadBlobKey: "overflow" }),
-          event("boundary", 2, { user }),
-          event("late", 3, { user }),
-          event("target", 1, { user, projectId: otherProject }),
-        ])
-          await seed(s, e);
-        const result = await s.events.deleteBySubject(
+    it("rejects subject erasure and preserves all-time issue counts", async () => {
+      const s = await factory();
+      await seed(s, event("target", 1));
+      expect(s.events.capabilities.deleteBySubject).toBe(false);
+      await expect(
+        s.events.deleteBySubject(
           project,
-          selector,
+          { kind: "userId", value: "x" },
           t(2),
           1,
-        );
-        expect(result.deleted).toBe(1);
-        expect(result.hasMore).toBe(true);
-        expect(result.payloadBlobKeys).toEqual(["overflow"]);
-        const next = await s.events.deleteBySubject(project, selector, t(2), 1);
-        expect(next.deleted).toBe(1);
-        expect(next.hasMore).toBe(false);
-        expect(next.issueCounts).toEqual([{ issueId, count: 1 }]);
-        expect(next.payloadBlobKeys).toEqual([]);
-        expect(await s.events.get(project, "boundary" as EventId)).toBeNull();
-        expect(result.issueCounts).toEqual([{ issueId, count: 1 }]);
-        const repaired = await s.issues.repairAfterErasure(project, issueId, 2);
-        expect(repaired.count).toBe(1);
-        expect(repaired.lastEventId).toBe("late");
-        expect(await s.events.get(project, "late" as EventId)).not.toBeNull();
-        await s.events.deleteBatch(project, ["late" as EventId]);
-        const empty = await s.issues.repairAfterErasure(project, issueId, 1);
-        expect(empty.count).toBe(0);
-        expect(empty.lastEventId).toBe("late");
-        expect(
-          await s.events.get(otherProject, "target" as EventId),
-        ).not.toBeNull();
-      });
+        ),
+      ).rejects.toBeInstanceOf(UnsupportedQueryError);
+      await expect(
+        s.issues.repairAfterErasure(project, issueId, 1),
+      ).rejects.toBeInstanceOf(UnsupportedQueryError);
+      expect(await s.events.get(project, "target" as EventId)).not.toBeNull();
+      await s.events.deleteBatch(project, ["target" as EventId]);
+      expect((await s.issues.get(project, issueId))?.count).toBe(1);
+    });
     it("uses compare-and-set for creation and competing writers, and lists erasures", async () => {
       const s = await factory();
       const state: ArchiveState = {
@@ -878,6 +843,219 @@ export function activeStoreContract(
       expect(new Set(results.map((key) => key.publicKey)).size).toBe(1);
       expect(await s.projects.listKeys(project)).toHaveLength(1);
     });
+    it("activates only a verified manifest after idempotent chunks and cleans pending bundles", async () => {
+      const s = await factory();
+      const ids = Array.from({ length: 1001 }, (_, i) => `debug-${i}`);
+      const manifest = {
+        blobKey: "manifest",
+        digest: await bundleDebugIdsDigest(ids),
+        debugIdCount: ids.length,
+      };
+      const pending = {
+        id: "bundle-many" as import("@errtraq/core").ArtifactBundleId,
+        projectId: project,
+        releaseId: "release" as ReleaseId,
+        blobKey: "archive",
+        state: "pending" as const,
+        pendingExpiresAt: t(10),
+        manifest,
+      };
+      await s.releases.beginBundle(pending, manifest);
+      await s.releases.beginBundle(pending, manifest);
+      await expect(
+        s.releases.putBundleDebugIds(
+          project,
+          pending.id,
+          ids.slice(0, 101),
+          ids,
+        ),
+      ).rejects.toBeInstanceOf(ConflictError);
+      await expect(
+        s.releases.putBundleDebugIds(project, pending.id, ["unexpected"], ids),
+      ).rejects.toBeInstanceOf(ConflictError);
+      await s.releases.putBundleDebugIds(
+        project,
+        pending.id,
+        ids.slice(0, 100),
+        ids,
+      );
+      await s.releases.putBundleDebugIds(
+        project,
+        pending.id,
+        ids.slice(0, 100),
+        ids,
+      );
+      expect(
+        await s.releases.findBundleByDebugId(project, ids[0] as string),
+      ).toBeNull();
+      await expect(
+        s.releases.verifyAndActivateBundle(project, pending.id, ids),
+      ).rejects.toBeInstanceOf(ConflictError);
+      for (let i = 100; i < ids.length; i += 100)
+        await s.releases.putBundleDebugIds(
+          project,
+          pending.id,
+          ids.slice(i, i + 100),
+          ids,
+        );
+      const competing = { ...pending, id: "competing" as typeof pending.id };
+      await s.releases.beginBundle(competing, manifest);
+      await expect(
+        s.releases.putBundleDebugIds(
+          project,
+          competing.id,
+          [ids[0] as string],
+          ids,
+        ),
+      ).rejects.toBeInstanceOf(ConflictError);
+      await expect(
+        s.releases.verifyAndActivateBundle(project, pending.id, [
+          ...ids.slice(1),
+          "wrong",
+        ]),
+      ).rejects.toBeInstanceOf(ConflictError);
+      await s.releases.verifyAndActivateBundle(project, pending.id, ids);
+      await s.releases.verifyAndActivateBundle(project, pending.id, ids);
+      expect(
+        (await s.releases.findBundleByDebugId(project, ids[1000] as string))
+          ?.state,
+      ).toBe("active");
+      expect(
+        (await s.releases.listPendingBundles(project, t(9))).items,
+      ).toEqual([]);
+      expect(
+        (await s.releases.listPendingBundles(project, t(11))).items.map(
+          (x) => x.id,
+        ),
+      ).toEqual([competing.id]);
+      expect(
+        await s.releases.claimPendingBundleCleanup(project, pending.id, t(11)),
+      ).toBeNull();
+      expect(
+        (
+          await s.releases.claimPendingBundleCleanup(
+            project,
+            competing.id,
+            t(11),
+          )
+        )?.cleanupStarted,
+      ).toBe(true);
+      await expect(
+        s.releases.putBundleDebugIds(project, competing.id, ["new"], ids),
+      ).rejects.toBeInstanceOf(ConflictError);
+      await expect(
+        s.releases.verifyAndActivateBundle(project, competing.id, ids),
+      ).rejects.toBeInstanceOf(ConflictError);
+      await expect(
+        s.releases.deleteBundle(project, competing.id),
+      ).rejects.toBeInstanceOf(ConflictError);
+      const claimed = await s.releases.claimPendingBundleCleanup(
+        project,
+        competing.id,
+        t(11),
+      );
+      if (!claimed?.cleanupId) throw new Error("Missing cleanup claim");
+      await s.releases.clearPendingBundleDebugIds(
+        project,
+        competing.id,
+        ids,
+        claimed.cleanupId,
+      );
+      await s.releases.finishPendingBundleCleanup(
+        project,
+        competing.id,
+        claimed.cleanupId,
+      );
+      await s.releases.deleteBundle(project, pending.id);
+      expect(
+        await s.releases.findBundleByDebugId(project, ids[0] as string),
+      ).toBeNull();
+    });
+    it("resumes pending bundle cleanup after blob deletion fails", async () => {
+      const s = await factory();
+      const blobs = new MemoryBlobStore();
+      const ids = ["one", "two"];
+      const manifest = {
+        blobKey: "manifests/unique-cleanup",
+        debugIdCount: ids.length,
+        digest: await bundleDebugIdsDigest(ids),
+      };
+      const bundle = {
+        id: "cleanup" as import("@errtraq/core").ArtifactBundleId,
+        projectId: project,
+        releaseId: "release" as ReleaseId,
+        blobKey: "bundle",
+        state: "pending" as const,
+        pendingExpiresAt: t(2),
+        manifest,
+      };
+      await blobs.put(
+        manifest.blobKey,
+        new TextEncoder().encode(JSON.stringify(ids)),
+      );
+      await s.releases.beginBundle(bundle, manifest);
+      await s.releases.putBundleDebugIds(
+        project,
+        bundle.id,
+        [ids[0] as string],
+        ids,
+      );
+      const deleteBlob = blobs.delete.bind(blobs);
+      const fail = vi
+        .spyOn(blobs, "delete")
+        .mockRejectedValueOnce(new Error("interrupted"));
+      await expect(
+        cleanupPendingBundle(s.releases, blobs, project, bundle.id, t(3)),
+      ).rejects.toThrow("interrupted");
+      fail.mockImplementation(deleteBlob);
+      expect(
+        await cleanupPendingBundle(s.releases, blobs, project, bundle.id, t(3)),
+      ).toBe(true);
+      expect(await blobs.get(manifest.blobKey)).toBeNull();
+      expect(
+        await cleanupPendingBundle(s.releases, blobs, project, bundle.id, t(3)),
+      ).toBe(false);
+      const newManifest = { ...manifest, blobKey: "manifests/new-owner" };
+      await s.releases.beginBundle(
+        {
+          ...bundle,
+          id: "new-owner" as typeof bundle.id,
+          manifest: newManifest,
+        },
+        newManifest,
+      );
+      await s.releases.putBundleDebugIds(
+        project,
+        "new-owner" as typeof bundle.id,
+        ids,
+        ids,
+      );
+    });
+    it("pages events by source-local examined cursor and rejects unrelated cursors", async () => {
+      const s = await factory();
+      for (const id of ["c", "b", "a"]) await seed(s, event(id, 1));
+      const first = await s.events.listByIssue({
+        projectId: project,
+        issueId,
+        limit: 1,
+      });
+      expect(first.items.map((e) => e.eventId)).toEqual(["c"]);
+      expect(first.nextCursor).not.toBeNull();
+      const second = await s.events.listByIssue({
+        projectId: project,
+        issueId,
+        limit: 1,
+        cursor: first.nextCursor ?? undefined,
+      });
+      expect(second.items.map((e) => e.eventId)).toEqual(["b"]);
+      await expect(
+        s.events.listByIssue({
+          projectId: otherProject,
+          issueId,
+          cursor: first.nextCursor ?? undefined,
+        }),
+      ).rejects.toBeInstanceOf(InvalidCursorError);
+    });
     it("looks up keys, hashed tokens, releases and debug ids", async () => {
       const s = await factory();
       const key = {
@@ -902,12 +1080,27 @@ export function activeStoreContract(
         projectId: project,
         releaseId: release.id,
         blobKey: "bundle-key",
-        debugIds: ["debug"],
-      } as Parameters<typeof s.releases.putBundle>[0];
+        state: "pending" as const,
+        pendingExpiresAt: t(20),
+        manifest: {
+          blobKey: "manifest",
+          digest: await bundleDebugIdsDigest(["debug"]),
+          debugIdCount: 1,
+        },
+      } as Parameters<typeof s.releases.beginBundle>[0];
       await s.projects.putKey(key);
       await s.projects.putToken(token);
       await s.releases.put(release);
-      await s.releases.putBundle(bundle);
+      await s.releases.beginBundle(bundle, bundle.manifest);
+      await s.releases.putBundleDebugIds(
+        project,
+        bundle.id,
+        ["debug"],
+        ["debug"],
+      );
+      await s.releases.verifyAndActivateBundle(project, bundle.id, ["debug"]);
+      const { pendingExpiresAt: _pendingExpiresAt, ...pendingFields } = bundle;
+      const activeBundle = { ...pendingFields, state: "active" as const };
       expect(await s.projects.getKey("public")).toEqual(key);
       expect(await s.projects.listKeys(project)).toEqual([key]);
       expect(await s.projects.listKeys(otherProject)).toEqual([]);
@@ -916,9 +1109,22 @@ export function activeStoreContract(
       const extraBundle = {
         ...bundle,
         id: "bundle-extra" as typeof bundle.id,
-        debugIds: ["extra-debug"],
+        manifest: {
+          blobKey: "other-manifest",
+          digest: await bundleDebugIdsDigest(["extra-debug"]),
+          debugIdCount: 1,
+        },
       };
-      await s.releases.putBundle(extraBundle);
+      await s.releases.beginBundle(extraBundle, extraBundle.manifest);
+      await s.releases.putBundleDebugIds(
+        project,
+        extraBundle.id,
+        ["extra-debug"],
+        ["extra-debug"],
+      );
+      await s.releases.verifyAndActivateBundle(project, extraBundle.id, [
+        "extra-debug",
+      ]);
       expect(
         (await s.releases.listBundles(project, release.id, undefined, 1))
           .nextCursor,
@@ -942,20 +1148,20 @@ export function activeStoreContract(
       ).toBeNull();
       expect(
         (await s.releases.listBundles(project, release.id, undefined, 1)).items,
-      ).toEqual([bundle]);
+      ).toEqual([expect.objectContaining(activeBundle)]);
       expect(
         (await s.releases.listBundles(otherProject, release.id, undefined, 1))
           .items,
       ).toEqual([]);
       expect(await s.releases.findBundleByDebugId(project, "debug")).toEqual(
-        bundle,
+        expect.objectContaining(activeBundle),
       );
       expect(
         await s.releases.findBundleByDebugId(otherProject, "debug"),
       ).toBeNull();
       await s.releases.deleteBundle(otherProject, bundle.id);
       expect(await s.releases.findBundleByDebugId(project, "debug")).toEqual(
-        bundle,
+        expect.objectContaining(activeBundle),
       );
       await s.releases.deleteBundle(project, bundle.id);
       await s.releases.deleteBundle(project, bundle.id);
