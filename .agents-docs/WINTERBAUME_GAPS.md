@@ -38,6 +38,15 @@ stated; successful creation by itself does not prove all settings were retained.
   lifecycle equality check compares the requested and returned minimum-object-size values.
   This blocks a complete S3 module apply and can block the generated stack.
 
+## S3 ownership-control deletion is ignored
+
+- Resource: `aws_s3_bucket_ownership_controls`. After `PutBucketOwnershipControls`
+  sets `BucketOwnerEnforced`, `DeleteBucketOwnershipControls` returns HTTP 204 but
+  a subsequent `GetBucketOwnershipControls` still returns HTTP 200 and the same
+  controls. The Terraform provider eventually reports `waiting for S3 Bucket Ownership
+  Controls (...) delete: found resource`, and ordinary generated-root destroy cannot
+  finish. A separate bucket reproduced the request and response sequence.
+
 ## DynamoDB server-side encryption cannot be read back
 
 - Resource: `aws_dynamodb_table`, `server_side_encryption { enabled = true }`.
@@ -55,6 +64,15 @@ stated; successful creation by itself does not prove all settings were retained.
   request carrying `DeletionProtectionEnabled: true` reproduced the false readback
   and successful `DeleteTable` independently. Production deletion protection cannot
   be verified against this revision.
+
+## Resource tag readback is incomplete
+
+- Resource: the generated stack's DynamoDB tables, S3 bucket, IAM roles and Lambda
+  event-source mapping. With provider 6.73.0, a repeat plan adds the `app` default tag
+  back to each affected resource's `tags_all`, despite successful creation. For example,
+  `CreateTable` sends its tags, but `ListTagsOfResource` returns an empty `Tags` array.
+  No API error is returned. The emulator cannot establish tag persistence or a truly empty
+  unfiltered repeat plan for these resources.
 
 ## Lambda resource policy conditions are discarded
 
@@ -109,6 +127,18 @@ stated; successful creation by itself does not prove all settings were retained.
   that fixed response; it does not execute the ZIP. Built errtraq bundles, function URL
   delivery and SQS-triggered execution therefore remain unproven here.
 
+## AWS provider 6.30.0 GSI diff (not an established Winterbaume gap)
+
+- Resource: `aws_dynamodb_table` with GSIs declared using `key_schema`. After a
+  successful apply and correct `DescribeTable` key-schema readback, provider 6.30.0
+  plans to remove and re-add all eight GSI blocks. Provider 6.73.0 does not. The
+  [6.30.0 provider diff code](https://github.com/hashicorp/terraform-provider-aws/blob/v6.30.0/internal/service/dynamodb/table.go)
+  special-cases legacy `hash_key` when `key_schema` is used, but not legacy `range_key`;
+  [6.73.0](https://github.com/hashicorp/terraform-provider-aws/blob/v6.73.0/internal/service/dynamodb/table.go)
+  handles both. This is not being classified as a Winterbaume exception or suppressed:
+  the minimum provider's repeat plan remains unproven until the provider compatibility
+  issue is resolved. The API readback itself has the intended eight keys and projections.
+
 ## S3 range requests in server release 0.2.6
 
 - Resource: S3 `GetObject` with `Range: bytes=1-3` on a six-byte object. Server release
@@ -116,6 +146,34 @@ stated; successful creation by itself does not prove all settings were retained.
   A separately signed AWS CLI request reproduced this; there is no error response.
   The pinned newer source revision used by the harness passes this probe.
 
-The results do not prove IAM, encryption at rest, authorization or the behavior of a real
-AWS account. M3a2 still needs API-level assertions, generated-root variants, idempotence,
-change plans, destruction and protection checks for the paths the emulator can exercise.
+The real-provider integration workflow checks the supported API readbacks and resource
+inventories with named, self-verifying exceptions for the gaps above. Its filtered repeat
+plan is not a truly empty unfiltered Terraform plan. IAM enforcement, encryption at rest,
+function execution, deletion protection, lifecycle and the other excluded behavior remain
+unproven until an emulator fix or the real AWS deployment.
+
+## Upstream issues
+
+Filed against `moriyoshi/winterbaume` at revision `69fed1d7fb0eb9a2738ff3274197c7591129c4cb`,
+each with a minimal AWS CLI reproduction. When one is fixed, bump the pinned revision in
+`scripts/aws-emulated/install.mjs` and remove the matching entry from
+`scripts/aws-emulated/gaps.json` (`pnpm infra:apply-emulated` fails if a listed gap no longer
+reproduces).
+
+| Gap | Upstream |
+| --- | --- |
+| S3 lifecycle configuration does not stabilize (`TransitionDefaultMinimumObjectSize`) | [#41](https://github.com/moriyoshi/winterbaume/issues/41) |
+| DynamoDB deletion protection is ignored | [#42](https://github.com/moriyoshi/winterbaume/issues/42) |
+| DynamoDB server-side encryption cannot be read back | [#43](https://github.com/moriyoshi/winterbaume/issues/43) |
+| Lambda resource policy conditions are discarded | [#44](https://github.com/moriyoshi/winterbaume/issues/44) |
+| Lambda partial batch response setting (and `ScalingConfig`) is discarded | [#45](https://github.com/moriyoshi/winterbaume/issues/45) |
+| Lambda mapping list ignores the function and event source filters | [#46](https://github.com/moriyoshi/winterbaume/issues/46) |
+| EventBridge retry policy and dead-letter config are discarded | [#47](https://github.com/moriyoshi/winterbaume/issues/47) |
+| Lambda Invoke does not execute the uploaded ZIP (feature request) | [#48](https://github.com/moriyoshi/winterbaume/issues/48) |
+| S3 bucket policy is stored but not enforced (feature request) | [#49](https://github.com/moriyoshi/winterbaume/issues/49) |
+| S3 ownership-control deletion is ignored | [#50](https://github.com/moriyoshi/winterbaume/issues/50) |
+| Tag readback: DynamoDB `CreateTable` drops tags | [#51](https://github.com/moriyoshi/winterbaume/issues/51) |
+| Tag readback: IAM `CreateRole` / `GetRole` omit `Role.Tags` | [#52](https://github.com/moriyoshi/winterbaume/issues/52) |
+| Tag readback: S3 `CreateBucket` drops `CreateBucketConfiguration.Tags` | [#53](https://github.com/moriyoshi/winterbaume/issues/53) |
+| Tag readback: Lambda event source mapping has no ARN and cannot be tagged | [#54](https://github.com/moriyoshi/winterbaume/issues/54) |
+| S3 ranged GET in server release 0.2.6 | [#29](https://github.com/moriyoshi/winterbaume/issues/29) (closed; fixed at the pinned revision) |

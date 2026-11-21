@@ -123,6 +123,31 @@ It probes module and generated-root applies with both pinned provider versions; 
 time out after 90 seconds. This is an inventory command, not a passing integration gate or
 proof of the complete M3a2 workflow. See [WINTERBAUME_GAPS.md](./WINTERBAUME_GAPS.md).
 
+The opt-in emulator apply workflow is:
+
+```sh
+pnpm infra:apply-emulated
+```
+
+It uses pinned AWS provider 6.73.0 and loopback-only provider settings, with
+independent Terraform data directories and a read-only plugin directory. It applies the
+DynamoDB, SQS and Lambda modules and generated shared and per-topic example stacks,
+checks resources and policies through service APIs, compares repeat and change plans,
+and checks API inventories after destroy. Provider queue-stabilization and deletion waits
+make this a lengthy opt-in run. A feature-enabled fixture checks the three-topic
+queue transition; the actual examples enable only `ingest`. Named exceptions are listed in
+`scripts/aws-emulated/gaps.json`, logged visibly, linked to
+[WINTERBAUME_GAPS.md](./WINTERBAUME_GAPS.md), and checked to ensure each gap still reproduces. Temporary module overrides exclude only the
+unusable lifecycle and ownership-control resources and partial-batch readback; tracked
+modules and generator output are unchanged.
+
+This does not prove IAM or TLS-only policy enforcement, Lambda code execution, DynamoDB
+encryption at rest or deletion protection, S3 lifecycle or ownership-control behavior,
+partial-batch delivery, EventBridge retry/DLQ behavior, or tag persistence. These need
+real AWS verification or a fixed emulator. The normal mock-provider checks still cover the
+full Terraform module declarations at both pinned provider versions. Provider 6.30.0's
+GSI repeat-plan issue is recorded separately in `WINTERBAUME_GAPS.md`.
+
 `pnpm infra:mutate` requires the cached 6.73.0 provider. It verifies unmodified baselines, applies
 each mutation from `scripts/infra-mutations.json` in its own temporary copy, and reports whether
 validation, HCL tests or the output-shape check detected it. It also mutates generated roots to
@@ -133,8 +158,9 @@ offline `init -backend=false`, `validate` and a
 mock-provider `terraform test` apply for each at both pinned provider versions. The test compares
 actual function environments, policies, queue and cron triggers, and HTTP outputs against the
 derived deployment view; it checks existing selections create no resources and sensitive values
-do not appear in generated files or non-sensitive outputs. Only Terraform's mock test apply runs;
-never run `terraform apply` as part of the gate.
+do not appear in generated files or non-sensitive outputs. The default gate runs only
+Terraform mock-provider applies; the explicit opt-in emulator command also applies resources
+against its local in-memory server.
 
 ## Pick your level
 

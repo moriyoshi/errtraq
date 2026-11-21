@@ -636,3 +636,16 @@ partial-batch and EventBridge retry settings disappear on API readback. Invoke r
 fixed response without executing the ZIP. The precise requests, observed responses and
 limitations are recorded in `WINTERBAUME_GAPS.md`; mocks still test the module contracts.
 The complete API-asserting generated-root apply workflow remains the next M3a2 turn.
+
+## 2026-11-21 — M3a2 local provider integration
+
+The local real-provider workflow now checks standalone modules, both generated stacks,
+API-visible function policies and bindings, change plans and destruction. The actual AWS
+examples activate only the ingest topic; a feature-enabled archive/notifications fixture
+checks the three-topic transition. Exceptions have named data entries, live probes and
+visible output: S3 lifecycle and ownership-control resources are excluded in temporary
+module overrides, and known response omissions are isolated in the repeat-plan check.
+Winterbaume also fails to delete S3 ownership controls and loses default-tag readback for
+several resources. Provider 6.30.0 independently plans GSI churn because its diff code lacks
+the range-key suppression present in 6.73.0; the user approved using 6.73.0 for this
+integration while the existing validation gate continues to cover both provider versions.
