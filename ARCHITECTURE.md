@@ -82,6 +82,7 @@ interface ActiveStore {
   capabilities: { textSearch: boolean; lastSeenRangeOnOtherSort: boolean };
   migrate(): Promise<void>;
 }
+// ProjectRepo.createToken inserts only when the token hash is absent; it never revives a token.
 interface IssueRepo {
   get(projectId, issueId): Promise<Issue | null>;
   list(q: IssueQuery): Promise<Page<Issue>>;   // project, status, [from, to) on lastSeen, sort ∈ {lastSeen, firstSeen, count} descending, cursor

@@ -119,7 +119,7 @@ function nextIssue(occ: Occurrence, previous: Issue | null) {
 }
 export function recordEvent(
   d: Driver,
-  shards: () => number | undefined,
+  shards: () => number | Promise<number>,
 ): ActiveStore["recordEvent"] {
   return async (occ, event) => {
     if (
@@ -129,11 +129,7 @@ export function recordEvent(
       occ.receivedAt !== event.receivedAt
     )
       throw new Error("Occurrence and event mismatch");
-    const count = shards();
-    if (!count)
-      throw new Error(
-        "DynamoDB store must be migrated before recording events",
-      );
+    const count = await shards();
     const PK = issueKey(occ.projectId, occ.issueId),
       evPK = eventKey(event.projectId, event.eventId);
     const eventRow = await eventItem(event, count);

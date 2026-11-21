@@ -965,3 +965,25 @@ construct each selection. `env("NAME")` becomes a Terraform string variable
 Sensitive variables are still rejected from config. The generated-root checks include all
 variable types, Postgres secret mode, and per-function secret-read policy resources. Bootstrap
 and deployed staged-envelope recovery remain for the next M3g turn.
+
+## 2026-11-21 — DynamoDB deployment blockers and bootstrap
+
+Multi-shard event cursors retain each started stream's original key range; the global
+examined boundary narrows only streams without a start key. The shared contract now pages
+project-wide listings and archival scans across four shards, including DynamoDB Local where
+invalid range/start combinations are rejected. DynamoDB schema metadata is loaded lazily,
+with one shared in-flight strong read and retry after failure. The API metadata-delete grant
+is active and generated roots assert its exact derived policy. Bundle cleanup's separate role
+remains future work.
+
+Deployed bootstrap runs from the operator's CLI, avoiding a new public endpoint or a Lambda
+role with secret-creation authority. Store migrations run first (Postgres uses its existing
+advisory migration lock; DynamoDB verifies provisioned schema metadata). Secrets Manager
+CreateSecret provides the atomic create-or-read handoff: the winner's secret contains the DSN
+and first API token, and retry registers that same token if interrupted. The CLI prints only
+the secret ARN; neither credential is a Terraform input, output or log value. New insert-only
+`ProjectRepo.createToken` semantics prevent retries or concurrent bootstrap from reviving a
+revoked token. Postgres separate-pool and DynamoDB Local store-plus-KV tests exercise concurrent
+bootstrap; Secrets Manager requests use fake HTTP in tests, so actual IAM, AWS consistency and
+network access remain M3h checks. The command needs operator-provided non-secret binding values
+and AWS credentials; it currently supports independent top-level store and KV selections.

@@ -92,6 +92,7 @@ const selection = (kind: PortKind): AdapterSelection => ({
               read: { primary: out("policy") },
               write: { primary: out("policy") },
               delete: { primary: out("policy") },
+              "metadata-delete": { primary: out("policy") },
             }
           : kind === "blob"
             ? Object.fromEntries(
@@ -1300,7 +1301,6 @@ describe("infrastructure model", () => {
       role: "api",
       capability: "metadata-delete",
       purpose: "primary",
-      milestone: "M3",
     });
     const v = stack();
     v.archive = selection("archive");
@@ -1313,7 +1313,7 @@ describe("infrastructure model", () => {
           g.selection === "store" &&
           g.capability === "metadata-delete",
       ),
-    ).toBe(false);
+    ).toBe(true);
     expect(
       grants.some(
         (g) =>

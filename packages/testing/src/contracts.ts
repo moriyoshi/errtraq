@@ -686,6 +686,39 @@ export function activeStoreContract(
       });
       expect(second.items.map((e) => e.eventId)).toEqual(["e3", "e4"]);
     });
+    it("pages unfiltered event listings and archival scans across multiple shards", async () => {
+      const store = await factory();
+      for (let i = 0; i < 40; i++)
+        await record(
+          store,
+          occurrence(`shard-${String(i).padStart(2, "0")}`, i, `issue${i % 3}`),
+        );
+      const scanned = await collect((cursor) =>
+        store.events.scanOlderThan(project, t(50), { cursor, limit: 7 }),
+      );
+      expect(scanned.map((e) => e.eventId)).toEqual(
+        Array.from(
+          { length: 40 },
+          (_, i) => `shard-${String(i).padStart(2, "0")}`,
+        ),
+      );
+      for (const order of ["asc", "desc"] as const) {
+        const listed = await collect(async (cursor) => {
+          const page = await store.events.listByIssue({
+            projectId: project,
+            order,
+            limit: 7,
+            cursor,
+          });
+          return { items: page.items, nextCursor: page.nextCursor };
+        });
+        expect(listed.map((e) => e.eventId)).toEqual(
+          order === "asc"
+            ? scanned.map((e) => e.eventId)
+            : [...scanned].reverse().map((e) => e.eventId),
+        );
+      }
+    });
     it("does not repeat issues when earlier entries are inserted or bumped", async () => {
       const store = await factory();
       for (let i = 1; i <= 4; i++)
@@ -803,6 +836,27 @@ export function activeStoreContract(
       ).rejects.toBeInstanceOf(ConflictError);
       await s.projects.putOrg({ ...org, name: "updated" });
       expect((await s.projects.getOrg(org.id))?.name).toBe("updated");
+    });
+    it("atomically creates a token once and never revives a revoked token", async () => {
+      const store = await factory();
+      const token: ApiToken = {
+        id: "token-once" as ApiTokenId,
+        orgId: "org" as OrgId,
+        tokenHash: "hash-once",
+        scopes: ["event:read"],
+      };
+      const created = await Promise.all(
+        Array.from({ length: 6 }, () => store.projects.createToken(token)),
+      );
+      expect(created.filter(Boolean)).toHaveLength(1);
+      await store.projects.putToken({ ...token, revokedAt: t(2) });
+      expect(await store.projects.createToken(token)).toBe(false);
+      expect(
+        (await store.projects.getTokenByHash(token.tokenHash))?.revokedAt,
+      ).toBe(t(2));
+      await expect(
+        store.projects.createToken({ ...token, tokenHash: "other-hash" }),
+      ).rejects.toBeInstanceOf(ConflictError);
     });
     it("looks up matching issue IDs across projects", async () => {
       const s = await factory();

@@ -11,7 +11,7 @@ item should be resolved or removed once addressed. Milestone work itself is trac
 - [ ] M3h: verify real Lambda-to-RDS/Aurora IAM authentication, the Lambda runtime CA bundle and hostname verification, new connections after 15 minutes, and RDS Proxy IAM/TLS behavior and permissions; verify VPC attachment, ENI role permissions and service reachability through the selected NAT or endpoints. — *source: M3f2*
 
 - [x] M3e / M4: replace the earlier subject-index ledger proposal with the owner-selected inline Parquet index, optional sharded fence and staged port changes. — *source: M3e step 1c*
-- [ ] M5: wire bundle upload and pending-bundle cleanup scheduling; activate the API metadata-delete and manifest blob policy rows when those handlers exist; check that their actual marker keys match the DynamoDB policy namespaces. Manifest object keys must be unique and never reused. — *source: M3e stage 1 step A*
+- [ ] M5: wire bundle upload and pending-bundle cleanup scheduling; activate the appropriate metadata-delete and manifest blob policy rows for the cleanup role when those handlers exist; check that their actual marker keys match the DynamoDB policy namespaces. Manifest object keys must be unique and never reused. — *source: M3e stage 1 step A*
 - [ ] M3e stage 1: verify exact count-sort key updates with the conditional count preimage under contention; the earlier DynamoDB Local concurrency experiment did not exercise that extra guard. — *source: M3e step 1c*
 - [ ] M4: resolve the main-queue drain proof before claiming erasure completion; waiting and inspecting the DLQ and index cannot prove that a committed, unindexed event is not still retrying in the main queue. Verify blob list/read consistency and lease-fenced manifest operations for the Parquet index. — *source: M3e step 1c*
 - [ ] M3h: measure 500 concurrent same-issue writes in both modes, transaction/GSI write units and index backpressure, and verify the revised IAM policies and LeadingKeys restrictions, immutable shard metadata and composite key queries, and measure fence ConditionCheck conflict rates on real AWS. — *source: M3e step 1c*
@@ -53,6 +53,7 @@ item should be resolved or removed once addressed. Milestone work itself is trac
 - [ ] M3: provide indexed token enumeration and revocation for tokens issued before M1g; their plaintext was not retained, so local token rotation can revoke only the file-backed token. — *source: M1g closing review*
 
 - [x] M3: integrate the AWS Secrets Manager runtime secret source for deployed Lambda functions. — *source: M2a2 review A4; M3g part 1*
+- [ ] M3h: verify deployed CLI bootstrap against real Secrets Manager, DynamoDB and RDS, including IAM/KMS permissions, network reachability and recovery after an interrupted first run. — *source: M3g bootstrap*
 
 - [x] M3: enforce the 1 MiB SQS body limit including serialization and envelope overhead. — *source: M2b step 1; resolved in M3c*
 - [ ] M3: implement the remaining AWS runtime adapters and make DynamoDB explicit deletion honor erasure semantics. — *source: M2b step 1*

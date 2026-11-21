@@ -209,6 +209,7 @@ describe("AWS descriptor stacks", () => {
     ]);
     expect(policyKeys("api")).toEqual([
       "blob:read:primary",
+      "store:metadata-delete:primary",
       "store:read:primary",
       "store:write:primary",
     ]);

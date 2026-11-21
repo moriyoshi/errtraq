@@ -83,6 +83,9 @@ atomicity. The command runs those unchanged cases against a cached, digest-pinne
 Local Docker image when available and prints a skip otherwise; it never pulls an image.
 The Winterbaume 40-writer diagnostic records the gap separately and is not a correctness or
 contention benchmark. DynamoDB Local likewise does not replace the M3h real AWS check.
+The Local run also exercises concurrent deployed bootstrap with both DynamoDB store and KV;
+`test:postgres` exercises it through separate Postgres pools. Secrets Manager bootstrap calls
+use fake HTTP responses in local tests and still require an M3h real-AWS check.
 To populate the cache explicitly, pull
 `amazon/dynamodb-local@sha256:6ada631ec7aa5fc83446855eb17233e3dad184fec47477e8140c6c569cfe0c86`.
 

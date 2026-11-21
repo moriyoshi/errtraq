@@ -70,6 +70,9 @@ export interface ProjectRepo {
   /** List keys belonging to a project. */
   listKeys(projectId: ProjectId): Promise<ProjectKey[]>;
   getTokenByHash(tokenHash: string): Promise<ApiToken | null>;
+  /** Atomically insert only when its hash is absent; return false for an existing hash.
+   * Never modify an existing token. A token ID owned by a different hash raises ConflictError. */
+  createToken(token: ApiToken): Promise<boolean>;
   putToken(token: ApiToken): Promise<void>;
 }
 

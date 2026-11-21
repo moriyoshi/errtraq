@@ -363,6 +363,9 @@ importers:
 
   packages/cli:
     dependencies:
+      '@errtraq/aws-signing':
+        specifier: workspace:*
+        version: link:../aws-signing
       '@errtraq/blob-fs':
         specifier: workspace:*
         version: link:../adapters/blob-fs
@@ -372,15 +375,24 @@ importers:
       '@errtraq/infra-gen':
         specifier: workspace:*
         version: link:../infra-gen
+      '@errtraq/kv-dynamodb':
+        specifier: workspace:*
+        version: link:../adapters/kv-dynamodb
       '@errtraq/kv-memory':
         specifier: workspace:*
         version: link:../adapters/kv-memory
+      '@errtraq/platform-aws-lambda':
+        specifier: workspace:*
+        version: link:../platforms/aws-lambda
       '@errtraq/platform-standalone':
         specifier: workspace:*
         version: link:../platforms/standalone
       '@errtraq/queue-memory':
         specifier: workspace:*
         version: link:../adapters/queue-memory
+      '@errtraq/store-dynamodb':
+        specifier: workspace:*
+        version: link:../adapters/store-dynamodb
       '@errtraq/store-sql':
         specifier: workspace:*
         version: link:../adapters/store-sql
@@ -390,6 +402,10 @@ importers:
       fflate:
         specifier: 0.8.2
         version: 0.8.2
+    devDependencies:
+      '@errtraq/testing':
+        specifier: workspace:*
+        version: link:../testing
 
   packages/core:
     dependencies:

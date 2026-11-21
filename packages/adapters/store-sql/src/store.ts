@@ -341,6 +341,29 @@ export function createSqlStore({ db, dialect }: SqlStoreOptions): ActiveStore {
           .executeTakeFirst();
         return r ? decode(r.data) : null;
       },
+      createToken: async (token) => {
+        const result = await retryBusy(() =>
+          db
+            .insertInto("tokens")
+            .values({
+              pk: token.id,
+              lookup: token.tokenHash,
+              data: JSON.stringify(token),
+            })
+            .onConflict((conflict) => conflict.doNothing())
+            .executeTakeFirst(),
+        );
+        if (dialect.didUpdate(result.numInsertedOrUpdatedRows)) return true;
+        if (
+          await db
+            .selectFrom("tokens")
+            .select("pk")
+            .where("lookup", "=", token.tokenHash)
+            .executeTakeFirst()
+        )
+          return false;
+        throw new ConflictError("Token ID already exists");
+      },
       putToken: async (token) =>
         put("tokens", {
           pk: token.id,

@@ -56,6 +56,7 @@ export const infra: InfraDescriptor<Config> = {
     read: { primary: null },
     write: { primary: null },
     delete: { primary: null },
+    "metadata-delete": { primary: null },
   },
   bindings: [],
 };
@@ -124,6 +125,7 @@ export function postgres(
       read: { primary: out("policies", "read", "primary") },
       write: { primary: out("policies", "write", "primary") },
       delete: { primary: out("policies", "delete", "primary") },
+      "metadata-delete": { primary: out("policies", "write", "primary") },
     },
     bindings: Object.entries(names).map(([name, value]) => ({
       name,

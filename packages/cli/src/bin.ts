@@ -6,6 +6,7 @@ import { physicalFunctions, resolveStack, selections } from "@errtraq/core";
 import { buildSummary, dsnHost, dsnOrigin } from "./address.js";
 import { buildStack } from "./build.js";
 import { constructStack } from "./construction.js";
+import { bootstrapAwsStack } from "./deployed-bootstrap.js";
 import { generateInfra, repositoryRoot, safeDirectory } from "./infra.js";
 import { assertNodeVersion } from "./node-version.js";
 import { devToken } from "./token.js";
@@ -42,10 +43,10 @@ export async function main(args: string[]): Promise<void> {
   if (
     !rotate &&
     !infra &&
-    !["dev", "validate", "build"].includes(command ?? "")
+    !["dev", "validate", "build", "bootstrap"].includes(command ?? "")
   )
     throw new Error(
-      "Usage: errtraq <dev|validate|build|infra generate|token rotate> --stack <file> [--out dir]",
+      "Usage: errtraq <dev|validate|build|bootstrap|infra generate|token rotate> --stack <file> [--out dir]",
     );
   const options: Record<string, string> = {};
   let allowMissing = false;
@@ -57,7 +58,14 @@ export async function main(args: string[]): Promise<void> {
     }
     if (
       !flag ||
-      !["--stack", "--out", "--build-dir"].includes(flag) ||
+      ![
+        "--stack",
+        "--out",
+        "--build-dir",
+        ...(command === "bootstrap"
+          ? ["--secret-name", "--ingest-url", "--org", "--project"]
+          : []),
+      ].includes(flag) ||
       !rest[i + 1] ||
       options[flag]
     )
@@ -75,6 +83,27 @@ export async function main(args: string[]): Promise<void> {
   if (!imported || typeof imported !== "object" || !("default" in imported))
     throw new Error("Stack must export a default configuration");
   const stack = resolveStack(imported.default);
+  if (command === "bootstrap") {
+    if (
+      !options["--secret-name"] ||
+      !options["--ingest-url"] ||
+      !options["--org"] ||
+      !options["--project"]
+    )
+      throw new Error(
+        "Bootstrap requires --secret-name, --ingest-url, --org and --project",
+      );
+    const arn = await bootstrapAwsStack(stack, process.env, {
+      secretName: options["--secret-name"],
+      ingestUrl: options["--ingest-url"],
+      orgSlug: options["--org"],
+      projectSlug: options["--project"],
+    });
+    console.log(
+      `Bootstrap complete; read DSN and API token from Secrets Manager: ${arn}`,
+    );
+    return;
+  }
   if (command === "validate") {
     console.log(formatValidation(stack));
     return;

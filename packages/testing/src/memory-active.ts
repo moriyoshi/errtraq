@@ -119,6 +119,13 @@ export class MemoryActiveStore implements ActiveStore {
         [...this.keys.values()].filter((key) => key.projectId === projectId),
       ),
     getTokenByHash: async (hash) => copy(this.tokens.get(hash) ?? null),
+    createToken: async (token) => {
+      if (this.tokens.has(token.tokenHash)) return false;
+      if ([...this.tokens.values()].some((row) => row.id === token.id))
+        throw new ConflictError("Token ID exists");
+      this.tokens.set(token.tokenHash, copy(token));
+      return true;
+    },
     putToken: async (token) => {
       const other = this.tokens.get(token.tokenHash);
       if (other && other.id !== token.id)

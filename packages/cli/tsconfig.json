@@ -16,6 +16,18 @@
     },
     {
       "path": "../platforms/standalone"
+    },
+    {
+      "path": "../aws-signing"
+    },
+    {
+      "path": "../platforms/aws-lambda"
+    },
+    {
+      "path": "../adapters/store-dynamodb"
+    },
+    {
+      "path": "../adapters/kv-dynamodb"
     }
   ]
 }

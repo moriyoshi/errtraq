@@ -14,6 +14,48 @@ const environment = {
   AWS_SESSION_TOKEN: "session-token",
 };
 describe("DynamoDB store runtime", () => {
+  it("loads shard metadata once lazily for concurrent operations and retries failed loads", async () => {
+    let reads = 0;
+    const fetcher: typeof fetch = async (_url, init) => {
+      const target = new Headers(init?.headers).get("x-amz-target");
+      if (target === "DynamoDB_20120810.GetItem") {
+        reads++;
+        return Response.json({ Item: { projectTimeShards: { N: "4" } } });
+      }
+      if (target === "DynamoDB_20120810.Query")
+        return Response.json({ Items: [] });
+      throw new Error("Unexpected request");
+    };
+    const store = new DynamoStore({
+      table: "table",
+      region: "us-east-1",
+      environment,
+      fetch: fetcher,
+    });
+    const project = "project" as import("@errtraq/core").ProjectId;
+    const cutoff =
+      "2025-01-01T00:00:00.000Z" as import("@errtraq/core").Timestamp;
+    expect(reads).toBe(0);
+    await Promise.all([
+      store.events.scanOlderThan(project, cutoff),
+      store.events.listByIssue({ projectId: project }),
+    ]);
+    await store.migrate();
+    expect(reads).toBe(1);
+    let attempts = 0;
+    const retry = new DynamoStore({
+      table: "table",
+      region: "us-east-1",
+      environment,
+      fetch: async () =>
+        Response.json(
+          ++attempts === 1 ? {} : { Item: { projectTimeShards: { N: "4" } } },
+        ),
+    });
+    await expect(retry.migrate()).rejects.toThrow("metadata");
+    await retry.migrate();
+    expect(attempts).toBe(2);
+  });
   it("retains transaction cancellation images without exposing them through serialization", async () => {
     const store = new DynamoStore({
       table: "table",

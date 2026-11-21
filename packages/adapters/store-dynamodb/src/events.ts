@@ -103,27 +103,49 @@ async function list(
           ? explicitAfter
           : boundary
       : (explicitAfter ?? boundary);
-  if (after && order === "asc" && (!lower || after > lower)) lower = after;
-  if (after && order === "desc" && (!upper || after < upper)) upper = after;
+  if (explicitAfter && order === "asc" && (!lower || explicitAfter > lower))
+    lower = explicitAfter;
+  if (explicitAfter && order === "desc" && (!upper || explicitAfter < upper))
+    upper = explicitAfter;
   if (lower && upper && lower >= upper) return { items: [], nextCursor: null };
   const items: StoredEvent[] = [];
   let examined = 0;
   while (items.length < limit && examined < 100) {
     for (const stream of streams) {
       if (stream.done || stream.next) continue;
+      let streamLower = lower,
+        streamUpper = upper;
+      if (
+        !stream.start &&
+        boundary &&
+        order === "asc" &&
+        (!streamLower || boundary > streamLower)
+      )
+        streamLower = boundary;
+      if (
+        !stream.start &&
+        boundary &&
+        order === "desc" &&
+        (!streamUpper || boundary < streamUpper)
+      )
+        streamUpper = boundary;
+      if (streamLower && streamUpper && streamLower >= streamUpper) {
+        stream.done = true;
+        continue;
+      }
       const response = await d.request("Query", {
         TableName: d.table,
         IndexName: index,
         ScanIndexForward: order === "asc",
-        KeyConditionExpression: `#hash = :hash${lower && upper ? " AND #range BETWEEN :lower AND :upper" : lower ? " AND #range >= :lower" : upper ? " AND #range <= :upper" : ""}`,
+        KeyConditionExpression: `#hash = :hash${streamLower && streamUpper ? " AND #range BETWEEN :lower AND :upper" : streamLower ? " AND #range >= :lower" : streamUpper ? " AND #range <= :upper" : ""}`,
         ExpressionAttributeNames: {
           "#hash": hash,
-          ...(lower || upper ? { "#range": range } : {}),
+          ...(streamLower || streamUpper ? { "#range": range } : {}),
         },
         ExpressionAttributeValues: {
           ":hash": s(stream.hash),
-          ...(lower ? { ":lower": s(lower) } : {}),
-          ...(upper ? { ":upper": s(upper) } : {}),
+          ...(streamLower ? { ":lower": s(streamLower) } : {}),
+          ...(streamUpper ? { ":upper": s(streamUpper) } : {}),
         },
         Limit: 1,
         ...(stream.start ? { ExclusiveStartKey: stream.start } : {}),
@@ -204,17 +226,23 @@ async function list(
 }
 export function eventRepository(
   d: Driver,
-  shards: () => number | undefined,
+  shards: () => number | Promise<number>,
 ): EventRepo {
   return {
     capabilities: { deleteStrategy: "explicit", deleteBySubject: false },
     get: async (project, id) =>
       itemData<StoredEvent>(await get(d, eventKey(project, id))),
     listByIssue: async (query) => {
-      const page = await list(d, shards() ?? 0, query, eventCursorScope(query));
+      const page = await list(
+        d,
+        await shards(),
+        query,
+        eventCursorScope(query),
+      );
       return { ...page, hasMore: page.nextCursor !== null };
     },
-    scanOlderThan: (project, cutoff, options) => {
+    scanOlderThan: async (project, cutoff, options) => {
+      const count = await shards();
       const query: EventQuery = {
         projectId: project,
         to: cutoff,
@@ -224,9 +252,9 @@ export function eventRepository(
       };
       return list(
         d,
-        shards() ?? 0,
+        count,
         query,
-        JSON.stringify(["scanOlderThan", project, cutoff, shards()]),
+        JSON.stringify(["scanOlderThan", project, cutoff, count]),
       );
     },
     deleteBatch: async (project, ids) => {

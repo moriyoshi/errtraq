@@ -231,7 +231,7 @@ function exampleStack(mode: "shared" | "per-topic"): StackConfig {
       },
     },
     platform,
-    store: resource("store", ["read", "write", "delete"]),
+    store: resource("store", ["read", "write", "delete", "metadata-delete"]),
     queue: queue(mode),
     blob: resource("blob", ["read", "write", "delete", "list"]),
     kv: resource("kv", ["read", "write"]),

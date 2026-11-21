@@ -5,6 +5,7 @@ export * from "./consumer.js";
 export * from "./consumer-policy.js";
 export * from "./cron.js";
 export * from "./cursor.js";
+export * from "./deployed-bootstrap.js";
 export * from "./deployed-runtime.js";
 export * from "./domain.js";
 export * from "./envelope.js";

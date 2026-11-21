@@ -25,9 +25,16 @@
     "@errtraq/queue-memory": "workspace:*",
     "@errtraq/store-sql": "workspace:*",
     "esbuild": "0.28.2",
-    "fflate": "0.8.2"
+    "fflate": "0.8.2",
+    "@errtraq/aws-signing": "workspace:*",
+    "@errtraq/platform-aws-lambda": "workspace:*",
+    "@errtraq/store-dynamodb": "workspace:*",
+    "@errtraq/kv-dynamodb": "workspace:*"
   },
   "bin": {
     "errtraq": "./dist/bin.js"
+  },
+  "devDependencies": {
+    "@errtraq/testing": "workspace:*"
   }
 }

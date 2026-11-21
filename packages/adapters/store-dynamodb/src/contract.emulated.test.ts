@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { signAwsRequest } from "@errtraq/aws-signing";
+import { bootstrapDeployed, hashApiToken } from "@errtraq/core";
 import { bundleDebugIdsDigest } from "@errtraq/core/store";
-import { activeStoreContract } from "@errtraq/testing";
+import { activeStoreContract, MemoryKV } from "@errtraq/testing";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { DynamoStore } from "./runtime.js";
 
@@ -45,7 +46,7 @@ async function api(action: string, input: Record<string, unknown>) {
   return response.json();
 }
 const tables: string[] = [];
-async function makeStore() {
+async function makeStore(migrate = true) {
   const table = `errtraq-${randomUUID().replaceAll("-", "")}`;
   await api("CreateTable", { ...shape, TableName: table });
   tables.push(table);
@@ -63,7 +64,7 @@ async function makeStore() {
     environment,
     endpoint,
   });
-  await store.migrate();
+  if (migrate) await store.migrate();
   if (process.env.ERRTRAQ_MEASURE_ISSUE_WRITES === "1") {
     const request = store.request.bind(store);
     let writes = 0,
@@ -90,6 +91,36 @@ describe.skipIf(!endpoint)("DynamoDB store emulator", () => {
       await api("DeleteTable", { TableName: table });
   });
   activeStoreContract(makeStore);
+  it("bootstraps a DynamoDB store concurrently without prior migration", async () => {
+    const store = await makeStore(false);
+    const kv = new MemoryKV();
+    let secret: string | undefined;
+    const vault = {
+      async claim(_name: string, candidate: string) {
+        secret ??= candidate;
+        return { identifier: "arn:bootstrap", value: secret };
+      },
+    };
+    const options = {
+      stackName: "stack",
+      store,
+      kv,
+      vault,
+      secretName: "bootstrap",
+      ingestUrl: "https://ingest.example/",
+      orgSlug: "org",
+      projectSlug: "project",
+    };
+    expect(
+      await Promise.all(
+        Array.from({ length: 4 }, () => bootstrapDeployed(options)),
+      ),
+    ).toEqual(Array(4).fill("arn:bootstrap"));
+    const saved = JSON.parse(secret ?? "null");
+    expect(
+      await store.projects.getTokenByHash(await hashApiToken(saved.token)),
+    ).toMatchObject({ orgId: saved.orgId });
+  });
   it("measures forty concurrent writes without treating emulator atomicity as proof", async () => {
     const store = await makeStore();
     const request = store.request.bind(store);

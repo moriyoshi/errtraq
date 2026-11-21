@@ -90,6 +90,7 @@ export async function assertStackHelper(
               read: { primary: null },
               write: { primary: null },
               delete: { primary: null },
+              "metadata-delete": { primary: null },
             }
           : kind === "blob"
             ? {

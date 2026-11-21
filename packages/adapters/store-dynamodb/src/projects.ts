@@ -274,6 +274,47 @@ export function projectRepository(driver: Driver): ProjectRepo {
     },
     getTokenByHash: async (hash) =>
       itemData<ApiToken>(await get(driver, tokenPk(hash))),
+    createToken: async (token) => {
+      const PK = tokenPk(token.tokenHash),
+        marker = ownerKey("token", token.id);
+      for (let attempt = 0; attempt < 12; attempt++) {
+        try {
+          await driver.request("TransactWriteItems", {
+            TransactItems: [
+              {
+                Put: {
+                  TableName: driver.table,
+                  Item: dataItem(PK, token),
+                  ConditionExpression: "attribute_not_exists(PK)",
+                },
+              },
+              {
+                Put: {
+                  TableName: driver.table,
+                  Item: {
+                    ...primary(marker),
+                    owner: s(PK),
+                    revision: s(crypto.randomUUID()),
+                  },
+                  ConditionExpression: "attribute_not_exists(PK)",
+                },
+              },
+            ],
+          });
+          return true;
+        } catch (error) {
+          if (!cancelled(error)) throw error;
+          if (await get(driver, PK)) return false;
+          if (await get(driver, marker))
+            throw new ConflictError("Token ID already exists");
+        }
+      }
+      throw new DynamoStoreError(
+        "DynamoDB token creation contention limit reached",
+        undefined,
+        true,
+      );
+    },
     putToken: (token) =>
       writeDirectUnique(driver, "token", token.id, token.tokenHash, token),
   };

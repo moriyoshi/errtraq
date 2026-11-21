@@ -100,7 +100,11 @@ export const fixtures = {
       existing: {
         table_name: "existing-store",
         table_arn: "arn:aws:dynamodb:us-east-1:123456789012:table/existing",
-        policies: { read: { primary: policy }, write: { primary: policy } },
+        policies: {
+          read: { primary: policy },
+          write: { primary: policy },
+          "metadata-delete": { primary: policy },
+        },
       },
     },
     queue: {
@@ -370,6 +374,18 @@ export function prepareRoot(parent, name, version) {
       http,
     }).map(([key, value]) => [`expected_${key}`, { value }]),
   );
+  const api = view.functions.find((fn) => fn.roles.includes("api"));
+  const metadata = api?.policies.find(
+    (grant) =>
+      grant.selection === "store" && grant.capability === "metadata-delete",
+  );
+  if (stack.store.manifest.id === "store-dynamodb") {
+    if (!api || !metadata?.policyOutput)
+      throw new Error("API metadata-delete grant is missing");
+    expectations.expected_metadata_delete = {
+      value: render(metadata.policyOutput, "store"),
+    };
+  }
   writeFileSync(
     resolve(target, "expectations.tf.json"),
     `${JSON.stringify({ output: expectations }, null, 2)}\n`,
@@ -407,7 +423,20 @@ export function prepareRoot(parent, name, version) {
   }
 `
       : "";
-  const rootTest = test.replace(/\n}\s*$/, `${vpcAssertions}\n}\n`);
+  let metadataAssertion = "";
+  if (stack.store.manifest.id === "store-dynamodb") {
+    if (!api) throw new Error("API function is missing");
+    metadataAssertion = `
+  assert {
+    condition = contains([for policy in module.platform.test_policies[${JSON.stringify(api.id)}] : jsonencode(jsondecode(policy))], jsonencode(jsondecode(output.expected_metadata_delete)))
+    error_message = "The API function must receive the store metadata-delete policy."
+  }
+`;
+  }
+  const rootTest = test.replace(
+    /\n}\s*$/,
+    `${vpcAssertions}${metadataAssertion}\n}\n`,
+  );
   writeFileSync(
     resolve(target, "tests/root.tftest.hcl"),
     `${functionOverrides}\n${queueOverrides}\n${rootTest}`,

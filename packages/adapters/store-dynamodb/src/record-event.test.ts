@@ -148,7 +148,6 @@ describe("DynamoDB recordEvent", () => {
       environment: { AWS_ACCESS_KEY_ID: "id", AWS_SECRET_ACCESS_KEY: "secret" },
       fetch: fetcher,
     });
-    await store.migrate();
     const result = await store.recordEvent(occurrence, event);
     expect(result.issue.count).toBe(5);
     expect(reads).toBe(2);

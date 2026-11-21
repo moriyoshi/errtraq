@@ -47,6 +47,7 @@ export class DynamoStore implements ActiveStore {
   };
   private readonly endpoint: string;
   private shards?: number;
+  private shardLoad?: Promise<number>;
   constructor(private readonly options: DynamoStoreOptions) {
     if (!options.table || !options.region)
       throw new Error("DynamoDB store table and region are required");
@@ -164,7 +165,7 @@ export class DynamoStore implements ActiveStore {
       throw new DynamoStoreError(...args);
     }
   }
-  async migrate(): Promise<void> {
+  private async readShards(): Promise<number> {
     const result = await this.request("GetItem", {
       TableName: this.options.table,
       Key: { PK: { S: "META|schema" }, SK: { S: "DATA" } },
@@ -184,18 +185,32 @@ export class DynamoStore implements ActiveStore {
         "DynamoDB store shard count differs from table metadata",
       );
     this.shards = shards;
+    return shards;
+  }
+  private loadShards(): Promise<number> {
+    if (this.shards !== undefined) return Promise.resolve(this.shards);
+    if (!this.shardLoad)
+      this.shardLoad = this.readShards().catch((error: unknown) => {
+        this.shardLoad = undefined;
+        throw error;
+      });
+    return this.shardLoad;
+  }
+  async migrate(): Promise<void> {
+    await this.loadShards();
   }
   /** The persisted count is available after migrate has verified the table. */
   get indexShards(): number | undefined {
     return this.shards;
   }
-  recordEvent: ActiveStore["recordEvent"] = recordEvent(
-    this,
-    () => this.shards,
+  recordEvent: ActiveStore["recordEvent"] = recordEvent(this, () =>
+    this.loadShards(),
   );
   projects: ActiveStore["projects"] = projectRepository(this);
   issues: ActiveStore["issues"] = issueRepository(this);
-  events: ActiveStore["events"] = eventRepository(this, () => this.shards);
+  events: ActiveStore["events"] = eventRepository(this, () =>
+    this.loadShards(),
+  );
   releases: ActiveStore["releases"] = releaseRepository(this);
   meta: ActiveStore["meta"] = metaRepository(this);
 }

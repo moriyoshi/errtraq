@@ -54,6 +54,32 @@ verification commands.
 When using `existing` resources, the function receives exactly the operator-supplied policy
 documents; an empty document grants no access.
 
+### Bootstrap a deployed AWS stack
+
+After deploying the stack, run migrations and create the first organization, project and
+credentials from the operator's machine. Supply the deployed store and KV binding names in
+the environment (for the DynamoDB examples, `ERRTRAQ_STORE_TABLE` and `ERRTRAQ_KV_TABLE`),
+`AWS_REGION`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, and, for temporary credentials,
+`AWS_SESSION_TOKEN`. For Postgres secret mode, supply the full existing
+database-secret ARN in `ERRTRAQ_POSTGRES_SECRET`; IAM mode also needs its documented database
+bindings and CA bundle. `errtraq validate` lists binding names. Use the deployed ingest URL,
+without a DSN key, and a new Secrets Manager name:
+
+```sh
+pnpm exec errtraq bootstrap --stack stacks/aws-dynamodb.ts \
+  --secret-name errtraq/bootstrap/example --ingest-url https://example.lambda-url.us-east-1.on.aws/ \
+  --org my-org --project my-project
+```
+
+The operator needs network access to the store and AWS APIs and IAM permissions for the
+selected store / KV operations plus Secrets Manager `CreateSecret`, `DescribeSecret` and
+`GetSecretValue` on the chosen secret. Postgres migrations need schema-management privileges.
+The command prints only the resulting secret ARN. Read its `SecretString` using Secrets Manager
+after the command succeeds; it contains the DSN and first API token. The secret is created by
+the command, outside Terraform state and outputs. Treat its value as a credential and restrict
+who can read it. If interrupted, rerun with the same arguments; an existing secret must match
+the deployment, and its token is registered if the earlier attempt stopped before that step.
+
 
 ### Bring-your-own RDS PostgreSQL
 

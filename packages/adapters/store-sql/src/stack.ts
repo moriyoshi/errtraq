@@ -37,6 +37,7 @@ export const infra: InfraDescriptor<SqliteStackConfig> = {
     read: { primary: null },
     write: { primary: null },
     delete: { primary: null },
+    "metadata-delete": { primary: null },
   },
   resources: { primary: "local" },
 };

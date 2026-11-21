@@ -3,7 +3,7 @@ import { spawn, spawnSync } from "node:child_process";
 // Cached image only: never pull from a registry as part of the test command.
 const image =
   "amazon/dynamodb-local@sha256:6ada631ec7aa5fc83446855eb17233e3dad184fec47477e8140c6c569cfe0c86";
-export async function testDynamoConcurrency(tableShape) {
+export async function testDynamoConcurrency(shapes) {
   const available = spawnSync("docker", ["image", "inspect", image], {
     stdio: "ignore",
   });
@@ -65,8 +65,9 @@ export async function testDynamoConcurrency(tableShape) {
         "vitest",
         "run",
         "packages/adapters/store-dynamodb/src/contract.emulated.test.ts",
+        "packages/cli/src/deployed-bootstrap.emulated.test.ts",
         "--testNamePattern",
-        "atomically creates or bumps, reopens regressions, and tracks the latest event|preserves an occurrence concurrent with an issue update|atomically ignores concurrent duplicate deliveries|uses compare-and-set for creation and competing writers, and lists erasures|pages erasures by state and serializes concurrent erasure transitions|atomically creates one initial active project key",
+        "bootstraps concurrently with the real DynamoDB store and KV adapters|pages unfiltered event listings and archival scans across multiple shards|atomically creates or bumps, reopens regressions, and tracks the latest event|preserves an occurrence concurrent with an issue update|atomically ignores concurrent duplicate deliveries|uses compare-and-set for creation and competing writers, and lists erasures|pages erasures by state and serializes concurrent erasure transitions|atomically creates a token once and never revives a revoked token|bootstraps a DynamoDB store concurrently without prior migration|atomically creates one initial active project key",
         "--disableConsoleIntercept",
         "--testTimeout",
         "30000",
@@ -76,7 +77,8 @@ export async function testDynamoConcurrency(tableShape) {
         env: {
           ...process.env,
           ERRTRAQ_DYNAMO_EMULATOR: endpoint,
-          ERRTRAQ_DYNAMO_STORE_SHAPE: JSON.stringify(tableShape),
+          ERRTRAQ_DYNAMO_STORE_SHAPE: JSON.stringify(shapes.table),
+          ERRTRAQ_DYNAMO_KV_SHAPE: JSON.stringify(shapes.kv),
           ERRTRAQ_MEASURE_ISSUE_WRITES: "1",
         },
       },

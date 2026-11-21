@@ -1,4 +1,5 @@
-import { activeStoreContract } from "@errtraq/testing";
+import { bootstrapDeployed, hashApiToken } from "@errtraq/core";
+import { activeStoreContract, MemoryKV } from "@errtraq/testing";
 import { Kysely, sql } from "kysely";
 import pg from "pg";
 import { afterAll, describe, expect, it } from "vitest";
@@ -43,6 +44,41 @@ suite("Postgres", () => {
     const store = createSqlStore({ db, dialect: postgresStoreDialect });
     await store.migrate();
     return store;
+  });
+  it("migrates and bootstraps concurrently through separate Postgres pools", async () => {
+    const { db: a, name } = await database();
+    const { db: b } = await database(name);
+    const left = createSqlStore({ db: a, dialect: postgresStoreDialect }),
+      right = createSqlStore({ db: b, dialect: postgresStoreDialect });
+    const kv = new MemoryKV();
+    let secret: string | undefined;
+    const vault = {
+      async claim(_name: string, candidate: string) {
+        secret ??= candidate;
+        return { identifier: "arn:bootstrap", value: secret };
+      },
+    };
+    const options = {
+      stackName: "stack",
+      kv,
+      vault,
+      secretName: "bootstrap",
+      ingestUrl: "https://ingest.example/",
+      orgSlug: "org",
+      projectSlug: "project",
+    };
+    const results = await Promise.all([
+      bootstrapDeployed({ ...options, store: left }),
+      bootstrapDeployed({ ...options, store: right }),
+    ]);
+    expect(results).toEqual(["arn:bootstrap", "arn:bootstrap"]);
+    const saved = JSON.parse(secret ?? "null");
+    expect(
+      await right.projects.getTokenByHash(await hashApiToken(saved.token)),
+    ).toMatchObject({ orgId: saved.orgId });
+    expect(await bootstrapDeployed({ ...options, store: left })).toBe(
+      "arn:bootstrap",
+    );
   });
   it("upgrades existing bundle markers without losing active lookups", async () => {
     const { db } = await database();

@@ -18,13 +18,11 @@ export const PORT_REQUIREMENTS: readonly PortRequirement[] = [
   { kind: "store", role: "ingest", capability: "read", purpose: "primary" },
   { kind: "store", role: "api", capability: "read", purpose: "primary" },
   { kind: "store", role: "api", capability: "write", purpose: "primary" },
-  // Future bundle endpoints/cleanup are not implemented yet; activate with their handlers.
   {
     kind: "store",
     role: "api",
     capability: "metadata-delete",
     purpose: "primary",
-    milestone: "M3",
   },
   {
     kind: "blob",
