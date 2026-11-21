@@ -611,3 +611,17 @@ the existing M3 recovery-race investigation remains open and no cause is assumed
 - What M2 does not prove: nothing has been planned or applied against a real AWS account, the
   AWS runtime adapters are stubs, and deployed secret resolution is an interface only. M3
   starts there.
+
+## 2026-11-21 — M3a AWS emulator harness
+
+- Winterbaume server release 0.2.6 ignores S3 Range; a separately signed AWS CLI request
+  reproduced the full-object response. Source revision `69fed1d7fb0eb9a2738ff3274197c7591129c4cb`
+  passes the ranged-read probe, so the harness verifies that archive's SHA-256 and builds
+  the pinned source in the ignored workspace. Building the full server is expensive in
+  time and disk. No tested DynamoDB or SQS gap justifies an additional emulator yet.
+- The probes and their precise scope are in `M3_EMULATOR_SUPPORT.md`. They exercise local
+  behavior, not SigV4, IAM enforcement, production security settings, or full AWS parity.
+  The test client refuses non-loopback endpoints and uses dummy request authorization.
+- The harness derives the table and queue shape from the Terraform modules and checks
+  namespace cleanup. Basic Terraform control-plane create/read/delete probes pass, but they
+  do not prove a generated root applies; M3a2 will exercise the provider's full workflow.

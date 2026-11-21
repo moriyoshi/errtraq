@@ -34,9 +34,19 @@ Every adapter runs the matching suite from `packages/testing` (`activeStoreContr
 `queueContract`, `blobStoreContract`, `archiveStoreContract`). When you change a port, extend
 the contract suite first, then make every existing adapter pass it.
 
-Adapters for external services run against the emulators in `docker/` (winterbaume for S3,
-Lakekeeper for the Iceberg catalog, database servers) and Miniflare for Cloudflare. These runs
-are opt-in. TODO(M3): record the exact commands here when the compose file lands.
+AWS emulator probes and the namespace lifecycle are opt-in:
+
+```sh
+pnpm aws-emulator:install   # first run: download verified pinned source and build with Rust
+pnpm test:aws-emulated      # starts and stops the local server; skips if not installed
+```
+
+The installer keeps its source, Cargo cache and build under `.agents-workspace/tmp`. The
+first build needs network access and substantial disk space; subsequent runs are offline.
+Tests bind a free loopback port, derive their DynamoDB and SQS shapes from the HCL modules,
+and never use AWS credentials. See [M3_EMULATOR_SUPPORT.md](./M3_EMULATOR_SUPPORT.md)
+for the probed operations and limitations. Other service contracts use the relevant local
+emulator (for example Lakekeeper or Miniflare) and remain opt-in.
 
 ## 3. End-to-end (when you touch ingest, the consumer, grouping, or the API)
 
