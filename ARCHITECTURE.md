@@ -390,8 +390,11 @@ Terraform generator composes hand-written AWS modules and the CLI validates stac
 role-scoped Lambda ZIPs and generates roots using their verified artifact manifests. Output files
 use relative paths and marked directories. The standalone build includes a non-root Node 22
 container with a persistent data volume; its explicit container host setting exposes the server
-to the container network while ordinary local runs default to loopback. Runtime AWS adapters,
-deployed secret sources and a real cloud deployment remain M3 work.
+to the container network while ordinary local runs default to loopback. Postgres can use a bring-your-own RDS IAM identity, with an exact database-user connect policy;
+one database user is shared by the store capabilities, and SQL privileges, rather than IAM,
+control read, write and delete. Lambda can use operator-provided subnet and security-group IDs;
+private functions need NAT or suitable service endpoints for their AWS API calls. Runtime AWS
+adapters, deployed secret sources and a real cloud deployment remain M3 work.
 
 ## Milestones
 
