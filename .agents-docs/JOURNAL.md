@@ -1112,3 +1112,48 @@ exception; the issue has not been filed upstream. Real AWS must verify tag persi
 
 A final rerun measured 3.96 seconds for 200 and 9.80 seconds for 500; both again had one
 transaction per hot event, no retries and maximum same-group concurrency one.
+
+## 2026-11-22 — M3h first real AWS deployment (Claude)
+
+Disposable copy of `stacks/aws-dynamodb.ts` (shared queue mode, grouped record stage) in a
+sandbox account, ap-northeast-1, provider 6.x. Stack file and scripts stayed in the ignored
+workspace; no account details are recorded here.
+
+- **Apply:** 70 resources, no errors. Plan review: only the two function URLs are public
+  (`auth NONE`, `principal *`, `InvokeFunctionUrl` plus `InvokeFunction` via URL); no IAM
+  statement with a wildcard action or resource. Lambda env holds only binding names.
+- **Repeat plan drift (fixed):** the ingest function URL's CORS `allow_headers` /
+  `expose_headers` were Title-Case in `infra/modules/aws/lambda-app`, AWS stores them
+  lowercased, so every plan proposed an in-place update. Now lowercase; repeat plan empty.
+  The emulator did not show this because winterbaume echoes the casing back.
+- **Bootstrap:** run twice from the operator machine; both printed the same secret ARN only.
+  The secret holds `dsn`, `token`, `orgId`, `projectId`, `stack`, `version`. Terraform destroy
+  does not remove it (by design, it is outside state): teardown must delete it separately.
+- **SDK end to end (`@sentry/node`, default transport):** 401 on missing and wrong tokens;
+  grouping (alpha 3, beta 1, message 1) visible 2.4 s after flush; latest event has Sentry
+  tags and exception entries; resolve then a new event reopens with count 4; one envelope
+  posted three times counted once.
+- **Ingest rate limit:** a 200 / 500-envelope burst through the function URL got 186 / 533
+  responses of 429. `IngestService` defaults to 60 events per minute per DSN key and the
+  Lambda platform has no setting for it (standalone does). Recorded in TODO.
+- **Grouped path under load** (staged envelopes sent straight to the shared queue with the
+  project's own S3 / SQS adapters, bypassing the rate limit): 200 hot + 20 background
+  drained within 10 s; 500 hot + 50 background drained about 13 s after the last send. Over
+  the whole window, 771 events took 190 `TransactWriteItems` (0.25 per event, about four
+  events per record batch), zero `TransactionConflict`, zero conditional failures, zero
+  throttles, zero Lambda errors, both DLQs empty. Peak concurrency: consumer 10, record 4.
+  So real SQS FIFO does serialise per group and batch, which winterbaume could not prove.
+- **Recovery cron:** an envelope planted 15 minutes old with no queue message was recorded
+  once by the next five-minute run (EventBridge `cron(*/5 * ? * * *)`).
+- **IAM (policy simulator, 23 cases):** all as designed. Two first looked wrong only because
+  the simulator was not given the condition keys: api `DeleteItem` is limited by
+  `dynamodb:LeadingKeys` to metadata key prefixes (allowed for `TOKEN|`, denied for `EV|`),
+  and cron `ListBucket` by `s3:prefix` (allowed `envelopes/`, denied elsewhere).
+- **Bucket:** plain-HTTP `PutObject` denied by the TLS-only policy; anonymous GET 403.
+- **Destroy:** 70 destroyed; the account has no errtraq functions, tables, queues, buckets,
+  secrets (including pending deletion), roles, log groups, rules or event source mappings.
+
+Not covered by this run (still on the M3h checklist): per-topic queue mode, FIFO poison
+message to DLQ and redrive, visibility expiry, mode-switch drain, RDS / Aurora IAM and VPC,
+provider retries and timeouts against real throttling, CloudWatch alarms (the stack creates
+none yet), and the S3 ZIP path (bundles are about 200 KB, direct upload is fine).

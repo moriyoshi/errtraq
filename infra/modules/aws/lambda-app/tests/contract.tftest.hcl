@@ -89,7 +89,7 @@ run "functions_triggers_and_urls" {
     error_message = "The logging policy must fit the 1024-character sizing budget."
   }
   assert {
-    condition     = aws_lambda_function.function["shared"].runtime == "nodejs20.x" && aws_lambda_function.function["shared"].handler == "app.handle" && aws_lambda_function.function["shared"].reserved_concurrent_executions == 12 && aws_lambda_function_url.http["shared"].authorization_type == "NONE" && toset(aws_lambda_function_url.http["shared"].cors[0].allow_origins) == toset(["*"]) && contains(aws_lambda_function_url.http["shared"].cors[0].allow_headers, "X-Sentry-Auth")
+    condition     = aws_lambda_function.function["shared"].runtime == "nodejs20.x" && aws_lambda_function.function["shared"].handler == "app.handle" && aws_lambda_function.function["shared"].reserved_concurrent_executions == 12 && aws_lambda_function_url.http["shared"].authorization_type == "NONE" && toset(aws_lambda_function_url.http["shared"].cors[0].allow_origins) == toset(["*"]) && contains(aws_lambda_function_url.http["shared"].cors[0].allow_headers, "x-sentry-auth")
     error_message = "Runtime, handler, concurrency, public auth and ingest CORS must match inputs."
   }
   assert {

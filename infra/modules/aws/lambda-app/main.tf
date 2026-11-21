@@ -97,10 +97,11 @@ resource "aws_lambda_function_url" "http" {
   dynamic "cors" {
     for_each = contains(each.value.http, "ingest") ? [1] : []
     content {
-      allow_origins  = ["*"]
-      allow_methods  = ["POST"]
-      allow_headers  = ["Content-Type", "Content-Encoding", "X-Sentry-Auth", "X-Requested-With", "sentry-trace", "baggage"]
-      expose_headers = ["X-Sentry-Error", "X-Sentry-Rate-Limits", "Retry-After"]
+      allow_origins = ["*"]
+      allow_methods = ["POST"]
+      # Lowercase: AWS stores header names lowercased, so other casings drift on every plan.
+      allow_headers  = ["content-type", "content-encoding", "x-sentry-auth", "x-requested-with", "sentry-trace", "baggage"]
+      expose_headers = ["x-sentry-error", "x-sentry-rate-limits", "retry-after"]
     }
   }
 }
