@@ -162,7 +162,25 @@ export class MemoryQueue implements Queue {
     maxBytes: 256000,
     delay: true,
     dlq: false,
+    grouping: "per-key-serial" as const,
   };
+  private readonly activeGroups = new Set<string>();
+  private group(delivery: Delivery): string | undefined {
+    return delivery.message.groupKey ? delivery.message.groupKey : undefined;
+  }
+  private eligible(row: Queued): boolean {
+    const group = this.group(row.delivery);
+    return (
+      row.available <= Date.parse(this.clock.now()) &&
+      (!group ||
+        (!this.activeGroups.has(group) &&
+          !this.rows.some(
+            (earlier) =>
+              this.group(earlier.delivery) === group &&
+              Number(earlier.delivery.id) < Number(row.delivery.id),
+          )))
+    );
+  }
   private rows: Queued[] = [];
   private nextId = 0;
   constructor(private clock: Clock = new FakeClock()) {}
@@ -171,7 +189,14 @@ export class MemoryQueue implements Queue {
       const delay = options?.delaySec ?? 0;
       if (!Number.isFinite(delay) || delay < 0)
         throw new RangeError("Invalid queue delay");
-      for (const message of messages) validateQueueBody(message.body);
+      for (const message of messages) {
+        validateQueueBody(message.body);
+        if (
+          message.groupKey !== undefined &&
+          (typeof message.groupKey !== "string" || !message.groupKey)
+        )
+          throw new TypeError("Invalid group key");
+      }
       const copies = messages.map((message) => copy(message));
       for (const message of copies)
         if (
@@ -191,6 +216,12 @@ export class MemoryQueue implements Queue {
       const deliveries = event as Delivery[];
       const ids = new Set(deliveries.map((delivery) => delivery.id));
       const items = this.rows.filter((row) => ids.has(row.delivery.id));
+      const groups = items
+        .map((item) => this.group(item.delivery))
+        .filter((group): group is string => !!group);
+      if (groups.some((group) => this.activeGroups.has(group)))
+        throw new Error("Group already in flight");
+      for (const group of groups) this.activeGroups.add(group);
       this.rows = this.rows.filter((row) => !ids.has(row.delivery.id));
       let result: BatchResult = [];
       try {
@@ -198,6 +229,7 @@ export class MemoryQueue implements Queue {
       } catch {
         /* Retry failed invocations. */
       }
+      for (const group of groups) this.activeGroups.delete(group);
       for (const item of items) {
         const action = result.find((r) => r.deliveryId === item.delivery.id);
         if (action?.action === "ack") continue;
@@ -213,18 +245,14 @@ export class MemoryQueue implements Queue {
 
   /** Simulates platform selection of one event and invokes the push source. */
   async deliverPush(handler: BatchHandler): Promise<void> {
-    const item = this.rows.find(
-      (row) => row.available <= Date.parse(this.clock.now()),
-    );
+    const item = this.rows.find((row) => this.eligible(row));
     if (item) await this.push.handle([item.delivery], handler);
   }
 
   pull: NonNullable<Queue["pull"]> = {
     run: async (handler, signal) => {
       while (!signal.aborted) {
-        const index = this.rows.findIndex(
-          (item) => item.available <= Date.parse(this.clock.now()),
-        );
+        const index = this.rows.findIndex((item) => this.eligible(item));
         if (index < 0) {
           await new Promise<void>((resolve) => {
             const timer = setTimeout(done, 5);
@@ -240,6 +268,8 @@ export class MemoryQueue implements Queue {
         }
         const [item] = this.rows.splice(index, 1);
         if (!item) continue;
+        const group = this.group(item.delivery);
+        if (group) this.activeGroups.add(group);
         try {
           const result = await handler([copy(item.delivery)]);
           const action = result.find((r) => r.deliveryId === item.delivery.id);
@@ -249,6 +279,8 @@ export class MemoryQueue implements Queue {
             (action?.action === "retry" ? (action.delaySec ?? 0) : 0) * 1000;
         } catch {
           item.available = Date.parse(this.clock.now());
+        } finally {
+          if (group) this.activeGroups.delete(group);
         }
         item.delivery.attempt++;
         this.rows.push(item);

@@ -6,6 +6,7 @@ item should be resolved or removed once addressed. Milestone work itself is trac
 
 ## Open Items
 
+- [ ] M3 issue-keyed recording: migrate the remaining adapters, then remove the temporary optional `recordEvents` / grouping capability fallback and unify `CoreTopic` with `RoutedTopic`; wire the record handler and FIFO according to `ISSUE_KEYED_QUEUE_PLAN.md`. — *source: issue-keyed turn 2*
 - [ ] M3e: add the event and issue `ttlEpoch` backstops from the DynamoDB design; explicit retention deletes remain primary. The ingest role's read policy also grants table-wide `GetItem`: restricting it with `dynamodb:LeadingKeys` requires a separate capability policy because the current read output is shared with roles that query the whole table. — *source: store review section C*
 - [ ] M3e: define an index backfill for bundle records created before the release and expiry index keys were added; existing records are not automatically reindexed. — *source: store review section C*
 - [x] M3e: resolve the pending bundle and manifest TTL decision: no TTL; scheduled, monitored cleanup is required. — *source: owner decision after store review*

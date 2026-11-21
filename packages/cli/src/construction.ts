@@ -84,6 +84,7 @@ export async function constructStack(
                     topic,
                     {
                       physical: route.physical,
+                      ...(route.grouping ? { grouping: route.grouping } : {}),
                       ...(route.producerBinding
                         ? { producerBinding: route.producerBinding }
                         : {}),

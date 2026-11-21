@@ -170,6 +170,90 @@ function stack(): StackConfig {
     kv: selection("kv"),
   };
 }
+it("derives grouped routes and rejects unsupported stores, queues and role mappings", () => {
+  const v = stack();
+  v.recordMode = "grouped";
+  v.platform.manifest.configSchema = z
+    .object({ roles: z.array(z.string()), split: z.array(z.string()) })
+    .passthrough();
+  v.platform.config = {
+    roles: [...roles, "record"],
+    split: [...roles, "record"],
+  };
+  v.store.manifest.capabilities.recordEvents = true;
+  v.queue.manifest.capabilities.grouping = "per-key-serial";
+  v.queue.infra.resources.record_queue = out("arn");
+  v.queue.infra.capabilities.produce.record_queue = out("policy");
+  v.queue.infra.capabilities.consume.record_queue = out("policy");
+  v.queue.infra.bindings.push({
+    name: "RECORD_QUEUE",
+    kind: "env",
+    purpose: "record_queue",
+    value: out("arn"),
+  });
+  const routes = topics(v).routes;
+  routes.record = {
+    physical: "record_queue",
+    producerBinding: "RECORD_QUEUE",
+    grouping: "per-key-serial",
+  };
+  expect(validateStack(v)).toEqual([]);
+  const grants = deriveAccess(v).grants;
+  expect(grants).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        functionId: "consumer",
+        selection: "queue",
+        capability: "produce",
+        purpose: "record_queue",
+      }),
+      expect.objectContaining({
+        functionId: "record",
+        selection: "queue",
+        capability: "consume",
+        purpose: "record_queue",
+      }),
+      expect.objectContaining({
+        functionId: "record",
+        selection: "store",
+        capability: "write",
+      }),
+    ]),
+  );
+  expect(
+    grants.some(
+      (grant) => grant.functionId === "consumer" && grant.selection === "store",
+    ),
+  ).toBe(false);
+  expect(
+    deriveTriggers(v).some(
+      (trigger) =>
+        trigger.kind === "queue" &&
+        trigger.role === "record" &&
+        trigger.topics.includes("record"),
+    ),
+  ).toBe(true);
+  v.store.manifest.capabilities.recordEvents = false;
+  expect(
+    validateStack(v).some(
+      (issue) => issue.path === "store.capabilities.recordEvents",
+    ),
+  ).toBe(true);
+  v.store.manifest.capabilities.recordEvents = true;
+  v.queue.manifest.capabilities.grouping = "none";
+  expect(
+    validateStack(v).some(
+      (issue) => issue.path === "queue.infra.topics.record",
+    ),
+  ).toBe(true);
+  v.queue.manifest.capabilities.grouping = "per-key-serial";
+  routes.record.physical = "shared";
+  expect(
+    validateStack(v).some((issue) =>
+      issue.message.includes("own physical queue"),
+    ),
+  ).toBe(true);
+});
 function topics(v: StackConfig) {
   const value = v.queue.infra.topics;
   if (!value) throw new Error("Missing topic mapping");

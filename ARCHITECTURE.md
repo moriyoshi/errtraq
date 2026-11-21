@@ -142,19 +142,19 @@ interface ReleaseRepo {
 
 ### Queue — unify push and pull delivery
 ```ts
-interface Message  { key: string; body: unknown; groupKey?: string } // proposed grouped mode; key = eventId
+interface Message  { key: string; body: unknown; groupKey?: string } // key = eventId for event messages
 interface Delivery { id: string; topic: Topic; message: Message; attempt: number }
 interface QueueProducer { send(topic: Topic, msgs: Message[], opts?: { delaySec?: number }): Promise<void>; }
 type BatchHandler = (batch: Delivery[]) => Promise<BatchResult>;   // per-delivery ack | retry(delaySec)
 interface PushSource<E, R> { handle(platformEvent: E, handler: BatchHandler): Promise<R>; }   // SQS event, CF MessageBatch, Pub/Sub push, Cloud Tasks HTTP
 interface PullSource { run(handler: BatchHandler, signal: AbortSignal): Promise<void>; }      // memory, Redis streams, NATS JetStream, Service Bus
-interface Queue { producer: QueueProducer; pull?: PullSource; push?: PushSource; capabilities: { delivery: 'push' | 'pull' | 'both'; maxBytes: number; delay: boolean; dlq: boolean; grouping: 'per-key-serial' | 'none' /* proposed */ } }
+interface Queue { producer: QueueProducer; pull?: PullSource; push?: PushSource; capabilities: { delivery: 'push' | 'pull' | 'both'; maxBytes: number; delay: boolean; dlq: boolean; grouping?: 'per-key-serial' | 'none' } }
 ```
 - A push source owns the whole platform round trip (`handle`), because acknowledging is
   platform-specific and asynchronous: SQS retry delay is a `ChangeMessageVisibility` call,
   Cloudflare Queues ack / retry are methods on the original batch.
-- Current semantics: at-least-once, unordered; handlers are idempotent on the message key.
-  The proposed grouped-delivery semantics and their visibility-timeout limits are specified below.
+- Delivery is at-least-once; queues with grouped delivery preserve order per group during a
+  live lease, with the visibility-timeout limits below. Other queues are unordered.
 - Push sources are driven by the platform entrypoint; pull sources need a long-lived process
   (standalone / container). Stack validation rejects pull-only queue + function-only compute.
 - **Claim-check**: ingest writes the raw envelope to BlobStore and enqueues a small reference,
@@ -221,14 +221,13 @@ CF Cron Triggers, Cloud Scheduler) or an in-process timer on the standalone plat
    issue/event list/get/update for a later UI.
 4. **Cron** — archival, retention of raw envelopes, release-artifact GC.
 
-### Planned issue-keyed record stage (M3, not implemented)
+### Issue-keyed record stage (M3, partially implemented)
 
 `recordMode` is a stack-level setting: `direct` retains the current consumer write path;
 `grouped` adds a `record` topic, produced by the normalizing consumer and consumed by a new
 `record` role. The separate role permits independent scaling, grants and timeouts; it can share
-a physical function through the normal split configuration. Standalone examples default to direct;
-Lambda + SQS examples default to grouped. These are explicit stack-helper defaults, not a hidden
-platform inference. Validation rejects grouped mode unless the record queue declares grouped
+a physical function through the normal split configuration. Stacks currently default to direct;
+future Lambda + SQS helpers will explicitly default to grouped. Validation rejects grouped mode unless the record queue declares grouped
 delivery, the record role is deployed, the active store supports the operation, and all record
 bindings, policies, triggers and limits are available. It never silently falls back to direct.
 
@@ -299,8 +298,8 @@ The returned issue is the committed post-group issue (or the actual stored issue
 belonging to another issue); a subsequent concurrent update can make a post-commit read newer.
 A duplicate-only group performs no issue mutation. Consumers may retry ambiguous commits and must
 not emit duplicate side effects. A reliable notification outbox is future work, so notifications
-must not be advertised as exactly-once. While an adapter is being migrated, `capabilities.recordEvents` is false and the operation throws
-`UnsupportedQueryError`; grouped-stack validation rejects it. SQLite, Postgres, the memory fake
+must not be advertised as exactly-once. While an adapter is being migrated, an absent `recordEvents` capability or method means unsupported;
+grouped-stack validation rejects it. SQLite, Postgres, the memory fake
 and DynamoDB must all eventually advertise true and satisfy the same shared contract; the detailed transaction design is in
 [the DynamoDB design](.agents-docs/DYNAMODB_DESIGN.md).
 

@@ -211,11 +211,12 @@ triggers are derived only for active topics, one per physical queue. Cron trigge
 the core cron registry: known M4 placeholders log that they are not implemented, and unknown or
 missing job names log an error and return without retrying.
 
-### Planned grouped recording (M3 design; not yet represented by the types below)
+### Grouped recording (M3; model implemented, runtime stage planned)
 
-The issue-keyed stage is a proposed change to this model, not a capability of the current
-implementation. Add stack `recordMode: "direct" | "grouped"` and a `record` function role.
-Stack helpers explicitly default standalone to direct and AWS Lambda/SQS to grouped; validation
+Core now models stack `recordMode: "direct" | "grouped"` and a `record` function role; the
+record handler, SQL/DynamoDB batch writes and SQS FIFO implementation remain future work. An
+omitted mode currently defaults to direct for every stack. Future stack helpers will explicitly
+default standalone to direct and AWS Lambda/SQS to grouped; validation
 must reject a grouped stack that lacks per-key serial delivery, a deployed record role, the
 batched store operation, or any required binding, policy or trigger. Direct mode does not activate
 `record`, its queue, trigger or grants. Do not silently downgrade a grouped stack.
@@ -230,7 +231,7 @@ The future core-owned route and requirement rows are (other current rows remain 
 | grouped | record | store | Read/write for duplicate checks and atomic batches, with policies attached only to the functions receiving this role. |
 | grouped | record | primary blob | Read/list for normalized-record claim checks and overflow reads where actually used; delete only if the record handler owns the corresponding cleanup. |
 
-The descriptor declares grouping per *physical queue*, because the same adapter must support a
+The descriptor declares grouping on a topic route for its *physical queue*, because the same adapter must support a
 standard ingest queue and FIFO record queue simultaneously. Logical `record` has its own valid
 physical key (for example `record`) and queue even when standard topics are shared. Shared mode
 maps compatible standard topics to one physical queue; per-topic mode maps them separately.

@@ -26,22 +26,29 @@ export class MemoryQueue implements Queue {
   private readonly systemClock: boolean;
   private readonly maxAttempts: number;
   private readonly logger: Pick<Logger, "error">;
-  private readonly topicMap: Record<string, { physical: string }> | undefined;
+  private readonly topicMap:
+    | Record<string, { physical: string; grouping?: "none" | "per-key-serial" }>
+    | undefined;
+  private group(delivery: Delivery): string | undefined {
+    return delivery.message.groupKey
+      ? JSON.stringify([
+          this.topicMap?.[delivery.topic]?.physical ?? "shared",
+          delivery.message.groupKey,
+        ])
+      : undefined;
+  }
   constructor(
     config: QueueConfig = {},
     clock?: Clock,
     logger: Pick<Logger, "error"> = {
       error: (message, fields) => console.error(message, fields),
     },
-    topics?: Record<string, { physical: string }>,
+    topics?: Record<
+      string,
+      { physical: string; grouping?: "none" | "per-key-serial" }
+    >,
   ) {
     this.topicMap = topics && Object.keys(topics).length ? topics : undefined;
-    if (
-      this.topicMap &&
-      new Set(Object.values(this.topicMap).map((route) => route.physical))
-        .size !== 1
-    )
-      throw new Error("Memory queue supports a single shared physical queue");
     this.systemClock = clock === undefined;
     this.clock = clock ?? { now: () => toTimestamp(new Date()) };
     this.maxAttempts = configSchema.parse(config).maxAttempts;
@@ -50,6 +57,7 @@ export class MemoryQueue implements Queue {
       delivery: "pull",
       delay: true,
       dlq: false,
+      grouping: "per-key-serial",
       maxBytes: QUEUE_MAX_BYTES,
     };
   }
@@ -67,7 +75,19 @@ export class MemoryQueue implements Queue {
       const delay = options?.delaySec ?? 0;
       if (!Number.isFinite(delay) || delay < 0)
         throw new RangeError("Invalid queue delay");
-      for (const message of messages) validateQueueBody(message.body);
+      for (const message of messages) {
+        validateQueueBody(message.body);
+        if (
+          this.topicMap?.[topic]?.grouping === "per-key-serial" &&
+          !message.groupKey
+        )
+          throw new TypeError("Grouped topic requires a group key");
+        if (
+          message.groupKey !== undefined &&
+          (typeof message.groupKey !== "string" || !message.groupKey)
+        )
+          throw new TypeError("Invalid group key");
+      }
       const copied = messages.map((message) => structuredClone(message));
       for (const message of copied) {
         const json = JSON.stringify(message);
@@ -92,7 +112,17 @@ export class MemoryQueue implements Queue {
         const index = this.pending.findIndex(
           (item) =>
             item.available <= Date.parse(this.clock.now()) &&
-            (item.retryAfterReal ?? 0) <= Date.now(),
+            (item.retryAfterReal ?? 0) <= Date.now() &&
+            (!this.group(item.delivery) ||
+              (![...this.running.values()].some(
+                (running) => this.group(running) === this.group(item.delivery),
+              ) &&
+                !this.pending.some(
+                  (earlier) =>
+                    this.group(earlier.delivery) ===
+                      this.group(item.delivery) &&
+                    Number(earlier.delivery.id) < Number(item.delivery.id),
+                ))),
         );
         if (index < 0) {
           await new Promise<void>((resolve) => {

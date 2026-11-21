@@ -1,4 +1,8 @@
-import type { CoreTopic, FunctionRole, PortKind } from "./stack-model.js";
+import type {
+  RoutedTopic as CoreTopic,
+  FunctionRole,
+  PortKind,
+} from "./stack-model.js";
 
 export const QUEUE_CAPABILITIES = {
   producer: "produce",
@@ -10,7 +14,7 @@ export interface PortRequirement {
   role: FunctionRole;
   capability: string;
   purpose: string;
-  feature?: "archive" | "notifications";
+  feature?: "archive" | "notifications" | "direct" | "grouped";
   milestone?: "M3" | "M4";
 }
 /** M1 calls are unconditional; M4 rows model the archive and erasure design. */
@@ -38,8 +42,48 @@ export const PORT_REQUIREMENTS: readonly PortRequirement[] = [
     purpose: "primary",
     milestone: "M3",
   },
-  { kind: "store", role: "consumer", capability: "read", purpose: "primary" },
-  { kind: "store", role: "consumer", capability: "write", purpose: "primary" },
+  {
+    kind: "store",
+    role: "consumer",
+    capability: "read",
+    purpose: "primary",
+    feature: "direct",
+  },
+  {
+    kind: "store",
+    role: "consumer",
+    capability: "write",
+    purpose: "primary",
+    feature: "direct",
+  },
+  {
+    kind: "store",
+    role: "record",
+    capability: "read",
+    purpose: "primary",
+    feature: "grouped",
+  },
+  {
+    kind: "store",
+    role: "record",
+    capability: "write",
+    purpose: "primary",
+    feature: "grouped",
+  },
+  {
+    kind: "blob",
+    role: "record",
+    capability: "read",
+    purpose: "primary",
+    feature: "grouped",
+  },
+  {
+    kind: "blob",
+    role: "record",
+    capability: "list",
+    purpose: "primary",
+    feature: "grouped",
+  },
   { kind: "blob", role: "ingest", capability: "write", purpose: "primary" },
   { kind: "blob", role: "ingest", capability: "delete", purpose: "primary" },
   { kind: "blob", role: "api", capability: "read", purpose: "primary" },
@@ -120,10 +164,11 @@ export const TOPIC_ROUTES: Readonly<
       producers: readonly FunctionRole[];
       consumer: FunctionRole;
       milestone?: "M4";
-      feature?: "archive" | "notifications";
+      feature?: "archive" | "notifications" | "direct" | "grouped";
     }
   >
 > = {
+  record: { producers: ["consumer"], consumer: "record", feature: "grouped" },
   ingest: { producers: ["ingest", "cron"], consumer: "consumer" },
   "archive.project": {
     producers: ["cron", "consumer"],

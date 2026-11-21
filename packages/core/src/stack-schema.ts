@@ -119,6 +119,7 @@ const descriptorSchema = z.strictObject({
         z.strictObject({
           physical: name,
           producerBinding: refName.optional(),
+          grouping: z.enum(["none", "per-key-serial"]).optional(),
         }),
       ),
       settings: z
@@ -155,6 +156,7 @@ const selectionSchema: z.ZodType<AdapterSelection> = z.lazy(() =>
 export const rootSchema = z.strictObject({
   name: z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/),
   protection: z.enum(["production", "disposable"]).default("production"),
+  recordMode: z.enum(["direct", "grouped"]).default("direct"),
   outputs: z.record(refName, z.custom(isOutputRef)).optional(),
   providers: z
     .record(

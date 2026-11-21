@@ -131,3 +131,20 @@ it("uses the resolved topic map and preserves logical topics on the shared queue
     }));
   }, signal.signal);
 });
+
+it("requires a group key for grouped topic mappings", async () => {
+  const queue = createAdapter({
+    config: {},
+    bindings: {},
+    dependencies: {},
+    topics: { record: { physical: "record", grouping: "per-key-serial" } },
+  });
+  await expect(
+    queue.producer.send("record", [{ key: "one", body: null }]),
+  ).rejects.toThrow("group key");
+  await expect(
+    queue.producer.send("record", [
+      { key: "one", groupKey: "issue", body: null },
+    ]),
+  ).resolves.toBeUndefined();
+});

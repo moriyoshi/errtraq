@@ -10,16 +10,24 @@ export type PortKind =
   | "kv"
   | "catalog"
   | "engine";
-export type FunctionRole = "ingest" | "api" | "consumer" | "cron";
+export type FunctionRole = "ingest" | "api" | "consumer" | "record" | "cron";
 export const FUNCTION_ROLES: readonly FunctionRole[] = [
   "ingest",
   "api",
   "consumer",
+  "record",
   "cron",
 ];
 /** Logical topics are part of core's contract; later handlers must not acknowledge unknown topics. */
-export const TOPICS = ["ingest", "archive.project", "notifications"] as const;
-export type CoreTopic = (typeof TOPICS)[number];
+export const TOPICS = [
+  "ingest",
+  "archive.project",
+  "notifications",
+  "record",
+] as const;
+/** Legacy adapter topic set; expanded to RoutedTopic as adapters migrate. */
+export type CoreTopic = Exclude<(typeof TOPICS)[number], "record">;
+export type RoutedTopic = (typeof TOPICS)[number];
 /** Visibility must cover six consumer timeouts, allowing for retries and delays. */
 export const QUEUE_VISIBILITY_FACTOR = 6;
 export const CRON_JOBS = [
@@ -306,10 +314,11 @@ export interface SecretReadRequirement {
 export interface TopicRoute {
   physical: string;
   producerBinding?: string;
+  grouping?: "none" | "per-key-serial";
 }
 export interface TopicMapping {
   mode: "shared" | "per-topic";
-  routes: Record<CoreTopic, TopicRoute>;
+  routes: Record<CoreTopic, TopicRoute> & Partial<Record<"record", TopicRoute>>;
   settings?: Record<string, QueueTriggerSettings>;
 }
 export interface QueueTriggerSettings {
@@ -335,7 +344,7 @@ export type DeploymentTrigger =
       resource: InfraValue;
       /** Environment binding carrying the runtime event-source identifier. */
       eventSourceBinding?: string;
-      topics: CoreTopic[];
+      topics: RoutedTopic[];
       settings: QueueTriggerSettings;
     }
   | { kind: "cron"; functionId: string; name: string; schedule: string };
@@ -367,14 +376,12 @@ export interface CreateContext<
   logger?: Logger;
   cronJobs?: readonly string[];
   /** Supplied only to a queue adapter. */
-  topics?: Partial<
-    Record<CoreTopic, { physical: string; producerBinding?: string }>
-  >;
+  topics?: Partial<Record<RoutedTopic, TopicRoute>>;
   /** Push event-source identifier to physical queue and the topics it carries. */
   queueConsumers?: readonly {
     eventSource: unknown;
     physical: string;
-    topics: readonly CoreTopic[];
+    topics: readonly RoutedTopic[];
   }[];
 }
 /** An adapter may release resources when construction fails or the process stops. */
@@ -406,6 +413,8 @@ export interface StackConfig {
   name: string;
   /** Production protection is the default; disposable permits resource teardown. */
   protection?: "production" | "disposable";
+  /** Defaults to direct until the grouped record handler is implemented. */
+  recordMode?: "direct" | "grouped";
   outputs?: Record<string, OutputRef>;
   providers?: Record<
     string,

@@ -23,6 +23,7 @@ export class MemoryActiveStore implements ActiveStore {
   readonly capabilities = {
     lastSeenRangeOnOtherSort: false,
     textSearch: false,
+    recordEvents: true,
   };
   private orgs = new Map<string, Org>();
   private projectRows = new Map<string, Project>();
@@ -136,7 +137,10 @@ export class MemoryActiveStore implements ActiveStore {
       this.tokens.set(token.tokenHash, copy(token));
     },
   };
-  recordEvent: ActiveStore["recordEvent"] = async (occurrence, event) => {
+  private recordOne: (
+    occurrence: import("@errtraq/core").Occurrence,
+    event: StoredEvent,
+  ) => import("@errtraq/core").RecordResult = (occurrence, event) => {
     this.purgeExpired();
     if (
       occurrence.projectId !== event.projectId ||
@@ -212,6 +216,51 @@ export class MemoryActiveStore implements ActiveStore {
       isNew,
       isRegression: !!isRegression,
     };
+  };
+
+  recordEvent: ActiveStore["recordEvent"] = async (occurrence, event) =>
+    this.recordOne(occurrence, event);
+
+  recordEvents: NonNullable<ActiveStore["recordEvents"]> = async (group) => {
+    if (!Array.isArray(group) || group.length < 1 || group.length > 10)
+      throw new RangeError("Record group must contain 1 to 10 events");
+    const first = group[0]?.occurrence;
+    if (!first) throw new TypeError("Missing record group");
+    for (const { occurrence, event } of group) {
+      if (
+        occurrence.projectId !== first.projectId ||
+        occurrence.issueId !== first.issueId ||
+        occurrence.fingerprint !== first.fingerprint ||
+        occurrence.projectId !== event.projectId ||
+        occurrence.issueId !== event.issueId ||
+        occurrence.eventId !== event.eventId ||
+        occurrence.receivedAt !== event.receivedAt
+      )
+        throw new TypeError("Record group identity mismatch");
+      copy(occurrence);
+      copy(event);
+    }
+    const oldIssues = new Map(this.issueRows),
+      oldEvents = new Map(this.eventRows);
+    try {
+      const results = group.map(({ occurrence, event }) =>
+        this.recordOne(occurrence, event),
+      );
+      const final = this.issueRows.get(
+        this.key(first.projectId, first.fingerprint),
+      );
+      return results.map((result) =>
+        final &&
+        result.issue.projectId === first.projectId &&
+        result.issue.id === first.issueId
+          ? { ...result, issue: copy(final) }
+          : result,
+      );
+    } catch (error) {
+      this.issueRows = oldIssues;
+      this.eventRows = oldEvents;
+      throw error;
+    }
   };
 
   issues: ActiveStore["issues"] = {

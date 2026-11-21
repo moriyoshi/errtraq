@@ -10,7 +10,7 @@ function ownValue<T>(
 import {
   type AdapterSelection,
   artifact,
-  type CoreTopic,
+  type RoutedTopic as CoreTopic,
   CRON_JOBS,
   configBinding,
   configReferenceBindingName,
@@ -101,14 +101,19 @@ export function moduleName(path: string): string {
 
 function featureEnabled(
   stack: StackConfig,
-  feature?: "archive" | "notifications",
+  feature?: "archive" | "notifications" | "direct" | "grouped",
   milestone?: "M3" | "M4",
 ): boolean {
   return (
     (feature === undefined && milestone === undefined) ||
     (feature === "archive"
       ? !!stack.archive
-      : feature === "notifications" && stack.features?.notifications === true)
+      : feature === "direct"
+        ? (stack.recordMode ?? "direct") === "direct"
+        : feature === "grouped"
+          ? stack.recordMode === "grouped"
+          : feature === "notifications" &&
+            stack.features?.notifications === true)
   );
 }
 interface AccessRequirement {
@@ -1775,14 +1780,17 @@ function inspect(input: unknown): {
   else {
     const keys = Object.keys(topics.routes);
     for (const topic of TOPICS)
-      if (!ownValue(topics.routes, topic))
+      if (
+        (topic !== "record" || stack.recordMode === "grouped") &&
+        !ownValue(topics.routes, topic)
+      )
         fail(`queue.infra.topics.${topic}`, "Missing topic route");
     for (const key of keys)
       if (!TOPICS.includes(key as CoreTopic))
         fail(`queue.infra.topics.${key}`, "Unknown topic");
     const physical: string[] = [];
     for (const [topic, route] of Object.entries(topics.routes)) {
-      physical.push(route.physical);
+      if (topic !== "record") physical.push(route.physical);
       const contract = ownValue(TOPIC_ROUTES, topic);
       if (
         contract &&
@@ -1856,6 +1864,40 @@ function inspect(input: unknown): {
     )
       fail("queue.infra.topics", "Per-topic queues must be distinct");
   }
+  if (stack.recordMode === "grouped") {
+    if (!functions.roles.includes("record"))
+      fail(
+        "platform.config.roles",
+        "Grouped recording requires the record role",
+      );
+    if (stack.store.manifest.capabilities.recordEvents !== true)
+      fail(
+        "store.capabilities.recordEvents",
+        "Grouped recording requires batched recordEvents",
+      );
+    const route = topics?.routes.record;
+    if (
+      route?.grouping !== "per-key-serial" ||
+      stack.queue.manifest.capabilities.grouping !== "per-key-serial"
+    )
+      fail(
+        "queue.infra.topics.record",
+        "Grouped recording requires per-key serial delivery",
+      );
+    if (
+      route &&
+      Object.entries(topics?.routes ?? {}).some(
+        ([name, other]) =>
+          name !== "record" && other.physical === route.physical,
+      )
+    )
+      fail(
+        "queue.infra.topics.record",
+        "Record delivery requires its own physical queue",
+      );
+  }
+  if (stack.recordMode !== "grouped" && functions.roles.includes("record"))
+    fail("platform.config.roles", "The record role requires grouped recording");
   if (
     stack.queue.manifest.capabilities.delivery === "pull" &&
     platform.compute === "function"

@@ -1026,3 +1026,18 @@ The design conservatively uses non-provisioned Lambda FIFO batches of at most te
 SQS Lambda guide also describes larger total batches with provisioned pollers while its parameter
 page still states a ten-record maximum; per-group size and this newer mode need real AWS testing.
 The cost and throughput examples and implementation turns are in ISSUE_KEYED_QUEUE_PLAN.md.
+
+## 2026-11-21 — Issue-keyed recording: core and memory contracts
+
+Core models direct/grouped recording, the `record` role and route, mode-dependent requirements,
+per-route grouping and validation of grouped store/queue capabilities. The memory queue enforces
+serial delivery by group within a physical queue while permitting other groups to progress; its
+shared contract covers retries and concurrent pullers. The memory active store implements atomic
+1..10-item homogeneous `recordEvents` groups, including duplicate and regression results.
+
+To keep SQL, DynamoDB and SQS untouched until their implementation turns, omitted grouping and
+`recordEvents` capabilities mean unsupported, and `recordEvents` is temporarily optional. The
+legacy `CoreTopic` type excludes `record` because SQS currently requires a complete map of those
+keys; `RoutedTopic` and `TOPICS` include it. Unify the topic aliases and make the migrated adapter
+contracts explicit when the remaining adapters are updated. Deployed record handling and FIFO
+remain future work; direct remains the default.

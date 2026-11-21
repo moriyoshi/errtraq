@@ -233,6 +233,16 @@ export interface MetaRepo {
   ): Promise<void>;
 }
 
+export interface RecordInput {
+  occurrence: Occurrence;
+  event: StoredEvent;
+}
+export interface RecordResult {
+  inserted: boolean;
+  issue: Issue;
+  isNew: boolean;
+  isRegression: boolean;
+}
 export interface ActiveStore {
   /** Atomically insert the event and create/bump the issue; duplicate (projectId, eventId)
    * changes nothing. Use a SQL transaction, D1 batch, DynamoDB TransactWriteItems with
@@ -241,12 +251,14 @@ export interface ActiveStore {
   recordEvent(
     occurrence: Occurrence,
     event: StoredEvent,
-  ): Promise<{
-    inserted: boolean;
-    issue: Issue;
-    isNew: boolean;
-    isRegression: boolean;
-  }>;
+  ): Promise<RecordResult>;
+  /** Atomically record 1..10 events for one project, issue and fingerprint.
+   * Results follow input order; duplicate IDs are no-ops. All new events commit
+   * together or none do, except an ambiguous response may require a retry.
+   * An absent method or capability means grouped recording is unsupported. */
+  recordEvents?(
+    group: readonly RecordInput[],
+  ): Promise<readonly RecordResult[]>;
   projects: ProjectRepo;
   issues: IssueRepo;
   events: EventRepo;
@@ -255,6 +267,8 @@ export interface ActiveStore {
   capabilities: {
     lastSeenRangeOnOtherSort: boolean;
     textSearch: boolean;
+    /** Omitted by adapters not yet migrated; omission means false. */
+    recordEvents?: boolean;
   };
   migrate(): Promise<void>;
 }
@@ -265,6 +279,8 @@ export type Topic = string;
 export interface Message {
   key: string;
   body: unknown;
+  /** Ordered delivery key; required for a topic using grouped delivery. */
+  groupKey?: string;
 }
 
 export interface Delivery {
@@ -279,7 +295,10 @@ export type BatchResult = Array<
   | { deliveryId: string; action: "retry"; delaySec?: number }
 >;
 
-/** Deliveries are at-least-once and unordered; handlers must be idempotent on the message key (eventId for event messages). */
+/** Deliveries are at-least-once. Grouped queues preserve acceptance order per
+ * key and do not intentionally dispatch another batch for a key while its lease
+ * is live. Lease expiry, retries and redelivery can overlap: this is not a lock.
+ * Different groups can run concurrently. Handlers must be idempotent. */
 export type BatchHandler = (batch: Delivery[]) => Promise<BatchResult>;
 
 export interface QueueProducer {
@@ -305,6 +324,8 @@ export interface QueueCapabilities {
   maxBytes: number;
   delay: boolean;
   dlq: boolean;
+  /** Omitted by adapters not yet migrated; omission means no grouping. */
+  grouping?: "per-key-serial" | "none";
 }
 
 /** Sources must match capabilities.delivery: push, pull, or both. */

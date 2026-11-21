@@ -165,6 +165,74 @@ export function activeStoreContract(
   options: ContractOptions = {},
 ): void {
   describe("ActiveStore contract", () => {
+    it("records homogeneous groups atomically with per-input duplicate results", async () => {
+      const store = await factory();
+      if (!store.capabilities.recordEvents) return;
+      if (!store.recordEvents)
+        throw new Error("Missing recordEvents implementation");
+      const input = (id: string, second: number) => {
+        const o = occurrence(id, second);
+        return {
+          occurrence: o,
+          event: event(id, second, { issueId: o.issueId }),
+        };
+      };
+      const first = input("batch-a", 1),
+        second = input("batch-b", 2);
+      const results = await store.recordEvents([first, first, second]);
+      expect(results.map((r) => r.inserted)).toEqual([true, false, true]);
+      expect(results.filter((r) => r.isNew)).toHaveLength(1);
+      expect(results.map((r) => r.issue.count)).toEqual([2, 2, 2]);
+      expect(
+        (await store.issues.get(project, first.occurrence.issueId))?.count,
+      ).toBe(2);
+      expect(
+        (await store.recordEvents([first, second])).every((r) => !r.inserted),
+      ).toBe(true);
+      const bad = input("batch-c", 3);
+      await expect(
+        store.recordEvents([
+          bad,
+          {
+            ...second,
+            occurrence: { ...second.occurrence, fingerprint: "other" },
+          },
+        ]),
+      ).rejects.toThrow();
+      expect(await store.events.get(project, bad.event.eventId)).toBeNull();
+      await expect(store.recordEvents([])).rejects.toThrow();
+      await expect(
+        store.recordEvents(Array.from({ length: 11 }, () => bad)),
+      ).rejects.toThrow();
+    });
+    it("applies grouped regression and latest-event rules in input order", async () => {
+      const store = await factory();
+      if (!store.capabilities.recordEvents) return;
+      if (!store.recordEvents)
+        throw new Error("Missing recordEvents implementation");
+      const seedOccurrence = occurrence("seed-group", 1);
+      await record(store, seedOccurrence);
+      await store.issues.update(project, seedOccurrence.issueId, {
+        status: "resolved",
+        resolvedAt: t(2),
+      });
+      const input = (id: string, second: number) => {
+        const o = occurrence(id, second);
+        return {
+          occurrence: o,
+          event: event(id, second, { issueId: o.issueId }),
+        };
+      };
+      const results = await store.recordEvents([
+        input("older", 2),
+        input("z-latest", 3),
+        input("a-tie", 3),
+      ]);
+      expect(results.map((r) => r.isRegression)).toEqual([false, true, false]);
+      expect(results.every((r) => r.issue.count === 4)).toBe(true);
+      expect(results[2]?.issue.lastEventId).toBe("z-latest");
+      expect(results[2]?.issue.status).toBe("unresolved");
+    });
     it("puts events idempotently by project and event id", async () => {
       const s = await factory();
       const a = event("one", 1);
@@ -1239,6 +1307,53 @@ export function queueContract(
   options: QueueContractOptions = {},
 ): void {
   describe("Queue contract", () => {
+    it("serializes each group while allowing other groups to make progress", async () => {
+      const q = await factory();
+      if (
+        q.capabilities.grouping !== "per-key-serial" ||
+        !q.pull ||
+        options.skip?.pull
+      )
+        return;
+      const controller = new AbortController();
+      let release: (() => void) | undefined;
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const seen: string[] = [];
+      const handler = async (batch: Delivery[]) => {
+        const item = batch[0];
+        if (!item) return [];
+        seen.push(item.message.key);
+        if (item.message.key === "first" && item.attempt === 1) {
+          await gate;
+          return [{ deliveryId: item.id, action: "retry" as const }];
+        }
+        return [{ deliveryId: item.id, action: "ack" as const }];
+      };
+      await q.producer.send("contract", [
+        { key: "first", groupKey: "a", body: null },
+        { key: "second", groupKey: "a", body: null },
+        { key: "other", groupKey: "b", body: null },
+      ]);
+      const one = q.pull.run(handler, controller.signal),
+        two = q.pull.run(handler, controller.signal);
+      try {
+        await vi.waitFor(() => expect(seen).toContain("other"));
+        expect(seen).not.toContain("second");
+        release?.();
+        await vi.waitFor(() => expect(seen).toContain("second"));
+        expect(seen.filter((key) => key !== "other")).toEqual([
+          "first",
+          "first",
+          "second",
+        ]);
+      } finally {
+        release?.();
+        controller.abort();
+        await Promise.all([one, two]);
+      }
+    });
     it("exposes exactly the consumer shapes declared by capabilities", async () => {
       const q = await factory();
       expect(!!q.pull).toBe(q.capabilities.delivery !== "push");

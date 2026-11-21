@@ -2,7 +2,7 @@ import { assertImplementedConsumerTopics } from "./consumer-policy.js";
 import type { Logger, SecretSource } from "./ports.js";
 import {
   type ConstructedAdapter,
-  type CoreTopic,
+  type RoutedTopic as CoreTopic,
   configReferenceBindingName,
   isConfigBindingRef,
   isEnvRef,
@@ -114,9 +114,7 @@ export interface DeployedPlan {
       allowEmpty?: boolean;
     }[];
   }[];
-  topics: Partial<
-    Record<CoreTopic, { physical: string; producerBinding?: string }>
-  >;
+  topics: Partial<Record<CoreTopic, import("./stack-model.js").TopicRoute>>;
   queueConsumers: {
     physical: string;
     topics: CoreTopic[];

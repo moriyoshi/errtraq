@@ -22,6 +22,7 @@ export const manifest: AdapterManifest = {
     delay: true,
     dlq: false,
     visibilityTimeout: false,
+    grouping: "per-key-serial",
   },
 };
 // TODO(M2b): provide local module generation semantics.
@@ -29,8 +30,11 @@ export const infra: InfraDescriptor<QueueConfig> = {
   module: { provider: "local", component: "queue-memory", outputs: {} },
   inputs: () => ({}),
   bindings: [],
-  capabilities: { produce: { memory: null }, consume: { memory: null } },
-  resources: { memory: "memory" },
+  capabilities: {
+    produce: { memory: null, memory_record: null },
+    consume: { memory: null, memory_record: null },
+  },
+  resources: { memory: "memory", memory_record: "memory_record" },
   topics: {
     mode: "shared",
     routes: {
@@ -43,6 +47,7 @@ export const infra: InfraDescriptor<QueueConfig> = {
       notifications: {
         physical: "memory",
       },
+      record: { physical: "memory_record", grouping: "per-key-serial" },
     },
   },
 };
