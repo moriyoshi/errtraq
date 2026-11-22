@@ -135,7 +135,7 @@ interface ReleaseRepo {
 - DynamoDB: one table with distributed `EV|project|eventId` event keys and
   `IS|project|issueId` issue keys, an issue-ID pointer, and eleven sparse keys-only GSIs.
   A durable table metadata item records the immutable project-time shard count. The
-  Terraform module is in place; the M3e runtime is still to be implemented. See
+  Terraform module and M3e stage 1 runtime are implemented. See
   `.agents-docs/DYNAMODB_DESIGN.md`. Firestore: per-project subcollections + composite indexes.
 - Event payloads above a size threshold (DynamoDB 400 KB, D1 row limits) overflow to BlobStore
   by reference — handled in core, not per adapter.
@@ -148,7 +148,7 @@ interface QueueProducer { send(topic: Topic, msgs: Message[], opts?: { delaySec?
 type BatchHandler = (batch: Delivery[]) => Promise<BatchResult>;   // per-delivery ack | retry(delaySec)
 interface PushSource<E, R> { handle(platformEvent: E, handler: BatchHandler): Promise<R>; }   // SQS event, CF MessageBatch, Pub/Sub push, Cloud Tasks HTTP
 interface PullSource { run(handler: BatchHandler, signal: AbortSignal): Promise<void>; }      // memory, Redis streams, NATS JetStream, Service Bus
-interface Queue { producer: QueueProducer; pull?: PullSource; push?: PushSource; capabilities: { delivery: 'push' | 'pull' | 'both'; maxBytes: number; delay: boolean; dlq: boolean; grouping?: 'per-key-serial' | 'none' } }
+interface Queue { producer: QueueProducer; pull?: PullSource; push?: PushSource; capabilities: { delivery: 'push' | 'pull' | 'both'; maxBytes: number; delay: boolean; dlq: boolean; grouping: 'per-key-serial' | 'none' } }
 ```
 - A push source owns the whole platform round trip (`handle`), because acknowledging is
   platform-specific and asynchronous: SQS retry delay is a `ChangeMessageVisibility` call,
@@ -308,9 +308,10 @@ The returned issue is the committed post-group issue (or the actual stored issue
 belonging to another issue); a subsequent concurrent update can make a post-commit read newer.
 A duplicate-only group performs no issue mutation. Consumers may retry ambiguous commits and must
 not emit duplicate side effects. A reliable notification outbox is future work, so notifications
-must not be advertised as exactly-once. While an adapter is being migrated, an absent `recordEvents` capability or method means unsupported;
-grouped-stack validation rejects it. SQLite, Postgres, the memory fake
-and DynamoDB must all eventually advertise true and satisfy the same shared contract; the detailed transaction design is in
+must not be advertised as exactly-once. Every store declares the `recordEvents` capability and
+provides the method; adapters that declare it unsupported reject the method and grouped-stack
+validation rejects them. SQLite, Postgres, the memory fake and DynamoDB support the shared
+contract; the detailed transaction design is in
 [the DynamoDB design](.agents-docs/DYNAMODB_DESIGN.md).
 
 This reduces contention in the ordinary lease-valid path, not as an absolute correctness guarantee.
@@ -511,8 +512,9 @@ container with a persistent data volume; its explicit container host setting exp
 to the container network while ordinary local runs default to loopback. Postgres can use a bring-your-own RDS IAM identity, with an exact database-user connect policy;
 one database user is shared by the store capabilities, and SQL privileges, rather than IAM,
 control read, write and delete. Lambda can use operator-provided subnet and security-group IDs;
-private functions need NAT or suitable service endpoints for their AWS API calls. Runtime AWS
-adapters, deployed secret sources and a real cloud deployment remain M3 work.
+private functions need NAT or suitable service endpoints for their AWS API calls. AWS runtime
+adapters and deployed secret sources are implemented; the first real AWS deployment passed.
+Further AWS verification and remaining M3 work are tracked in the agent documents.
 
 ## Milestones
 

@@ -94,9 +94,9 @@ bursts only if long-run service capacity exceeds arrivals and retention is suffi
 2. **Core ports and in-memory contracts:** add grouped per-physical-queue capabilities, message
    group keys and `recordEvents`; enforce the 1..10 homogeneous group and per-result semantics.
    Extend shared queue and active-store contracts, memory queue/fake, duplicate, malformed, lease
-   expiry, mixed-group and atomicity tests. Until each store is migrated, it may omit both `recordEvents` and its capability, which is
-   interpreted as unsupported and rejected for grouped stacks;
-   run the unmodified applicable contract cases for every capable store, with no weakened cases.
+   expiry, mixed-group and atomicity tests. Stores explicitly declare `recordEvents` support and
+   implement the method; unsupported stores reject it and cannot be selected for grouped stacks.
+   Run the unmodified applicable contract cases for every capable store, with no weakened cases.
    Keep current consumers direct. Gate after the turn.
 3. **Store implementations:** implement one atomic group transaction in SQLite and Postgres
    (defined lock order and retry rules) and the DynamoDB conditional transaction described in

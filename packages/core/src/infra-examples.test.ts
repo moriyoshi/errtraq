@@ -81,6 +81,7 @@ function resource(
         kind === "store"
           ? {
               textSearch: false,
+              recordEvents: false,
               lastSeenRangeOnOtherSort: false,
               deleteStrategy: "explicit",
             }
@@ -206,6 +207,7 @@ function queue(mode: "shared" | "per-topic"): AdapterSelection {
       requires: [],
       capabilities: {
         delivery: "push",
+        grouping: "none",
         maxBytes: 262144,
         delay: true,
         dlq: true,

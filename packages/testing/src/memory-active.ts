@@ -221,7 +221,7 @@ export class MemoryActiveStore implements ActiveStore {
   recordEvent: ActiveStore["recordEvent"] = async (occurrence, event) =>
     this.recordOne(occurrence, event);
 
-  recordEvents: NonNullable<ActiveStore["recordEvents"]> = async (group) => {
+  recordEvents: ActiveStore["recordEvents"] = async (group) => {
     if (!Array.isArray(group) || group.length < 1 || group.length > 10)
       throw new RangeError("Record group must contain 1 to 10 events");
     const first = group[0]?.occurrence;

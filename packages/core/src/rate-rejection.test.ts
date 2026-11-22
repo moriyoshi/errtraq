@@ -117,6 +117,62 @@ describe("rate rejection counters", () => {
       }
     }
   });
+  it.each(["allow", "retry"] as const)(
+    "aggregates all KV failures once per batch with %s",
+    async (onKvFailure) => {
+      const config = {
+        issueRateLimit: { events: 1, windowSec: 60 },
+        newIssueCap: { issues: 1, windowSec: 60 },
+        onKvFailure,
+      };
+      const { kv, logger, rejector } = setup(config);
+      vi.mocked(kv.increment).mockRejectedValue(new Error("private-secret"));
+      const first = rejector.batch();
+      const second = rejector.batch();
+      const attempts = await Promise.allSettled([
+        first.rejector.admitIssueEvents([
+          candidate("1", "a"),
+          candidate("1", "b"),
+        ]),
+        first.rejector.admitNewIssues([
+          candidate("1", "a"),
+          candidate("2", "a"),
+        ]),
+        second.rejector.admitIssueEvents([candidate("1", "c")]),
+      ]);
+      expect(attempts.map((result) => result.status)).toEqual(
+        Array(3).fill(onKvFailure === "allow" ? "fulfilled" : "rejected"),
+      );
+      expect(logger.warn).not.toHaveBeenCalled();
+      first.flush();
+      first.flush();
+      second.flush();
+      expect(logger.warn).toHaveBeenCalledTimes(2);
+      expect(logger.warn).toHaveBeenNthCalledWith(
+        1,
+        "Rate rejection KV failure",
+        {
+          failures: 4,
+          affected: 4,
+          operations: ["issue-rate", "new-issue-cap"],
+          failurePolicy: onKvFailure,
+        },
+      );
+      expect(logger.warn).toHaveBeenNthCalledWith(
+        2,
+        "Rate rejection KV failure",
+        {
+          failures: 1,
+          affected: 1,
+          operations: ["issue-rate"],
+          failurePolicy: onKvFailure,
+        },
+      );
+      expect(JSON.stringify(vi.mocked(logger.warn).mock.calls)).not.toContain(
+        "private-secret",
+      );
+    },
+  );
   it("reads only the current aligned dropped window", async () => {
     const config = { issueRateLimit: { events: 1, windowSec: 60 } };
     const { kv, rejector } = setup(config);

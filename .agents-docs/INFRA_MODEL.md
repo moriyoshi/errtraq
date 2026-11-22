@@ -334,7 +334,7 @@ export type DeploymentTrigger =
       resource: InfraValue;
       /** Environment binding carrying the runtime event-source identifier. */
       eventSourceBinding?: string;
-      topics: CoreTopic[];
+      topics: RoutedTopic[];
       settings: QueueTriggerSettings;
     }
   | { kind: "cron"; functionId: string; name: string; schedule: string };

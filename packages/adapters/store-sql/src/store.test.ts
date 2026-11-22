@@ -83,7 +83,7 @@ describe("SQLite migrations and indexes", () => {
         event: { ...common, level: "error" as const, tags: {}, payload: {} },
       };
     });
-    await expect(store.recordEvents?.(group)).rejects.toThrow(
+    await expect(store.recordEvents(group)).rejects.toThrow(
       "injected group failure",
     );
     expect(

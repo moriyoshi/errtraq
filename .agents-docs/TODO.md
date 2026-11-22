@@ -6,18 +6,26 @@ item should be resolved or removed once addressed. Milestone work itself is trac
 
 ## Open Items
 
-- [ ] M3 issue-keyed recording: migrate the remaining adapters, then remove the temporary optional `recordEvents` / grouping capability fallback and unify `CoreTopic` with `RoutedTopic`; wire the record handler and FIFO according to `ISSUE_KEYED_QUEUE_PLAN.md`. — *source: issue-keyed turn 2*
+- [x] M3 remaining queue item 0: reconcile completed M3 entries and cite their commits; keep
+  direct-mode contention and real-AWS verification open.
+- [ ] M3 remaining queue items 3-9, in order: retention-safe claim-check and overflow cleanup; DynamoDB TTL and bundle-index backfill plus scoped ingest read if possible;
+  Lambda CORS, large ZIP S3 deployment and bundle size; deployed API token listing and
+  revocation; Postgres identifier bounds; documented AWS event fixtures; and, if budget permits,
+  a packaging-outside-the-workspace design. See `.agents-workspace/tmp/m3-remaining.md` for
+  the full ordered requirements. Real-AWS M3h work remains with the orchestrator.
+
+- [x] M3 issue-keyed recording: require explicit grouped-recording and queue grouping capabilities, remove the temporary optional method fallback, and use one `RoutedTopic` type. Store adapters and the FIFO record pipeline were implemented in 46a2913, ffd0ba8 and 0ca239b. — *source: issue-keyed turn 2*
 - [ ] M3e: add the event and issue `ttlEpoch` backstops from the DynamoDB design; explicit retention deletes remain primary. The ingest role's read policy also grants table-wide `GetItem`: restricting it with `dynamodb:LeadingKeys` requires a separate capability policy because the current read output is shared with roles that query the whole table. — *source: store review section C*
 - [ ] M3e: define an index backfill for bundle records created before the release and expiry index keys were added; existing records are not automatically reindexed. — *source: store review section C*
 - [x] M3e: resolve the pending bundle and manifest TTL decision: no TTL; scheduled, monitored cleanup is required. — *source: owner decision after store review*
-- [ ] M3e: the 500 ms jitter cap alone did not eliminate hot-issue exhaustion: a DynamoDB Local run with 500 simultaneous, same-timestamp events used 58.55 transaction attempts per event and 213 operations failed; the sampled failure was the 80-attempt contention limit. Implement the selected issue-keyed queue and batched recording; repeat this measurement and verify the retry policy on real DynamoDB before relying on this load. — *source: store review section B*
+- [ ] M3h / direct mode: verify the retry policy and hot-issue limits on real DynamoDB; the 500 ms jitter cap did not eliminate exhaustion in DynamoDB Local (58.55 attempts per event and 213 failures at 500 writers). The grouped FIFO path and local contention measurement are implemented (46a2913, ffd0ba8, 0ca239b, fbeefb7). — *source: store review section B*
 - [x] M3f2 part 2: add the RDS IAM policy module and contract / mutation tests, Lambda VPC configuration and ENI grants, and Postgres-on-Lambda generated-root and emulator coverage. — *source: M3f2 part 1*
-- [ ] M3f2: file the Winterbaume Lambda VPC readback gap upstream and remove the emulator-only override when the fix is pinned. — *source: M3f2 part 2*
+- [ ] M3f2: remove the Winterbaume Lambda VPC readback override when a fix for https://github.com/moriyoshi/winterbaume/issues/62 is pinned. — *source: M3f2 part 2*
 - [ ] M3h: verify real Lambda-to-RDS/Aurora IAM authentication, the Lambda runtime CA bundle and hostname verification, new connections after 15 minutes, and RDS Proxy IAM/TLS behavior and permissions; verify VPC attachment, ENI role permissions and service reachability through the selected NAT or endpoints. — *source: M3f2*
 
 - [x] M3e / M4: replace the earlier subject-index ledger proposal with the owner-selected inline Parquet index, optional sharded fence and staged port changes. — *source: M3e step 1c*
 - [ ] M5: wire bundle upload and pending-bundle cleanup scheduling; activate the appropriate metadata-delete and manifest blob policy rows for the cleanup role when those handlers exist; check that their actual marker keys match the DynamoDB policy namespaces. Manifest object keys must be unique and never reused. — *source: M3e stage 1 step A*
-- [ ] M3e stage 1: verify exact count-sort key updates with the conditional count preimage under contention; the earlier DynamoDB Local concurrency experiment did not exercise that extra guard. — *source: M3e step 1c*
+- [ ] M3h: verify exact count-sort key updates under contention on real DynamoDB; the guard and DynamoDB Local concurrency cases are implemented (770de3d, e98a876). — *source: M3e step 1c*
 - [ ] M4: resolve the main-queue drain proof before claiming erasure completion; waiting and inspecting the DLQ and index cannot prove that a committed, unindexed event is not still retrying in the main queue. Verify blob list/read consistency and lease-fenced manifest operations for the Parquet index. — *source: M3e step 1c*
 - [ ] M3h: measure 500 concurrent same-issue writes in both modes, transaction/GSI write units and index backpressure, and verify the revised IAM policies and LeadingKeys restrictions, immutable shard metadata and composite key queries, and measure fence ConditionCheck conflict rates on real AWS. — *source: M3e step 1c*
 
@@ -61,15 +69,15 @@ item should be resolved or removed once addressed. Milestone work itself is trac
 - [ ] M3h: verify deployed CLI bootstrap against real Secrets Manager, DynamoDB and RDS, including IAM/KMS permissions, network reachability and recovery after an interrupted first run. — *source: M3g bootstrap*
 
 - [x] M3: enforce the 1 MiB SQS body limit including serialization and envelope overhead. — *source: M2b step 1; resolved in M3c*
-- [ ] M3: implement the remaining AWS runtime adapters and make DynamoDB explicit deletion honor erasure semantics. — *source: M2b step 1*
+- [ ] M4: implement DynamoDB subject-erasure semantics; the M3 AWS runtime adapters are implemented (a006055, 45f8d88, 5158fdb, e98a876). — *source: M2b step 1*
 
 - [x] M3: implement SQS partial batch failures. — *source: M2b step 2; resolved in M3c*
-- [ ] M3: verify EventBridge job dispatch with AWS runtime adapters. — *source: M2b step 2*
-- [ ] M3e: implement and test the staged DynamoDB layout in `.agents-docs/DYNAMODB_DESIGN.md`, then update the module README and policies; erasure belongs to stage 4. — *source: M2b step 2; revised M3e step 1c*
+- [ ] M3: add documented real-shaped EventBridge event fixtures and verify dispatch; the recovery job and generated Lambda wiring are implemented (fbeefb7). — *source: M2b step 2*
+- [x] M3e: implement and test stage 1 of the DynamoDB layout, module and policies (21eafd6, e98a876, 9e2734a); subject erasure remains M4. — *source: M2b step 2; revised M3e step 1c*
 
 - [ ] M3 / M6: address second-review follow-ups N9 and N12-N15, including Cloudflare binding authorization and runtime limitations. — *source: `.agents-workspace/tmp/m2a2-review-fixes.md`*
 
-- [ ] M3e / M3h: implement and verify the selected sortable encodings, projections, sharding and transaction limits; document PITR retention of erased data for up to 35 days. — *source: M2b HCL review section B; M3e step 1c*
+- [ ] M3h / M4: verify the implemented sortable encodings, projections, sharding and transaction limits on AWS (21eafd6, e98a876); document PITR retention of erased data for up to 35 days with M4 erasure. — *source: M2b HCL review section B; M3e step 1c*
 - [x] M3: require the full Secrets Manager ARN including its random suffix. — *source: M2b HCL review section B; M3g part 1*
 - [x] M3: never map an S3 403 directly to missing; use an authorized exact-prefix list to establish absence and propagate real access failures. — *source: M2b HCL review section B*
 - [x] M3: schedule cron-based staged-envelope recovery for deployed stacks; keep idempotency and a recovery window longer than the sweep interval. — *source: M2b HCL review A3*
@@ -82,7 +90,7 @@ item should be resolved or removed once addressed. Milestone work itself is trac
 - [ ] M3: reduce Lambda bundle size; current bundles include most of core and Zod. — *source: M2 final review section B*
 - [x] M3: test SQS partial-batch failures with real-shaped AWS events. — *source: M2 final review section B; resolved in M3c*
 - [ ] M3: test EventBridge event handling against real AWS event shapes. — *source: M2 final review section B*
-- [ ] M3 / M3h (store-dynamodb): implement the owner-selected issue-keyed FIFO stage using the completed batched `recordEvents`, then measure 200 / 500 writers through that path on DynamoDB Local and real AWS. — *source: owner queue-first decision*
+- [x] M3 (store-dynamodb): implement issue-keyed FIFO and measure grouped 200 / 500-event workloads on DynamoDB Local (ffd0ba8, 0ca239b, fbeefb7); real AWS measurement remains in the M3h item above. — *source: owner queue-first decision*
 
 - [ ] M3 / M4: add retention-safe cleanup for grouped-record claim-check blobs after queue retention, DLQ and redrive windows; content-addressed retries can leave orphaned blobs. — *source: issue-keyed queue turn 5*
 
@@ -118,8 +126,8 @@ item should be resolved or removed once addressed. Milestone work itself is trac
   Suppression remains TODO(M4); grouped consumers do not access the store.
 - [x] M3 stage 3 issue API: expose approximate current-window dropped counts, with window
   bounds and received-at basis, conditional API KV reads, expiry and fail-open reads.
-- [ ] M3 stage 3 follow-ups: aggregate KV failure logging per batch, and support project-level
-  overrides constrained by stack limits. KV increments can double-charge on retries; the
+- [x] M3 remaining queue item 2: aggregate rate-rejection KV failure logging per delivery batch.
+- [ ] M3 stage 3 follow-ups: support project-level overrides constrained by stack limits. KV increments can double-charge on retries; the
   received-at bucket intentionally excludes delayed events from the current-window count.
   Preserve privacy-safe logging for retry failures (provider messages may contain secrets), and
   expand integration coverage of retries, project isolation, issue rotation, resolved issues

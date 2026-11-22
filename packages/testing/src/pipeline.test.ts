@@ -498,6 +498,104 @@ describe("in-process ingest pipeline", () => {
       ).not.toContain("private-secret");
     },
   );
+  it.each(["allow", "retry"] as const)(
+    "aggregates consumer KV failures across a batch with %s",
+    async (onKvFailure) => {
+      const c = await setup({
+        rateRejection: {
+          issueRateLimit: { events: 1, windowSec: 60 },
+          onKvFailure,
+        },
+      });
+      await c.send(body(id(620), "first issue"));
+      await c.send(body(id(621), "second issue"));
+      const deliveries = c.sent.map((message, index) => ({
+        id: String(index),
+        topic: "ingest",
+        attempt: 1,
+        message,
+      }));
+      vi.spyOn(c.kv, "increment").mockRejectedValue(
+        new Error("private-secret"),
+      );
+      const result = await c.consumer.handle(deliveries);
+      expect(result.map((item) => item.action)).toEqual([
+        onKvFailure === "allow" ? "ack" : "retry",
+        onKvFailure === "allow" ? "ack" : "retry",
+      ]);
+      expect(c.logger.warn).toHaveBeenCalledTimes(1);
+      expect(c.logger.warn).toHaveBeenCalledWith(
+        "Rate rejection KV failure",
+        expect.objectContaining({
+          failures: 2,
+          affected: 2,
+          failurePolicy: onKvFailure,
+        }),
+      );
+      expect(c.logger.error).not.toHaveBeenCalled();
+      expect(JSON.stringify(vi.mocked(c.logger.warn).mock.calls)).not.toContain(
+        "private-secret",
+      );
+    },
+  );
+  it.each(["allow", "retry"] as const)(
+    "aggregates record handler KV failures across groups with %s",
+    async (onKvFailure) => {
+      const c = await setup({ recordMode: "grouped" });
+      const deliveries: Delivery[] = [];
+      for (const [n, message] of [
+        [630, "first issue"],
+        [631, "second issue"],
+      ] as const) {
+        const event = await normalizeEvent(
+          c.project.project.id,
+          id(n) as EventId,
+          c.clock.now(),
+          { message },
+        );
+        deliveries.push({
+          id: String(n),
+          topic: "record",
+          attempt: 1,
+          message: {
+            key: event.event.eventId,
+            groupKey: event.event.issueId,
+            body: JSON.parse(JSON.stringify({ version: 1, ...event })),
+          },
+        });
+      }
+      vi.spyOn(c.kv, "increment").mockRejectedValue(
+        new Error("private-secret"),
+      );
+      const handler = new RecordHandler({
+        store: c.store,
+        blobs: c.blobs,
+        kv: c.kv,
+        logger: c.logger,
+        rateRejection: {
+          newIssueCap: { issues: 1, windowSec: 60 },
+          onKvFailure,
+        },
+      });
+      const result = await handler.handle(deliveries);
+      expect(result.map((item) => item.action)).toEqual([
+        onKvFailure === "allow" ? "ack" : "retry",
+        onKvFailure === "allow" ? "ack" : "retry",
+      ]);
+      expect(c.logger.warn).toHaveBeenCalledTimes(1);
+      expect(c.logger.warn).toHaveBeenCalledWith(
+        "Rate rejection KV failure",
+        expect.objectContaining({
+          failures: 2,
+          affected: 2,
+          failurePolicy: onKvFailure,
+        }),
+      );
+      expect(JSON.stringify(vi.mocked(c.logger.warn).mock.calls)).not.toContain(
+        "private-secret",
+      );
+    },
+  );
   it("caps candidate new issues in the grouped record handler and counts dropped records", async () => {
     const c = await setup({ recordMode: "grouped" });
     const rateRejection = { newIssueCap: { issues: 1, windowSec: 60 } };

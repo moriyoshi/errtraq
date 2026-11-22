@@ -10,7 +10,6 @@ function ownValue<T>(
 import {
   type AdapterSelection,
   artifact,
-  type RoutedTopic as CoreTopic,
   CRON_JOBS,
   configBinding,
   configReferenceBindingName,
@@ -34,6 +33,7 @@ import {
   type PlatformConfig,
   QUEUE_VISIBILITY_FACTOR,
   REF,
+  type RoutedTopic,
   type ScopedBinding,
   type SecretReadRequirement,
   type StackConfig,
@@ -1850,7 +1850,7 @@ function inspect(input: unknown): {
       )
         fail(`queue.infra.topics.${topic}`, "Missing topic route");
     for (const key of keys)
-      if (!TOPICS.includes(key as CoreTopic))
+      if (!TOPICS.includes(key as RoutedTopic))
         fail(`queue.infra.topics.${key}`, "Unknown topic");
     const physical: string[] = [];
     for (const [topic, route] of Object.entries(topics.routes)) {
@@ -2061,7 +2061,7 @@ export type DerivedTrigger =
       physical: string;
       role: FunctionRole;
       resource: InfraValue;
-      topics: CoreTopic[];
+      topics: RoutedTopic[];
       settings: import("./stack-model.js").QueueTriggerSettings;
     }
   | {

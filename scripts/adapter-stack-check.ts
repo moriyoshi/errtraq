@@ -66,12 +66,14 @@ export async function assertStackHelper(
         kind === "store"
           ? {
               textSearch: false,
+              recordEvents: false,
               lastSeenRangeOnOtherSort: false,
               deleteStrategy: "explicit",
             }
           : kind === "queue"
             ? {
                 delivery: "pull",
+                grouping: "none",
                 maxBytes: 100,
                 delay: true,
                 dlq: false,

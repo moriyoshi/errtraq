@@ -81,7 +81,7 @@ suite("Postgres", () => {
     );
     const results = (
       await Promise.all(
-        groups.map((group, i) => (i % 2 ? left : right).recordEvents?.(group)),
+        groups.map((group, i) => (i % 2 ? left : right).recordEvents(group)),
       )
     ).flat();
     expect(results.filter((result) => result?.isNew)).toHaveLength(1);

@@ -49,12 +49,14 @@ const selection = (kind: PortKind): AdapterSelection => ({
       kind === "store"
         ? {
             textSearch: false,
+            recordEvents: false,
             lastSeenRangeOnOtherSort: false,
             deleteStrategy: "explicit",
           }
         : kind === "queue"
           ? {
               delivery: "push",
+              grouping: "none",
               maxBytes: 100,
               delay: true,
               dlq: false,
@@ -406,6 +408,23 @@ describe("conditional rate rejection access", () => {
       }
     }
   });
+});
+it("requires explicit store batching and queue grouping declarations", () => {
+  const v = stack();
+  delete v.store.manifest.capabilities.recordEvents;
+  delete v.queue.manifest.capabilities.grouping;
+  const issues = validateStack(v);
+  expect(issues).toContainEqual({
+    path: "store.manifest.capabilities.recordEvents",
+    message: "Missing or invalid capability",
+  });
+  expect(issues).toContainEqual({
+    path: "queue.manifest.capabilities.grouping",
+    message: "Missing or invalid capability",
+  });
+  v.store.manifest.capabilities.recordEvents = false;
+  v.queue.manifest.capabilities.grouping = "none";
+  expect(validateStack(v)).toEqual([]);
 });
 describe("infrastructure model", () => {
   it("validates and preserves disabled rate-rejection settings", () => {

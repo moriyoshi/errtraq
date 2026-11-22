@@ -305,7 +305,7 @@ export function recordEvent(
 export function recordEvents(
   d: Driver,
   shards: () => number | Promise<number>,
-): NonNullable<ActiveStore["recordEvents"]> {
+): ActiveStore["recordEvents"] {
   return async (group) => {
     if (!Array.isArray(group) || group.length < 1 || group.length > 10)
       throw new RangeError("Record group must contain 1 to 10 events");

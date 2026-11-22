@@ -1,8 +1,4 @@
-import type {
-  RoutedTopic as CoreTopic,
-  FunctionRole,
-  PortKind,
-} from "./stack-model.js";
+import type { FunctionRole, PortKind, RoutedTopic } from "./stack-model.js";
 
 export const QUEUE_CAPABILITIES = {
   producer: "produce",
@@ -185,7 +181,7 @@ export const PORT_REQUIREMENTS: readonly PortRequirement[] = [
 /** Routing is core-owned; the adapter maps only topics to physical resources. */
 export const TOPIC_ROUTES: Readonly<
   Record<
-    CoreTopic,
+    RoutedTopic,
     {
       producers: readonly FunctionRole[];
       consumer: FunctionRole;

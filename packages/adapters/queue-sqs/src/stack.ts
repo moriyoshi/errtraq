@@ -2,9 +2,9 @@ import {
   type AdapterManifest,
   type AdapterSelection,
   type Binding,
-  type CoreTopic,
   type InfraDescriptor,
   out,
+  type RoutedTopic,
   stackValue,
   type TopicMapping,
 } from "@errtraq/core";
@@ -49,18 +49,20 @@ export const manifest: AdapterManifest = {
   },
 };
 function descriptor(config: ResolvedConfig): InfraDescriptor<Config> {
-  const physical: Record<CoreTopic, string> =
-    config.mode === "shared"
-      ? {
-          ingest: "shared",
-          "archive.project": "shared",
-          notifications: "shared",
-        }
-      : {
-          ingest: "ingest",
-          "archive.project": "archive_project",
-          notifications: "notifications",
-        };
+  const physical: Record<
+    Exclude<RoutedTopic, "record">,
+    string
+  > = config.mode === "shared"
+    ? {
+        ingest: "shared",
+        "archive.project": "shared",
+        notifications: "shared",
+      }
+    : {
+        ingest: "ingest",
+        "archive.project": "archive_project",
+        notifications: "notifications",
+      };
   const keys = [...new Set([...Object.values(physical), "record"])];
   const bindings: Binding[] = keys.map((key) => ({
     name: `ERRTRAQ_QUEUE_${key.toUpperCase()}_URL`,

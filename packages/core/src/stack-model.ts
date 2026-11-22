@@ -26,8 +26,6 @@ export const TOPICS = [
   "notifications",
   "record",
 ] as const;
-/** Legacy adapter topic set; expanded to RoutedTopic as adapters migrate. */
-export type CoreTopic = Exclude<(typeof TOPICS)[number], "record">;
 export type RoutedTopic = (typeof TOPICS)[number];
 /** Visibility must cover six consumer timeouts, allowing for retries and delays. */
 export const QUEUE_VISIBILITY_FACTOR = 6;
@@ -320,7 +318,8 @@ export interface TopicRoute {
 }
 export interface TopicMapping {
   mode: "shared" | "per-topic";
-  routes: Record<CoreTopic, TopicRoute> & Partial<Record<"record", TopicRoute>>;
+  routes: Record<Exclude<RoutedTopic, "record">, TopicRoute> &
+    Partial<Record<"record", TopicRoute>>;
   settings?: Record<string, QueueTriggerSettings>;
 }
 export interface QueueTriggerSettings {

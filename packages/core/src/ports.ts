@@ -256,10 +256,8 @@ export interface ActiveStore {
   /** Atomically record 1..10 events for one project, issue and fingerprint.
    * Results follow input order; duplicate IDs are no-ops. All new events commit
    * together or none do, except an ambiguous response may require a retry.
-   * An absent method or capability means grouped recording is unsupported. */
-  recordEvents?(
-    group: readonly RecordInput[],
-  ): Promise<readonly RecordResult[]>;
+   * Adapters declaring recordEvents false reject this operation. */
+  recordEvents(group: readonly RecordInput[]): Promise<readonly RecordResult[]>;
   projects: ProjectRepo;
   issues: IssueRepo;
   events: EventRepo;
@@ -268,8 +266,8 @@ export interface ActiveStore {
   capabilities: {
     lastSeenRangeOnOtherSort: boolean;
     textSearch: boolean;
-    /** Omitted by adapters not yet migrated; omission means false. */
-    recordEvents?: boolean;
+    /** Whether atomic grouped recording is supported. */
+    recordEvents: boolean;
   };
   migrate(): Promise<void>;
 }
@@ -327,8 +325,8 @@ export interface QueueCapabilities {
   maxBytes: number;
   delay: boolean;
   dlq: boolean;
-  /** Omitted by adapters not yet migrated; omission means no grouping. */
-  grouping?: "per-key-serial" | "none";
+  /** Explicit support for per-key serial delivery. */
+  grouping: "per-key-serial" | "none";
   /** Physical queues may differ, notably FIFO queues without per-message delay. */
   physicalQueues?: Readonly<
     Record<string, { grouping: "per-key-serial" | "none"; delay: boolean }>

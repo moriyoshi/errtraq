@@ -1277,3 +1277,28 @@ field. Windows use ingest `receivedAt`, matching admission and preserving retry 
 delayed event can therefore increment a past bucket and be absent from the current response;
 the response identifies the basis and bounds. When both limits are enabled, the issue limit
 sets the dropped-counter window.
+
+
+## 2026-11-22 — M3 remaining-work hygiene
+
+Reconciled the M3 queue with committed code: the staged DynamoDB layout, grouped FIFO
+pipeline and local contention measurement are complete. Direct-mode contention and AWS
+verification remain open. Winterbaume VPC readback was filed as issue 62; the emulator
+override stays until a fixed revision is pinned.
+
+
+## 2026-11-22 — Explicit grouped-delivery contracts
+
+Every store now exposes `recordEvents` and explicitly declares whether it supports the operation;
+every queue explicitly declares its grouping capability. Unsupported stores reject grouped
+recording and grouped stack validation rejects them. `RoutedTopic` is the single routed-topic
+type, while the record route remains conditional. The emulator atomicity gap did not reproduce
+in one diagnostic run but did on retry, so the pinned exception remains.
+
+
+## 2026-11-22 — Batch-level rate-rejection failure logging
+
+Consumer and record handlers collect KV failures separately for each delivery batch and emit
+one privacy-safe aggregate warning at batch completion. Concurrent increments settle before
+retry errors propagate, preventing late failure logs from escaping the batch. Allow/retry
+semantics remain unchanged; project-level overrides remain deferred.

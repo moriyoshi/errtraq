@@ -50,6 +50,14 @@ const droppedKey = (
   bucket: number,
 ): string => `rate:dropped:${projectId}:${issueId}:${bucket}`;
 
+async function awaitAll(
+  operations: readonly Promise<unknown>[],
+): Promise<void> {
+  const results = await Promise.allSettled(operations);
+  const failed = results.find((result) => result.status === "rejected");
+  if (failed?.status === "rejected") throw failed.reason;
+}
+
 /** Fixed-window decisions over KV counters; every method takes candidates in deterministic input order. */
 export class RateRejector {
   constructor(
@@ -76,6 +84,43 @@ export class RateRejector {
         onKvFailure !== "retry")
     )
       throw new RangeError("Invalid rate rejection configuration");
+  }
+  /** Isolate and aggregate failures for one delivery batch, including concurrent calls. */
+  batch(): {
+    rejector: RateRejector;
+    flush: () => void;
+    hasFailures: () => boolean;
+  } {
+    let failures = 0;
+    let affected = 0;
+    const operations = new Set<string>();
+    let flushed = false;
+    const logger: Logger = {
+      debug: (message, fields) => this.options.logger.debug(message, fields),
+      info: (message, fields) => this.options.logger.info(message, fields),
+      error: (message, fields) => this.options.logger.error(message, fields),
+      warn: (_message, fields) => {
+        failures++;
+        if (typeof fields?.affected === "number") affected += fields.affected;
+        if (typeof fields?.operation === "string")
+          operations.add(fields.operation);
+      },
+    };
+    return {
+      rejector: new RateRejector({ ...this.options, logger }),
+      hasFailures: () => failures > 0,
+      flush: () => {
+        if (flushed) return;
+        flushed = true;
+        if (failures)
+          this.options.logger.warn("Rate rejection KV failure", {
+            failures,
+            affected,
+            operations: [...operations].sort(),
+            failurePolicy: this.options.config.onKvFailure ?? "allow",
+          });
+      },
+    };
   }
   get issueLimitEnabled(): boolean {
     return !!this.options.config.issueRateLimit;
@@ -124,7 +169,7 @@ export class RateRejector {
       group.indexes.push(index);
       groups.set(key, group);
     });
-    await Promise.all(
+    await awaitAll(
       [...groups.values()].map((group) =>
         this.guard(
           "issue-rate",
@@ -168,7 +213,7 @@ export class RateRejector {
       group.push(index);
       groups.set(key, group);
     });
-    await Promise.all(
+    await awaitAll(
       [...groups].map(([key, indexes]) =>
         this.guard(
           "new-issue-cap",
@@ -206,7 +251,7 @@ export class RateRejector {
       "dropped-counter",
       rejected.length,
       async () => {
-        await Promise.all(
+        await awaitAll(
           [...groups].map(([key, by]) =>
             this.options.kv.increment(key, by, { ttlSec: windowSec * 2 }),
           ),

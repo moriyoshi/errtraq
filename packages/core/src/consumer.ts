@@ -116,13 +116,16 @@ export class ConsumerService {
     )
       throw new RangeError("Invalid consumer limits");
   }
-  private async admit(pending: PendingEvent[]): Promise<PendingEvent[]> {
-    if (!this.rejector || pending.length === 0) return pending;
+  private async admit(
+    pending: PendingEvent[],
+    rejector: RateRejector,
+  ): Promise<PendingEvent[]> {
+    if (pending.length === 0) return pending;
     const candidates = pending.map(({ normalized }) => normalized.occurrence);
     try {
-      const allowed = await this.rejector.admitIssueEvents(candidates);
+      const allowed = await rejector.admitIssueEvents(candidates);
       if (
-        this.rejector.newIssueCapEnabled &&
+        rejector.newIssueCapEnabled &&
         this.options.recordMode !== "grouped"
       ) {
         const store = this.options.store;
@@ -153,16 +156,14 @@ export class ConsumerService {
             Date.parse(candidate.receivedAt) / (windowSec * 1000),
           );
           if (!state.denied.has(bucket)) {
-            const [accepted] = await this.rejector.admitNewIssues([candidate]);
+            const [accepted] = await rejector.admitNewIssues([candidate]);
             if (accepted) state.exists = true;
             else state.denied.add(bucket);
           }
           if (!state.exists) allowed[i] = false;
         }
       }
-      await this.rejector.recordDropped(
-        candidates.filter((_, i) => !allowed[i]),
-      );
+      await rejector.recordDropped(candidates.filter((_, i) => !allowed[i]));
       return pending.filter((_, i) => allowed[i]);
     } catch {
       // Do not expose provider exception text or names through the delivery log.
@@ -170,6 +171,18 @@ export class ConsumerService {
     }
   }
   handle: BatchHandler = async (batch) => {
+    const scope = this.rejector?.batch();
+    try {
+      return await this.handleBatch(batch, scope?.rejector, scope?.hasFailures);
+    } finally {
+      scope?.flush();
+    }
+  };
+  private async handleBatch(
+    batch: Parameters<BatchHandler>[0],
+    rejector?: RateRejector,
+    hasKvFailures?: () => boolean,
+  ) {
     const results: Awaited<ReturnType<BatchHandler>> = [];
     const prepared: {
       resultIndex: number;
@@ -382,16 +395,20 @@ export class ConsumerService {
         }
       }
     }
-    if (this.rejector && prepared.length) {
+    if (rejector && prepared.length) {
       let accepted: Set<PendingEvent>;
       try {
         accepted = new Set(
-          await this.admit(prepared.flatMap((item) => item.pending)),
+          await this.admit(
+            prepared.flatMap((item) => item.pending),
+            rejector,
+          ),
         );
       } catch {
-        this.options.logger.error("Rate rejection failed", {
-          deliveries: prepared.length,
-        });
+        if (!hasKvFailures?.())
+          this.options.logger.error("Rate rejection failed", {
+            deliveries: prepared.length,
+          });
         return results;
       }
       for (const item of prepared) {
@@ -412,5 +429,5 @@ export class ConsumerService {
       }
     }
     return results;
-  };
+  }
 }

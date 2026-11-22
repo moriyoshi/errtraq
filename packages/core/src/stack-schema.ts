@@ -250,11 +250,13 @@ export const requiredCapabilities: Partial<
 > = {
   store: {
     textSearch: z.boolean(),
+    recordEvents: z.boolean(),
     lastSeenRangeOnOtherSort: z.boolean(),
     deleteStrategy: z.enum(["explicit", "ttl"]),
   },
   queue: {
     delivery: z.enum(["push", "pull", "both"]),
+    grouping: z.enum(["none", "per-key-serial"]),
     maxBytes: z.number().positive(),
     delay: z.boolean(),
     dlq: z.boolean(),

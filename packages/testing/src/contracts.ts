@@ -165,11 +165,16 @@ export function activeStoreContract(
   options: ContractOptions = {},
 ): void {
   describe("ActiveStore contract", () => {
+    it("declares grouped-recording support and supplies the operation", async () => {
+      const store = await factory();
+      expect(typeof store.capabilities.recordEvents).toBe("boolean");
+      expect(typeof store.recordEvents).toBe("function");
+      if (!store.capabilities.recordEvents)
+        await expect(store.recordEvents([])).rejects.toThrow();
+    });
     it("records homogeneous groups atomically with per-input duplicate results", async () => {
       const store = await factory();
       if (!store.capabilities.recordEvents) return;
-      if (!store.recordEvents)
-        throw new Error("Missing recordEvents implementation");
       const input = (id: string, second: number) => {
         const o = occurrence(id, second);
         return {
@@ -208,8 +213,6 @@ export function activeStoreContract(
     it("applies grouped regression and latest-event rules in input order", async () => {
       const store = await factory();
       if (!store.capabilities.recordEvents) return;
-      if (!store.recordEvents)
-        throw new Error("Missing recordEvents implementation");
       const seedOccurrence = occurrence("seed-group", 1);
       await record(store, seedOccurrence);
       await store.issues.update(project, seedOccurrence.issueId, {
@@ -236,8 +239,6 @@ export function activeStoreContract(
     it("atomically records concurrent event groups for one issue", async () => {
       const store = await factory();
       if (!store.capabilities.recordEvents) return;
-      if (!store.recordEvents)
-        throw new Error("Missing recordEvents implementation");
       const make = (index: number) => {
         const o = occurrence(
           `group-${String(index).padStart(2, "0")}`,
@@ -252,7 +253,7 @@ export function activeStoreContract(
         Array.from({ length: 10 }, (_, i) => make(group * 10 + i)),
       );
       const results = (
-        await Promise.all(groups.map((group) => store.recordEvents?.(group)))
+        await Promise.all(groups.map((group) => store.recordEvents(group)))
       ).flat();
       expect(results.filter((result) => result?.inserted)).toHaveLength(40);
       expect(results.filter((result) => result?.isNew)).toHaveLength(1);
@@ -1337,6 +1338,10 @@ export function queueContract(
   options: QueueContractOptions = {},
 ): void {
   describe("Queue contract", () => {
+    it("explicitly declares its grouped-delivery capability", async () => {
+      const queue = await factory();
+      expect(["none", "per-key-serial"]).toContain(queue.capabilities.grouping);
+    });
     it("serializes each group while allowing other groups to make progress", async () => {
       const q = await factory();
       if (
