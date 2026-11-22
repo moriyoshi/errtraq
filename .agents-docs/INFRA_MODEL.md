@@ -565,9 +565,9 @@ Stack `rateRejection` is an optional object carrying `issueRateLimit`, `newIssue
 `onKvFailure`; the default failure policy is `allow` when the object is supplied. Settings
 are carried in deployed plans, generated Lambda entries and local platform construction. The
 Lambda plan is embedded at build time, so changing these settings requires rebuilding function
-artifacts. Enabled limits are temporarily rejected by stack validation and platform handlers
-until conditional KV grants and enabled-stack verification are implemented. Behind the guard,
-the consumer batches per-issue checks across delivered envelopes and checks the new-issue cap
+artifacts. The consumer receives KV read/write grants and bindings when the per-issue limit
+is enabled or the direct-mode new-issue cap is enabled. The record role receives them when the
+grouped-mode new-issue cap is enabled. The consumer batches per-issue checks across delivered envelopes and checks the new-issue cap
 in direct mode; in grouped mode the record handler checks that cap. Platform code passes KV
 and the stack settings to each handler. Rejected events are not stored or forwarded. The API
 dropped-count field remains future work.

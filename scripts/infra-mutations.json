@@ -598,5 +598,30 @@
     "id": "root-drop-dlq",
     "root": "alarm-topic",
     "operation": "drop-dlq"
+  },
+  {
+    "id": "root-rate-drop-kv-policy",
+    "root": "rate-direct-issue",
+    "operation": "rate-drop-kv-policy"
+  },
+  {
+    "id": "root-rate-drop-kv-binding",
+    "root": "rate-direct-issue",
+    "operation": "rate-drop-kv-binding"
+  },
+  {
+    "id": "root-rate-extra-kv-binding",
+    "root": "grouped-shared",
+    "operation": "rate-add-kv-to-record"
+  },
+  {
+    "id": "root-rate-record-drop-kv-policy",
+    "root": "rate-grouped-new",
+    "operation": "rate-drop-record-kv-policy"
+  },
+  {
+    "id": "root-rate-record-drop-kv-binding",
+    "root": "rate-grouped-new",
+    "operation": "rate-drop-record-kv-binding"
   }
 ]

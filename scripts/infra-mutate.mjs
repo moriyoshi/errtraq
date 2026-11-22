@@ -187,6 +187,28 @@ try {
     const main = JSON.parse(readFileSync(path, "utf8"));
     const platform = main.module.platform;
     switch (mutation.operation) {
+      case "rate-drop-record-kv-policy":
+      case "rate-drop-kv-policy": {
+        const role =
+          mutation.operation === "rate-drop-record-kv-policy"
+            ? "record"
+            : "consumer";
+        const policies = platform.functions[role].policies;
+        const index = policies.findIndex((p) => p.includes("module.kv"));
+        if (index < 0) throw new Error("KV policy mutation target missing");
+        policies.splice(index, 1);
+        break;
+      }
+      case "rate-drop-kv-binding":
+        delete platform.functions.consumer.environment.ERRTRAQ_KV_TABLE;
+        break;
+      case "rate-drop-record-kv-binding":
+        delete platform.functions.record.environment.ERRTRAQ_KV_TABLE;
+        break;
+      case "rate-add-kv-to-record":
+        platform.functions.record.environment.ERRTRAQ_KV_TABLE =
+          platform.functions.ingest.environment.ERRTRAQ_KV_TABLE;
+        break;
       case "drop-policy":
         platform.functions.ingest.policies.pop();
         break;

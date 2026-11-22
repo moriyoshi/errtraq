@@ -113,22 +113,9 @@ item should be resolved or removed once addressed. Milestone work itself is trac
   `test:aws-emulated` and the relevant `infra:apply-emulated` variant.
 
 
-- [ ] M3 stage 3 rate-based rejection: finish the slice in
-  `.agents-workspace/tmp/m3-rate-rejection.md`. The isolated core `RateRejector` and its unit
-  tests exist; the consumer enforces per-issue limits and the direct new-issue cap, and the
-  grouped record handler enforces the new-issue cap. Stack and platform guards keep both limits
-  disabled in deployments until conditional KV grants and their verification are complete.
-  Stack-level `rateRejection` is validated and threaded through deployed plans, generated
-  Lambda entries and local platform construction. Its schema permits counts 1..1,000,000,000,
-  windows 1..86,400 seconds and defaults `onKvFailure` to `allow`. Enabled limits are explicitly
-  rejected by stack validation and both platform handlers until the enforcement and grants below
-  land; remove all three guards only with integration.
-- [ ] M3 stage 3 integration: run suppression before rejection (leave TODO(M4)); batch the
-  per-issue and direct new-issue checks plus platform wiring are implemented and tested behind
-  the guard. Add conditional consumer / record KV read and write grants, binding scopes,
-  generated-root assertions and mutation coverage, and test the complete enabled stacks before
-  removing stack and platform guards. Keep the grouped consumer free of store access. Retain
-  suppression before rate checks (TODO(M4)), per-group ordering and at-least-once idempotency.
+- [x] M3 stage 3 enforcement and infrastructure: per-issue and new-issue checks, conditional
+  KV grants and bindings, platform wiring, enabled generated-root checks and mutation coverage.
+  Suppression remains TODO(M4); grouped consumers do not access the store.
 - [ ] M3 stage 3 API and verification: expose a clearly labeled approximate dropped count
   and its fixed window on issue responses, with KV expiry / failure behavior and privacy-safe
   aggregate logging (the helper currently logs once per failed KV group, not once per batch).

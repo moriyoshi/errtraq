@@ -1,10 +1,13 @@
+import { bootstrapProject, readDropped } from "@errtraq/core";
 import {
+  DeterministicIdGen,
+  FakeClock,
   MemoryActiveStore,
   MemoryBlobStore,
   MemoryKV,
   MemoryQueue,
 } from "@errtraq/testing";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { create as createAdapter, cronMatches } from "./index.js";
 
 const create = (
@@ -117,13 +120,63 @@ it("accepts grouped recording with the in-memory queue and record role", async (
   expect(deriveDeployment(stack).functions[0]?.roles).toContain("record");
 });
 
-it("refuses to start with an unenforced rate-rejection limit", () => {
-  expect(() =>
-    createAdapter({
-      config: {},
-      bindings: {},
-      dependencies: {} as Parameters<typeof createAdapter>[0]["dependencies"],
-      rateRejection: { newIssueCap: { issues: 1, windowSec: 60 } },
-    }),
-  ).toThrow("Rate rejection limits are not implemented yet");
+it("enforces an issue limit through the standalone HTTP and queue pipeline", async () => {
+  const store = new MemoryActiveStore();
+  const clock = new FakeClock();
+  const kv = new MemoryKV(clock);
+  const queue = Object.assign(new MemoryQueue(clock), {
+    idle: async () => true,
+  });
+  const project = await bootstrapProject({
+    store,
+    kv,
+    ids: new DeterministicIdGen(),
+    orgSlug: "org",
+    projectSlug: "project",
+  });
+  const rateRejection = { issueRateLimit: { events: 1, windowSec: 60 } };
+  const platform = createAdapter({
+    config: { port: 0 },
+    dependencies: { store, kv, queue, blob: new MemoryBlobStore(), clock },
+    bindings: {},
+    topics: {},
+    rateRejection,
+  });
+  const server = await platform.start();
+  try {
+    for (const n of [1, 2]) {
+      const eventId = n.toString(16).padStart(32, "0");
+      const body = `${JSON.stringify({ event_id: eventId })}\n${JSON.stringify({ type: "event" })}\n${JSON.stringify({ event_id: eventId, message: "same issue" })}\n`;
+      const response = await fetch(
+        `http://127.0.0.1:${server.port}/api/${project.project.id}/envelope/?sentry_key=${project.key.publicKey}`,
+        {
+          method: "POST",
+          body,
+          headers: { "Content-Type": "application/x-sentry-envelope" },
+        },
+      );
+      expect(response.status).toBe(200);
+    }
+    await vi.waitFor(async () => {
+      const page = await store.issues.list({
+        projectId: project.project.id,
+        sort: "lastSeen",
+      });
+      expect(page.items).toHaveLength(1);
+      const issue = page.items[0];
+      if (!issue) throw new Error("Issue not recorded yet");
+      expect(issue.count).toBe(1);
+      expect(
+        await readDropped(
+          kv,
+          rateRejection,
+          project.project.id,
+          issue.id,
+          clock.now(),
+        ),
+      ).toEqual({ count: 1, windowSec: 60 });
+    });
+  } finally {
+    await platform.close();
+  }
 });

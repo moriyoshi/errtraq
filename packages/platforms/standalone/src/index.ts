@@ -13,7 +13,6 @@ import {
   type Logger,
   type Queue,
   RecordHandler,
-  rateRejectionEnabled,
   recoverStagedEnvelopes,
   toTimestamp,
   WebCryptoIdGen,
@@ -106,8 +105,6 @@ export function create({
   recordMode = "direct",
   rateRejection,
 }: CreateContext<StandaloneConfig, Partial<Bindings>, Bindings>) {
-  if (rateRejectionEnabled(rateRejection))
-    throw new Error("Rate rejection limits are not implemented yet");
   const bindings = { ...dependencies, ...runtimeBindings };
   const cfg = configSchema.parse(config);
   const clock = bindings.clock ?? { now: () => toTimestamp(new Date()) };

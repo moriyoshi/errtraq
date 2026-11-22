@@ -143,10 +143,10 @@ bursts only if long-run service capacity exceeds arrivals and retention is suffi
    Repeat relevant checks for the other queue topology before considering M3h complete.
 
 
-The guarded consumer rate path groups candidates by project, issue and received-at fixed window
+The consumer rate path groups candidates by project, issue and received-at fixed window
 across a delivery batch before forwarding, then charges one KV increment for each group. The
 new-issue cap is checked after a consistent issue read in direct mode and in the grouped record
 handler. Admission counters are approximate on retries and concurrent issue creation. KV
 retry failures retry the affected batch before any event is recorded or forwarded; accepted
-per-delivery handoffs still retry independently on downstream failures. Stack activation remains
-blocked until conditional KV grants and their infrastructure checks are complete.
+per-delivery handoffs still retry independently on downstream failures. KV bindings and grants
+are scoped to the roles running the enabled checks.

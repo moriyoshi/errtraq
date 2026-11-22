@@ -1258,3 +1258,12 @@ forwarded or recorded, with provider details omitted from logs. Downstream hando
 still retry their own deliveries. Standalone and Lambda pass settings and KV to both handlers.
 The stack and platform guards remain until conditional KV grants, generated-root assertions
 and mutation coverage are complete; the API dropped-count item also remains open.
+
+
+## 2026-11-22 — Rate rejection deployment access
+
+Rate rejection can now be enabled in a stack. Consumer KV read/write access is conditional on
+the per-issue limit or the direct-mode new-issue cap; the grouped record role gets it only for
+the new-issue cap. Requirement-derived bindings follow the same scopes. Generated roots test
+these combinations and mutation checks remove or add access to exercise the assertions.
+Suppression and the issue API dropped-count field remain future work.

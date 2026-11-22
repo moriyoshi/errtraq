@@ -312,6 +312,87 @@ function keyedQueue(mode: "shared" | "per-topic"): StackConfig {
   };
   return v;
 }
+describe("conditional rate rejection access", () => {
+  it("scopes KV grants and bindings to the roles that enforce each limit", () => {
+    for (const mode of ["direct", "grouped"] as const) {
+      for (const limits of ["none", "issue", "new", "both"] as const) {
+        const v = stack();
+        v.recordMode = mode;
+        if (mode === "grouped") {
+          v.platform.manifest.configSchema = z
+            .object({ roles: z.array(z.string()), split: z.array(z.string()) })
+            .passthrough();
+          v.platform.config = {
+            roles: [...roles, "record"],
+            split: [...roles, "record"],
+          };
+          v.store.manifest.capabilities.recordEvents = true;
+          v.queue.manifest.capabilities.grouping = "per-key-serial";
+          v.queue.infra.resources.record_queue = out("arn");
+          v.queue.infra.capabilities.produce.record_queue = out("policy");
+          v.queue.infra.capabilities.consume.record_queue = out("policy");
+          v.queue.infra.bindings.push({
+            name: "RECORD_QUEUE",
+            kind: "env",
+            purpose: "record_queue",
+            value: out("arn"),
+          });
+          topics(v).routes.record = {
+            physical: "record_queue",
+            producerBinding: "RECORD_QUEUE",
+            grouping: "per-key-serial",
+          };
+        }
+        v.kv.infra.bindings.push({
+          name: "KV_TABLE",
+          kind: "env",
+          purpose: "primary",
+          value: out("arn"),
+        });
+        v.rateRejection = {
+          ...(limits === "issue" || limits === "both"
+            ? { issueRateLimit: { events: 1, windowSec: 60 } }
+            : {}),
+          ...(limits === "new" || limits === "both"
+            ? { newIssueCap: { issues: 1, windowSec: 60 } }
+            : {}),
+        };
+        const consumer =
+          limits === "issue" ||
+          limits === "both" ||
+          (mode === "direct" && limits === "new");
+        const record =
+          mode === "grouped" && (limits === "new" || limits === "both");
+        const access = deriveAccess(v);
+        for (const [role, expected] of [
+          ["consumer", consumer],
+          ["record", record],
+        ] as const) {
+          expect(
+            access.grants
+              .filter((g) => g.functionId === role && g.selection === "kv")
+              .map((g) => g.capability)
+              .sort(),
+          ).toEqual(expected ? ["read", "write"] : []);
+          expect(
+            access.bindings.some(
+              (b) =>
+                b.functionId === role &&
+                b.selection === "kv" &&
+                b.binding.name === "KV_TABLE",
+            ),
+          ).toBe(expected);
+        }
+        if (mode === "grouped")
+          expect(
+            access.grants.some(
+              (g) => g.functionId === "consumer" && g.selection === "store",
+            ),
+          ).toBe(false);
+      }
+    }
+  });
+});
 describe("infrastructure model", () => {
   it("validates and preserves disabled rate-rejection settings", () => {
     const v = { ...stack(), rateRejection: { onKvFailure: "retry" as const } };
@@ -327,10 +408,7 @@ describe("infrastructure model", () => {
       { issueRateLimit: { events: 1, windowSec: 60 } },
       { newIssueCap: { issues: 1, windowSec: 60 } },
     ])
-      expect(validateStack({ ...stack(), rateRejection })).toContainEqual({
-        path: "rateRejection",
-        message: "Rate rejection limits are not implemented yet",
-      });
+      expect(validateStack({ ...stack(), rateRejection })).toEqual([]);
     for (const rateRejection of [
       { issueRateLimit: { events: 0, windowSec: 60 } },
       { issueRateLimit: { events: 1, windowSec: 86401 } },

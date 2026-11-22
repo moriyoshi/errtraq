@@ -44,6 +44,38 @@ export const fixtures = {
       split: ["ingest", "api", "consumer", "record", "cron"],
     }),
   }),
+  "rate-direct-issue": variant(shared, {
+    recordMode: "direct",
+    platform: awsLambda({
+      roles: ["ingest", "api", "consumer", "cron"],
+      split: ["ingest", "api", "consumer", "cron"],
+    }),
+    rateRejection: { issueRateLimit: { events: 2, windowSec: 60 } },
+  }),
+  "rate-direct-new": variant(shared, {
+    recordMode: "direct",
+    platform: awsLambda({
+      roles: ["ingest", "api", "consumer", "cron"],
+      split: ["ingest", "api", "consumer", "cron"],
+    }),
+    rateRejection: { newIssueCap: { issues: 2, windowSec: 60 } },
+  }),
+  "rate-grouped-issue": variant(shared, {
+    recordMode: "grouped",
+    platform: awsLambda({
+      roles: ["ingest", "api", "consumer", "record", "cron"],
+      split: ["ingest", "api", "consumer", "record", "cron"],
+    }),
+    rateRejection: { issueRateLimit: { events: 2, windowSec: 60 } },
+  }),
+  "rate-grouped-new": variant(shared, {
+    recordMode: "grouped",
+    platform: awsLambda({
+      roles: ["ingest", "api", "consumer", "record", "cron"],
+      split: ["ingest", "api", "consumer", "record", "cron"],
+    }),
+    rateRejection: { newIssueCap: { issues: 2, windowSec: 60 } },
+  }),
   "alarm-topic": variant(shared, {
     recordMode: "grouped",
     platform: awsLambda({
@@ -332,6 +364,37 @@ export function prepareRoot(parent, name, version) {
   writeFileSync(resolve(modules, "aws/lambda-app/probe.tf"), probe);
   writeFileSync(resolve(modules, "aws/sqs/probe.tf"), queueProbe);
   const view = deriveDeployment(stack);
+  // Independent access matrix: root tests below compare actual module env and policies
+  // against this derived view, while these assertions constrain the view itself.
+  if (name.startsWith("rate-") || name === "grouped-shared") {
+    const expected =
+      name === "rate-direct-issue" ||
+      name === "rate-direct-new" ||
+      name === "rate-grouped-issue"
+        ? ["consumer"]
+        : name === "rate-grouped-new"
+          ? ["record"]
+          : [];
+    for (const role of ["consumer", "record"]) {
+      const fn = view.functions.find((item) => item.roles.includes(role));
+      if (!fn) continue;
+      const wanted = expected.includes(role);
+      const grants = fn.policies
+        .filter((item) => item.selection === "kv")
+        .map((item) => item.capability)
+        .sort();
+      const binding = fn.envBindings.some(
+        (item) =>
+          item.selection === "kv" && item.binding.name === "ERRTRAQ_KV_TABLE",
+      );
+      if (
+        JSON.stringify(grants) !==
+          JSON.stringify(wanted ? ["read", "write"] : []) ||
+        binding !== wanted
+      )
+        throw new Error(`Incorrect ${role} KV scope in ${name}`);
+    }
+  }
   const options = {
     outputDirectory: target,
     modulesDirectory: modules,

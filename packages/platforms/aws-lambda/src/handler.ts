@@ -16,7 +16,6 @@ import {
   type Queue,
   type RateRejectionConfig,
   RecordHandler,
-  rateRejectionEnabled,
   toTimestamp,
 } from "@errtraq/core";
 import { createApiApp, createIngestApp } from "@errtraq/http";
@@ -67,8 +66,6 @@ export function retryableInitialization<T>(
 export function createHandler(
   options: HandlerOptions,
 ): (event: unknown) => Promise<unknown> {
-  if (rateRejectionEnabled(options.rateRejection))
-    throw new Error("Rate rejection limits are not implemented yet");
   const { roles, adapters } = options;
   const clock = options.clock ?? { now: () => toTimestamp(new Date()) };
   const log = options.logger ?? logger;
