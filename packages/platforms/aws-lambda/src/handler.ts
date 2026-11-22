@@ -14,7 +14,9 @@ import {
   type KV,
   type Logger,
   type Queue,
+  type RateRejectionConfig,
   RecordHandler,
+  rateRejectionEnabled,
   toTimestamp,
 } from "@errtraq/core";
 import { createApiApp, createIngestApp } from "@errtraq/http";
@@ -24,6 +26,7 @@ import { handle, type LambdaEvent } from "hono/aws-lambda";
 export interface HandlerOptions {
   roles: readonly FunctionRole[];
   recordMode?: "direct" | "grouped";
+  rateRejection?: RateRejectionConfig;
   rateLimit?: number | null;
   http: readonly FunctionRole[];
   adapters: { store?: ActiveStore; blob?: BlobStore; queue?: Queue; kv?: KV };
@@ -64,6 +67,8 @@ export function retryableInitialization<T>(
 export function createHandler(
   options: HandlerOptions,
 ): (event: unknown) => Promise<unknown> {
+  if (rateRejectionEnabled(options.rateRejection))
+    throw new Error("Rate rejection limits are not implemented yet");
   const { roles, adapters } = options;
   const clock = options.clock ?? { now: () => toTimestamp(new Date()) };
   const log = options.logger ?? logger;

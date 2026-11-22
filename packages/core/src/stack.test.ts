@@ -7,6 +7,7 @@ import {
   configReference,
   constructionOrder,
   defineStack,
+  deployedPlan,
   deriveAccess,
   deriveDeployment,
   deriveTriggers,
@@ -312,6 +313,35 @@ function keyedQueue(mode: "shared" | "per-topic"): StackConfig {
   return v;
 }
 describe("infrastructure model", () => {
+  it("validates and preserves disabled rate-rejection settings", () => {
+    const v = { ...stack(), rateRejection: { onKvFailure: "retry" as const } };
+    const resolved = resolveStack(v);
+    expect(resolved.rateRejection).toEqual({ onKvFailure: "retry" });
+    expect(deployedPlan(resolved, "consumer").rateRejection).toEqual({
+      onKvFailure: "retry",
+    });
+    expect(
+      resolveStack({ ...stack(), rateRejection: {} }).rateRejection,
+    ).toEqual({ onKvFailure: "allow" });
+    for (const rateRejection of [
+      { issueRateLimit: { events: 1, windowSec: 60 } },
+      { newIssueCap: { issues: 1, windowSec: 60 } },
+    ])
+      expect(validateStack({ ...stack(), rateRejection })).toContainEqual({
+        path: "rateRejection",
+        message: "Rate rejection limits are not implemented yet",
+      });
+    for (const rateRejection of [
+      { issueRateLimit: { events: 0, windowSec: 60 } },
+      { issueRateLimit: { events: 1, windowSec: 86401 } },
+      { newIssueCap: { issues: 1.5, windowSec: 60 } },
+      { onKvFailure: "ignore" },
+    ])
+      expect(
+        validateStack({ ...stack(), rateRejection } as unknown as StackConfig)
+          .length,
+      ).toBeGreaterThan(0);
+  });
   it("checks declared child kinds and detects colliding Terraform module names", () => {
     const v = stack();
     v.kv.manifest.childKinds = { wrong: "kv", a_b: "kv", a: "kv" };

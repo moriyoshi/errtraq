@@ -221,6 +221,11 @@ CF Cron Triggers, Cloud Scheduler) or an in-process timer on the standalone plat
    issue/event list/get/update for a later UI.
 4. **Cron** — archival, retention of raw envelopes, release-artifact GC.
 
+Stack-level `rateRejection` describes optional per-issue and new-issue fixed-window limits and
+an `onKvFailure` policy. Both limits are disabled by default; an explicit enabled limit is
+currently rejected at validation because enforcement is not wired. `onKvFailure` defaults to
+`allow`. See `.agents-docs/TODO.md` for the remaining integration.
+
 ### Issue-keyed record stage (M3, partially implemented)
 
 `recordMode` is a stack-level setting: `direct` retains the current consumer write path;

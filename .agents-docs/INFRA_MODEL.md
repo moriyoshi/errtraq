@@ -559,3 +559,12 @@ positive safe integer to change it or `null` to disable it. The derived deployme
 `ERRTRAQ_INGEST_RATE_LIMIT` only to functions exposing ingest HTTP. Terraform can update the
 value without rebuilding artifacts. It is a reserved platform binding; adapter bindings cannot
 use that name. Rate counters remain keyed by DSN key ID, not by project.
+
+
+Stack `rateRejection` is an optional object carrying `issueRateLimit`, `newIssueCap` and
+`onKvFailure`; the default failure policy is `allow` when the object is supplied. Settings
+are carried in deployed plans, generated Lambda entries and local platform construction. The
+Lambda plan is embedded at build time, so changing these settings requires rebuilding function
+artifacts. Enabled limits are temporarily rejected by stack validation and platform handlers until
+the consumer, record handler and conditional KV grants implement them. The API dropped-count
+field remains future work.

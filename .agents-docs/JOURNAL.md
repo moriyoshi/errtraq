@@ -1224,3 +1224,13 @@ helper logs aggregate failure context without provider error text or names. The 
 integration was removed because stack configuration, grouped-mode checks, API fields and
 grants are not yet wired; rejection remains inactive. The remaining work and the decision
 needed for delayed-event buckets are recorded in TODO.
+
+
+## 2026-11-22 — Rate-rejection stack configuration
+
+Stack-wide `rateRejection` now validates the existing helper bounds and defaults its failure
+policy to `allow`, and its configuration reaches the deployed plan, Lambda entry and standalone
+platform context. Limits are explicitly rejected until both execution paths and their KV grants
+are implemented: accepting a configured limit without enforcing it would silently lose the
+operator's protection. The disabled configuration remains usable and the existing pipeline is
+unchanged. TODO records the remaining integration and API work.

@@ -116,3 +116,14 @@ it("accepts grouped recording with the in-memory queue and record role", async (
   });
   expect(deriveDeployment(stack).functions[0]?.roles).toContain("record");
 });
+
+it("refuses to start with an unenforced rate-rejection limit", () => {
+  expect(() =>
+    createAdapter({
+      config: {},
+      bindings: {},
+      dependencies: {} as Parameters<typeof createAdapter>[0]["dependencies"],
+      rateRejection: { newIssueCap: { issues: 1, windowSec: 60 } },
+    }),
+  ).toThrow("Rate rejection limits are not implemented yet");
+});

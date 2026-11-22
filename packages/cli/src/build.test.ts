@@ -117,6 +117,21 @@ describe("built stacks", () => {
       Reflect.deleteProperty(globalThis, "__m2dInit");
     }
   }, 30000);
+  it("carries disabled rate-rejection settings into generated Lambda entries", async () => {
+    const stack = resolveStack({
+      ...Object.fromEntries(Object.entries(shared)),
+      rateRejection: { onKvFailure: "retry" },
+    });
+    const output = join(temp, "rate-rejection");
+    await buildStack(
+      stack,
+      repo,
+      output,
+      resolve(repo, "stacks/aws-dynamodb.ts"),
+    );
+    const entry = await readFile(join(output, "consumer", "index.mjs"), "utf8");
+    expect(entry).toMatch(/onKvFailure.{0,20}retry/);
+  }, 30000);
   it("removes previously owned function directories when split settings change", async () => {
     const output = join(temp, "split-changes");
     const raw = Object.fromEntries(Object.entries(shared));

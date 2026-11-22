@@ -305,3 +305,14 @@ it("enforces the configured limit independently for each DSN key and can disable
       "Invalid Lambda ingest rate limit",
     );
 });
+
+it("refuses to start with an unenforced rate-rejection limit", () => {
+  expect(() =>
+    createHandler({
+      roles: [],
+      http: [],
+      adapters: {},
+      rateRejection: { issueRateLimit: { events: 1, windowSec: 60 } },
+    }),
+  ).toThrow("Rate rejection limits are not implemented yet");
+});

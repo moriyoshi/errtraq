@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { RATE_REJECTION_BOUNDS } from "./rate-rejection.js";
 import {
   type AdapterSelection,
   type DeploymentView,
@@ -157,6 +158,31 @@ export const rootSchema = z.strictObject({
   name: z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/),
   protection: z.enum(["production", "disposable"]).default("production"),
   recordMode: z.enum(["direct", "grouped"]).optional(),
+  rateRejection: z
+    .strictObject({
+      issueRateLimit: z
+        .strictObject({
+          events: z.number().int().min(1).max(RATE_REJECTION_BOUNDS.maxCount),
+          windowSec: z
+            .number()
+            .int()
+            .min(RATE_REJECTION_BOUNDS.minWindowSec)
+            .max(RATE_REJECTION_BOUNDS.maxWindowSec),
+        })
+        .optional(),
+      newIssueCap: z
+        .strictObject({
+          issues: z.number().int().min(1).max(RATE_REJECTION_BOUNDS.maxCount),
+          windowSec: z
+            .number()
+            .int()
+            .min(RATE_REJECTION_BOUNDS.minWindowSec)
+            .max(RATE_REJECTION_BOUNDS.maxWindowSec),
+        })
+        .optional(),
+      onKvFailure: z.enum(["allow", "retry"]).default("allow"),
+    })
+    .optional(),
   outputs: z.record(refName, z.custom(isOutputRef)).optional(),
   providers: z
     .record(

@@ -115,3 +115,26 @@ it("passes distinct event sources and topics for per-topic queue consumers", asy
   ]);
   await built.close();
 });
+
+it("passes disabled rate-rejection settings to the standalone platform only", async () => {
+  const stack = {
+    ...copyStack(local),
+    rateRejection: { onKvFailure: "retry" as const },
+  };
+  const contexts = new Map<string, Record<string, unknown>>();
+  const built = await constructStack(stack, roles, {}, async (specifier) => ({
+    create(context: Record<string, unknown>) {
+      const path = pathByModule.get(specifier);
+      if (!path) throw new Error("Unknown module");
+      contexts.set(path, context);
+      return {};
+    },
+  }));
+  expect(contexts.get("platform")?.rateRejection).toEqual({
+    onKvFailure: "retry",
+  });
+  for (const [path, context] of contexts)
+    if (path !== "platform")
+      expect(context).not.toHaveProperty("rateRejection");
+  await built.close();
+});

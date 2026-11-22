@@ -1,4 +1,5 @@
 import { CONSUMER_MAX_MISSING_ATTEMPTS } from "./consumer-policy.js";
+import { rateRejectionEnabled } from "./rate-rejection.js";
 
 function ownValue<T>(
   record: Record<string, T> | undefined,
@@ -697,6 +698,9 @@ function inspect(input: unknown): {
   const issues: StackValidationIssue[] = [];
   const fail = (path: string, message: string) =>
     issues.push({ path, message });
+  // TODO(M3): remove this guard when both record modes enforce the limits and have KV grants.
+  if (rateRejectionEnabled(stack.rateRejection))
+    fail("rateRejection", "Rate rejection limits are not implemented yet");
   const platformParsed = platformSchema.safeParse(stack.platform.manifest);
   if (!platformParsed.success) {
     fail("platform.manifest", "Invalid platform manifest");

@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { Logger, SecretSource } from "./ports.js";
+import type { RateRejectionConfig } from "./rate-rejection.js";
 
 export type PortKind =
   | "platform"
@@ -371,6 +372,7 @@ export interface CreateContext<
   bindings: B;
   dependencies: D;
   recordMode?: "direct" | "grouped";
+  rateRejection?: RateRejectionConfig;
   /** Runtime environment supplied by the host; the adapter may read refreshed credentials lazily. */
   environment?: Readonly<Record<string, string | undefined>>;
   /** Resolve secret identifiers only when an adapter needs the secret bytes. */
@@ -415,8 +417,10 @@ export interface StackConfig {
   name: string;
   /** Production protection is the default; disposable permits resource teardown. */
   protection?: "production" | "disposable";
-  /** Defaults to direct until the grouped record handler is implemented. */
+  /** Defaults to grouped for Lambda with SQS and direct otherwise. */
   recordMode?: "direct" | "grouped";
+  /** Stack-wide fixed-window limits; unset limits are disabled. */
+  rateRejection?: RateRejectionConfig;
   outputs?: Record<string, OutputRef>;
   providers?: Record<
     string,

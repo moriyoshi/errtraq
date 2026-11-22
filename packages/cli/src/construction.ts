@@ -108,7 +108,10 @@ export async function constructStack(
           : {};
       const context = {
         ...(selection.manifest.kind === "platform"
-          ? { recordMode: stack.recordMode ?? "direct" }
+          ? {
+              recordMode: stack.recordMode ?? "direct",
+              rateRejection: stack.rateRejection,
+            }
           : {}),
         config: resolveRuntimeValue(selection.config, path, stack, environment),
         bindings: resolveRoleBindings(stack, roles, path, environment),
