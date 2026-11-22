@@ -112,3 +112,6 @@ receive EC2 network-interface permissions on `*`, as required by Lambda; those p
 also be used by function code. See [AWS VPC guidance](https://docs.aws.amazon.com/lambda/latest/dg/configuration-vpc.html)
 for network access and the optional source-function deny defense. Test actual IAM, TLS and
 network behavior in a real account before relying on it.
+
+For AWS Lambda stacks, configure `awsLambda({ rateLimit: 1000 })` to allow 1,000 event items
+per minute for each DSN key. The default is 60; use `rateLimit: null` to disable the limit.

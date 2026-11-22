@@ -24,6 +24,7 @@ import { handle, type LambdaEvent } from "hono/aws-lambda";
 export interface HandlerOptions {
   roles: readonly FunctionRole[];
   recordMode?: "direct" | "grouped";
+  rateLimit?: number | null;
   http: readonly FunctionRole[];
   adapters: { store?: ActiveStore; blob?: BlobStore; queue?: Queue; kv?: KV };
   clock?: Clock;
@@ -36,6 +37,16 @@ const logger: Logger = {
   warn: (message, fields) => console.warn(message, fields ?? ""),
   error: (message, fields) => console.error(message, fields ?? ""),
 };
+/** Parse the platform-delivered limit; missing uses the IngestService default. */
+export function lambdaRateLimit(
+  value: string | undefined,
+): number | null | undefined {
+  if (value === undefined) return undefined;
+  if (value === "disabled") return null;
+  if (!/^[1-9][0-9]*$/.test(value) || !Number.isSafeInteger(Number(value)))
+    throw new Error("Invalid Lambda ingest rate limit");
+  return Number(value);
+}
 /** Share successful initialization while allowing the next invocation to retry a failure. */
 export function retryableInitialization<T>(
   initialize: () => Promise<T>,
@@ -65,6 +76,7 @@ export function createHandler(
       createIngestApp(
         new IngestService({
           store: adapters.store,
+          rateLimit: options.rateLimit,
           blobs: adapters.blob,
           queue: adapters.queue.producer,
           kv: adapters.kv,

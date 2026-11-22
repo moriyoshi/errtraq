@@ -332,6 +332,10 @@ describe("built stacks", () => {
         expect(typeof entry.handler).toBe("function");
         const zip = unzipSync(await readFile(join(directory, "bundle.zip")));
         expect(Object.keys(zip)).toEqual(["index.mjs"]);
+        if (fn.http.includes("ingest"))
+          expect(new TextDecoder().decode(zip["index.mjs"])).toContain(
+            "ERRTRAQ_INGEST_RATE_LIMIT",
+          );
         expect(
           JSON.parse(await readFile(join(directory, "manifest.json"), "utf8")),
         ).toEqual(manifest.artifacts[fn.id]);
@@ -344,6 +348,10 @@ describe("built stacks", () => {
       const main = JSON.parse(
         await readFile(join(target, "main.tf.json"), "utf8"),
       );
+      expect(
+        main.module.platform.functions.ingest.environment
+          .ERRTRAQ_INGEST_RATE_LIMIT,
+      ).toBe("60");
       for (const fn of deriveDeployment(stack).functions) {
         const artifact = manifest.artifacts[fn.id];
         expect(artifact).toBeDefined();

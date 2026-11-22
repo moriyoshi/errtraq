@@ -57,6 +57,40 @@ function parsed(
   return JSON.parse(file);
 }
 describe("Terraform generator", () => {
+  it.each([
+    [42, "42"],
+    [null, "disabled"],
+  ] as const)(
+    "delivers Lambda rate limit %s only to ingest HTTP functions",
+    (rateLimit, value) => {
+      const base = raw(shared);
+      base.platform = {
+        ...base.platform,
+        config: {
+          ...(base.platform.config as Record<string, unknown>),
+          rateLimit,
+        },
+      };
+      const files = terraform(resolveStack(base));
+      const main = parsed(files, "main.tf.json") as {
+        module: {
+          platform: {
+            functions: Record<string, { environment: Record<string, string> }>;
+          };
+        };
+      };
+      expect(
+        main.module.platform.functions.ingest?.environment
+          .ERRTRAQ_INGEST_RATE_LIMIT,
+      ).toBe(value);
+      expect(
+        main.module.platform.functions.api?.environment,
+      ).not.toHaveProperty("ERRTRAQ_INGEST_RATE_LIMIT");
+      expect(
+        main.module.platform.functions.consumer?.environment,
+      ).not.toHaveProperty("ERRTRAQ_INGEST_RATE_LIMIT");
+    },
+  );
   it("delivers runtime config references to precisely the functions using their adapter", async () => {
     const base = raw(shared);
     base.variables = {

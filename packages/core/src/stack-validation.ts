@@ -345,6 +345,20 @@ function deploymentFor(
   if (stack.platform.manifest.id === "aws-lambda") {
     const all = selections(stack);
     for (const fn of view.functions) {
+      if (fn.http.includes("ingest")) {
+        const limit = (stack.platform.config as { rateLimit?: number | null })
+          .rateLimit;
+        fn.envBindings.push({
+          functionId: fn.id,
+          selection: "platform",
+          binding: {
+            name: "ERRTRAQ_INGEST_RATE_LIMIT",
+            kind: "env",
+            purpose: "platform-config",
+            value: limit === null ? "disabled" : String(limit ?? 60),
+          },
+        });
+      }
       const needed = new Set(
         access.grants
           .filter((g) => g.functionId === fn.id)
@@ -1393,6 +1407,7 @@ function inspect(input: unknown): {
         );
       bindingNames.add(item.binding.name);
       if (
+        item.selection !== "platform" &&
         platform.reservedBindings.some((pattern) =>
           pattern.endsWith("*")
             ? item.binding.name.startsWith(pattern.slice(0, -1))

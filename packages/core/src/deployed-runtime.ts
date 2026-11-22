@@ -143,7 +143,8 @@ export function deployedPlan(
       .grants.filter((grant) => grant.functionId === functionId)
       .map((grant) => grant.selection),
   );
-  for (const item of scoped) needed.add(item.selection);
+  for (const item of scoped)
+    if (item.selection !== "platform") needed.add(item.selection);
   let changed = true;
   while (changed) {
     changed = false;

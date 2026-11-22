@@ -86,5 +86,6 @@ item should be resolved or removed once addressed. Milestone work itself is trac
 
 - [ ] M3 / M4: add retention-safe cleanup for grouped-record claim-check blobs after queue retention, DLQ and redrive windows; content-addressed retries can leave orphaned blobs. — *source: issue-keyed queue turn 5*
 
-- [ ] M3: make the ingest rate limit configurable on the Lambda platform (it is fixed at the core default of 60 events per minute per DSN key; standalone already has `rateLimit`), and decide whether the default should be per key or per project. — *source: M3h first real deployment*
+- [x] M3: make the ingest rate limit configurable on the Lambda platform. — *source: M3h first real deployment*
+- [ ] M3 / product: decide whether an additional per-project ingest limit is needed alongside the existing per-DSN-key limit. — *source: M3h first real deployment*
 - [ ] M3h: remaining real-AWS checks: per-topic mode, FIFO poison to DLQ and redrive, visibility expiry, mode-switch drain, RDS / Aurora IAM with VPC, provider retries under throttling; add CloudWatch alarms (DLQ depth, queue age, function errors) since the stack creates none. Teardown must also delete the bootstrap secret, which is outside Terraform state. — *source: M3h first real deployment*

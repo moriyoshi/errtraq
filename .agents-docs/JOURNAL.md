@@ -1157,3 +1157,12 @@ Not covered by this run (still on the M3h checklist): per-topic queue mode, FIFO
 message to DLQ and redrive, visibility expiry, mode-switch drain, RDS / Aurora IAM and VPC,
 provider retries and timeouts against real throttling, CloudWatch alarms (the stack creates
 none yet), and the S3 ZIP path (bundles are about 200 KB, direct upload is fine).
+
+
+## 2026-11-22 — Lambda ingest rate configuration
+
+Lambda exposes the same per-DSN-key ingest limit as standalone: 60 event items per minute
+by default, a positive safe integer for another limit, or `null` to disable it. The value is
+a reserved, ingest-scoped platform environment binding in the derived deployment view, so
+Terraform can update it without rebuilding the Lambda bundle. Existing KV counters remain keyed
+by project-key ID; whether a separate project-wide limit is desirable remains a product decision.

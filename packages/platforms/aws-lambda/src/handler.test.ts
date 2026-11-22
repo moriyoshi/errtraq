@@ -5,7 +5,11 @@ import {
   MemoryQueue,
 } from "@errtraq/testing";
 import { expect, it, vi } from "vitest";
-import { createHandler, retryableInitialization } from "./handler.js";
+import {
+  createHandler,
+  lambdaRateLimit,
+  retryableInitialization,
+} from "./handler.js";
 
 it("retries failed initialization and shares an in-flight success", async () => {
   let attempts = 0;
@@ -243,4 +247,61 @@ it("executes staged-envelope recovery through its delivered blob and queue adapt
       body: expect.objectContaining({ blobKey: key, recovered: true }),
     }),
   ]);
+});
+
+it("enforces the configured limit independently for each DSN key and can disable it", async () => {
+  const store = new MemoryActiveStore();
+  vi.spyOn(store.projects, "getKey").mockImplementation(async (key) => ({
+    id: key as import("@errtraq/core").ProjectKeyId,
+    publicKey: key,
+    projectId: "1" as import("@errtraq/core").ProjectId,
+  }));
+  const adapters = {
+    store,
+    blob: new MemoryBlobStore(),
+    queue: new MemoryQueue(),
+    kv: new MemoryKV(),
+  };
+  const make = (rateLimit: number | null) =>
+    createHandler({ roles: ["ingest"], http: ["ingest"], adapters, rateLimit });
+  const event = (key: string) => ({
+    version: "2.0",
+    routeKey: "$default",
+    rawPath: "/api/1/envelope/",
+    rawQueryString: `sentry_key=${key}`,
+    headers: {
+      host: "example.test",
+      "content-type": "application/x-sentry-envelope",
+    },
+    body: '{}\n{"type":"event"}\n{"message":"test"}\n',
+    isBase64Encoded: false,
+    requestContext: {
+      http: {
+        method: "POST",
+        path: "/api/1/envelope/",
+        protocol: "HTTP/1.1",
+        sourceIp: "127.0.0.1",
+        userAgent: "test",
+      },
+      domainName: "example.test",
+      requestId: "test",
+      stage: "$default",
+      time: "",
+      timeEpoch: 0,
+      accountId: "",
+      apiId: "",
+    },
+  });
+  const limited = make(lambdaRateLimit("1") ?? 1);
+  expect(await limited(event("first"))).toMatchObject({ statusCode: 200 });
+  expect(await limited(event("first"))).toMatchObject({ statusCode: 429 });
+  expect(await limited(event("second"))).toMatchObject({ statusCode: 200 });
+  const disabled = make(lambdaRateLimit("disabled") ?? null);
+  expect(await disabled(event("first"))).toMatchObject({ statusCode: 200 });
+  expect(await disabled(event("first"))).toMatchObject({ statusCode: 200 });
+  expect(lambdaRateLimit(undefined)).toBeUndefined();
+  for (const invalid of ["0", "1.5", "-1", "NaN", "9007199254740992"])
+    expect(() => lambdaRateLimit(invalid)).toThrow(
+      "Invalid Lambda ingest rate limit",
+    );
 });

@@ -58,3 +58,45 @@ it("preserves stack variable references for existing VPC IDs", () => {
   expect(inputs.vpc_security_group_ids).toEqual(variable("GROUPS"));
   expect(resolved.platform.config).toBeDefined();
 });
+
+it("validates the per-key ingest limit including disable", () => {
+  expect(awsLambda().config).toMatchObject({ rateLimit: 60 });
+  expect(awsLambda({ rateLimit: null }).config).toMatchObject({
+    rateLimit: null,
+  });
+  expect(awsLambda({ rateLimit: 1000 }).config).toMatchObject({
+    rateLimit: 1000,
+  });
+  for (const limit of [0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1])
+    expect(() => awsLambda({ rateLimit: limit })).toThrow();
+});
+
+it("reserves the platform rate-limit environment name", () => {
+  const stack = {
+    ...Object.fromEntries(Object.entries(shared)),
+    store: {
+      ...shared.store,
+      infra: {
+        ...shared.store.infra,
+        bindings: [
+          ...shared.store.infra.bindings,
+          {
+            name: "ERRTRAQ_INGEST_RATE_LIMIT",
+            kind: "env" as const,
+            purpose: "primary",
+            value: "1",
+          },
+        ],
+      },
+    },
+  };
+  expect(validateStack(stack)).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        message: expect.stringContaining(
+          "Reserved binding name ERRTRAQ_INGEST_RATE_LIMIT",
+        ),
+      }),
+    ]),
+  );
+});

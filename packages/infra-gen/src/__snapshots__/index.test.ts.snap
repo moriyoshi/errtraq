@@ -111,6 +111,7 @@ exports[`Terraform generator > renders the full per-topic stack deterministicall
           "auth_type": "NONE",
           "environment": {
             "ERRTRAQ_BLOB_BUCKET": "\${module.blob.bucket_name}",
+            "ERRTRAQ_INGEST_RATE_LIMIT": "60",
             "ERRTRAQ_KV_TABLE": "\${module.kv.table_name}",
             "ERRTRAQ_QUEUE_INGEST_URL": "\${module.queue.queues[\\"ingest\\"][\\"url\\"]}",
             "ERRTRAQ_STORE_TABLE": "\${module.store.table_name}"
@@ -378,6 +379,7 @@ exports[`Terraform generator > renders the full shared stack deterministically 1
           "auth_type": "NONE",
           "environment": {
             "ERRTRAQ_BLOB_BUCKET": "\${module.blob.bucket_name}",
+            "ERRTRAQ_INGEST_RATE_LIMIT": "60",
             "ERRTRAQ_KV_TABLE": "\${module.kv.table_name}",
             "ERRTRAQ_QUEUE_SHARED_URL": "\${module.queue.queues[\\"shared\\"][\\"url\\"]}",
             "ERRTRAQ_STORE_TABLE": "\${module.store.table_name}"

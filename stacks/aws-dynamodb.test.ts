@@ -197,6 +197,7 @@ describe("AWS descriptor stacks", () => {
     const byId = Object.fromEntries(view.functions.map((fn) => [fn.id, fn]));
     expect(names(byId.ingest?.envBindings ?? [])).toEqual([
       "ERRTRAQ_BLOB_BUCKET",
+      "ERRTRAQ_INGEST_RATE_LIMIT",
       "ERRTRAQ_KV_TABLE",
       "ERRTRAQ_QUEUE_SHARED_URL",
       "ERRTRAQ_STORE_TABLE",

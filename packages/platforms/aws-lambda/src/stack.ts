@@ -29,6 +29,7 @@ export const configSchema = z
     ).default([]),
     runtime: z.string().min(1).default("nodejs22.x"),
     handler: z.string().min(1).default("index.handler"),
+    rateLimit: z.number().int().positive().safe().nullable().default(60),
     cronRetryAttempts: z.number().int().min(0).max(185).default(185),
     cronMaxEventAgeSec: z.number().int().min(60).max(86400).default(86400),
     cronDlqArn: z
@@ -77,6 +78,7 @@ export const manifest: PlatformManifest = {
     vpcSecurityGroupIds: "string[]",
   },
   reservedBindings: [
+    "ERRTRAQ_INGEST_RATE_LIMIT",
     "_HANDLER",
     "_X_AMZN_TRACE_ID",
     "AWS_DEFAULT_REGION",

@@ -538,3 +538,10 @@ resource and are also available to the function code; Lambda's documented source
 is an optional operator defense. No network infrastructure is created. Private subnets need NAT
 or appropriate S3, DynamoDB, SQS and Secrets Manager VPC endpoints, including correct DNS,
 routes and security-group rules, for the adapters' HTTPS calls.
+
+
+Lambda platform `rateLimit` defaults to 60 event items per minute for each DSN key; set a
+positive safe integer to change it or `null` to disable it. The derived deployment view delivers
+`ERRTRAQ_INGEST_RATE_LIMIT` only to functions exposing ingest HTTP. Terraform can update the
+value without rebuilding artifacts. It is a reserved platform binding; adapter bindings cannot
+use that name. Rate counters remain keyed by DSN key ID, not by project.

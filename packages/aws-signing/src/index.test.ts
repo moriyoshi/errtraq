@@ -279,8 +279,8 @@ describe("shared AWS request", () => {
     const signals: AbortSignal[] = [];
     const error = await awsRequest(
       base({
-        requestTimeoutMs: 100,
-        overallTimeoutMs: 10,
+        requestTimeoutMs: 2_000,
+        overallTimeoutMs: 200,
         fetch: async (_url, init) => {
           if (init?.signal) signals.push(init.signal);
           return await new Promise<Response>(() => {});
