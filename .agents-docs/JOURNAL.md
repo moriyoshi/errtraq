@@ -1347,3 +1347,20 @@ Added a tested numeric epoch-seconds calculation for event retention plus grace.
 fractional seconds later and rejects invalid timestamps and overflow. It is deliberately not
 wired to event writes: safe activation still needs a durable retention bound and an archival
 transition that deals with TTL attributes already present on older events.
+
+
+## 2026-11-22 — Event TTL activation deferred
+
+The owner deferred event TTL activation to M4 with the archiver, where retention ceiling changes
+and transitions from existing TTL-tagged tables can be resolved together. Issues remain permanent.
+
+
+## 2026-11-23 — Lambda packaging and CORS
+
+Lambda URLs are the only source of ingest CORS headers on Lambda; standalone still emits them.
+An optional same-region operator-owned artifact bucket makes Terraform upload encrypted,
+content-addressed ZIP objects and deploy Lambda from S3. Without it, the CLI rejects ZIPs above
+a conservative 50,000,000-byte direct-upload threshold. The runtime-only core entry removes Zod
+from Lambda bundles; minification preserves names. On the shared AWS stack the five ZIPs changed:
+ingest 213345 to 65273 bytes, API 206996 to 60467, consumer 193241 to 49057, record 211248 to
+63695, cron 193203 to 49018. Real AWS S3 deployment remains for M3h verification.

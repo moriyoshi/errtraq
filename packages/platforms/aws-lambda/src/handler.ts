@@ -17,7 +17,7 @@ import {
   type RateRejectionConfig,
   RecordHandler,
   toTimestamp,
-} from "@errtraq/core";
+} from "@errtraq/core/runtime";
 import { createApiApp, createIngestApp } from "@errtraq/http";
 import { Hono } from "hono";
 import { handle, type LambdaEvent } from "hono/aws-lambda";
@@ -86,6 +86,7 @@ export function createHandler(
           logger: log,
         }),
         log,
+        { cors: false },
       ),
     );
   }

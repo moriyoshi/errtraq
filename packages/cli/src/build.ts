@@ -149,7 +149,7 @@ export async function buildStack(
           .filter((item) => !item.path.includes("."))
           .map((item) => [item.kind, item.path]),
       );
-      entry = `${imports}\nimport { constructDeployedPlan, env, variable } from "@errtraq/core";\nimport { createHandler, createSecretsManagerSource, lambdaRateLimit, retryableInitialization } from "@errtraq/platform-aws-lambda/handler";\nconst plan=${sourceValue(plan)}; const modules={${modules}}; const kinds=${JSON.stringify(kinds)}; const logger={debug:(m,f)=>console.debug(m,f??{}),info:(m,f)=>console.info(m,f??{}),warn:(m,f)=>console.warn(m,f??{}),error:(m,f)=>console.error(m,f??{})};\nconst secretSource=createSecretsManagerSource({environment:process.env});
+      entry = `${imports}\nimport { constructDeployedPlan, env, variable } from "@errtraq/core/runtime";\nimport { createHandler, createSecretsManagerSource, lambdaRateLimit, retryableInitialization } from "@errtraq/platform-aws-lambda/handler";\nconst plan=${sourceValue(plan)}; const modules={${modules}}; const kinds=${JSON.stringify(kinds)}; const logger={debug:(m,f)=>console.debug(m,f??{}),info:(m,f)=>console.info(m,f??{}),warn:(m,f)=>console.warn(m,f??{}),error:(m,f)=>console.error(m,f??{})};\nconst secretSource=createSecretsManagerSource({environment:process.env});
 const getHandler=retryableInitialization(async()=>{ const built=await constructDeployedPlan(plan,process.env, async (name)=>{ if(!Object.hasOwn(modules,name)) throw new Error("Unknown module "+name); return modules[name]; }, logger, secretSource); try { const adapters=Object.fromEntries(Object.entries(kinds).map(([kind,path])=>[kind,built.instances.get(path)])); return createHandler({roles:${JSON.stringify(fn.roles)},http:${JSON.stringify(fn.http)},recordMode:plan.recordMode,rateRejection:plan.rateRejection,rateLimit:lambdaRateLimit(process.env.ERRTRAQ_INGEST_RATE_LIMIT),adapters,logger}); } catch(error) { try { await built.close(); } catch(cleanup) { throw new AggregateError([error,cleanup],"Handler creation and cleanup failed"); } throw error; } });\nexport async function handler(event){return (await getHandler())(event);}\n`;
     } else if (stack.platform.manifest.id === "standalone") {
       const localImport = (path: string) => {
@@ -191,6 +191,8 @@ for(const signal of ["SIGTERM","SIGINT"]) process.on(signal,()=>{if(stopping){if
       platform: "node",
       format: "esm",
       target: "node22",
+      minify: stack.platform.manifest.id === "aws-lambda",
+      keepNames: true,
       conditions: ["development"],
       write: false,
       metafile: true,

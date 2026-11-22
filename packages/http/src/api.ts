@@ -20,7 +20,7 @@ import {
   type StoredEvent,
   UnsupportedQueryError,
   VersionConflictError,
-} from "@errtraq/core";
+} from "@errtraq/core/runtime";
 import { Hono } from "hono";
 import { HTTPException } from "hono/http-exception";
 import { eventJson, issueJson } from "./api-mappers.js";

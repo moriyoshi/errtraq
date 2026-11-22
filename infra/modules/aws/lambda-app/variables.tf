@@ -23,6 +23,15 @@ variable "log_retention_days" {
     error_message = "log_retention_days must be a CloudWatch-supported retention period."
   }
 }
+variable "artifact_bucket" {
+  description = "Optional operator-owned S3 bucket in the Lambda region for ZIP deployments; null uses direct upload."
+  type        = string
+  default     = null
+  validation {
+    condition     = var.artifact_bucket == null ? true : can(regex("^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$", var.artifact_bucket))
+    error_message = "artifact_bucket must be a valid lowercase S3 bucket name."
+  }
+}
 variable "functions" {
   description = "Physical functions, scoped bindings, policies and build-produced ZIP artifacts."
   type = map(object({

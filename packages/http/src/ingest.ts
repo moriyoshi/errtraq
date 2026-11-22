@@ -1,5 +1,9 @@
-import type { Logger } from "@errtraq/core";
-import { IngestError, type IngestService, parseDsnKey } from "@errtraq/core";
+import type { Logger } from "@errtraq/core/runtime";
+import {
+  IngestError,
+  type IngestService,
+  parseDsnKey,
+} from "@errtraq/core/runtime";
 import { Hono } from "hono";
 import { logUnexpected } from "./errors.js";
 
@@ -139,29 +143,33 @@ async function headerAndBody(
 export function createIngestApp(
   service: IngestService,
   logger?: Pick<Logger, "error">,
+  options?: { cors?: boolean },
 ): Hono {
   const app = new Hono();
   app.onError((error, c) => {
     const requestId = logUnexpected(logger, error, c.req.raw);
     return c.json({ detail: "Internal server error", requestId }, 500);
   });
-  app.use("*", async (c, next) => {
-    if (
-      !/^\/api\/[^/]+\/(?:envelope|store)\/?$/.test(new URL(c.req.url).pathname)
-    )
-      return next();
-    await next();
-    c.header("Access-Control-Allow-Origin", "*");
-    c.header("Access-Control-Allow-Methods", "POST, OPTIONS");
-    c.header(
-      "Access-Control-Allow-Headers",
-      "Content-Type, Content-Encoding, X-Sentry-Auth, X-Requested-With, sentry-trace, baggage",
-    );
-    c.header(
-      "Access-Control-Expose-Headers",
-      "X-Sentry-Error, X-Sentry-Rate-Limits, Retry-After",
-    );
-  });
+  if (options?.cors !== false)
+    app.use("*", async (c, next) => {
+      if (
+        !/^\/api\/[^/]+\/(?:envelope|store)\/?$/.test(
+          new URL(c.req.url).pathname,
+        )
+      )
+        return next();
+      await next();
+      c.header("Access-Control-Allow-Origin", "*");
+      c.header("Access-Control-Allow-Methods", "POST, OPTIONS");
+      c.header(
+        "Access-Control-Allow-Headers",
+        "Content-Type, Content-Encoding, X-Sentry-Auth, X-Requested-With, sentry-trace, baggage",
+      );
+      c.header(
+        "Access-Control-Expose-Headers",
+        "X-Sentry-Error, X-Sentry-Rate-Limits, Retry-After",
+      );
+    });
   for (const route of [
     "/api/:projectId/envelope",
     "/api/:projectId/envelope/",

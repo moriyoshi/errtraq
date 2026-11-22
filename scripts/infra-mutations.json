@@ -645,5 +645,26 @@
     "file": "main.tf",
     "find": "\"dynamodb:LeadingKeys\" = [\"KEY|*\"]",
     "replace": "\"dynamodb:LeadingKeys\" = [\"*\"]"
+  },
+  {
+    "id": "lambda-s3-artifact-encryption",
+    "module": "lambda-app",
+    "file": "main.tf",
+    "find": "server_side_encryption = \"AES256\"",
+    "replace": "server_side_encryption = null"
+  },
+  {
+    "id": "lambda-s3-artifact-wrong-source",
+    "module": "lambda-app",
+    "file": "main.tf",
+    "find": "source                 = each.value.artifact",
+    "replace": "source                 = \"wrong.zip\""
+  },
+  {
+    "id": "lambda-s3-artifact-wrong-key",
+    "module": "lambda-app",
+    "file": "main.tf",
+    "find": "${var.name}/${each.key}/${filesha256(each.value.artifact)}.zip",
+    "replace": "${var.name}/${each.key}/fixed.zip"
   }
 ]

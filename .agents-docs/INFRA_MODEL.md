@@ -554,6 +554,15 @@ or appropriate S3, DynamoDB, SQS and Secrets Manager VPC endpoints, including co
 routes and security-group rules, for the adapters' HTTPS calls.
 
 
+Lambda `artifactBucket` may be a literal bucket name or a non-sensitive string variable. When
+set, Terraform uploads each ZIP to an encrypted, content-addressed object in that existing bucket
+and passes its S3 location to Lambda. The bucket must be in the function region and the Terraform
+principal needs object management access. Without it, Lambda uses direct ZIP upload; the CLI
+rejects files over a conservative 50,000,000-byte threshold. AWS describes the direct-upload
+limit as approximate and requires S3 for larger ZIPs: [Lambda deployment troubleshooting](https://docs.aws.amazon.com/lambda/latest/dg/troubleshooting-deployment.html).
+Lambda function URLs, not the ingest application, supply CORS. Lambda bundles use the core
+runtime entry, omit Zod and are minified with names preserved.
+
 Lambda platform `rateLimit` defaults to 60 event items per minute for each DSN key; set a
 positive safe integer to change it or `null` to disable it. The derived deployment view delivers
 `ERRTRAQ_INGEST_RATE_LIMIT` only to functions exposing ingest HTTP. Terraform can update the

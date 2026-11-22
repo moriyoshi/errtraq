@@ -42,7 +42,7 @@ it("routes Lambda URL requests through the configured Hono apps", async () => {
       kv: new MemoryKV(),
     },
   });
-  const result = await handler({
+  const event = {
     version: "2.0",
     routeKey: "$default",
     rawPath: "/api/1/envelope/",
@@ -66,11 +66,21 @@ it("routes Lambda URL requests through the configured Hono apps", async () => {
       accountId: "",
       apiId: "",
     },
+  };
+  const result = await handler(event);
+  expect(result).toMatchObject({ statusCode: 204 });
+  expect(result).not.toHaveProperty("headers.access-control-allow-origin");
+  expect(result).not.toHaveProperty("headers.access-control-allow-methods");
+  const post = await handler({
+    ...event,
+    requestContext: {
+      ...event.requestContext,
+      http: { ...event.requestContext.http, method: "POST" },
+    },
   });
-  expect(result).toMatchObject({
-    statusCode: 204,
-    headers: { "access-control-allow-origin": "*" },
-  });
+  expect(post).toMatchObject({ statusCode: 401 });
+  expect(post).not.toHaveProperty("headers.access-control-allow-origin");
+  expect(post).not.toHaveProperty("headers.access-control-expose-headers");
 });
 it("delegates SQS to the queue push source with the consumer handler", async () => {
   const memory = new MemoryQueue();

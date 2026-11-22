@@ -119,3 +119,28 @@ it("threads an optional validated alarm topic into the module inputs", () => {
   ])
     expect(() => awsLambda({ alarmTopicArn: bad })).toThrow();
 });
+
+it("accepts an existing artifact bucket or a stack variable", () => {
+  expect(
+    awsLambda({ artifactBucket: "deployment-artifacts-123" }).config,
+  ).toMatchObject({ artifactBucket: "deployment-artifacts-123" });
+  expect(() => awsLambda({ artifactBucket: "INVALID" })).toThrow();
+  const platform = awsLambda({ artifactBucket: variable("ARTIFACT_BUCKET") });
+  const stack = {
+    ...Object.fromEntries(Object.entries(shared)),
+    platform,
+    recordMode: "direct" as const,
+    variables: {
+      ARTIFACT_BUCKET: {
+        type: "string" as const,
+        sensitive: false,
+        default: "deployment-artifacts-123",
+      },
+    },
+  };
+  expect(validateStack(stack)).toEqual([]);
+  expect(
+    platform.infra.inputs(platform.config, { functions: [], triggers: [] })
+      .artifact_bucket,
+  ).toEqual(variable("ARTIFACT_BUCKET"));
+});

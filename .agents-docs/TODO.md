@@ -8,14 +8,14 @@ item should be resolved or removed once addressed. Milestone work itself is trac
 
 - [x] M3 remaining queue item 0: reconcile completed M3 entries and cite their commits; keep
   direct-mode contention and real-AWS verification open.
-- [ ] M3 remaining queue: item 3 is deferred; item 4 still needs the event TTL backstop.
-  The bundle backfill and scoped ingest read are implemented. Then items 5-9: Lambda CORS, large ZIP S3 deployment and bundle size; deployed API token listing and
+- [ ] M3 remaining queue: item 3 is deferred; item 4 is complete; event TTL activation is deferred to M4 with archival.
+  Item 5 (Lambda CORS, S3 artifacts and bundle size) is implemented. Next are items 6-9: deployed API token listing and
   revocation; Postgres identifier bounds; documented AWS event fixtures; and, if budget permits,
   a packaging-outside-the-workspace design. See `.agents-workspace/tmp/m3-remaining.md` for
   the full ordered requirements. Real-AWS M3h work remains with the orchestrator.
 
 - [x] M3 issue-keyed recording: require explicit grouped-recording and queue grouping capabilities, remove the temporary optional method fallback, and use one `RoutedTopic` type. Store adapters and the FIFO record pipeline were implemented in 46a2913, ffd0ba8 and 0ca239b. — *source: issue-keyed turn 2*
-- [ ] M3e: add the event `ttlEpoch` backstop from the DynamoDB design; explicit retention deletes remain primary. `ttl-backstop.ts` now calculates epoch seconds with safe later rounding, but is not wired into writes. Do not set TTL before archival commit when archive is enabled; settle and durably enforce the retention ceiling / retention-increase and archive-transition policy before enabling it. — *source: store review section C*
+- [ ] M4: activate the event `ttlEpoch` backstop with the archiver; explicit retention deletes remain primary. `ttl-backstop.ts` now calculates epoch seconds with safe later rounding, but is not wired into writes. Do not set TTL before archival commit when archive is enabled; settle and durably enforce the retention ceiling / retention-increase and archive-transition policy before enabling it. — *source: store review section C*
 - [x] M3e: narrow the ingest store policy to `GetItem` on `KEY|*` through a separate `key-read` capability. — *source: store review section C*
 - [x] M3e: provide a conditional, idempotent backfill for legacy bundle release and expiry indexes using an explicit operator-supplied inventory; existing records are not automatically discovered. — *source: store review section C*
 - [ ] M3e: provide a source for a complete legacy bundle inventory and run the backfill where needed; the backfill intentionally does not scan the table. — *source: M3 item 4*
@@ -84,12 +84,12 @@ item should be resolved or removed once addressed. Milestone work itself is trac
 - [x] M3: never map an S3 403 directly to missing; use an authorized exact-prefix list to establish absence and propagate real access failures. — *source: M2b HCL review section B*
 - [x] M3: schedule cron-based staged-envelope recovery for deployed stacks; keep idempotency and a recovery window longer than the sweep interval. — *source: M2b HCL review A3*
 - [ ] M3 / M4: delete overflow payloads when their corresponding events are retained, archived or erased; a fixed bucket lifecycle would violate per-project retention. — *source: M2b HCL review A9*
-- [ ] M3: avoid duplicate Lambda Function URL and ingest app CORS headers, and support S3-based deployment for ZIPs too large for direct upload. — *source: M2b HCL review A8*
+- [x] M3: avoid duplicate Lambda Function URL and ingest app CORS headers, and support S3-based deployment for ZIPs too large for direct upload. — *source: M2b HCL review A8*
 
 - [x] M3: investigate the intermittent missing staged-blob log observed during e2e recovery; determine whether recovery races the consumer deleting an envelope, and verify that the race is safe and correctly logged. A later M2d e2e also logged `Skipping unreadable blob` with `ENOENT`. — *source: M2b HCL contract validation e2e; M2d final gate*
 
 - [ ] M3 / packaging: support projects that depend on errtraq packages without requiring a `pnpm-workspace.yaml` repository or in-repository build and output directories. — *source: M2 final review section B*
-- [ ] M3: reduce Lambda bundle size; current bundles include most of core and Zod. — *source: M2 final review section B*
+- [x] M3: reduce Lambda bundle size by using the runtime-only core entry and minification; Lambda bundles no longer include Zod. — *source: M2 final review section B*
 - [x] M3: test SQS partial-batch failures with real-shaped AWS events. — *source: M2 final review section B; resolved in M3c*
 - [ ] M3: test EventBridge event handling against real AWS event shapes. — *source: M2 final review section B*
 - [x] M3 (store-dynamodb): implement issue-keyed FIFO and measure grouped 200 / 500-event workloads on DynamoDB Local (ffd0ba8, 0ca239b, fbeefb7); real AWS measurement remains in the M3h item above. — *source: owner queue-first decision*
@@ -113,6 +113,9 @@ item should be resolved or removed once addressed. Milestone work itself is trac
 
 - [x] M3: make the ingest rate limit configurable on the Lambda platform. — *source: M3h first real deployment*
 - [ ] M3 / product: decide whether an additional per-project ingest limit is needed alongside the existing per-DSN-key limit. — *source: M3h first real deployment*
+- [ ] M3h: verify Lambda function URL CORS produces one set of headers for ingest preflight,
+  successful responses and errors; verify S3-backed ZIP deployment, update and teardown with an
+  operator-owned same-region bucket and its IAM / encryption policy. — *source: M3 item 5*
 - [ ] M3h: remaining real-AWS checks: per-topic mode, FIFO poison to DLQ and redrive, visibility expiry, mode-switch drain, RDS / Aurora IAM with VPC, provider retries under throttling; CloudWatch alarms (DLQ depth, queue age, function errors) now exist (M3 alarms) and still need a real-AWS check of evaluation, missing-data behavior and SNS delivery. Teardown must also delete the bootstrap secret, which is outside Terraform state. — *source: M3h first real deployment*
 
 

@@ -81,6 +81,10 @@ run "functions_triggers_and_urls" {
     error_message = "Logging and secret-read policies must have exact actions, resources and role scopes."
   }
   assert {
+    condition     = length(aws_s3_object.artifact) == 0 && aws_lambda_function.function["shared"].filename == "tests/artifact.txt" && aws_lambda_function.function["shared"].s3_bucket == null && aws_lambda_function.function["shared"].s3_key == null
+    error_message = "Without an artifact bucket, Lambda must use direct upload."
+  }
+  assert {
     condition     = length(aws_iam_role_policy.vpc) == 0 && alltrue([for fn in values(aws_lambda_function.function) : length(fn.vpc_config) == 0])
     error_message = "Functions without VPC configuration must not receive VPC permissions."
   }
@@ -251,4 +255,26 @@ run "invalid_alarm_topic" {
     cron_triggers   = {}
   }
   expect_failures = [var.alarm_topic_arn]
+}
+
+run "s3_artifact_deployment" {
+  command = apply
+  variables {
+    name            = "example"
+    tags            = {}
+    artifact_bucket = "existing-deployment-bucket"
+    functions = {
+      ingest = { roles = ["ingest"], http = ["ingest"], artifact = "tests/artifact.txt", memory_mb = 512, timeout_sec = 30, architecture = "arm64", environment = {}, secrets = {}, secret_reads = [], policies = [] }
+    }
+    queue_triggers = {}
+    cron_triggers  = {}
+  }
+  assert {
+    condition     = length(aws_s3_object.artifact) == 1 && aws_s3_object.artifact["ingest"].bucket == "existing-deployment-bucket" && aws_s3_object.artifact["ingest"].source == "tests/artifact.txt" && aws_s3_object.artifact["ingest"].key == "example/ingest/${filesha256("tests/artifact.txt")}.zip" && aws_s3_object.artifact["ingest"].source_hash == filebase64sha256("tests/artifact.txt") && aws_s3_object.artifact["ingest"].server_side_encryption == "AES256"
+    error_message = "S3 artifacts must use the operator bucket, encrypted content-addressed object and correct source."
+  }
+  assert {
+    condition     = aws_lambda_function.function["ingest"].filename == null && aws_lambda_function.function["ingest"].s3_bucket == "existing-deployment-bucket" && aws_lambda_function.function["ingest"].s3_key == aws_s3_object.artifact["ingest"].key && aws_lambda_function.function["ingest"].source_code_hash == filebase64sha256("tests/artifact.txt")
+    error_message = "Lambda must deploy the uploaded object with the local content hash."
+  }
 }

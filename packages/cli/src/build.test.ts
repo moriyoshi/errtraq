@@ -26,7 +26,7 @@ import shared from "../../../stacks/aws-dynamodb.js";
 import perTopic from "../../../stacks/aws-dynamodb-per-topic.js";
 import local from "../../../stacks/local.js";
 import { buildStack } from "./build.js";
-import { generateInfra } from "./infra.js";
+import { generateInfra, validateLambdaArtifactSize } from "./infra.js";
 import { resolveRuntimeValue } from "./runtime.js";
 import { formatValidation } from "./validation.js";
 
@@ -317,6 +317,8 @@ describe("built stacks", () => {
           await readFile(join(directory, "meta.json"), "utf8"),
         ) as { inputs: Record<string, unknown> };
         const inputs = Object.keys(meta.inputs).join("\n");
+        expect(inputs).not.toContain("node_modules/.pnpm/zod@");
+        expect(inputs).not.toContain("packages/core/src/stack-schema.ts");
         expect(inputs).not.toContain("packages/adapters/blob-s3/src/stack.ts");
         expect(inputs).not.toContain(
           "packages/adapters/queue-sqs/src/stack.ts",
@@ -578,4 +580,12 @@ describe("built stacks", () => {
       ),
     ).toContain("artifact paths are placeholders");
   });
+});
+
+it("requires S3 for ZIPs beyond the conservative direct-upload limit", () => {
+  expect(() => validateLambdaArtifactSize(50_000_000, false)).not.toThrow();
+  expect(() => validateLambdaArtifactSize(50_000_001, false)).toThrow(
+    "configure artifactBucket",
+  );
+  expect(() => validateLambdaArtifactSize(50_000_001, true)).not.toThrow();
 });

@@ -60,6 +60,15 @@ resource "aws_iam_role_policy" "vpc" {
   role     = aws_iam_role.function[each.key].id
   policy   = local.vpc_policy
 }
+# The operator supplies the bucket; no public access or bucket is created by this module.
+resource "aws_s3_object" "artifact" {
+  for_each               = var.artifact_bucket == null ? {} : var.functions
+  bucket                 = var.artifact_bucket
+  key                    = "${var.name}/${each.key}/${filesha256(each.value.artifact)}.zip"
+  source                 = each.value.artifact
+  source_hash            = filebase64sha256(each.value.artifact)
+  server_side_encryption = "AES256"
+}
 resource "aws_lambda_function" "function" {
   for_each                       = var.functions
   function_name                  = "${var.name}-${each.key}"
@@ -67,7 +76,9 @@ resource "aws_lambda_function" "function" {
   runtime                        = var.runtime
   handler                        = var.handler
   reserved_concurrent_executions = each.value.reserved_concurrency
-  filename                       = each.value.artifact
+  filename                       = var.artifact_bucket == null ? each.value.artifact : null
+  s3_bucket                      = var.artifact_bucket
+  s3_key                         = var.artifact_bucket == null ? null : aws_s3_object.artifact[each.key].key
   source_code_hash               = filebase64sha256(each.value.artifact)
   memory_size                    = each.value.memory_mb
   timeout                        = each.value.timeout_sec

@@ -76,6 +76,10 @@ export const fixtures = {
     }),
     rateRejection: { newIssueCap: { issues: 2, windowSec: 60 } },
   }),
+  "artifact-s3": variant(shared, {
+    recordMode: "direct",
+    platform: awsLambda({ artifactBucket: "deployment-artifacts-123" }),
+  }),
   "alarm-topic": variant(shared, {
     recordMode: "grouped",
     platform: awsLambda({
@@ -281,6 +285,7 @@ export const fixtures = {
 const probe = `
 output "test_vpc" { value = { for id, fn in aws_lambda_function.function : id => { subnet_ids = try(tolist(fn.vpc_config[0].subnet_ids), []), security_group_ids = try(tolist(fn.vpc_config[0].security_group_ids), []) } } }
 output "test_vpc_policies" { value = { for id, policy in aws_iam_role_policy.vpc : id => policy.policy if policy.role == aws_iam_role.function[id].id } }
+output "test_artifacts" { value = { for id, fn in aws_lambda_function.function : id => { filename = fn.filename, s3_bucket = fn.s3_bucket, s3_key = fn.s3_key } } }
 output "test_env" { value = { for id, fn in aws_lambda_function.function : id => fn.environment[0].variables } }
 output "test_secret_reads" { value = { for id in keys(var.functions) : id => try(jsondecode(aws_iam_role_policy.secret_reads[id].policy).Statement[0].Resource, []) } }
 output "test_policies" {
@@ -617,9 +622,18 @@ export function prepareRoot(parent, name, version) {
   }
 `;
   }
+  const artifactAssertion =
+    name === "artifact-s3"
+      ? `
+  assert {
+    condition = alltrue([for id, fn in module.platform.test_artifacts : fn.filename == null && fn.s3_bucket == "deployment-artifacts-123" && fn.s3_key == "${stack.name}/\${id}/\${filesha256("build/\${id}.zip")}.zip"])
+    error_message = "Every Lambda artifact must be uploaded to the configured bucket."
+  }
+`
+      : "";
   const rootTest = test.replace(
     /\n}\s*$/,
-    `${vpcAssertions}${metadataAssertion}${queueAlarmAssertion}\n}\n`,
+    `${vpcAssertions}${metadataAssertion}${queueAlarmAssertion}${artifactAssertion}\n}\n`,
   );
   writeFileSync(
     resolve(target, "tests/root.tftest.hcl"),

@@ -83,6 +83,16 @@ function terraformWorkingFile(name: string): boolean {
     /^crash(?:\..*)?\.log$/.test(name)
   );
 }
+/** Conservative direct-upload cutoff; AWS describes the 50 MB limit as approximate. */
+export function validateLambdaArtifactSize(
+  size: number,
+  usesS3: boolean,
+): void {
+  if (!usesS3 && size > 50_000_000)
+    throw new Error(
+      "Lambda ZIP exceeds the direct upload limit; configure artifactBucket for S3 deployment",
+    );
+}
 export async function generateInfra(
   stack: ResolvedStack,
   repo: string,
@@ -164,7 +174,12 @@ export async function generateInfra(
     const config = stack.platform.config as {
       handler?: string;
       runtime?: string;
+      artifactBucket?: unknown;
     };
+    validateLambdaArtifactSize(
+      bytes.byteLength,
+      config.artifactBucket !== undefined,
+    );
     if (
       artifact.handler !== (config.handler ?? "index.handler") ||
       artifact.runtime !== (config.runtime ?? "nodejs22.x")

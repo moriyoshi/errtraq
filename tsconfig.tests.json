@@ -73,7 +73,8 @@
       ],
       "@errtraq/store-sql/postgres/stack": [
         "packages/adapters/store-sql/src/postgres-stack.ts"
-      ]
+      ],
+      "@errtraq/core/runtime": ["packages/core/src/runtime.ts"]
     }
   },
   "include": ["packages/core/src/**/*.ts", "packages/http/src/**/*.ts"]

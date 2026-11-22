@@ -506,7 +506,12 @@ stack data is frozen and factories are constructed in dependency order, then clo
 order. The local platform runs in one process. See [INFRA_MODEL.md](./.agents-docs/INFRA_MODEL.md)
 for the exact types, resolution phases and validated shared and per-topic examples. The pure
 Terraform generator composes hand-written AWS modules and the CLI validates stacks, emits
-role-scoped Lambda ZIPs and generates roots using their verified artifact manifests. Output files
+role-scoped Lambda ZIPs and generates roots using their verified artifact manifests. Lambda
+function URLs supply ingest CORS; the app does not duplicate those headers on Lambda. Optional
+`awsLambda({ artifactBucket: "existing-bucket" })` uploads content-addressed ZIPs through
+Terraform to an operator-owned, same-region S3 bucket before deployment. The operator must grant
+the Terraform principal access to manage those objects; the module does not create the bucket.
+Without the setting, ZIPs use direct upload and the CLI rejects ZIPs above a conservative 50 MB. Output files
 use relative paths and marked directories. The standalone build includes a non-root Node 22
 container with a persistent data volume; its explicit container host setting exposes the server
 to the container network while ordinary local runs default to loopback. Postgres can use a bring-your-own RDS IAM identity, with an exact database-user connect policy;

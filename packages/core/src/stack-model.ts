@@ -1,4 +1,4 @@
-import { z } from "zod";
+import type { z } from "zod";
 import type { Logger, SecretSource } from "./ports.js";
 import type { RateRejectionConfig } from "./rate-rejection.js";
 
@@ -180,16 +180,6 @@ export const artifact = (functionId: string): ArtifactRef => ({
   functionId,
 });
 
-/** Config references resolve from the runtime environment, or from TF_VAR values at runtime. */
-export function configReference<T extends z.ZodType>(schema: T) {
-  return z.union([
-    z.custom<EnvRef | VariableRef>(
-      (value) =>
-        isVariableRef(value) || (isEnvRef(value) && value.phase === "runtime"),
-    ),
-    schema,
-  ]);
-}
 export const out = (name: string, ...path: string[]): OutputRef => ({
   [REF]: "output",
   name,

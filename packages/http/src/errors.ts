@@ -1,4 +1,4 @@
-import { type Logger, redactLogText } from "@errtraq/core";
+import { type Logger, redactLogText } from "@errtraq/core/runtime";
 
 /** Log an unexpected failure without request bodies or known authentication credentials. */
 export function logUnexpected(

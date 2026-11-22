@@ -30,6 +30,9 @@ export const configSchema = z
     runtime: z.string().min(1).default("nodejs22.x"),
     handler: z.string().min(1).default("index.handler"),
     rateLimit: z.number().int().positive().safe().nullable().default(60),
+    artifactBucket: configReference(
+      z.string().regex(/^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/),
+    ).optional(),
     cronRetryAttempts: z.number().int().min(0).max(185).default(185),
     cronMaxEventAgeSec: z.number().int().min(60).max(86400).default(86400),
     cronDlqArn: z
@@ -81,6 +84,7 @@ export const manifest: PlatformManifest = {
   bindingKinds: ["env", "secret"],
   configReferenceKinds: ["env", "variable"],
   infrastructureConfigReferences: {
+    artifactBucket: "string",
     vpcSubnetIds: "string[]",
     vpcSecurityGroupIds: "string[]",
   },
@@ -110,6 +114,9 @@ export const infra: InfraDescriptor<Config> = {
     name: stackValue("name"),
     tags: stackValue("tags"),
     ...(config.alarmTopicArn ? { alarm_topic_arn: config.alarmTopicArn } : {}),
+    ...(config.artifactBucket
+      ? { artifact_bucket: config.artifactBucket }
+      : {}),
     vpc_subnet_ids: config.vpcSubnetIds ?? [],
     vpc_security_group_ids: config.vpcSecurityGroupIds ?? [],
     runtime: config.runtime ?? "nodejs22.x",
