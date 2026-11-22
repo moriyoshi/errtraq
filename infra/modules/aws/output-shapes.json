@@ -4,6 +4,9 @@
       "delete": {
         "primary": "json-document"
       },
+      "key-read": {
+        "primary": "json-document"
+      },
       "metadata-delete": {
         "primary": "json-document"
       },

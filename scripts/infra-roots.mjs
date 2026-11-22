@@ -164,6 +164,7 @@ export const fixtures = {
         table_arn: "arn:aws:dynamodb:us-east-1:123456789012:table/existing",
         policies: {
           read: { primary: policy },
+          "key-read": { primary: policy },
           write: { primary: policy },
           "metadata-delete": { primary: policy },
         },

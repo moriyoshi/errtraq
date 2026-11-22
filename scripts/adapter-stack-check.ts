@@ -89,6 +89,7 @@ export async function assertStackHelper(
       capabilities:
         kind === "store"
           ? {
+              "key-read": { primary: null },
               read: { primary: null },
               write: { primary: null },
               delete: { primary: null },

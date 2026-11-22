@@ -1330,3 +1330,20 @@ explicit inventory, without a table scan. Revision-guarded updates reread on con
 lifecycle changes and advance the revision themselves. The inventory is supplied externally;
 a partial inventory cannot establish that all legacy bundles were repaired. Issues remain
 permanent and do not receive a TTL.
+
+
+## 2026-11-22 — Ingest project-key read policy
+
+Core now derives a distinct `key-read` store capability for ingest, which only calls `getKey`.
+The DynamoDB module grants `GetItem` on the table with mandatory `KEY|*` LeadingKeys; API and
+consumer retain their broader read policies. SQLite and Postgres map the new capability to their
+existing authorization model. Event TTL remains open: it must respect archive commit and project
+retention changes; issues never receive TTLs.
+
+
+## 2026-11-22 — Event TTL arithmetic
+
+Added a tested numeric epoch-seconds calculation for event retention plus grace. It rounds
+fractional seconds later and rejects invalid timestamps and overflow. It is deliberately not
+wired to event writes: safe activation still needs a durable retention bound and an archival
+transition that deals with TTL attributes already present on older events.

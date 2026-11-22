@@ -92,6 +92,7 @@ const selection = (kind: PortKind): AdapterSelection => ({
           }
         : kind === "store"
           ? {
+              "key-read": { primary: out("policy") },
               read: { primary: out("policy") },
               write: { primary: out("policy") },
               delete: { primary: out("policy") },
@@ -1496,18 +1497,18 @@ describe("infrastructure model", () => {
   });
   it("validates required capabilities and derives policies for each physical function", () => {
     const v = stack();
-    delete v.store.infra.capabilities.read;
+    delete v.store.infra.capabilities["key-read"];
     expect(
       validateStack(v).some((x) =>
-        x.message.includes("Role ingest requires store capability read"),
+        x.message.includes("Role ingest requires store capability key-read"),
       ),
     ).toBe(true);
-    v.store.infra.capabilities.read = { primary: out("policy") };
+    v.store.infra.capabilities["key-read"] = { primary: out("policy") };
     const access = deriveAccess(v);
     expect(access.grants).toContainEqual({
       functionId: "ingest",
       selection: "store",
-      capability: "read",
+      capability: "key-read",
       purpose: "primary",
       policyOutput: out("policy"),
     });
@@ -1603,11 +1604,11 @@ describe("infrastructure model", () => {
     );
     expect(grants).toHaveLength(1);
     expect(grants[0]?.functionId).toBe("shared");
-    v.store.infra.capabilities.read = { primary: null };
+    v.store.infra.capabilities["key-read"] = { primary: null };
     expect(
       validateStack(v).some((issue) =>
         issue.message.includes(
-          "Role ingest requires store capability read with an IAM policy",
+          "Role ingest requires store capability key-read with an IAM policy",
         ),
       ),
     ).toBe(true);

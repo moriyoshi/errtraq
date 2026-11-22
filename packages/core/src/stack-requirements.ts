@@ -22,7 +22,7 @@ export interface PortRequirement {
 }
 /** M1 calls are unconditional; M4 rows model the archive and erasure design. */
 export const PORT_REQUIREMENTS: readonly PortRequirement[] = [
-  { kind: "store", role: "ingest", capability: "read", purpose: "primary" },
+  { kind: "store", role: "ingest", capability: "key-read", purpose: "primary" },
   { kind: "store", role: "api", capability: "read", purpose: "primary" },
   { kind: "store", role: "api", capability: "write", purpose: "primary" },
   {

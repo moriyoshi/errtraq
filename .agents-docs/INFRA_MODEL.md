@@ -185,7 +185,7 @@ and accept extra settings such as `cpuMs`. `http` lists deployed roles to expose
 and `api` have HTTP apps. The standalone platform mounts exactly the configured apps.
 
 `PORT_REQUIREMENTS` and `TOPIC_ROUTES` in `stack-requirements.ts` own the role matrix. For M1,
-ingest needs store read, blob write/delete, KV read/write and queue produce; API needs store
+ingest needs store `key-read`, blob write/delete, KV read/write and queue produce; API needs store
 read/write, store `metadata-delete`, and blob read; consumer needs store read/write and blob
 read/write/delete and queue consume. Planned bundle handlers also require primary blob
 write/delete, which stay inactive until handlers exist. The DynamoDB store descriptor exposes a

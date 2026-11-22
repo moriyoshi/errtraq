@@ -121,7 +121,7 @@ exports[`Terraform generator > renders the full per-topic stack deterministicall
           ],
           "memory_mb": 512,
           "policies": [
-            "\${module.store.policies[\\"read\\"][\\"primary\\"]}",
+            "\${module.store.policies[\\"key-read\\"][\\"primary\\"]}",
             "\${module.blob.policies[\\"write\\"][\\"primary\\"]}",
             "\${module.blob.policies[\\"delete\\"][\\"primary\\"]}",
             "\${module.kv.policies[\\"read\\"][\\"primary\\"]}",
@@ -389,7 +389,7 @@ exports[`Terraform generator > renders the full shared stack deterministically 1
           ],
           "memory_mb": 512,
           "policies": [
-            "\${module.store.policies[\\"read\\"][\\"primary\\"]}",
+            "\${module.store.policies[\\"key-read\\"][\\"primary\\"]}",
             "\${module.blob.policies[\\"write\\"][\\"primary\\"]}",
             "\${module.blob.policies[\\"delete\\"][\\"primary\\"]}",
             "\${module.kv.policies[\\"read\\"][\\"primary\\"]}",

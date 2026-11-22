@@ -638,5 +638,12 @@
     "id": "root-rate-api-extra-kv-binding",
     "root": "grouped-shared",
     "operation": "rate-add-api-kv-binding"
+  },
+  {
+    "id": "ddb-ingest-key-read-unscoped",
+    "module": "dynamodb",
+    "file": "main.tf",
+    "find": "\"dynamodb:LeadingKeys\" = [\"KEY|*\"]",
+    "replace": "\"dynamodb:LeadingKeys\" = [\"*\"]"
   }
 ]

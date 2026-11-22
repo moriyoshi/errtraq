@@ -38,6 +38,24 @@ describe("derived capability policy expectations", () => {
     );
     expect(read.Statement[0].Resource).toHaveLength(12);
   });
+  it("limits ingest reads to project key rows", () => {
+    expect(
+      capabilityPolicy(
+        { selection: "store", capability: "key-read", purpose: "primary" },
+        resources,
+      ).Statement,
+    ).toEqual([
+      {
+        Effect: "Allow",
+        Action: ["dynamodb:GetItem"],
+        Resource: ["table"],
+        Condition: {
+          "ForAllValues:StringLike": { "dynamodb:LeadingKeys": ["KEY|*"] },
+          Null: { "dynamodb:LeadingKeys": "false" },
+        },
+      },
+    ]);
+  });
   it("limits event batch writes to event keys", () => {
     const policy = capabilityPolicy(
       { selection: "store", capability: "delete", purpose: "primary" },

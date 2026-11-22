@@ -247,7 +247,7 @@ describe("AWS descriptor stacks", () => {
       "kv:read:primary",
       "kv:write:primary",
       "queue:produce:shared",
-      "store:read:primary",
+      "store:key-read:primary",
     ]);
     expect(policyKeys("api")).toEqual([
       "blob:read:primary",

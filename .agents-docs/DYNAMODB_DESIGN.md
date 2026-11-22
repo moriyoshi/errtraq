@@ -303,6 +303,26 @@ no-delete-before-commit invariant during an unbounded outage. Pending debug-ID m
 and permanent/active markers have no TTL. Cleanup cron is required and must be monitored.
 PITR/backups can retain deleted bytes until their retention expires.
 
+### Event TTL activation constraints (not yet implemented)
+
+The epoch conversion helper rounds up after adding the retention bound and grace period. It is
+not wired to event writes. A safe insertion-time backstop needs a durable project-retention
+ceiling: raising retention above the bound used by an existing event would otherwise allow TTL
+to delete it early. The ceiling must remain enforced even if the stack setting is later removed;
+changing it requires a migration that accounts for existing TTL-tagged events.
+
+A table that has ever received pre-archive TTLs cannot safely switch directly to archival.
+Existing event TTL attributes remain after the setting is disabled, and DynamoDB TTL disabling
+is asynchronous. A transition must stop relevant writers, disable table TTL and verify that it
+is disabled before archival relies on those events; its completion needs durable state so a
+subsequent deployment cannot silently re-enable expiration. An archive-enabled stack must not
+write pre-commit event TTLs. After a durable archive commit, TTL marking must be tied to the
+committed batch and remain compatible with explicit deletion and retries.
+
+Backstop expiry may leak payload blobs when DynamoDB deletes rows asynchronously; the separate
+item 3 cleanup protocol must account for this before claiming full payload retention cleanup.
+No issue row receives TTL. The operator-facing activation and migration details remain open.
+
 Legacy bundle index repair is exposed as `DynamoStore.backfillBundleIndexes(inventory)` in
 `@errtraq/store-dynamodb/runtime`. Supply explicit `{ projectId, bundleId }` entries in batches
 of at most 1,000; there is no scan and the caller must obtain a complete inventory independently.
@@ -319,8 +339,9 @@ redesigned store name as `<stack>-store-v2` so the old table is not reinterprete
 subject erasure unavailable. Versioned migration/backfill is needed for an existing table; do
 not reinterpret old keys in place. Module output names can remain stable.
 
-- `read`: `GetItem`, `BatchGetItem`, `Query` on table and named GSI ARNs, required by ingest,
-  API and consumer as derived by core. `getKey` is a direct table read.
+- `key-read`: `GetItem` on the table constrained to `KEY|*` with LeadingKeys required; ingest
+  uses only `getKey`. `read` grants `GetItem`, `BatchGetItem` and `Query` on the table and
+  named GSI ARNs to the API and other roles that need broader access.
 - `write`: `PutItem`, `UpdateItem`, **`GetItem`** (issue branch reads) and any required
   transaction item actions, on the table; `Query` on required indexes via read grant. Ordinary
   event recording uses no `DeleteItem`. When the stage 4 fence is enabled, add

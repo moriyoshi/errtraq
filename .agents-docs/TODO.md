@@ -8,14 +8,15 @@ item should be resolved or removed once addressed. Milestone work itself is trac
 
 - [x] M3 remaining queue item 0: reconcile completed M3 entries and cite their commits; keep
   direct-mode contention and real-AWS verification open.
-- [ ] M3 remaining queue items 3-9, in order: retention-safe claim-check and overflow cleanup; DynamoDB TTL and bundle-index backfill plus scoped ingest read if possible;
-  Lambda CORS, large ZIP S3 deployment and bundle size; deployed API token listing and
+- [ ] M3 remaining queue: item 3 is deferred; item 4 still needs the event TTL backstop.
+  The bundle backfill and scoped ingest read are implemented. Then items 5-9: Lambda CORS, large ZIP S3 deployment and bundle size; deployed API token listing and
   revocation; Postgres identifier bounds; documented AWS event fixtures; and, if budget permits,
   a packaging-outside-the-workspace design. See `.agents-workspace/tmp/m3-remaining.md` for
   the full ordered requirements. Real-AWS M3h work remains with the orchestrator.
 
 - [x] M3 issue-keyed recording: require explicit grouped-recording and queue grouping capabilities, remove the temporary optional method fallback, and use one `RoutedTopic` type. Store adapters and the FIFO record pipeline were implemented in 46a2913, ffd0ba8 and 0ca239b. — *source: issue-keyed turn 2*
-- [ ] M3e: add the event `ttlEpoch` backstop from the DynamoDB design; explicit retention deletes remain primary. The ingest role's read policy also grants table-wide `GetItem`: restricting it with `dynamodb:LeadingKeys` requires a separate capability policy because the current read output is shared with roles that query the whole table. — *source: store review section C*
+- [ ] M3e: add the event `ttlEpoch` backstop from the DynamoDB design; explicit retention deletes remain primary. `ttl-backstop.ts` now calculates epoch seconds with safe later rounding, but is not wired into writes. Do not set TTL before archival commit when archive is enabled; settle and durably enforce the retention ceiling / retention-increase and archive-transition policy before enabling it. — *source: store review section C*
+- [x] M3e: narrow the ingest store policy to `GetItem` on `KEY|*` through a separate `key-read` capability. — *source: store review section C*
 - [x] M3e: provide a conditional, idempotent backfill for legacy bundle release and expiry indexes using an explicit operator-supplied inventory; existing records are not automatically discovered. — *source: store review section C*
 - [ ] M3e: provide a source for a complete legacy bundle inventory and run the backfill where needed; the backfill intentionally does not scan the table. — *source: M3 item 4*
 - [x] M3e: resolve the pending bundle and manifest TTL decision: no TTL; scheduled, monitored cleanup is required. — *source: owner decision after store review*
