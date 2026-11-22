@@ -36,6 +36,13 @@ export const configSchema = z
       .string()
       .regex(/^arn:[^:]+:sqs:/)
       .optional(),
+    /** Existing operator-owned SNS topic notified by the function alarms; never created here. */
+    alarmTopicArn: z
+      .string()
+      .regex(
+        /^arn:aws(?:-cn|-us-gov)?:sns:[a-z0-9-]+:[0-9]{12}:[A-Za-z0-9_-]{1,256}(?:\.fifo)?$/,
+      )
+      .optional(),
   })
   .refine(
     (config) =>
@@ -102,6 +109,7 @@ export const infra: InfraDescriptor<Config> = {
   inputs: (config, deployment) => ({
     name: stackValue("name"),
     tags: stackValue("tags"),
+    ...(config.alarmTopicArn ? { alarm_topic_arn: config.alarmTopicArn } : {}),
     vpc_subnet_ids: config.vpcSubnetIds ?? [],
     vpc_security_group_ids: config.vpcSecurityGroupIds ?? [],
     runtime: config.runtime ?? "nodejs22.x",

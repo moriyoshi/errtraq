@@ -1,6 +1,7 @@
 import { cpSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { z } from "zod";
+import { sqsQueue } from "../packages/adapters/queue-sqs/dist/stack.js";
 import { postgres } from "../packages/adapters/store-sql/dist/postgres-stack.js";
 import {
   configReference,
@@ -41,6 +42,18 @@ export const fixtures = {
     platform: awsLambda({
       roles: ["ingest", "api", "consumer", "record", "cron"],
       split: ["ingest", "api", "consumer", "record", "cron"],
+    }),
+  }),
+  "alarm-topic": variant(shared, {
+    recordMode: "grouped",
+    platform: awsLambda({
+      roles: ["ingest", "api", "consumer", "record", "cron"],
+      split: ["ingest", "api", "consumer", "record", "cron"],
+      alarmTopicArn: "arn:aws:sns:us-east-1:123456789012:operators",
+    }),
+    queue: sqsQueue({
+      mode: "per-topic",
+      alarmTopicArn: "arn:aws:sns:us-east-1:123456789012:operators",
     }),
   }),
   "config-refs": variant(shared, {
@@ -247,9 +260,18 @@ output "test_crons" {
   value = { for key, target in aws_cloudwatch_event_target.cron : key => one([for id, fn in aws_lambda_function.function : id if fn.arn == target.arn]) }
 }
 output "test_cron_rules" { value = { for key, rule in aws_cloudwatch_event_rule.cron : key => rule.schedule_expression } }
+output "test_alarms" {
+  value = { for id, alarm in aws_cloudwatch_metric_alarm.errors : id => { name = alarm.alarm_name, namespace = alarm.namespace, metric = alarm.metric_name, dimensions = alarm.dimensions, statistic = alarm.statistic, period = alarm.period, evaluation_periods = alarm.evaluation_periods, datapoints_to_alarm = alarm.datapoints_to_alarm, threshold = alarm.threshold, comparison = alarm.comparison_operator, missing = alarm.treat_missing_data, actions = tolist(alarm.alarm_actions), tags = alarm.tags } }
+}
 output "test_http" {
   value = { for role in ["ingest", "api"] : role => local.role_urls[role] if local.role_urls[role] != "" }
 }
+`;
+const queueProbe = `
+locals {
+  test_alarm_fields = { for key, alarm in merge({ for k, a in aws_cloudwatch_metric_alarm.dlq_messages : "dlq|\${k}" => a }, { for k, a in aws_cloudwatch_metric_alarm.queue_age : "age|\${k}" => a }) : key => { name = alarm.alarm_name, namespace = alarm.namespace, metric = alarm.metric_name, dimensions = alarm.dimensions, statistic = alarm.statistic, period = alarm.period, evaluation_periods = alarm.evaluation_periods, datapoints_to_alarm = alarm.datapoints_to_alarm, threshold = alarm.threshold, comparison = alarm.comparison_operator, missing = alarm.treat_missing_data, actions = tolist(alarm.alarm_actions), tags = alarm.tags } }
+}
+output "test_alarms" { value = local.test_alarm_fields }
 `;
 const test = `mock_provider "aws" {
   mock_data "aws_iam_policy_document" { defaults = { json = "{}" } }
@@ -286,6 +308,10 @@ run "generated_root" {
     error_message = "Cron rules differ from deployment view."
   }
   assert {
+    condition = jsonencode(module.platform.test_alarms) == jsonencode(output.expected_function_alarms)
+    error_message = "Function alarms differ from the deployment view."
+  }
+  assert {
     condition = sort(keys(module.platform.test_http)) == sort(keys(output.expected_http))
     error_message = "HTTP roles differ from deployment view."
   }
@@ -304,6 +330,7 @@ export function prepareRoot(parent, name, version) {
   mkdirSync(target, { recursive: true });
   cpSync(resolve("infra/modules"), modules, { recursive: true });
   writeFileSync(resolve(modules, "aws/lambda-app/probe.tf"), probe);
+  writeFileSync(resolve(modules, "aws/sqs/probe.tf"), queueProbe);
   const view = deriveDeployment(stack);
   const options = {
     outputDirectory: target,
@@ -384,8 +411,69 @@ export function prepareRoot(parent, name, version) {
   const http = Object.fromEntries(
     view.functions.flatMap((fn) => fn.http.map((role) => [role, true])),
   );
+  const tags = stack.providers.aws.tags;
+  const alarm = (fields) => ({
+    statistic: "Maximum",
+    period: 300,
+    evaluation_periods: 1,
+    datapoints_to_alarm: 1,
+    threshold: 0,
+    comparison: "GreaterThanThreshold",
+    missing: "notBreaching",
+    tags,
+    ...fields,
+  });
+  const functionTopic = stack.platform.config.alarmTopicArn;
+  const function_alarms = Object.fromEntries(
+    view.functions.map((fn) => [
+      fn.id,
+      alarm({
+        name: `${stack.name}-${fn.id}-errors`,
+        namespace: "AWS/Lambda",
+        metric: "Errors",
+        dimensions: { FunctionName: `${stack.name}-${fn.id}` },
+        statistic: "Sum",
+        actions: functionTopic ? [functionTopic] : [],
+      }),
+    ]),
+  );
+  // Only queues the stack owns have alarms; an existing queue is the operator's.
+  const queueTopic = stack.queue.config?.alarmTopicArn;
+  const queue_alarms = {};
+  if (!stack.queue.existing) {
+    const fifo = (physical) => (physical === "record" ? ".fifo" : "");
+    const seen = new Set();
+    for (const trigger of view.triggers) {
+      if (trigger.kind !== "queue" || seen.has(trigger.physical)) continue;
+      seen.add(trigger.physical);
+      const queueName = `${stack.name}-${trigger.physical}${fifo(trigger.physical)}`;
+      const actions = queueTopic ? [queueTopic] : [];
+      queue_alarms[`age|${trigger.physical}`] = alarm({
+        name: `${stack.name}-${trigger.physical}-queue-age`,
+        namespace: "AWS/SQS",
+        metric: "ApproximateAgeOfOldestMessage",
+        dimensions: { QueueName: queueName },
+        evaluation_periods: 3,
+        datapoints_to_alarm: 3,
+        threshold: 900,
+        actions,
+      });
+      if (trigger.settings.dlq?.enabled)
+        queue_alarms[`dlq|${trigger.physical}`] = alarm({
+          name: `${stack.name}-${trigger.physical}-dlq-messages`,
+          namespace: "AWS/SQS",
+          metric: "ApproximateNumberOfMessagesVisible",
+          dimensions: {
+            QueueName: `${stack.name}-${trigger.physical}-dlq${fifo(trigger.physical)}`,
+          },
+          actions,
+        });
+    }
+  }
   const expectations = Object.fromEntries(
     Object.entries({
+      function_alarms,
+      queue_alarms,
       env,
       policies,
       secret_reads,
@@ -444,6 +532,14 @@ export function prepareRoot(parent, name, version) {
   }
 `
       : "";
+  const queueAlarmAssertion = stack.queue.existing
+    ? ""
+    : `
+  assert {
+    condition = jsonencode(module.queue.test_alarms) == jsonencode(output.expected_queue_alarms)
+    error_message = "Queue alarms differ from the deployment view."
+  }
+`;
   let metadataAssertion = "";
   if (stack.store.manifest.id === "store-dynamodb") {
     if (!api) throw new Error("API function is missing");
@@ -456,7 +552,7 @@ export function prepareRoot(parent, name, version) {
   }
   const rootTest = test.replace(
     /\n}\s*$/,
-    `${vpcAssertions}${metadataAssertion}\n}\n`,
+    `${vpcAssertions}${metadataAssertion}${queueAlarmAssertion}\n}\n`,
   );
   writeFileSync(
     resolve(target, "tests/root.tftest.hcl"),

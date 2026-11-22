@@ -5,7 +5,7 @@ describe("Terraform emulator routing", () => {
   it("pins every configured endpoint to loopback and rejects remote origins", () => {
     const config = providerOverride("http://127.0.0.1:12345", "6.32.1");
     expect(Object.values(config.provider.aws[0].endpoints)).toEqual(
-      Array(9).fill("http://127.0.0.1:12345"),
+      Array(10).fill("http://127.0.0.1:12345"),
     );
     expect(config.provider.aws[0].s3_use_path_style).toBe(true);
     expect(() => providerOverride("https://example.com", "6.32.1")).toThrow();

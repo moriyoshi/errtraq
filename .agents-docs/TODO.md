@@ -88,10 +88,10 @@ item should be resolved or removed once addressed. Milestone work itself is trac
 
 - [x] M3: make the ingest rate limit configurable on the Lambda platform. — *source: M3h first real deployment*
 - [ ] M3 / product: decide whether an additional per-project ingest limit is needed alongside the existing per-DSN-key limit. — *source: M3h first real deployment*
-- [ ] M3h: remaining real-AWS checks: per-topic mode, FIFO poison to DLQ and redrive, visibility expiry, mode-switch drain, RDS / Aurora IAM with VPC, provider retries under throttling; add CloudWatch alarms (DLQ depth, queue age, function errors) since the stack creates none. Teardown must also delete the bootstrap secret, which is outside Terraform state. — *source: M3h first real deployment*
+- [ ] M3h: remaining real-AWS checks: per-topic mode, FIFO poison to DLQ and redrive, visibility expiry, mode-switch drain, RDS / Aurora IAM with VPC, provider retries under throttling; CloudWatch alarms (DLQ depth, queue age, function errors) now exist (M3 alarms) and still need a real-AWS check of evaluation, missing-data behavior and SNS delivery. Teardown must also delete the bootstrap secret, which is outside Terraform state. — *source: M3h first real deployment*
 
 
-- [ ] M3 CloudWatch alarms (next slice): add an alarm for visible DLQ messages greater than zero
+- [x] M3 CloudWatch alarms (next slice; resolved in M3 alarms): add an alarm for visible DLQ messages greater than zero
   for every enabled standard or FIFO DLQ (`AWS/SQS`, `ApproximateNumberOfMessagesVisible`),
   `AWS/SQS` `ApproximateAgeOfOldestMessage` for every physical source queue, and `AWS/Lambda`
   `Errors` for every physical function. Choose and document useful age / error periods,
@@ -100,7 +100,7 @@ item should be resolved or removed once addressed. Milestone work itself is trac
   optional validated operator-supplied SNS topic ARN for alarm actions; no topic or subscriptions
   should be created by default. Thread configuration through the SQS and Lambda descriptors and
   HCL modules without exposing secrets or creating duplicate alarms for shared queues.
-- [ ] M3 alarm verification: extend both Terraform module contract suites with exact alarm count,
+- [x] M3 alarm verification (resolved in M3 alarms): extend both Terraform module contract suites with exact alarm count,
   metrics, dimensions, thresholds, periods, missing-data treatment and optional SNS actions; add
   mutations to `scripts/infra-mutations.json` for missing / incorrect alarms and actions. Extend
   `scripts/infra-roots.mjs` mock-provider assertions to derive expected alarms for shared,

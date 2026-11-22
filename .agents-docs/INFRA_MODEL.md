@@ -261,6 +261,20 @@ and group attributes remain emulator gaps documented in WINTERBAUME_GAPS.md. Rea
 FIFO ordering under load, visibility-expiry overlap, DLQ/redrive, IAM enforcement and throughput.
 [The implementation plan](./ISSUE_KEYED_QUEUE_PLAN.md) tracks those checks and rollout.
 
+### CloudWatch alarms (M3)
+
+The SQS and Lambda modules create alarms for the resources they own: DLQ visible messages above
+zero for every enabled DLQ, `ApproximateAgeOfOldestMessage` above 900 seconds for three
+five-minute periods on every physical source queue, and Lambda `Errors` above zero in a
+five-minute period for every physical function. All use `treat_missing_data = notBreaching`,
+real queue or function names for dimensions (FIFO `.fifo` included) and the stack tags. Both the
+SQS adapter and the Lambda platform take an optional `alarmTopicArn` (validated SNS topic ARN,
+module input `alarm_topic_arn`); it is the sole alarm action when set and no topic or subscription
+is ever created. Values and rationale: `infra/modules/aws/README.md`. Contract tests, mutations,
+generated-root derivation (shared, per-topic, grouped, and an `alarm-topic` fixture) and the
+emulated apply (API readback and destroy) cover them; the emulator gap for datapoint and
+missing-data readback is a named exception in WINTERBAUME_GAPS.md.
+
 For the exact view passed to `inputs`, the following declarations are copied from
 `stack-model.ts` (the referenced `ArtifactRef`, `Binding`, `InfraValue` and `OutputRef` are also
 in that file):

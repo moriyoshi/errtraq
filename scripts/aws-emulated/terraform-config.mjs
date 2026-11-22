@@ -21,6 +21,7 @@ export function providerOverride(endpoint, version) {
         "iam",
         "lambda",
         "cloudwatchlogs",
+        "cloudwatch",
         "eventbridge",
         "sts",
         "ec2",

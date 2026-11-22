@@ -31,3 +31,12 @@ variable "physical_queues" {
     error_message = "Queues need identifier keys and valid integer visibility and redrive settings."
   }
 }
+variable "alarm_topic_arn" {
+  type        = string
+  description = "Optional operator-owned SNS topic ARN notified when an alarm enters ALARM; no topic or subscription is created, and alarms exist either way."
+  default     = null
+  validation {
+    condition     = var.alarm_topic_arn == null ? true : can(regex("^arn:aws(-cn|-us-gov)?:sns:[a-z0-9-]+:[0-9]{12}:[A-Za-z0-9_-]{1,256}(\\.fifo)?$", var.alarm_topic_arn))
+    error_message = "alarm_topic_arn must be null or an SNS topic ARN."
+  }
+}

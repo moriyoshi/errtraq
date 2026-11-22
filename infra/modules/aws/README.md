@@ -91,6 +91,22 @@ return null only when absence is established, otherwise propagate the authorizat
 Deployed cron requires primary blob read / list and ingest-queue produce to recover staged
 envelopes; M3 must schedule and implement that recovery. Standalone already recovers at startup.
 
+CloudWatch alarms are always created, with no topic or subscription. The SQS module has one
+`<stack>-<queue>-dlq-messages` alarm per enabled DLQ (`AWS/SQS` `ApproximateNumberOfMessagesVisible`,
+maximum, five-minute period, one of one datapoint, greater than 0) and one `<stack>-<queue>-queue-age`
+alarm per physical source queue (`ApproximateAgeOfOldestMessage`, maximum, five-minute period, three of
+three datapoints, greater than 900 seconds, so a stuck consumer is reported after about 15 minutes;
+a poison message under the default redrive is dead-lettered before then). The Lambda module has one
+`<stack>-<function>-errors` alarm per physical function (`AWS/Lambda` `Errors`, sum, five-minute period,
+one of one datapoint, greater than 0; partial batch item failures are not function errors). Dimensions
+are the real queue or function names, so FIFO queues and DLQs carry `.fifo`; shared queues have one
+alarm set. Missing data is `notBreaching` everywhere: SQS emits no datapoints for an idle queue and
+Lambda none without invocations. The optional `alarm_topic_arn` (stack config `alarmTopicArn` on
+the SQS adapter and the Lambda platform) is a validated SNS topic ARN owned by the operator; when set
+it is the only `alarm_actions` entry (no OK or insufficient-data actions), and the operator must
+allow CloudWatch to publish to it. Alarms on the cron DLQ named by `cronDlqArn` are not created
+because that queue is not owned by the stack.
+
 The default TypeScript contract test checks descriptor types and referenced paths against the
 committed `output-shapes.json` snapshot. `pnpm infra:validate` runs mock-provider Terraform tests
 at both pinned provider versions, captures actual output values and compares their normalized

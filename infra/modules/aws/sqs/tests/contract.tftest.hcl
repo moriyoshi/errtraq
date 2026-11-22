@@ -49,4 +49,68 @@ run "queues_and_policies" {
     condition     = contains(jsondecode(output.policies.consume.notifications).Statement[0].Action, "sqs:ChangeMessageVisibility") && jsondecode(output.policies.consume.notifications).Statement[0].Resource == aws_sqs_queue.queue["notifications"].arn
     error_message = "Consumer access must include retries and target only its queue."
   }
+  assert {
+    condition = length(aws_cloudwatch_metric_alarm.dlq_messages) == 2 && toset(keys(aws_cloudwatch_metric_alarm.dlq_messages)) == toset(["ingest", "record"]) && alltrue([for key, alarm in aws_cloudwatch_metric_alarm.dlq_messages :
+      alarm.namespace == "AWS/SQS" && alarm.metric_name == "ApproximateNumberOfMessagesVisible" && alarm.statistic == "Maximum" && alarm.period == 300 && alarm.evaluation_periods == 1 && alarm.datapoints_to_alarm == 1 &&
+      alarm.threshold == 0 && alarm.comparison_operator == "GreaterThanThreshold" && alarm.treat_missing_data == "notBreaching" && jsonencode(alarm.dimensions) == jsonencode({ QueueName = aws_sqs_queue.dlq[key].name }) && alarm.alarm_name == "example-${key}-dlq-messages"
+    ])
+    error_message = "Every enabled DLQ, and only those, needs an exact visible-messages alarm."
+  }
+  assert {
+    condition     = jsonencode(aws_cloudwatch_metric_alarm.dlq_messages["record"].dimensions) == jsonencode({ QueueName = "example-record-dlq.fifo" }) && jsonencode(aws_cloudwatch_metric_alarm.queue_age["record"].dimensions) == jsonencode({ QueueName = "example-record.fifo" }) && jsonencode(aws_cloudwatch_metric_alarm.queue_age["ingest"].dimensions) == jsonencode({ QueueName = "example-ingest" })
+    error_message = "Alarm dimensions must be the actual queue names including the FIFO suffix."
+  }
+  assert {
+    condition = length(aws_cloudwatch_metric_alarm.queue_age) == 5 && toset(keys(aws_cloudwatch_metric_alarm.queue_age)) == toset(keys(aws_sqs_queue.queue)) && alltrue([for key, alarm in aws_cloudwatch_metric_alarm.queue_age :
+      alarm.namespace == "AWS/SQS" && alarm.metric_name == "ApproximateAgeOfOldestMessage" && alarm.statistic == "Maximum" && alarm.period == 300 && alarm.evaluation_periods == 3 && alarm.datapoints_to_alarm == 3 &&
+      alarm.threshold == 900 && alarm.comparison_operator == "GreaterThanThreshold" && alarm.treat_missing_data == "notBreaching" && alarm.alarm_name == "example-${key}-queue-age"
+    ])
+    error_message = "Every physical source queue needs exactly one exact queue-age alarm."
+  }
+  assert {
+    condition     = alltrue([for alarm in concat(values(aws_cloudwatch_metric_alarm.dlq_messages), values(aws_cloudwatch_metric_alarm.queue_age)) : length(alarm.alarm_actions) == 0 && alarm.ok_actions == null && alarm.insufficient_data_actions == null])
+    error_message = "Without an operator topic no alarm may have any action."
+  }
+}
+run "alarm_actions_and_tags" {
+  command = apply
+  variables {
+    name            = "example"
+    tags            = { stack = "example" }
+    alarm_topic_arn = "arn:aws:sns:us-east-1:000000000000:operators"
+    physical_queues = {
+      shared = { visibility_timeout_sec = 180, dlq_enabled = false, max_receive_count = 5 }
+    }
+  }
+  assert {
+    condition     = length(aws_cloudwatch_metric_alarm.dlq_messages) == 0 && length(aws_cloudwatch_metric_alarm.queue_age) == 1 && aws_cloudwatch_metric_alarm.queue_age["shared"].alarm_actions == toset(["arn:aws:sns:us-east-1:000000000000:operators"]) && jsonencode(aws_cloudwatch_metric_alarm.queue_age["shared"].tags) == jsonencode({ stack = "example" })
+    error_message = "A queue without a DLQ gets only an age alarm; the operator topic and stack tags must be applied."
+  }
+}
+run "alarm_actions_on_dlq" {
+  command = apply
+  variables {
+    name            = "example"
+    tags            = { stack = "example" }
+    alarm_topic_arn = "arn:aws:sns:us-east-1:000000000000:operators"
+    physical_queues = {
+      ingest = { visibility_timeout_sec = 180, dlq_enabled = true, max_receive_count = 5 }
+    }
+  }
+  assert {
+    condition     = aws_cloudwatch_metric_alarm.dlq_messages["ingest"].alarm_actions == toset(["arn:aws:sns:us-east-1:000000000000:operators"]) && aws_cloudwatch_metric_alarm.queue_age["ingest"].alarm_actions == toset(["arn:aws:sns:us-east-1:000000000000:operators"]) && jsonencode(aws_cloudwatch_metric_alarm.dlq_messages["ingest"].tags) == jsonencode({ stack = "example" }) && jsonencode(aws_cloudwatch_metric_alarm.queue_age["ingest"].tags) == jsonencode({ stack = "example" })
+    error_message = "Both alarm kinds must notify the operator topic and carry the stack tags."
+  }
+}
+run "invalid_alarm_topic" {
+  command = plan
+  variables {
+    name            = "example"
+    tags            = {}
+    alarm_topic_arn = "arn:aws:sqs:us-east-1:000000000000:operators"
+    physical_queues = {
+      shared = { visibility_timeout_sec = 180, dlq_enabled = false, max_receive_count = 5 }
+    }
+  }
+  expect_failures = [var.alarm_topic_arn]
 }

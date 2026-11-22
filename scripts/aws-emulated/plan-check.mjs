@@ -23,6 +23,26 @@ export function assertRepeatPlan(plan, gaps, expectedTags = {}) {
       aws_s3_bucket: [["tags_all", "tags-s3"]],
       aws_iam_role: [["tags_all", "tags-iam"]],
     };
+    if (
+      change.type === "aws_cloudwatch_metric_alarm" &&
+      (before.datapoints_to_alarm !== after.datapoints_to_alarm ||
+        before.treat_missing_data !== after.treat_missing_data)
+    ) {
+      // The emulator returns neither field: they read back as 0 and "missing".
+      if (!gaps["cloudwatch-alarm-readback"])
+        throw new Error(
+          "Undeclared emulator exception cloudwatch-alarm-readback",
+        );
+      assert.equal(before.datapoints_to_alarm, 0, change.address);
+      assert.equal(before.treat_missing_data, "missing", change.address);
+      assert.ok([1, 3].includes(after.datapoints_to_alarm), change.address);
+      assert.equal(after.treat_missing_data, "notBreaching", change.address);
+      observed.add("cloudwatch-alarm-readback");
+      for (const field of ["datapoints_to_alarm", "treat_missing_data"]) {
+        delete before[field];
+        delete after[field];
+      }
+    }
     const fields = fieldsByType[change.type] ?? [];
     for (const [field, gap] of fields) {
       if (JSON.stringify(before[field]) !== JSON.stringify(after[field])) {
@@ -70,6 +90,8 @@ export function assertQueueTransition(plan, before, after) {
         for (const [module, type, name] of [
           ["queue", "aws_sqs_queue", "queue"],
           ["queue", "aws_sqs_queue", "dlq"],
+          ["queue", "aws_cloudwatch_metric_alarm", "dlq_messages"],
+          ["queue", "aws_cloudwatch_metric_alarm", "queue_age"],
           ["platform", "aws_lambda_event_source_mapping", "queue"],
         ])
           expected.push(
@@ -81,9 +103,11 @@ export function assertQueueTransition(plan, before, after) {
     if (resource.mode !== "managed") continue;
     const actions = resource.change.actions;
     if (
-      ["aws_sqs_queue", "aws_lambda_event_source_mapping"].includes(
-        resource.type,
-      )
+      [
+        "aws_sqs_queue",
+        "aws_lambda_event_source_mapping",
+        "aws_cloudwatch_metric_alarm",
+      ].includes(resource.type)
     ) {
       for (const action of actions)
         if (action === "create" || action === "delete")

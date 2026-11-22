@@ -498,3 +498,26 @@ describe("Lambda SQS events", () => {
     ).toEqual([{ itemIdentifier: "a" }]);
   });
 });
+
+describe("SQS alarm topic", () => {
+  const topic = "arn:aws:sns:us-east-1:000000000000:operators";
+  const view = { functions: [], triggers: [] } as never;
+  it("is optional and passed to the module only when configured", async () => {
+    const { sqsQueue } = await import("./stack.js");
+    const none = sqsQueue();
+    expect(none.infra.inputs({}, view)).not.toHaveProperty("alarm_topic_arn");
+    const set = sqsQueue({ alarmTopicArn: topic });
+    expect(set.infra.inputs({}, view)).toMatchObject({
+      alarm_topic_arn: topic,
+    });
+  });
+  it("rejects anything but an SNS topic ARN", async () => {
+    const { sqsQueue } = await import("./stack.js");
+    for (const bad of [
+      "arn:aws:sqs:us-east-1:000000000000:operators",
+      "arn:aws:sns:us-east-1:000000000000:",
+      "operators",
+    ])
+      expect(() => sqsQueue({ alarmTopicArn: bad })).toThrow();
+  });
+});

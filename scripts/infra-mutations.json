@@ -387,5 +387,216 @@
     "file": "main.tf",
     "find": "name                        = \"${var.name}-${each.key}${each.value.fifo ? \".fifo\" : \"\"}\"",
     "replace": "name                        = \"${var.name}-${each.key}\""
+  },
+  {
+    "id": "sqs-alarm-dlq-removed",
+    "module": "sqs",
+    "file": "main.tf",
+    "find": "for_each            = aws_sqs_queue.dlq",
+    "replace": "for_each            = {}"
+  },
+  {
+    "id": "sqs-alarm-age-skips-queue",
+    "module": "sqs",
+    "file": "main.tf",
+    "find": "for_each            = aws_sqs_queue.queue\n  alarm_name          = \"${var.name}-${each.key}-queue-age\"",
+    "replace": "for_each            = { for key, queue in aws_sqs_queue.queue : key => queue if key != \"ingest\" }\n  alarm_name          = \"${var.name}-${each.key}-queue-age\""
+  },
+  {
+    "id": "sqs-alarm-dlq-wrong-dimension",
+    "module": "sqs",
+    "file": "main.tf",
+    "find": "\"ApproximateNumberOfMessagesVisible\"\n  dimensions          = { QueueName = each.value.name }",
+    "replace": "\"ApproximateNumberOfMessagesVisible\"\n  dimensions          = { QueueName = aws_sqs_queue.queue[each.key].name }"
+  },
+  {
+    "id": "sqs-alarm-age-fifo-suffix-dropped",
+    "module": "sqs",
+    "file": "main.tf",
+    "find": "\"ApproximateAgeOfOldestMessage\"\n  dimensions          = { QueueName = each.value.name }",
+    "replace": "\"ApproximateAgeOfOldestMessage\"\n  dimensions          = { QueueName = trimsuffix(each.value.name, \".fifo\") }"
+  },
+  {
+    "id": "sqs-alarm-dlq-wrong-metric",
+    "module": "sqs",
+    "file": "main.tf",
+    "find": "\"ApproximateNumberOfMessagesVisible\"",
+    "replace": "\"ApproximateNumberOfMessages\""
+  },
+  {
+    "id": "sqs-alarm-dlq-threshold",
+    "module": "sqs",
+    "file": "main.tf",
+    "find": "evaluation_periods  = 1\n  datapoints_to_alarm = 1\n  threshold           = 0",
+    "replace": "evaluation_periods  = 1\n  datapoints_to_alarm = 1\n  threshold           = 1"
+  },
+  {
+    "id": "sqs-alarm-dlq-period",
+    "module": "sqs",
+    "file": "main.tf",
+    "find": "statistic           = \"Maximum\"\n  period              = 300\n  evaluation_periods  = 1",
+    "replace": "statistic           = \"Maximum\"\n  period              = 60\n  evaluation_periods  = 1"
+  },
+  {
+    "id": "sqs-alarm-age-threshold",
+    "module": "sqs",
+    "file": "main.tf",
+    "find": "threshold           = 900",
+    "replace": "threshold           = 1800"
+  },
+  {
+    "id": "sqs-alarm-age-evaluation",
+    "module": "sqs",
+    "file": "main.tf",
+    "find": "evaluation_periods  = 3\n  datapoints_to_alarm = 3",
+    "replace": "evaluation_periods  = 3\n  datapoints_to_alarm = 1"
+  },
+  {
+    "id": "sqs-alarm-age-missing-data",
+    "module": "sqs",
+    "file": "main.tf",
+    "find": "threshold           = 900\n  comparison_operator = \"GreaterThanThreshold\"\n  treat_missing_data  = \"notBreaching\"",
+    "replace": "threshold           = 900\n  comparison_operator = \"GreaterThanThreshold\"\n  treat_missing_data  = \"breaching\""
+  },
+  {
+    "id": "sqs-alarm-dlq-comparison",
+    "module": "sqs",
+    "file": "main.tf",
+    "find": "comparison_operator = \"GreaterThanThreshold\"\n  treat_missing_data  = \"notBreaching\"\n  alarm_actions       = local.alarm_actions\n  tags                = var.tags\n}\n# The oldest",
+    "replace": "comparison_operator = \"GreaterThanOrEqualToThreshold\"\n  treat_missing_data  = \"notBreaching\"\n  alarm_actions       = local.alarm_actions\n  tags                = var.tags\n}\n# The oldest"
+  },
+  {
+    "id": "sqs-alarm-actions-dropped",
+    "module": "sqs",
+    "file": "main.tf",
+    "find": "[var.alarm_topic_arn]",
+    "replace": "[]"
+  },
+  {
+    "id": "sqs-alarm-actions-wrong-topic",
+    "module": "sqs",
+    "file": "main.tf",
+    "find": "[var.alarm_topic_arn]",
+    "replace": "[\"arn:aws:sns:us-east-1:000000000000:other\"]"
+  },
+  {
+    "id": "sqs-alarm-dlq-tags-dropped",
+    "module": "sqs",
+    "file": "main.tf",
+    "find": "alarm_actions       = local.alarm_actions\n  tags                = var.tags\n}\n# The oldest",
+    "replace": "alarm_actions       = local.alarm_actions\n  tags                = {}\n}\n# The oldest"
+  },
+  {
+    "id": "sqs-alarm-topic-validation-removed",
+    "module": "sqs",
+    "file": "variables.tf",
+    "find": "var.alarm_topic_arn == null ? true : can(",
+    "replace": "true ? true : can("
+  },
+  {
+    "id": "lambda-alarm-removed",
+    "module": "lambda-app",
+    "file": "main.tf",
+    "find": "for_each            = aws_lambda_function.function\n  alarm_name",
+    "replace": "for_each            = {}\n  alarm_name"
+  },
+  {
+    "id": "lambda-alarm-skips-function",
+    "module": "lambda-app",
+    "file": "main.tf",
+    "find": "for_each            = aws_lambda_function.function\n  alarm_name",
+    "replace": "for_each            = { for id, fn in aws_lambda_function.function : id => fn if id != \"worker\" }\n  alarm_name"
+  },
+  {
+    "id": "lambda-alarm-wrong-dimension",
+    "module": "lambda-app",
+    "file": "main.tf",
+    "find": "dimensions          = { FunctionName = each.value.function_name }",
+    "replace": "dimensions          = { FunctionName = each.key }"
+  },
+  {
+    "id": "lambda-alarm-wrong-metric",
+    "module": "lambda-app",
+    "file": "main.tf",
+    "find": "metric_name         = \"Errors\"",
+    "replace": "metric_name         = \"Throttles\""
+  },
+  {
+    "id": "lambda-alarm-statistic",
+    "module": "lambda-app",
+    "file": "main.tf",
+    "find": "statistic           = \"Sum\"",
+    "replace": "statistic           = \"Maximum\""
+  },
+  {
+    "id": "lambda-alarm-threshold",
+    "module": "lambda-app",
+    "file": "main.tf",
+    "find": "threshold           = 0",
+    "replace": "threshold           = 5"
+  },
+  {
+    "id": "lambda-alarm-period",
+    "module": "lambda-app",
+    "file": "main.tf",
+    "find": "period              = 300",
+    "replace": "period              = 60"
+  },
+  {
+    "id": "lambda-alarm-evaluation",
+    "module": "lambda-app",
+    "file": "main.tf",
+    "find": "evaluation_periods  = 1\n  datapoints_to_alarm = 1",
+    "replace": "evaluation_periods  = 2\n  datapoints_to_alarm = 2"
+  },
+  {
+    "id": "lambda-alarm-missing-data",
+    "module": "lambda-app",
+    "file": "main.tf",
+    "find": "treat_missing_data  = \"notBreaching\"",
+    "replace": "treat_missing_data  = \"missing\""
+  },
+  {
+    "id": "lambda-alarm-actions-dropped",
+    "module": "lambda-app",
+    "file": "main.tf",
+    "find": "alarm_actions       = var.alarm_topic_arn == null ? [] : [var.alarm_topic_arn]",
+    "replace": "alarm_actions       = []"
+  },
+  {
+    "id": "lambda-alarm-actions-always",
+    "module": "lambda-app",
+    "file": "main.tf",
+    "find": "alarm_actions       = var.alarm_topic_arn == null ? [] : [var.alarm_topic_arn]",
+    "replace": "alarm_actions       = [coalesce(var.alarm_topic_arn, \"arn:aws:sns:us-east-1:000000000000:default\")]"
+  },
+  {
+    "id": "lambda-alarm-tags-dropped",
+    "module": "lambda-app",
+    "file": "main.tf",
+    "find": "alarm_actions       = var.alarm_topic_arn == null ? [] : [var.alarm_topic_arn]\n  tags                = var.tags",
+    "replace": "alarm_actions       = var.alarm_topic_arn == null ? [] : [var.alarm_topic_arn]\n  tags                = {}"
+  },
+  {
+    "id": "lambda-alarm-topic-validation-removed",
+    "module": "lambda-app",
+    "file": "variables.tf",
+    "find": "var.alarm_topic_arn == null ? true : can(",
+    "replace": "true ? true : can("
+  },
+  {
+    "id": "root-drop-function-alarm-topic",
+    "root": "alarm-topic",
+    "operation": "drop-function-alarm-topic"
+  },
+  {
+    "id": "root-drop-queue-alarm-topic",
+    "root": "alarm-topic",
+    "operation": "drop-queue-alarm-topic"
+  },
+  {
+    "id": "root-drop-dlq",
+    "root": "alarm-topic",
+    "operation": "drop-dlq"
   }
 ]

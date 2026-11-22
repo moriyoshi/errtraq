@@ -1176,3 +1176,40 @@ the alarm. It omitted the requested `TreatMissingData=notBreaching` in readback.
 evaluation, SNS delivery and the AWS provider's protocol and repeat-plan behavior remain
 unverified. No alarm implementation was started; the remaining module, descriptor, mutation,
 generated-root and emulator work is recorded in TODO.
+
+
+## 2026-11-22 — M3 CloudWatch alarms
+
+- **Alarms live in the modules.** `infra/modules/aws/sqs` creates `<stack>-<queue>-dlq-messages`
+  (DLQ visible messages > 0, maximum, 300 s, 1 of 1) per enabled DLQ and
+  `<stack>-<queue>-queue-age` (`ApproximateAgeOfOldestMessage` > 900 s, maximum, 300 s, 3 of 3) per
+  physical source queue; `lambda-app` creates `<stack>-<fn>-errors` (`Errors` > 0, sum, 300 s, 1 of
+  1) per function. All use `notBreaching` (SQS emits nothing for an idle queue, Lambda nothing
+  without invocations), dimensions from the resource's own `name` / `function_name` (so FIFO
+  `.fifo` is automatic) and `var.tags`. Alarms hang off the physical resource maps, so a shared
+  queue never gets duplicates; a queue without a DLQ gets only the age alarm. The 900 s age threshold
+  is deliberately above the default redrive time (5 receives x 180 s) so poison messages reach the
+  DLQ alarm first and the age alarm means a stuck or throttled consumer.
+- **Optional topic.** `alarmTopicArn` (zod-validated SNS ARN) on `sqsQueue` and `awsLambda` becomes
+  `alarm_topic_arn` (null default, regex-validated in HCL) and is the sole `alarm_actions` entry;
+  no OK / insufficient-data actions, no topic or subscription is created. The cron DLQ named by
+  `cronDlqArn` is not stack-owned and gets no alarm.
+- **Emulator.** The Terraform AWS provider 6.73.0 applies alarms against winterbaume (the new
+  `cloudwatch` endpoint) and the query `DescribeAlarms` returns name, namespace, metric,
+  dimensions, statistic, period, evaluation periods, threshold, comparison and actions, and tags
+  survive. It never returns `DatapointsToAlarm` or `TreatMissingData`, so a repeat plan drifts on
+  `datapoints_to_alarm` (0 -> n) and `treat_missing_data` ("missing" -> "notBreaching"). That is the
+  named, self-verifying exception `cloudwatch-alarm-readback` (plan-check requires the exact
+  before / after values; apply-emulated fails if the drift stops reproducing). A hand-built query
+  `PutMetricAlarm` drops Period and EvaluationPeriods (300 / 3 came back as 60 / 1) while the
+  provider's request keeps them, so a direct API probe is not a valid way to test the gap; do it
+  through the provider. The earlier journal note that only TreatMissingData was missing came from
+  that query-API probe.
+- **Verification shape.** Module contract suites assert counts, keys, metric, dimensions, thresholds,
+  periods, missing data, tags and actions, plus invalid-topic rejection. `infra-roots.mjs` derives
+  expected alarms from the deployment view (probe outputs injected into scratch copies of both
+  modules) and gained an `alarm-topic` grouped per-topic fixture with both topics set. 31
+  mutations were added; the first run missed dropped tags on DLQ alarms because every contract
+  run used empty tags, so tag assertions now use non-empty tags.
+- Not verified anywhere: alarm evaluation, state changes, SNS delivery and the real-provider
+  behavior on AWS (left on the M3h real-AWS checklist).

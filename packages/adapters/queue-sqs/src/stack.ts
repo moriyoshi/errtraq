@@ -23,6 +23,13 @@ export const configSchema = z.strictObject({
   maxConcurrency: z.number().int().min(2).max(1000).optional(),
   dlq: z.boolean().default(true),
   maxReceiveCount: z.number().int().min(1).max(1000).default(5),
+  /** Existing operator-owned SNS topic notified by the queue alarms; never created here. */
+  alarmTopicArn: z
+    .string()
+    .regex(
+      /^arn:aws(?:-cn|-us-gov)?:sns:[a-z0-9-]+:[0-9]{12}:[A-Za-z0-9_-]{1,256}(?:\.fifo)?$/,
+    )
+    .optional(),
 });
 export type Config = z.input<typeof configSchema>;
 type ResolvedConfig = z.output<typeof configSchema>;
@@ -112,6 +119,9 @@ function descriptor(config: ResolvedConfig): InfraDescriptor<Config> {
     inputs: (_config, deployment) => ({
       name: stackValue("name"),
       tags: stackValue("tags"),
+      ...(config.alarmTopicArn === undefined
+        ? {}
+        : { alarm_topic_arn: config.alarmTopicArn }),
       physical_queues: Object.fromEntries(
         [
           ...new Set(

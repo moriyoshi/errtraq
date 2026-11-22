@@ -43,5 +43,10 @@
     "heading": "EventBridge rule tag readback is incomplete",
     "effect": "exclude EventBridge rule tags_all drift from repeat-plan comparison",
     "issue": null
+  },
+  "cloudwatch-alarm-readback": {
+    "heading": "CloudWatch alarm datapoint and missing-data settings are not returned",
+    "effect": "assert alarm inventory, metric, dimensions, statistic, threshold, period, evaluation periods, comparison and actions through the emulator API; exclude only datapoints_to_alarm and treat_missing_data drift from repeat-plan comparison (the Terraform mock tests assert both)",
+    "issue": null
   }
 }

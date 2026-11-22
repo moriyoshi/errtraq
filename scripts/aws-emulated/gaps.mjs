@@ -16,6 +16,7 @@ export function loadGaps() {
     "tags-lambda-mapping",
     "tags-eventbridge",
     "lambda-vpc-readback",
+    "cloudwatch-alarm-readback",
   ];
   if (
     JSON.stringify(Object.keys(gaps).sort()) !== JSON.stringify(expected.sort())

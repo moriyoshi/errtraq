@@ -87,6 +87,8 @@ describe("deployment change plans", () => {
       for (const [module, type, name] of [
         ["queue", "aws_sqs_queue", "queue"],
         ["queue", "aws_sqs_queue", "dlq"],
+        ["queue", "aws_cloudwatch_metric_alarm", "dlq_messages"],
+        ["queue", "aws_cloudwatch_metric_alarm", "queue_age"],
         ["platform", "aws_lambda_event_source_mapping", "queue"],
       ])
         entries.push({
@@ -139,4 +141,54 @@ it("does not hide unrelated tag changes behind a known gap", () => {
   expect(() =>
     assertRepeatPlan(plan, { "tags-dynamodb": {} }, { app: "errtraq" }),
   ).toThrow();
+});
+
+describe("CloudWatch alarm readback exception", () => {
+  const change = (before, after) => ({
+    resource_changes: [
+      {
+        address: "alarm",
+        mode: "managed",
+        type: "aws_cloudwatch_metric_alarm",
+        change: { actions: ["update"], before, after },
+      },
+    ],
+  });
+  const base = { period: 300, threshold: 900 };
+  const gaps = { "cloudwatch-alarm-readback": {} };
+  it("permits only the two unreturned fields at their known values", () => {
+    const plan = change(
+      { ...base, datapoints_to_alarm: 0, treat_missing_data: "missing" },
+      { ...base, datapoints_to_alarm: 3, treat_missing_data: "notBreaching" },
+    );
+    expect([...assertRepeatPlan(plan, gaps)]).toEqual([
+      "cloudwatch-alarm-readback",
+    ]);
+    expect(() => assertRepeatPlan(plan, {})).toThrow("Undeclared");
+  });
+  it("rejects other alarm drift and unexpected desired values", () => {
+    expect(() =>
+      assertRepeatPlan(
+        change(
+          { ...base, datapoints_to_alarm: 0, treat_missing_data: "missing" },
+          {
+            ...base,
+            threshold: 1,
+            datapoints_to_alarm: 1,
+            treat_missing_data: "notBreaching",
+          },
+        ),
+        gaps,
+      ),
+    ).toThrow();
+    expect(() =>
+      assertRepeatPlan(
+        change(
+          { ...base, datapoints_to_alarm: 0, treat_missing_data: "missing" },
+          { ...base, datapoints_to_alarm: 1, treat_missing_data: "breaching" },
+        ),
+        gaps,
+      ),
+    ).toThrow();
+  });
 });

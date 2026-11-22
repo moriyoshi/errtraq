@@ -112,6 +112,13 @@ run "functions_triggers_and_urls" {
     condition     = jsondecode(aws_iam_role_policy.secret_reads["shared"].policy).Statement[0].Resource == ["arn:aws:secretsmanager:us-east-1:000000000000:secret:test-123456"]
     error_message = "Secret reads must be scoped to the function's secret ARN."
   }
+  assert {
+    condition = toset(keys(aws_cloudwatch_metric_alarm.errors)) == toset(["shared", "worker"]) && alltrue([for id, alarm in aws_cloudwatch_metric_alarm.errors :
+      alarm.alarm_name == "example-${id}-errors" && alarm.namespace == "AWS/Lambda" && alarm.metric_name == "Errors" && alarm.statistic == "Sum" && alarm.period == 300 && alarm.evaluation_periods == 1 && alarm.datapoints_to_alarm == 1 &&
+      alarm.threshold == 0 && alarm.comparison_operator == "GreaterThanThreshold" && alarm.treat_missing_data == "notBreaching" && jsonencode(alarm.dimensions) == jsonencode({ FunctionName = "example-${id}" }) && length(alarm.alarm_actions) == 0 && alarm.ok_actions == null
+    ])
+    error_message = "Every physical function needs exactly one exact Errors alarm and no actions without an operator topic."
+  }
 }
 
 run "visibility_too_short" {
@@ -216,4 +223,32 @@ run "incomplete_vpc" {
     cron_triggers  = {}
   }
   expect_failures = [aws_lambda_function.function["api"]]
+}
+
+run "alarm_actions_and_tags" {
+  command = apply
+  variables {
+    name            = "example"
+    tags            = { stack = "example" }
+    alarm_topic_arn = "arn:aws:sns:us-east-1:000000000000:operators"
+    functions       = { api = { roles = ["api"], http = ["api"], artifact = "tests/artifact.txt", memory_mb = 512, timeout_sec = 30, architecture = "arm64", environment = {}, secrets = {}, secret_reads = [], policies = [] } }
+    queue_triggers  = {}
+    cron_triggers   = {}
+  }
+  assert {
+    condition     = length(aws_cloudwatch_metric_alarm.errors) == 1 && aws_cloudwatch_metric_alarm.errors["api"].alarm_actions == toset(["arn:aws:sns:us-east-1:000000000000:operators"]) && jsonencode(aws_cloudwatch_metric_alarm.errors["api"].tags) == jsonencode({ stack = "example" })
+    error_message = "The operator topic and stack tags must be applied to the Errors alarm."
+  }
+}
+run "invalid_alarm_topic" {
+  command = plan
+  variables {
+    name            = "example"
+    tags            = {}
+    alarm_topic_arn = "arn:aws:sqs:us-east-1:000000000000:operators"
+    functions       = { api = { roles = ["api"], http = ["api"], artifact = "tests/artifact.txt", memory_mb = 512, timeout_sec = 30, architecture = "arm64", environment = {}, secrets = {}, secret_reads = [], policies = [] } }
+    queue_triggers  = {}
+    cron_triggers   = {}
+  }
+  expect_failures = [var.alarm_topic_arn]
 }

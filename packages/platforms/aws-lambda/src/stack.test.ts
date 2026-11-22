@@ -100,3 +100,22 @@ it("reserves the platform rate-limit environment name", () => {
     ]),
   );
 });
+
+it("threads an optional validated alarm topic into the module inputs", () => {
+  const topic = "arn:aws:sns:us-east-1:000000000000:operators";
+  const view = { functions: [], triggers: [] } as never;
+  expect(awsLambda().infra.inputs(awsLambda().config, view)).not.toHaveProperty(
+    "alarm_topic_arn",
+  );
+  const platform = awsLambda({ alarmTopicArn: topic });
+  expect(platform.infra.inputs(platform.config, view)).toMatchObject({
+    alarm_topic_arn: topic,
+  });
+  for (const bad of [
+    "arn:aws:sqs:us-east-1:000000000000:operators",
+    "arn:aws:sns:us-east-1:12:operators",
+    "operators",
+    "",
+  ])
+    expect(() => awsLambda({ alarmTopicArn: bad })).toThrow();
+});

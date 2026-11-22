@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { element } from "./client.mjs";
+import { describeAlarms, verifyAlarms } from "./cloudwatch.mjs";
 import { canonicalPolicy, capabilityPolicy } from "./expected.mjs";
 import { moduleShapes } from "./shapes.mjs";
 
@@ -305,6 +306,9 @@ export async function verifyDeployment(c, stack, view, account) {
       job: trigger.name,
     });
   }
+  // Period, evaluation counts and missing-data treatment are not returned by the pinned
+  // emulator (gap cloudwatch-alarm-readback); the Terraform mock tests assert them.
+  await verifyAlarms(c, stack, view);
   return { resources, mappingForStack };
 }
 
@@ -369,6 +373,11 @@ export async function verifyCleanup(c, name) {
     ),
     [],
     "log groups remain after destroy",
+  );
+  assert.deepEqual(
+    (await describeAlarms(c, `${name}-`)).map((alarm) => alarm.AlarmName),
+    [],
+    "CloudWatch alarms remain after destroy",
   );
   const rules = await json(c, "events", "AWSEvents.ListRules", {
     NamePrefix: `${name}-`,

@@ -26,6 +26,7 @@ stated; successful creation by itself does not prove all settings were retained.
 | IAM roles and inline policies | Created by the Lambda module; an inline capability policy was retrieved through IAM. Enforcement was not tested. |
 | Lambda function, URL, permissions and event source mapping | Module applied with a ZIP; settings and execution have the gaps below. |
 | CloudWatch log group, EventBridge rule and target | Created by the Lambda module; target retry and dead-letter settings have the gaps below. |
+| CloudWatch metric alarms (SQS and Lambda modules) | Applied and read back through the query API; datapoint and missing-data settings have the gap below. |
 | Generated AWS stack | Apply reached the S3 lifecycle waiter and exceeded the probe timeout; complete root application remains unproven. |
 | STS | GetCallerIdentity succeeded in the M3a direct control-plane probe. |
 
@@ -92,20 +93,23 @@ Fixed at pinned revision `79c452d2bb2844abf771cfa4a497275c24b46489`: a protected
   harness checks that this exact named gap still occurs and ignores only that drift. EventBridge
   tag persistence remains unproven. This additional service-specific gap has not been filed.
 
-## CloudWatch alarm missing-data setting is not returned
+## CloudWatch alarm datapoint and missing-data settings are not returned
 
-- Revision: `79c452d2bb2844abf771cfa4a497275c24b46489`, direct loopback query API
-  probe using the `monitoring` service and API version `2010-08-01`.
-- `PutMetricAlarm` returned HTTP 200 for an SQS visible-message alarm with
-  `TreatMissingData=notBreaching`, threshold zero, period 60, one evaluation period, queue
-  dimension and an SNS action ARN. `DescribeAlarms` returned HTTP 200 and the metric,
-  threshold, dimension and action, but omitted the `TreatMissingData` element. No error was
-  returned. `DeleteAlarms` returned HTTP 200 and a subsequent description contained no alarm.
-- Terraform provider readback, repeat-plan behavior, actual metric evaluation and SNS delivery
-  were not tested. The provider may use a different request protocol, and an omitted field is not
-  proof of how the emulator evaluates missing data. No upstream issue has been filed. A future
-  emulated-apply check must verify the provider request and readback before deciding whether a
-  named exception is required; it must not change production alarm behavior for the emulator.
+- Revision: `79c452d2bb2844abf771cfa4a497275c24b46489`; provider `6.73.0`; reproduced through
+  the real provider by the apply harness (M3 alarms).
+- `aws_cloudwatch_metric_alarm` applies without error and the monitoring query
+  `DescribeAlarms` returns the name, namespace, metric, dimensions (including a FIFO `.fifo`
+  queue name), statistic, period, evaluation periods, threshold, comparison operator and SNS
+  alarm action. It never returns `DatapointsToAlarm` or `TreatMissingData`, so a repeat plan
+  proposes `datapoints_to_alarm` from `0` and `treat_missing_data` from `"missing"` to the
+  configured values. No API error is returned. The harness requires exactly this drift (the
+  named exception fails when it stops reproducing) and ignores only those two fields; the
+  Terraform mock tests assert both settings, and tracked HCL is unchanged. Tags read back
+  correctly, and destroy leaves no alarm.
+- Separately, a hand-built query-API `PutMetricAlarm` (period 300, three evaluation periods)
+  came back as period 60 and one evaluation period, while the provider's request retained
+  both; the provider appears to use a different request protocol than the query API.
+  Evaluation, state changes and SNS delivery are unverified. No upstream issue has been filed.
 
 ## DynamoDB conditional updates are not atomic with their checks
 

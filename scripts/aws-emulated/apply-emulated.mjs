@@ -186,6 +186,9 @@ try {
   const { awsLambda } = await import(
     "../../packages/platforms/aws-lambda/dist/stack.js"
   );
+  const { sqsQueue } = await import(
+    "../../packages/adapters/queue-sqs/dist/stack.js"
+  );
   const { fixtures } = await import("../infra-roots.mjs");
   const variant = (base, changes) =>
     resolveStack({ ...Object.fromEntries(Object.entries(base)), ...changes });
@@ -249,6 +252,7 @@ try {
       "tags-s3",
       "tags-lambda-mapping",
       "tags-eventbridge",
+      "cloudwatch-alarm-readback",
     ]) {
       if (!exceptions.has(id))
         throw new Error(
@@ -337,9 +341,13 @@ try {
     tf(dir, "destroy", "-auto-approve", "-input=false");
     await verifyCleanup(c, stack.name);
     console.log("PASS shared-stack destroy and API inventory");
+    // The per-topic stack also carries an operator SNS topic, so alarm actions are read back.
+    const alarmTopicArn = `arn:aws:sns:us-east-1:${account}:operators`;
     const second = variant(perTopic, {
       name: "m3a2-per-topic",
       protection: "disposable",
+      platform: awsLambda({ ...perTopic.platform.config, alarmTopicArn }),
+      queue: sqsQueue({ mode: "per-topic", alarmTopicArn }),
     });
     const secondView = deriveDeployment(second);
     const secondDir = resolve(temp, "per-topic");
@@ -411,6 +419,7 @@ try {
       "tags-s3",
       "tags-lambda-mapping",
       "tags-eventbridge",
+      "cloudwatch-alarm-readback",
     ]) {
       if (!secondExceptions.has(id))
         throw new Error(`Emulator gap ${id} no longer reproduces`);

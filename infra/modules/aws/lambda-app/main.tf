@@ -167,3 +167,21 @@ resource "aws_lambda_permission" "cron" {
   principal     = "events.amazonaws.com"
   source_arn    = aws_cloudwatch_event_rule.cron[each.key].arn
 }
+# Any invocation error in a five-minute window alarms; no invocations means no datapoints, which is healthy.
+resource "aws_cloudwatch_metric_alarm" "errors" {
+  for_each            = aws_lambda_function.function
+  alarm_name          = "${var.name}-${each.key}-errors"
+  alarm_description   = "The ${each.value.function_name} function reported invocation errors."
+  namespace           = "AWS/Lambda"
+  metric_name         = "Errors"
+  dimensions          = { FunctionName = each.value.function_name }
+  statistic           = "Sum"
+  period              = 300
+  evaluation_periods  = 1
+  datapoints_to_alarm = 1
+  threshold           = 0
+  comparison_operator = "GreaterThanThreshold"
+  treat_missing_data  = "notBreaching"
+  alarm_actions       = var.alarm_topic_arn == null ? [] : [var.alarm_topic_arn]
+  tags                = var.tags
+}

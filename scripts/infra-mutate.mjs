@@ -212,6 +212,15 @@ try {
         environment[key] = "https://example.test/$" + "{literal}";
         break;
       }
+      case "drop-function-alarm-topic":
+        delete platform.alarm_topic_arn;
+        break;
+      case "drop-queue-alarm-topic":
+        delete main.module.queue.alarm_topic_arn;
+        break;
+      case "drop-dlq":
+        main.module.queue.physical_queues.record.dlq_enabled = false;
+        break;
       default:
         throw new Error(`Unknown root mutation ${mutation.operation}`);
     }

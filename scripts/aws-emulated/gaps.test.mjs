@@ -4,7 +4,7 @@ import { loadGaps, skipped } from "./gaps.mjs";
 describe("emulator exception inventory", () => {
   it("requires named documented exceptions and rejects undeclared exclusions", () => {
     const gaps = loadGaps();
-    expect(Object.keys(gaps)).toHaveLength(9);
+    expect(Object.keys(gaps)).toHaveLength(10);
     expect(() => skipped(gaps, "unlisted")).toThrow("Undeclared");
   });
   it("maps each exclusion to its upstream issue and prints the link", () => {
