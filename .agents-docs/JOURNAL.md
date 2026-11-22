@@ -1166,3 +1166,13 @@ by default, a positive safe integer for another limit, or `null` to disable it. 
 a reserved, ingest-scoped platform environment binding in the derived deployment view, so
 Terraform can update it without rebuilding the Lambda bundle. Existing KV counters remain keyed
 by project-key ID; whether a separate project-wide limit is desirable remains a product decision.
+
+
+## 2026-11-22 — CloudWatch alarm emulator probe
+
+The pinned Winterbaume revision accepted CloudWatch monitoring query `PutMetricAlarm`, returned
+the basic metric, threshold, queue dimension and SNS action through `DescribeAlarms`, and deleted
+the alarm. It omitted the requested `TreatMissingData=notBreaching` in readback. Actual alarm
+evaluation, SNS delivery and the AWS provider's protocol and repeat-plan behavior remain
+unverified. No alarm implementation was started; the remaining module, descriptor, mutation,
+generated-root and emulator work is recorded in TODO.

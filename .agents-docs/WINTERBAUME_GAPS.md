@@ -92,6 +92,21 @@ Fixed at pinned revision `79c452d2bb2844abf771cfa4a497275c24b46489`: a protected
   harness checks that this exact named gap still occurs and ignores only that drift. EventBridge
   tag persistence remains unproven. This additional service-specific gap has not been filed.
 
+## CloudWatch alarm missing-data setting is not returned
+
+- Revision: `79c452d2bb2844abf771cfa4a497275c24b46489`, direct loopback query API
+  probe using the `monitoring` service and API version `2010-08-01`.
+- `PutMetricAlarm` returned HTTP 200 for an SQS visible-message alarm with
+  `TreatMissingData=notBreaching`, threshold zero, period 60, one evaluation period, queue
+  dimension and an SNS action ARN. `DescribeAlarms` returned HTTP 200 and the metric,
+  threshold, dimension and action, but omitted the `TreatMissingData` element. No error was
+  returned. `DeleteAlarms` returned HTTP 200 and a subsequent description contained no alarm.
+- Terraform provider readback, repeat-plan behavior, actual metric evaluation and SNS delivery
+  were not tested. The provider may use a different request protocol, and an omitted field is not
+  proof of how the emulator evaluates missing data. No upstream issue has been filed. A future
+  emulated-apply check must verify the provider request and readback before deciding whether a
+  named exception is required; it must not change production alarm behavior for the emulator.
+
 ## DynamoDB conditional updates are not atomic with their checks
 
 - Revision: `69fed1d7fb0eb9a2738ff3274197c7591129c4cb`; the pinned revision `79c452d2bb2844abf771cfa4a497275c24b46489` still has the separate `get_item` and `update_item` calls. `UpdateItem` reads and
