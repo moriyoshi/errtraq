@@ -141,3 +141,12 @@ bursts only if long-run service capacity exceeds arrivals and retention is suffi
    behavior, CORS and operational alarms with real AWS; exercise provider retries and timeouts.
 8. Destroy the disposable stack and inspect AWS APIs for leftover resources and retained data.
    Repeat relevant checks for the other queue topology before considering M3h complete.
+
+
+The guarded consumer rate path groups candidates by project, issue and received-at fixed window
+across a delivery batch before forwarding, then charges one KV increment for each group. The
+new-issue cap is checked after a consistent issue read in direct mode and in the grouped record
+handler. Admission counters are approximate on retries and concurrent issue creation. KV
+retry failures retry the affected batch before any event is recorded or forwarded; accepted
+per-delivery handoffs still retry independently on downstream failures. Stack activation remains
+blocked until conditional KV grants and their infrastructure checks are complete.

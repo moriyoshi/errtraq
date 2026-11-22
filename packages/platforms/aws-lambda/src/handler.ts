@@ -114,6 +114,8 @@ export function createHandler(
           store: adapters.store,
           blobs: adapters.blob,
           recordMode: options.recordMode,
+          rateRejection: options.rateRejection,
+          kv: adapters.kv,
           queue: adapters.queue,
           logger: log,
         })
@@ -123,6 +125,8 @@ export function createHandler(
       ? new RecordHandler({
           store: adapters.store,
           blobs: adapters.blob,
+          kv: adapters.kv,
+          rateRejection: options.rateRejection,
           logger: log,
         })
       : undefined;

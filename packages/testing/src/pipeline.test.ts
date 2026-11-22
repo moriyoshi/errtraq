@@ -16,6 +16,7 @@ import {
   normalizeEvent,
   parseEnvelope,
   parseEventPayload,
+  type RateRejectionConfig,
   RecordHandler,
   readDropped,
   recoverStagedEnvelopes,
@@ -40,6 +41,7 @@ async function setup(
     maxBytes?: number;
     overflowBytes?: number;
     recordMode?: "direct" | "grouped";
+    rateRejection?: RateRejectionConfig;
   } = {},
 ) {
   const store = new MemoryActiveStore();
@@ -80,6 +82,7 @@ async function setup(
     overflowBytes: options.overflowBytes,
     maxEnvelopeBytes: options.maxBytes,
     recordMode: options.recordMode,
+    rateRejection: options.rateRejection,
     queue,
   });
   const service = new IngestService({
@@ -136,6 +139,365 @@ async function withConsumer(
 }
 
 describe("in-process ingest pipeline", () => {
+  it("does not require consumer KV for a grouped stack with only the new-issue cap", async () => {
+    const c = await setup({ recordMode: "grouped" });
+    const consumer = new ConsumerService({
+      recordMode: "grouped",
+      queue: c.queue,
+      blobs: c.blobs,
+      logger: c.logger,
+      rateRejection: { newIssueCap: { issues: 1, windowSec: 60 } },
+    });
+    expect((await c.send(body(id(728), "cap-only"))).status).toBe(200);
+    const message = c.sent[0];
+    if (!message) throw new Error("Missing ingest claim");
+    expect(
+      await consumer.handle([
+        { id: "one", topic: "ingest", attempt: 1, message },
+      ]),
+    ).toEqual([{ deliveryId: "one", action: "ack" }]);
+  });
+  it("does not call KV from a consumer when rejection is disabled", async () => {
+    const c = await setup({ recordMode: "direct" });
+    expect((await c.send(body(id(729), "disabled"))).status).toBe(200);
+    const message = c.sent[0];
+    if (!message) throw new Error("Missing ingest claim");
+    const increment = vi.spyOn(c.kv, "increment");
+    expect(
+      (
+        await c.consumer.handle([
+          { id: "one", topic: "ingest", attempt: 1, message },
+        ])
+      )[0]?.action,
+    ).toBe("ack");
+    expect(increment).not.toHaveBeenCalled();
+  });
+  it("allows a later-window candidate for an issue rejected in the previous window", async () => {
+    const config = { newIssueCap: { issues: 1, windowSec: 60 } };
+    const c = await setup({ recordMode: "direct", rateRejection: config });
+    const bucket = Math.floor(Date.parse(c.clock.now()) / 60_000);
+    await c.kv.increment(
+      `rate:new-issues:${c.project.project.id}:${bucket}`,
+      1,
+      { ttlSec: 120 },
+    );
+    expect((await c.send(body(id(730), "same issue"))).status).toBe(200);
+    c.clock.advance(60_000);
+    expect((await c.send(body(id(731), "same issue"))).status).toBe(200);
+    const deliveries: Delivery[] = c.sent.map((message, n) => ({
+      id: String(n),
+      topic: "ingest",
+      attempt: 1,
+      message,
+    }));
+    expect(await c.consumer.handle(deliveries)).toEqual([
+      { deliveryId: "0", action: "ack" },
+      { deliveryId: "1", action: "ack" },
+    ]);
+    expect(
+      await c.store.events.get(c.project.project.id, id(730) as EventId),
+    ).toBeNull();
+    expect(
+      await c.store.events.get(c.project.project.id, id(731) as EventId),
+    ).not.toBeNull();
+  });
+  it("keeps a failed accepted delivery retryable while processing other deliveries", async () => {
+    const config = { issueRateLimit: { events: 1, windowSec: 60 } };
+    const c = await setup({ recordMode: "direct", rateRejection: config });
+    expect((await c.send(body(id(740), "first issue"))).status).toBe(200);
+    expect((await c.send(body(id(741), "second issue"))).status).toBe(200);
+    const original = c.store.recordEvent.bind(c.store);
+    vi.spyOn(c.store, "recordEvent")
+      .mockRejectedValueOnce(new Error("temporary"))
+      .mockImplementation(original);
+    const deliveries: Delivery[] = c.sent.map((message, n) => ({
+      id: String(n),
+      topic: "ingest",
+      attempt: 1,
+      message,
+    }));
+    expect(await c.consumer.handle(deliveries)).toEqual([
+      { deliveryId: "0", action: "retry" },
+      { deliveryId: "1", action: "ack" },
+    ]);
+    expect(
+      await c.store.events.get(c.project.project.id, id(740) as EventId),
+    ).toBeNull();
+    expect(
+      await c.store.events.get(c.project.project.id, id(741) as EventId),
+    ).not.toBeNull();
+    const first = c.sent[0]?.body as { blobKey: string };
+    expect(await c.blobs.get(first.blobKey)).not.toBeNull();
+  });
+  it.each(["direct", "grouped"] as const)(
+    "charges one per-issue increment across %s deliveries",
+    async (mode) => {
+      const config = { issueRateLimit: { events: 1, windowSec: 60 } };
+      const c = await setup({ recordMode: mode, rateRejection: config });
+      for (const event of [701, 702])
+        expect((await c.send(body(id(event), "same issue"))).status).toBe(200);
+      const increment = vi.spyOn(c.kv, "increment");
+      const produce = vi.spyOn(c.queue.producer, "send");
+      const eventRead = vi.spyOn(c.store.events, "get");
+      const issueRead = vi.spyOn(c.store.issues, "get");
+      const deliveries: Delivery[] = c.sent.map((message, n) => ({
+        id: String(n),
+        topic: "ingest",
+        attempt: 1,
+        message,
+      }));
+      expect(await c.consumer.handle(deliveries)).toEqual([
+        { deliveryId: "0", action: "ack" },
+        { deliveryId: "1", action: "ack" },
+      ]);
+      const calls = increment.mock.calls.filter(([key]) =>
+        key.startsWith("rate:issue:"),
+      );
+      expect(calls).toHaveLength(1);
+      expect(calls[0]?.[1]).toBe(2);
+      if (mode === "direct") {
+        expect(
+          await c.store.events.get(c.project.project.id, id(701) as EventId),
+        ).not.toBeNull();
+        expect(
+          await c.store.events.get(c.project.project.id, id(702) as EventId),
+        ).toBeNull();
+      } else {
+        expect(eventRead).not.toHaveBeenCalled();
+        expect(issueRead).not.toHaveBeenCalled();
+        expect(
+          produce.mock.calls
+            .flatMap(([topic, messages]) =>
+              topic === "record" ? messages : [],
+            )
+            .map((message) => message.key),
+        ).toEqual([id(701)]);
+      }
+    },
+  );
+  it("does not charge suppressed events and does not reopen a resolved issue when rejecting", async () => {
+    const config = { issueRateLimit: { events: 1, windowSec: 60 } };
+    const c = await setup({ recordMode: "direct", rateRejection: config });
+    expect((await c.send(body(id(710), "same issue"))).status).toBe(200);
+    const first = c.sent[0];
+    if (!first) throw new Error("Missing first claim");
+    expect(
+      (
+        await c.consumer.handle([
+          { id: "first", topic: "ingest", attempt: 1, message: first },
+        ])
+      )[0]?.action,
+    ).toBe("ack");
+    const issue = await normalizeEvent(
+      c.project.project.id,
+      id(710) as EventId,
+      c.clock.now(),
+      { message: "same issue" },
+    );
+    const resolved = await c.store.issues.update(
+      c.project.project.id,
+      issue.event.issueId,
+      { status: "resolved", resolvedAt: c.clock.now() },
+    );
+    c.clock.advance(1000);
+    expect((await c.send(body(id(711), "same issue"))).status).toBe(200);
+    const second = c.sent[1];
+    if (!second) throw new Error("Missing second claim");
+    expect(
+      (
+        await c.consumer.handle([
+          { id: "second", topic: "ingest", attempt: 1, message: second },
+        ])
+      )[0]?.action,
+    ).toBe("ack");
+    expect(
+      await c.store.issues.get(c.project.project.id, issue.event.issueId),
+    ).toMatchObject({
+      status: "resolved",
+      lastSeen: resolved.lastSeen,
+      count: 1,
+    });
+    expect(
+      await c.store.events.get(c.project.project.id, id(711) as EventId),
+    ).toBeNull();
+    expect((await c.send(body(id(712), "suppressed"))).status).toBe(200);
+    const third = c.sent[2];
+    if (!third) throw new Error("Missing third claim");
+    const suppressed = new ConsumerService({
+      store: c.store,
+      blobs: c.blobs,
+      kv: c.kv,
+      logger: c.logger,
+      rateRejection: config,
+      shouldSuppress: () => true,
+    });
+    const increment = vi.spyOn(c.kv, "increment");
+    expect(
+      (
+        await suppressed.handle([
+          { id: "third", topic: "ingest", attempt: 1, message: third },
+        ])
+      )[0]?.action,
+    ).toBe("ack");
+    expect(increment).not.toHaveBeenCalled();
+  });
+  it("retries a delivery without storing accepted events when the dropped counter fails", async () => {
+    const config = {
+      issueRateLimit: { events: 1, windowSec: 60 },
+      onKvFailure: "retry" as const,
+    };
+    const c = await setup({ recordMode: "direct", rateRejection: config });
+    const payload = `{}\n${[720, 721].map((n) => `{"type":"event"}\n${JSON.stringify({ event_id: id(n), message: "same issue" })}\n`).join("")}`;
+    expect((await c.send(payload)).status).toBe(200);
+    const message = c.sent[0];
+    if (!message) throw new Error("Missing ingest claim");
+    const original = c.kv.increment.bind(c.kv);
+    vi.spyOn(c.kv, "increment").mockImplementation(async (key, by, options) => {
+      if (key.startsWith("rate:dropped:"))
+        throw new Error("sensitive-provider-response");
+      return original(key, by, options);
+    });
+    expect(
+      await c.consumer.handle([
+        { id: "one", topic: "ingest", attempt: 1, message },
+      ]),
+    ).toEqual([{ deliveryId: "one", action: "retry" }]);
+    expect(
+      await c.store.events.get(c.project.project.id, id(720) as EventId),
+    ).toBeNull();
+    expect(
+      JSON.stringify([
+        ...vi.mocked(c.logger.warn).mock.calls,
+        ...vi.mocked(c.logger.error).mock.calls,
+      ]),
+    ).not.toContain("sensitive-provider-response");
+  });
+  it.each(["direct", "grouped"] as const)(
+    "limits events per issue before the %s handoff",
+    async (mode) => {
+      const config = { issueRateLimit: { events: 2, windowSec: 60 } };
+      const c = await setup({ recordMode: mode, rateRejection: config });
+      const payload = `{}\n${[1, 2, 3].map((n) => `{"type":"event"}\n${JSON.stringify({ event_id: id(500 + n), message: "limited" })}\n`).join("")}`;
+      expect((await c.send(payload)).status).toBe(200);
+      const message = c.sent[0];
+      if (!message) throw new Error("Missing ingest claim");
+      const increment = vi.spyOn(c.kv, "increment");
+      const produce = vi.spyOn(c.queue.producer, "send");
+      const handler =
+        mode === "grouped"
+          ? new ConsumerService({
+              recordMode: "grouped",
+              queue: c.queue,
+              blobs: c.blobs,
+              kv: c.kv,
+              logger: c.logger,
+              rateRejection: config,
+            })
+          : c.consumer;
+      expect(
+        await handler.handle([
+          { id: "one", topic: "ingest", attempt: 1, message },
+        ]),
+      ).toEqual([{ deliveryId: "one", action: "ack" }]);
+      const issue = await normalizeEvent(
+        c.project.project.id,
+        id(501) as EventId,
+        c.clock.now(),
+        { message: "limited" },
+      );
+      expect(
+        await readDropped(
+          c.kv,
+          config,
+          c.project.project.id,
+          issue.event.issueId,
+          c.clock.now(),
+        ),
+      ).toEqual({ count: 1, windowSec: 60 });
+      expect(
+        increment.mock.calls.filter(([key]) => key.startsWith("rate:issue:")),
+      ).toHaveLength(1);
+      if (mode === "direct") {
+        expect(
+          (await c.store.issues.get(c.project.project.id, issue.event.issueId))
+            ?.count,
+        ).toBe(2);
+        expect(
+          await c.store.events.get(c.project.project.id, id(503) as EventId),
+        ).toBeNull();
+      } else {
+        const messages = produce.mock.calls.flatMap(([topic, sent]) =>
+          topic === "record" ? sent : [],
+        );
+        expect(messages.map((item) => item.key)).toEqual([id(501), id(502)]);
+        expect(
+          await c.store.issues.get(c.project.project.id, issue.event.issueId),
+        ).toBeNull();
+      }
+    },
+  );
+  it("caps new issues in direct mode while allowing further events for an admitted issue", async () => {
+    const config = { newIssueCap: { issues: 1, windowSec: 60 } };
+    const c = await setup({ recordMode: "direct", rateRejection: config });
+    const events = [
+      [601, "first"],
+      [602, "second"],
+      [603, "first"],
+    ] as const;
+    const payload = `{}\n${events.map(([n, message]) => `{"type":"event"}\n${JSON.stringify({ event_id: id(n), message })}\n`).join("")}`;
+    expect((await c.send(payload)).status).toBe(200);
+    const message = c.sent[0];
+    if (!message) throw new Error("Missing ingest claim");
+    const issueRead = vi.spyOn(c.store.issues, "get");
+    expect(
+      (
+        await c.consumer.handle([
+          { id: "one", topic: "ingest", attempt: 1, message },
+        ])
+      )[0]?.action,
+    ).toBe("ack");
+    expect(
+      await c.store.events.get(c.project.project.id, id(601) as EventId),
+    ).not.toBeNull();
+    expect(
+      await c.store.events.get(c.project.project.id, id(602) as EventId),
+    ).toBeNull();
+    expect(
+      await c.store.events.get(c.project.project.id, id(603) as EventId),
+    ).not.toBeNull();
+    expect(issueRead).toHaveBeenCalledTimes(2);
+  });
+  it.each(["allow", "retry"] as const)(
+    "handles consumer KV failure with %s policy without leaking its details",
+    async (onKvFailure) => {
+      const c = await setup({
+        recordMode: "direct",
+        rateRejection: {
+          issueRateLimit: { events: 1, windowSec: 60 },
+          onKvFailure,
+        },
+      });
+      expect((await c.send(body(id(610), "failure"))).status).toBe(200);
+      const message = c.sent[0];
+      if (!message) throw new Error("Missing ingest claim");
+      vi.spyOn(c.kv, "increment").mockRejectedValue(
+        new Error("private-secret"),
+      );
+      expect(
+        (
+          await c.consumer.handle([
+            { id: "one", topic: "ingest", attempt: 1, message },
+          ])
+        )[0]?.action,
+      ).toBe(onKvFailure === "allow" ? "ack" : "retry");
+      expect(
+        JSON.stringify([
+          ...vi.mocked(c.logger.warn).mock.calls,
+          ...vi.mocked(c.logger.error).mock.calls,
+        ]),
+      ).not.toContain("private-secret");
+    },
+  );
   it("caps candidate new issues in the grouped record handler and counts dropped records", async () => {
     const c = await setup({ recordMode: "grouped" });
     const rateRejection = { newIssueCap: { issues: 1, windowSec: 60 } };

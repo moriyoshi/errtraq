@@ -172,6 +172,7 @@ export function create({
         kv: bindings.kv,
         queue: bindings.queue,
         recordMode,
+        rateRejection,
         logger,
         maxEnvelopeBytes: limit,
       });
@@ -209,6 +210,8 @@ export function create({
           ? new RecordHandler({
               store: bindings.store,
               blobs: bindings.blob,
+              kv: bindings.kv,
+              rateRejection,
               logger,
             })
           : undefined;

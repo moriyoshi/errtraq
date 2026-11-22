@@ -223,8 +223,11 @@ CF Cron Triggers, Cloud Scheduler) or an in-process timer on the standalone plat
 
 Stack-level `rateRejection` describes optional per-issue and new-issue fixed-window limits and
 an `onKvFailure` policy. Both limits are disabled by default; an explicit enabled limit is
-currently rejected at validation because enforcement is not wired. `onKvFailure` defaults to
-`allow`. See `.agents-docs/TODO.md` for the remaining integration.
+currently rejected at validation until conditional KV grants and their infrastructure tests
+are complete. The guarded consumer checks per-issue limits after suppression in both modes,
+and checks the new-issue cap in direct mode; the grouped record handler checks the cap. Rejected
+events are acknowledged without recording or forwarding. `onKvFailure` defaults to `allow`.
+See `.agents-docs/TODO.md` for the remaining integration.
 
 ### Issue-keyed record stage (M3, partially implemented)
 

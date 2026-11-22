@@ -1246,3 +1246,15 @@ for the current invocation. KV retry failures log aggregate metadata without pro
 The stack and platform guards remain: the consumer path, platform wiring and conditional KV
 grants are not yet implemented. A read-after-write contract for `IssueRepo.get` and a DynamoDB
 strong-read test make the admission assumption explicit.
+
+
+## 2026-11-22 — Guarded consumer rate enforcement
+
+The consumer now groups unsuppressed candidates across a delivery batch by project, issue
+and received-at fixed window before charging the per-issue counter. Direct mode pre-reads each
+candidate issue for the approximate new-issue cap; grouped mode leaves that cap to the record
+handler and never reads the store. A KV retry failure happens before any prepared event is
+forwarded or recorded, with provider details omitted from logs. Downstream handoff failures
+still retry their own deliveries. Standalone and Lambda pass settings and KV to both handlers.
+The stack and platform guards remain until conditional KV grants, generated-root assertions
+and mutation coverage are complete; the API dropped-count item also remains open.
