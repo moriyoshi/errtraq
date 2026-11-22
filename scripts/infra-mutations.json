@@ -623,5 +623,20 @@
     "id": "root-rate-record-drop-kv-binding",
     "root": "rate-grouped-new",
     "operation": "rate-drop-record-kv-binding"
+  },
+  {
+    "id": "root-rate-api-drop-kv-policy",
+    "root": "rate-direct-issue",
+    "operation": "rate-drop-api-kv-policy"
+  },
+  {
+    "id": "root-rate-api-drop-kv-binding",
+    "root": "rate-grouped-new",
+    "operation": "rate-drop-api-kv-binding"
+  },
+  {
+    "id": "root-rate-api-extra-kv-binding",
+    "root": "grouped-shared",
+    "operation": "rate-add-api-kv-binding"
   }
 ]

@@ -5,6 +5,9 @@ import {
   hashApiToken,
   type IssueId,
   type ProjectId,
+  type RateRejectionConfig,
+  RateRejector,
+  readDropped,
   toTimestamp,
   VersionConflictError,
   WebCryptoIdGen,
@@ -15,7 +18,7 @@ import { MemoryActiveStore } from "./memory-active.js";
 import { MemoryBlobStore, MemoryKV } from "./memory-other.js";
 import { DeterministicIdGen, FakeClock } from "./shared.js";
 
-async function setup() {
+async function setup(rateRejection?: RateRejectionConfig) {
   const store = new MemoryActiveStore();
   const clock = new FakeClock();
   const kv = new MemoryKV(clock);
@@ -40,7 +43,7 @@ async function setup() {
   });
   const blobs = new MemoryBlobStore();
   const logger = { error: vi.fn() };
-  const app = createApiApp({ store, clock, blobs, logger });
+  const app = createApiApp({ store, clock, blobs, logger, kv, rateRejection });
   const auth = { authorization: "Bearer secret" };
   async function seed(n: number) {
     const eventId = `event-${n}` as EventId;
@@ -72,8 +75,104 @@ async function setup() {
       },
     );
   }
-  return { store, clock, boot, app, auth, seed, blobs, logger };
+  return { store, clock, boot, app, auth, seed, blobs, logger, kv };
 }
+describe("approximate dropped counts", () => {
+  for (const config of [
+    { issueRateLimit: { events: 1, windowSec: 60 } },
+    { newIssueCap: { issues: 1, windowSec: 60 } },
+  ]) {
+    it("shows the current received-at window in list and detail and advances at expiry", async () => {
+      const c = await setup(config);
+      await c.seed(1);
+      const rejector = new RateRejector({
+        kv: c.kv,
+        config,
+        logger: { debug() {}, info() {}, warn() {}, error() {} },
+      });
+      const candidate = {
+        projectId: c.boot.project.id,
+        issueId: "issue-1",
+        receivedAt: c.clock.now(),
+      };
+      await rejector.recordDropped([candidate, candidate]);
+      const paths = [
+        "/api/0/issues/issue-1",
+        "/api/0/projects/org/project/issues/",
+      ];
+      for (const path of paths) {
+        const response = await c.app.request(path, { headers: c.auth });
+        expect(response.status).toBe(200);
+        const json = await response.json();
+        const issue = Array.isArray(json) ? json[0] : json;
+        expect(issue.approximateDropped).toEqual({
+          count: 2,
+          windowSec: 60,
+          windowStart: "2024-01-01T00:00:00.000Z",
+          windowEnd: "2024-01-01T00:01:00.000Z",
+          timeBasis: "receivedAt",
+        });
+      }
+      c.clock.advance(60000);
+      // A delayed old event increments its original received-at bucket, not this one.
+      await rejector.recordDropped([candidate]);
+      const response = await c.app.request("/api/0/issues/issue-1", {
+        headers: c.auth,
+      });
+      const issue = await response.json();
+      expect(issue.approximateDropped).toEqual({
+        count: 0,
+        windowSec: 60,
+        windowStart: "2024-01-01T00:01:00.000Z",
+        windowEnd: "2024-01-01T00:02:00.000Z",
+        timeBasis: "receivedAt",
+      });
+      c.clock.advance(120000);
+      expect(
+        await readDropped(
+          c.kv,
+          config,
+          c.boot.project.id,
+          candidate.issueId,
+          candidate.receivedAt,
+        ),
+      ).toEqual({ count: 0, windowSec: 60 });
+    });
+  }
+  it("omits the field when disabled or if the KV read fails, without exposing the error", async () => {
+    const disabled = await setup();
+    await disabled.seed(1);
+    for (const path of [
+      "/api/0/issues/issue-1",
+      "/api/0/projects/org/project/issues/",
+    ]) {
+      const response = await disabled.app.request(path, {
+        headers: disabled.auth,
+      });
+      const json = await response.json();
+      expect(Array.isArray(json) ? json[0] : json).not.toHaveProperty(
+        "approximateDropped",
+      );
+    }
+    const c = await setup({ issueRateLimit: { events: 1, windowSec: 60 } });
+    await c.seed(1);
+    vi.spyOn(c.kv, "get").mockRejectedValue(
+      new Error("private provider details"),
+    );
+    for (const path of [
+      "/api/0/issues/issue-1",
+      "/api/0/projects/org/project/issues/",
+    ]) {
+      const response = await c.app.request(path, { headers: c.auth });
+      expect(response.status).toBe(200);
+      const json = await response.json();
+      expect(Array.isArray(json) ? json[0] : json).not.toHaveProperty(
+        "approximateDropped",
+      );
+      expect(JSON.stringify(json)).not.toContain("private provider details");
+    }
+  });
+});
 describe("minimal API", () => {
   it("reports subject erasure as unavailable without mutating events", async () => {
     const c = await setup();

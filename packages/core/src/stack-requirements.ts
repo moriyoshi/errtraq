@@ -19,6 +19,7 @@ export interface PortRequirement {
     | "notifications"
     | "direct"
     | "grouped"
+    | "rate-api"
     | "rate-consumer"
     | "rate-record";
   milestone?: "M3" | "M4";
@@ -101,6 +102,13 @@ export const PORT_REQUIREMENTS: readonly PortRequirement[] = [
   { kind: "blob", role: "cron", capability: "list", purpose: "primary" },
   { kind: "kv", role: "ingest", capability: "read", purpose: "primary" },
   { kind: "kv", role: "ingest", capability: "write", purpose: "primary" },
+  {
+    kind: "kv",
+    role: "api",
+    capability: "read",
+    purpose: "primary",
+    feature: "rate-api",
+  },
   ...(["read", "write"] as const).flatMap((capability) =>
     (["consumer", "record"] as const).map((role) => ({
       kind: "kv" as const,

@@ -10,9 +10,13 @@ import {
   type Issue,
   type IssueId,
   type IssueStatus,
+  type KV,
   type Logger,
   NotFoundError,
   type Project,
+  type RateRejectionConfig,
+  rateRejectionEnabled,
+  readDropped,
   type StoredEvent,
   UnsupportedQueryError,
   VersionConflictError,
@@ -29,10 +33,14 @@ export function createApiApp(options: {
   store: ActiveStore;
   clock: Clock;
   blobs?: BlobStore;
+  kv?: KV;
+  rateRejection?: RateRejectionConfig;
   logger?: Pick<Logger, "error">;
 }): Hono<Env> {
   const app = new Hono<Env>({ strict: false });
   const { store, clock } = options;
+  if (rateRejectionEnabled(options.rateRejection) && !options.kv)
+    throw new Error("Rate rejection API requires KV");
   async function payloadOf(
     event: StoredEvent,
   ): Promise<Record<string, unknown>> {
@@ -59,13 +67,37 @@ export function createApiApp(options: {
     if (!project || !org)
       throw new Error("Issue project or organization missing");
     const event = await store.events.get(issue.projectId, issue.lastEventId);
-    return issueJson(
+    const result = issueJson(
       issue,
       project,
       org,
       origin,
       event ? await payloadOf(event) : {},
     );
+    if (!options.kv || !rateRejectionEnabled(options.rateRejection))
+      return result;
+    const now = clock.now();
+    const dropped = await readDropped(
+      options.kv,
+      options.rateRejection,
+      issue.projectId,
+      issue.id,
+      now,
+    );
+    if (!dropped) return result;
+    const start =
+      Math.floor(Date.parse(now) / (dropped.windowSec * 1000)) *
+      dropped.windowSec *
+      1000;
+    return {
+      ...result,
+      approximateDropped: {
+        ...dropped,
+        windowStart: new Date(start).toISOString(),
+        windowEnd: new Date(start + dropped.windowSec * 1000).toISOString(),
+        timeBasis: "receivedAt" as const,
+      },
+    };
   }
   app.onError((error, c) => {
     if (error instanceof HTTPException && error.status < 500)

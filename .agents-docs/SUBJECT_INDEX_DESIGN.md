@@ -291,7 +291,15 @@ stored, never advances `lastSeen` and cannot cause a regression/notification.
 
 For each rejected event increment a per-project/issue/window KV dropped counter and surface it as a **windowed, approximate** API
 field, separately from `Issue.count`. No durable rejection ledger: double counting on redelivery and increments lost on a crash are
-accepted; this must not be labeled an exact total. Fail open on KV failure by default and emit an aggregate failure metric without PII;
+accepted; this must not be labeled an exact total. Issue list and detail responses expose `approximateDropped` with `count`, `windowSec`,
+`windowStart`, `windowEnd` and `timeBasis: "receivedAt"` while a limit is enabled. The window is
+aligned to UTC epoch boundaries using the issue limit's window when configured, otherwise the
+new-issue cap's window. Each drop is charged to its original ingest `receivedAt` bucket; delayed
+or replayed events can update an old bucket and therefore be absent from the current-window API
+count. This matches admission accounting and avoids moving retries between buckets, at the cost
+of understating delayed drops in the current window. Keys have a two-window TTL from creation.
+A missing key means zero; a KV failure or invalid value omits the field rather than failing the
+request. Counts can be over- or under-reported as described above. Fail open on KV failure by default and emit an aggregate failure metric without PII;
 per stack an operator can choose retry instead. Project-level new-issue cap limits rotating fingerprints. The existing KV has no atomic
 "first fingerprint in this window" operation: if cap decisions count candidates that observe an absent issue, simultaneous candidates
 and retries can overcount. This is a conservative approximate cap, not an exact unique-issue quota; using a durable dedupe ledger would

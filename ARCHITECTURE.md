@@ -227,7 +227,9 @@ active when configured. The consumer checks per-issue limits after suppression i
 and checks the new-issue cap in direct mode; the grouped record handler checks the cap. Rejected
 events are acknowledged without recording or forwarding. `onKvFailure` defaults to `allow`.
 The consumer receives KV read and write access when its checks need it; the grouped record
-role receives it for the new-issue cap. The issue API dropped-count field remains future work.
+role receives it for the new-issue cap. Issue list and detail responses include `approximateDropped` for the current fixed window when
+limits are enabled; its bounds and `receivedAt` basis make delayed-event attribution explicit.
+A KV read failure omits the field without failing the request.
 
 ### Issue-keyed record stage (M3, partially implemented)
 

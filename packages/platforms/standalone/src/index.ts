@@ -189,6 +189,8 @@ export function create({
             store: bindings.store,
             clock,
             blobs: bindings.blob,
+            kv: bindings.kv,
+            rateRejection,
             logger,
           }),
         );

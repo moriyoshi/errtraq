@@ -1267,3 +1267,13 @@ the per-issue limit or the direct-mode new-issue cap; the grouped record role ge
 the new-issue cap. Requirement-derived bindings follow the same scopes. Generated roots test
 these combinations and mutation checks remove or add access to exercise the assertions.
 Suppression and the issue API dropped-count field remain future work.
+
+
+## 2026-11-22 — Approximate drop counts on issue responses
+
+Issue list and detail responses expose the current fixed-window approximate dropped count when
+a rate limit is enabled. The API receives KV read access only in that case; KV failures omit the
+field. Windows use ingest `receivedAt`, matching admission and preserving retry attribution. A
+delayed event can therefore increment a past bucket and be absent from the current response;
+the response identifies the basis and bounds. When both limits are enabled, the issue limit
+sets the dropped-counter window.

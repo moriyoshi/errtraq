@@ -97,6 +97,8 @@ export function createHandler(
       createApiApp({
         store: adapters.store,
         blobs: adapters.blob,
+        kv: adapters.kv,
+        rateRejection: options.rateRejection,
         clock,
         logger: log,
       }),

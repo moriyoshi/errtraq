@@ -569,5 +569,5 @@ artifacts. The consumer receives KV read/write grants and bindings when the per-
 is enabled or the direct-mode new-issue cap is enabled. The record role receives them when the
 grouped-mode new-issue cap is enabled. The consumer batches per-issue checks across delivered envelopes and checks the new-issue cap
 in direct mode; in grouped mode the record handler checks that cap. Platform code passes KV
-and the stack settings to each handler. Rejected events are not stored or forwarded. The API
-dropped-count field remains future work.
+and the stack settings to each handler. Rejected events are not stored or forwarded. The API role receives only KV read access when either limit is enabled; issue responses expose
+an approximate current-window dropped count and omit it on KV read failure.

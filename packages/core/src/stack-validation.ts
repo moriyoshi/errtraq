@@ -106,26 +106,30 @@ function featureEnabled(
     | "notifications"
     | "direct"
     | "grouped"
+    | "rate-api"
     | "rate-consumer"
     | "rate-record",
   milestone?: "M3" | "M4",
 ): boolean {
   return (
     (feature === undefined && milestone === undefined) ||
-    (feature === "rate-consumer"
+    (feature === "rate-api"
       ? !!stack.rateRejection?.issueRateLimit ||
-        ((stack.recordMode ?? "direct") === "direct" &&
-          !!stack.rateRejection?.newIssueCap)
-      : feature === "rate-record"
-        ? stack.recordMode === "grouped" && !!stack.rateRejection?.newIssueCap
-        : feature === "archive"
-          ? !!stack.archive
-          : feature === "direct"
-            ? (stack.recordMode ?? "direct") === "direct"
-            : feature === "grouped"
-              ? stack.recordMode === "grouped"
-              : feature === "notifications" &&
-                stack.features?.notifications === true)
+        !!stack.rateRejection?.newIssueCap
+      : feature === "rate-consumer"
+        ? !!stack.rateRejection?.issueRateLimit ||
+          ((stack.recordMode ?? "direct") === "direct" &&
+            !!stack.rateRejection?.newIssueCap)
+        : feature === "rate-record"
+          ? stack.recordMode === "grouped" && !!stack.rateRejection?.newIssueCap
+          : feature === "archive"
+            ? !!stack.archive
+            : feature === "direct"
+              ? (stack.recordMode ?? "direct") === "direct"
+              : feature === "grouped"
+                ? stack.recordMode === "grouped"
+                : feature === "notifications" &&
+                  stack.features?.notifications === true)
   );
 }
 interface AccessRequirement {

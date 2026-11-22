@@ -316,3 +316,28 @@ it("accepts rate-rejection configuration for an idle handler", () => {
     }),
   ).not.toThrow();
 });
+
+it("wires KV and rate rejection to the API role only when configured", () => {
+  const adapters = {
+    store: new MemoryActiveStore(),
+    blob: new MemoryBlobStore(),
+  };
+  const options = {
+    roles: ["api"] as const,
+    http: ["api"] as const,
+    adapters,
+    rateRejection: { newIssueCap: { issues: 1, windowSec: 60 } },
+  };
+  expect(() => createHandler(options)).toThrow(
+    "Rate rejection API requires KV",
+  );
+  expect(() =>
+    createHandler({
+      ...options,
+      adapters: { ...adapters, kv: new MemoryKV() },
+    }),
+  ).not.toThrow();
+  expect(() =>
+    createHandler({ ...options, rateRejection: undefined }),
+  ).not.toThrow();
+});

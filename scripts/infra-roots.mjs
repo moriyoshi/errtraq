@@ -375,10 +375,11 @@ export function prepareRoot(parent, name, version) {
         : name === "rate-grouped-new"
           ? ["record"]
           : [];
-    for (const role of ["consumer", "record"]) {
+    for (const role of ["api", "consumer", "record"]) {
       const fn = view.functions.find((item) => item.roles.includes(role));
       if (!fn) continue;
-      const wanted = expected.includes(role);
+      const wanted =
+        role === "api" ? name.startsWith("rate-") : expected.includes(role);
       const grants = fn.policies
         .filter((item) => item.selection === "kv")
         .map((item) => item.capability)
@@ -389,7 +390,9 @@ export function prepareRoot(parent, name, version) {
       );
       if (
         JSON.stringify(grants) !==
-          JSON.stringify(wanted ? ["read", "write"] : []) ||
+          JSON.stringify(
+            wanted ? (role === "api" ? ["read"] : ["read", "write"]) : [],
+          ) ||
         binding !== wanted
       )
         throw new Error(`Incorrect ${role} KV scope in ${name}`);

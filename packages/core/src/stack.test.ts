@@ -383,6 +383,20 @@ describe("conditional rate rejection access", () => {
             ),
           ).toBe(expected);
         }
+        const apiEnabled = limits !== "none";
+        expect(
+          access.grants
+            .filter((g) => g.functionId === "api" && g.selection === "kv")
+            .map((g) => g.capability),
+        ).toEqual(apiEnabled ? ["read"] : []);
+        expect(
+          access.bindings.some(
+            (b) =>
+              b.functionId === "api" &&
+              b.selection === "kv" &&
+              b.binding.name === "KV_TABLE",
+          ),
+        ).toBe(apiEnabled);
         if (mode === "grouped")
           expect(
             access.grants.some(
