@@ -1213,3 +1213,14 @@ generated-root and emulator work is recorded in TODO.
   run used empty tags, so tag assertions now use non-empty tags.
 - Not verified anywhere: alarm evaluation, state changes, SNS delivery and the real-provider
   behavior on AWS (left on the M3h real-AWS checklist).
+
+
+## 2026-11-22 — M3 stage 3 rate-based rejection
+
+Retained the independent fixed-window counter helper from the initial draft and tested batch
+ordering, project isolation, bounds, disabled behavior and failure handling. Dropped counts
+read only the current aligned window, avoiding a two-window total labeled as one window. The
+helper logs aggregate failure context without provider error text or names. The draft consumer
+integration was removed because stack configuration, grouped-mode checks, API fields and
+grants are not yet wired; rejection remains inactive. The remaining work and the decision
+needed for delayed-event buckets are recorded in TODO.

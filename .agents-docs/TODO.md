@@ -111,3 +111,29 @@ item should be resolved or removed once addressed. Milestone work itself is trac
   provider before adding a self-verifying named exception. Keep tracked HCL unchanged for any
   emulator limitation. Run the workspace gate, `infra:validate`, `infra:mutate`,
   `test:aws-emulated` and the relevant `infra:apply-emulated` variant.
+
+
+- [ ] M3 stage 3 rate-based rejection: finish the slice in
+  `.agents-workspace/tmp/m3-rate-rejection.md`. The isolated core `RateRejector` and its unit
+  tests exist, but no pipeline calls it: both limits are effectively disabled for every stack.
+  Add bounded stack-level `issueRateLimit`, `newIssueCap`, and `onKvFailure` configuration
+  (the helper currently permits counts 1..1,000,000,000 and windows 1..86,400 seconds), and thread it through deployed plans, generated entries and standalone construction.
+- [ ] M3 stage 3 integration: run suppression before rejection (leave TODO(M4)); batch the
+  per-issue counter in the consumer before publishing in grouped mode, and check the candidate
+  new-issue cap using a strong issue read in direct consumer / grouped record handler. Reject
+  without storage, regression, lastSeen changes or forwarding; preserve per-group failure order
+  and at-least-once idempotency. Add conditional consumer / record KV read and write grants,
+  binding scopes, generated-root assertions and mutation coverage. Keep the grouped consumer
+  free of store access.
+- [ ] M3 stage 3 API and verification: expose a clearly labeled approximate dropped count
+  and its fixed window on issue responses, with KV expiry / failure behavior and privacy-safe
+  aggregate logging (the helper currently logs once per failed KV group, not once per batch).
+  Retry-mode callers must not log provider error messages or names, since
+  they may contain PII or credentials. Review the helper's `receivedAt` bucket choice for delayed events and the
+  aligned current-window read before fixing the public shape. Add integration tests for both
+  modes, retries, project isolation, issue rotation, resolved-issue rejection, duplicates and
+  API expiry; complete the documented end-to-end, emulator, Terraform and mutation checks.
+  Per-project overrides are explicitly deferred (TODO(M3)). The helper's KV cost is one
+  increment per issue/window group when enabled, with extra increments for new issues and
+  drops and KV reads for issue API counters; the DynamoDB KV implementation also reads when
+  incrementing.

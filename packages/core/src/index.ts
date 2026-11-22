@@ -17,6 +17,7 @@ export * from "./normalize.js";
 export * from "./path-hygiene.js";
 export * from "./ports.js";
 export * from "./queue.js";
+export * from "./rate-rejection.js";
 export * from "./record-handler.js";
 export * from "./recover-ingest.js";
 export * from "./stack.js";
