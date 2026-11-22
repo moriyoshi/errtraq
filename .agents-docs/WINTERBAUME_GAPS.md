@@ -244,6 +244,12 @@ reproduces).
 | S3 percent-decoding corrupts UTF-8 keys | [#58](https://github.com/moriyoshi/winterbaume/issues/58); local contract-only patch until fixed |
 | DynamoDB conditional updates are not atomic with their checks | [#61](https://github.com/moriyoshi/winterbaume/issues/61) |
 | Lambda `VpcConfig` is accepted but never returned | [#62](https://github.com/moriyoshi/winterbaume/issues/62) |
+| SQS FIFO `DeduplicationScope` / `FifoThroughputLimit` are discarded | [#64](https://github.com/moriyoshi/winterbaume/issues/64) |
+| SQS FIFO delivers more of a group while a message is in flight | [#65](https://github.com/moriyoshi/winterbaume/issues/65) |
+| SQS FIFO receive omits `MessageGroupId`, `MessageDeduplicationId`, `SequenceNumber` | [#66](https://github.com/moriyoshi/winterbaume/issues/66) |
+| EventBridge `PutRule` drops `Tags` | [#67](https://github.com/moriyoshi/winterbaume/issues/67) |
+| CloudWatch `DescribeAlarms` omits `TreatMissingData`; new alarms start in `OK` | [#68](https://github.com/moriyoshi/winterbaume/issues/68) |
+| CloudWatch rejects AWS JSON 1.0 protocol requests (`MissingAction`); AWS CLI 2.35 cannot call it | [#69](https://github.com/moriyoshi/winterbaume/issues/69) |
 | S3 ranged GET in server release 0.2.6 | [#29](https://github.com/moriyoshi/winterbaume/issues/29) (closed; fixed at the pinned revision) |
 
 ## Lambda VPC configuration is discarded
