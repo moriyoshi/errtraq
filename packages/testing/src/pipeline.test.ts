@@ -17,6 +17,7 @@ import {
   parseEnvelope,
   parseEventPayload,
   RecordHandler,
+  readDropped,
   recoverStagedEnvelopes,
   WebCryptoIdGen,
 } from "@errtraq/core";
@@ -135,6 +136,291 @@ async function withConsumer(
 }
 
 describe("in-process ingest pipeline", () => {
+  it("caps candidate new issues in the grouped record handler and counts dropped records", async () => {
+    const c = await setup({ recordMode: "grouped" });
+    const rateRejection = { newIssueCap: { issues: 1, windowSec: 60 } };
+    const handler = new RecordHandler({
+      store: c.store,
+      blobs: c.blobs,
+      kv: c.kv,
+      logger: c.logger,
+      rateRejection,
+    });
+    const a = await normalizeEvent(
+      c.project.project.id,
+      id(71) as EventId,
+      c.clock.now(),
+      { message: "first issue" },
+    );
+    const b = await normalizeEvent(
+      c.project.project.id,
+      id(72) as EventId,
+      c.clock.now(),
+      { message: "second issue" },
+    );
+    const b2 = await normalizeEvent(
+      c.project.project.id,
+      id(73) as EventId,
+      c.clock.now(),
+      { message: "second issue" },
+    );
+    const toDelivery = (n: string, value: typeof a): Delivery => ({
+      id: n,
+      topic: "record",
+      attempt: 1,
+      message: {
+        key: value.event.eventId,
+        groupKey: value.event.issueId,
+        body: JSON.parse(JSON.stringify({ version: 1, ...value })),
+      },
+    });
+    const get = vi.spyOn(c.store.issues, "get");
+    const increment = vi.spyOn(c.kv, "increment");
+    expect(
+      await handler.handle([
+        toDelivery("a", a),
+        toDelivery("b", b),
+        toDelivery("b2", b2),
+      ]),
+    ).toEqual([
+      { deliveryId: "a", action: "ack" },
+      { deliveryId: "b", action: "ack" },
+      { deliveryId: "b2", action: "ack" },
+    ]);
+    expect(
+      await c.store.events.get(c.project.project.id, a.event.eventId),
+    ).not.toBeNull();
+    expect(
+      await c.store.events.get(c.project.project.id, b.event.eventId),
+    ).toBeNull();
+    expect(
+      await c.store.events.get(c.project.project.id, b2.event.eventId),
+    ).toBeNull();
+    expect(get).toHaveBeenCalledTimes(2);
+    expect(increment).toHaveBeenCalledTimes(3);
+    expect(
+      await readDropped(
+        c.kv,
+        rateRejection,
+        c.project.project.id,
+        b.event.issueId,
+        c.clock.now(),
+      ),
+    ).toEqual({ count: 2, windowSec: 60 });
+    const existing = await normalizeEvent(
+      c.project.project.id,
+      id(74) as EventId,
+      c.clock.now(),
+      { message: "first issue" },
+    );
+    expect(await handler.handle([toDelivery("existing", existing)])).toEqual([
+      { deliveryId: "existing", action: "ack" },
+    ]);
+    expect(
+      await c.store.events.get(c.project.project.id, existing.event.eventId),
+    ).not.toBeNull();
+    expect(increment).toHaveBeenCalledTimes(3);
+  });
+  it("rechecks issue existence between chunks without charging the same candidate twice", async () => {
+    const c = await setup({ recordMode: "grouped" });
+    const config = { newIssueCap: { issues: 1, windowSec: 60 } };
+    const handler = new RecordHandler({
+      store: c.store,
+      blobs: c.blobs,
+      kv: c.kv,
+      logger: c.logger,
+      rateRejection: config,
+    });
+    const timestamp = c.clock.now();
+    const bucket = Math.floor(Date.parse(timestamp) / 60_000);
+    await c.kv.increment(
+      `rate:new-issues:${c.project.project.id}:${bucket}`,
+      1,
+      { ttlSec: 120 },
+    );
+    const get = vi.spyOn(c.store.issues, "get");
+    const increment = vi.spyOn(c.kv, "increment");
+    const deliveries: Delivery[] = [];
+    for (let n = 0; n < 11; n++) {
+      const value = await normalizeEvent(
+        c.project.project.id,
+        id(200 + n) as EventId,
+        timestamp,
+        { message: "one issue" },
+      );
+      deliveries.push({
+        id: String(n),
+        topic: "record",
+        attempt: 1,
+        message: {
+          key: value.event.eventId,
+          groupKey: value.event.issueId,
+          body: JSON.parse(JSON.stringify({ version: 1, ...value })),
+        },
+      });
+    }
+    expect(
+      (await handler.handle(deliveries)).every(
+        (result) => result.action === "ack",
+      ),
+    ).toBe(true);
+    expect(get).toHaveBeenCalledTimes(2);
+    expect(
+      increment.mock.calls.filter(([key]) =>
+        key.startsWith("rate:new-issues:"),
+      ),
+    ).toHaveLength(1);
+    const group = deliveries[0]?.message.groupKey;
+    if (!group) throw new Error("Missing group");
+    expect(
+      await readDropped(c.kv, config, c.project.project.id, group, timestamp),
+    ).toEqual({ count: 11, windowSec: 60 });
+  });
+  it("can admit a later record for the same new issue in a later cap window", async () => {
+    const c = await setup({ recordMode: "grouped" });
+    const config = { newIssueCap: { issues: 1, windowSec: 60 } };
+    const firstTime = c.clock.now();
+    const laterTime = "2024-01-01T00:01:00.000Z" as typeof firstTime;
+    const bucket = Math.floor(Date.parse(firstTime) / 60_000);
+    await c.kv.increment(
+      `rate:new-issues:${c.project.project.id}:${bucket}`,
+      1,
+      { ttlSec: 120 },
+    );
+    const first = await normalizeEvent(
+      c.project.project.id,
+      id(300) as EventId,
+      firstTime,
+      { message: "same issue" },
+    );
+    const later = await normalizeEvent(
+      c.project.project.id,
+      id(301) as EventId,
+      laterTime,
+      { message: "same issue" },
+    );
+    const delivery = (name: string, value: typeof first): Delivery => ({
+      id: name,
+      topic: "record",
+      attempt: 1,
+      message: {
+        key: value.event.eventId,
+        groupKey: value.event.issueId,
+        body: JSON.parse(JSON.stringify({ version: 1, ...value })),
+      },
+    });
+    const handler = new RecordHandler({
+      store: c.store,
+      blobs: c.blobs,
+      kv: c.kv,
+      logger: c.logger,
+      rateRejection: config,
+    });
+    expect(
+      await handler.handle([
+        delivery("first", first),
+        delivery("later", later),
+      ]),
+    ).toEqual([
+      { deliveryId: "first", action: "ack" },
+      { deliveryId: "later", action: "ack" },
+    ]);
+    expect(
+      await c.store.events.get(c.project.project.id, first.event.eventId),
+    ).toBeNull();
+    expect(
+      await c.store.events.get(c.project.project.id, later.event.eventId),
+    ).not.toBeNull();
+  });
+  it("does not reuse an admitted group for a different project across chunks", async () => {
+    const c = await setup({ recordMode: "grouped" });
+    const time = c.clock.now();
+    const deliveries: Delivery[] = [];
+    for (let n = 0; n < 11; n++) {
+      const value = await normalizeEvent(
+        c.project.project.id,
+        id(400 + n) as EventId,
+        time,
+        { message: "same group" },
+      );
+      if (n === 10) {
+        value.occurrence.projectId = "999" as typeof value.occurrence.projectId;
+        value.event.projectId = "999" as typeof value.event.projectId;
+      }
+      deliveries.push({
+        id: String(n),
+        topic: "record",
+        attempt: 1,
+        message: {
+          key: value.event.eventId,
+          groupKey: value.event.issueId,
+          body: JSON.parse(JSON.stringify({ version: 1, ...value })),
+        },
+      });
+    }
+    const handler = new RecordHandler({
+      store: c.store,
+      blobs: c.blobs,
+      kv: c.kv,
+      logger: c.logger,
+      rateRejection: { newIssueCap: { issues: 1, windowSec: 60 } },
+    });
+    const result = await handler.handle(deliveries);
+    expect(result.slice(0, 10).every((item) => item.action === "ack")).toBe(
+      true,
+    );
+    expect(result[10]).toEqual({ deliveryId: "10", action: "retry" });
+    expect(
+      await c.store.events.get(
+        "999" as typeof c.project.project.id,
+        id(410) as EventId,
+      ),
+    ).toBeNull();
+  });
+  it.each(["allow", "retry"] as const)(
+    "handles grouped new-issue KV failure with %s policy",
+    async (onKvFailure) => {
+      const c = await setup({ recordMode: "grouped" });
+      const event = await normalizeEvent(
+        c.project.project.id,
+        id(75) as EventId,
+        c.clock.now(),
+        { message: "failure" },
+      );
+      const delivery: Delivery = {
+        id: "d",
+        topic: "record",
+        attempt: 1,
+        message: {
+          key: event.event.eventId,
+          groupKey: event.event.issueId,
+          body: JSON.parse(JSON.stringify({ version: 1, ...event })),
+        },
+      };
+      vi.spyOn(c.kv, "increment").mockRejectedValue(
+        new Error("private-secret"),
+      );
+      const handler = new RecordHandler({
+        store: c.store,
+        blobs: c.blobs,
+        kv: c.kv,
+        logger: c.logger,
+        rateRejection: {
+          newIssueCap: { issues: 1, windowSec: 60 },
+          onKvFailure,
+        },
+      });
+      expect(await handler.handle([delivery])).toEqual([
+        { deliveryId: "d", action: onKvFailure === "allow" ? "ack" : "retry" },
+      ]);
+      expect(
+        await c.store.events.get(c.project.project.id, event.event.eventId),
+      ).toEqual(onKvFailure === "allow" ? expect.anything() : null);
+      expect(JSON.stringify(vi.mocked(c.logger.warn).mock.calls)).not.toContain(
+        "private-secret",
+      );
+    },
+  );
   it("stores oversized normalized records as durable claim checks", async () => {
     const c = await setup({ recordMode: "grouped" });
     c.queue.capabilities.maxBytes = 500;

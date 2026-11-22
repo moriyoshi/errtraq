@@ -107,6 +107,13 @@ describe("rate rejection counters", () => {
         await expect(rejector.recordDropped([candidate()])).rejects.toBe(
           sensitive,
         );
+        expect(logger.warn).toHaveBeenCalledWith(
+          "Rate rejection KV failure",
+          expect.objectContaining({ failurePolicy: "retry" }),
+        );
+        expect(JSON.stringify(vi.mocked(logger.warn).mock.calls)).not.toContain(
+          "private-user",
+        );
       }
     }
   });

@@ -4,9 +4,11 @@ import type {
   BatchHandler,
   BlobStore,
   Delivery,
+  KV,
   Logger,
   RecordInput,
 } from "./ports.js";
+import { type RateRejectionConfig, RateRejector } from "./rate-rejection.js";
 
 const object = (value: unknown): Record<string, unknown> | undefined =>
   value && typeof value === "object" && !Array.isArray(value)
@@ -16,15 +18,26 @@ class PoisonRecord extends Error {}
 
 /** Consume normalized records in issue order. Delivery remains at-least-once. */
 export class RecordHandler {
+  private readonly rejector?: RateRejector;
   constructor(
     private readonly options: {
       store: ActiveStore;
       blobs: BlobStore;
       logger: Logger;
+      kv?: KV;
+      rateRejection?: RateRejectionConfig;
     },
   ) {
     if (!options.store.capabilities.recordEvents || !options.store.recordEvents)
       throw new Error("Store does not support grouped recording");
+    if (options.rateRejection?.newIssueCap) {
+      if (!options.kv) throw new Error("New-issue cap requires KV");
+      this.rejector = new RateRejector({
+        kv: options.kv,
+        config: options.rateRejection,
+        logger: options.logger,
+      });
+    }
   }
   private async decode(delivery: Delivery): Promise<RecordInput> {
     let value = object(delivery.message.body);
@@ -117,6 +130,14 @@ export class RecordHandler {
     const actions = new Map<string, "ack" | "retry">();
     for (const group of groups.values()) {
       let index = 0;
+      let issueExists: boolean | undefined;
+      let groupIdentity:
+        | Pick<
+            RecordInput["occurrence"],
+            "projectId" | "issueId" | "fingerprint"
+          >
+        | undefined;
+      const deniedWindows = new Set<number>();
       while (index < group.length) {
         const prefix: RecordInput[] = [];
         const items: Delivery[] = [];
@@ -147,10 +168,54 @@ export class RecordHandler {
         }
         if (prefix.length) {
           try {
+            let admitted = prefix;
+            const cap = this.options.rateRejection?.newIssueCap;
+            const first = prefix[0];
+            // TODO(M4): the consumer must apply erasure suppression before any rate check or publish.
+            if (this.rejector && cap && first) {
+              groupIdentity ??= first.occurrence;
+              if (
+                prefix.some(
+                  ({ occurrence }) =>
+                    occurrence.projectId !== groupIdentity?.projectId ||
+                    occurrence.issueId !== groupIdentity?.issueId ||
+                    occurrence.fingerprint !== groupIdentity?.fingerprint,
+                )
+              )
+                throw new Error("Record group identity mismatch");
+              if (!issueExists)
+                issueExists = !!(await this.options.store.issues.get(
+                  first.occurrence.projectId,
+                  first.occurrence.issueId,
+                ));
+              if (!issueExists) {
+                const rejected: RecordInput[] = [];
+                admitted = [];
+                for (const input of prefix) {
+                  const occurrence = input.occurrence;
+                  const bucket = Math.floor(
+                    Date.parse(occurrence.receivedAt) / (cap.windowSec * 1000),
+                  );
+                  if (!issueExists && !deniedWindows.has(bucket)) {
+                    const [allowed] = await this.rejector.admitNewIssues([
+                      occurrence,
+                    ]);
+                    if (allowed) issueExists = true;
+                    else deniedWindows.add(bucket);
+                  }
+                  if (issueExists) admitted.push(input);
+                  else rejected.push(input);
+                }
+                await this.rejector.recordDropped(
+                  rejected.map((item) => item.occurrence),
+                );
+              }
+            }
             const recordEvents = this.options.store.recordEvents;
             if (!recordEvents)
               throw new Error("Store does not support grouped recording");
-            await recordEvents.call(this.options.store, prefix);
+            if (admitted.length)
+              await recordEvents.call(this.options.store, admitted);
             // TODO(M5): emit issue.created / issue.regressed through a durable notification outbox.
             for (const item of items) actions.set(item.id, "ack");
           } catch {

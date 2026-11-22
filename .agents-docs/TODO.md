@@ -115,15 +115,18 @@ item should be resolved or removed once addressed. Milestone work itself is trac
 
 - [ ] M3 stage 3 rate-based rejection: finish the slice in
   `.agents-workspace/tmp/m3-rate-rejection.md`. The isolated core `RateRejector` and its unit
-  tests exist, but no pipeline calls it: both limits are effectively disabled for every stack.
+  tests exist; the grouped record handler can enforce the new-issue cap when supplied KV and
+  configuration directly, but stack and platform guards keep both limits disabled in deployments.
   Stack-level `rateRejection` is validated and threaded through deployed plans, generated
   Lambda entries and local platform construction. Its schema permits counts 1..1,000,000,000,
   windows 1..86,400 seconds and defaults `onKvFailure` to `allow`. Enabled limits are explicitly
   rejected by stack validation and both platform handlers until the enforcement and grants below
   land; remove all three guards only with integration.
 - [ ] M3 stage 3 integration: run suppression before rejection (leave TODO(M4)); batch the
-  per-issue counter in the consumer before publishing in grouped mode, and check the candidate
-  new-issue cap using a strong issue read in direct consumer / grouped record handler. Reject
+  per-issue counter in the consumer before publishing in grouped mode, and add the candidate
+  new-issue cap with a strong issue read in the direct consumer. The grouped record handler
+  already implements and tests the cap behind the guard; pass it KV and configuration only
+  after the conditional grants and the consumer checks are in place. Reject
   without storage, regression, lastSeen changes or forwarding; preserve per-group failure order
   and at-least-once idempotency. Add conditional consumer / record KV read and write grants,
   binding scopes, generated-root assertions and mutation coverage. Keep the grouped consumer

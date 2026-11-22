@@ -1234,3 +1234,15 @@ platform context. Limits are explicitly rejected until both execution paths and 
 are implemented: accepting a configured limit without enforcing it would silently lose the
 operator's protection. The disabled configuration remains usable and the existing pipeline is
 unchanged. TODO records the remaining integration and API work.
+
+
+## 2026-11-22 — Grouped new-issue admission groundwork
+
+The grouped `RecordHandler` can now use the new-issue cap when explicitly given its config and
+KV. It reads issue existence consistently before admission, counts each absent issue once per
+window within a delivery group, acknowledges rejected records and records approximate drops.
+It checks again between chunks while the issue is absent, and only retains a successful admission
+for the current invocation. KV retry failures log aggregate metadata without provider details.
+The stack and platform guards remain: the consumer path, platform wiring and conditional KV
+grants are not yet implemented. A read-after-write contract for `IssueRepo.get` and a DynamoDB
+strong-read test make the admission assumption explicit.

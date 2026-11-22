@@ -566,5 +566,6 @@ Stack `rateRejection` is an optional object carrying `issueRateLimit`, `newIssue
 are carried in deployed plans, generated Lambda entries and local platform construction. The
 Lambda plan is embedded at build time, so changing these settings requires rebuilding function
 artifacts. Enabled limits are temporarily rejected by stack validation and platform handlers until
-the consumer, record handler and conditional KV grants implement them. The API dropped-count
-field remains future work.
+the consumer, platform wiring and conditional KV grants implement them. The grouped record
+handler has an independently tested new-issue-cap path, but it is not wired to deployed
+functions. The API dropped-count field remains future work.

@@ -93,12 +93,13 @@ export class RateRejector {
     try {
       return await run();
     } catch (error) {
-      if (this.options.config.onKvFailure === "retry") throw error;
+      const failurePolicy = this.options.config.onKvFailure ?? "allow";
       this.options.logger.warn("Rate rejection KV failure", {
         operation,
         affected,
-        failurePolicy: "allow",
+        failurePolicy,
       });
+      if (failurePolicy === "retry") throw error;
       return fallback;
     }
   }

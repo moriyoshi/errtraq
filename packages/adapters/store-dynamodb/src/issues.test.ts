@@ -6,6 +6,28 @@ import { type Driver, type Item, primary, s } from "./repository-base.js";
 
 const projectId = "project" as ProjectId;
 describe("DynamoDB issue index pagination", () => {
+  it("reads an issue using a strongly consistent base-table get", async () => {
+    const calls: unknown[] = [];
+    const request: Driver["request"] = async (action, input) => {
+      calls.push({ action, input });
+      return {};
+    };
+    expect(
+      await issueRepository({ table: "table", request }).get(
+        projectId,
+        "issue" as Issue["id"],
+      ),
+    ).toBeNull();
+    expect(calls).toEqual([
+      expect.objectContaining({
+        action: "GetItem",
+        input: expect.objectContaining({
+          TableName: "table",
+          ConsistentRead: true,
+        }),
+      }),
+    ]);
+  });
   it.each([25, 130])(
     "hydrates %i issues in bounded batches rather than one request per row",
     async (size) => {
