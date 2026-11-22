@@ -288,11 +288,9 @@ export class ConsumerService {
                 const bytes = encode(record);
                 if (bytes.length > 8 * 1024 * 1024)
                   throw new Error("Normalized record exceeds limit");
-                const digest = Array.from(
-                  new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)),
-                  (b) => b.toString(16).padStart(2, "0"),
-                ).join("");
-                const blobKey = `payloads/records/${claim.projectId}/${eventId}/${digest}`;
+                // Each publication owns a fresh key. A cleanup of an older attempt must
+                // never remove an object that a later publication has reused.
+                const blobKey = `payloads/records/${claim.projectId}/${eventId}/${Date.now()}-${crypto.randomUUID()}`;
                 await this.options.blobs.put(blobKey, bytes, {
                   size: bytes.length,
                   contentType: "application/json",

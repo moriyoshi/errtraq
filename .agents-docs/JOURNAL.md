@@ -1302,3 +1302,22 @@ Consumer and record handlers collect KV failures separately for each delivery ba
 one privacy-safe aggregate warning at batch completion. Concurrent increments settle before
 retry errors propagate, preventing late failure logs from escaping the batch. Allow/retry
 semantics remain unchanged; project-level overrides remain deferred.
+
+
+## 2026-11-22 — Retention cleanup boundaries
+
+The grouped claim-check key includes a content digest and is reused on republish. BlobStore
+exposes neither modification time nor conditional delete, so an age check followed by delete
+can remove a newly published claim. SQS source and DLQ retention are 4 and 14 days, but the
+current model does not bound repeated manual redrive. Overflow keys are also reused, and
+`deleteBatch` does not durably retain blob keys; deleting either the row or blob first leaves a
+crash or reinsertion race. Item 3 needs an explicit bounded redrive / publication protocol and
+crash-resumable deletion before its cron can safely be wired.
+
+
+## 2026-11-22 — Immutable record claim publications
+
+New grouped record claim-check writes use a fresh timestamped UUID key per publication attempt.
+That prevents a future sweep of an earlier key from deleting an overwritten later publication.
+Legacy digest keys still need safe handling, and the publication / redrive horizon and the
+cleanup cron remain unimplemented. Fresh retry keys can increase orphan storage until then.

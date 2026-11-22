@@ -92,7 +92,22 @@ item should be resolved or removed once addressed. Milestone work itself is trac
 - [ ] M3: test EventBridge event handling against real AWS event shapes. — *source: M2 final review section B*
 - [x] M3 (store-dynamodb): implement issue-keyed FIFO and measure grouped 200 / 500-event workloads on DynamoDB Local (ffd0ba8, 0ca239b, fbeefb7); real AWS measurement remains in the M3h item above. — *source: owner queue-first decision*
 
-- [ ] M3 / M4: add retention-safe cleanup for grouped-record claim-check blobs after queue retention, DLQ and redrive windows; content-addressed retries can leave orphaned blobs. — *source: issue-keyed queue turn 5*
+- [ ] M3 / M4: add retention-safe cleanup for grouped-record claim-check blobs after queue
+  retention, DLQ and a bounded redrive window; legacy content-addressed retries reuse the same
+  key, so an age check followed by unconditional delete can race a republish. New claim keys
+  use a timestamp and fresh UUID; they can leave multiple orphaned objects across retries until
+  cleanup is implemented. The blob port exposes
+  neither modification time nor conditional delete. The SQS module sets a 4-day source and
+  14-day DLQ retention but does not bound repeated manual redrive. Establish a safe publication /
+  redrive horizon and race-safe key or deletion protocol before wiring the cron. Existing keys
+  need a migration or explicit safe handling. — *source: issue-keyed queue turn 5; M3 queue item 3*
+- [ ] M3: implement retention and crash-resumable overflow cleanup. `deleteBatch` currently
+  deletes event IDs without returning or durably recording payload keys, and overflow keys are
+  reused for the same project / event. Deleting the event first can leak its blob on a crash;
+  deleting the blob first can leave a live event unreadable. Account for concurrent reinsertion
+  and retries, then wire the cron and its least-privilege grants. Archive and erasure hooks remain
+  TODO(M4). The investigation and race cases are in `.agents-docs/M3_BLOB_CLEANUP_DESIGN.md`.
+  — *source: M3 queue item 3*
 
 - [x] M3: make the ingest rate limit configurable on the Lambda platform. — *source: M3h first real deployment*
 - [ ] M3 / product: decide whether an additional per-project ingest limit is needed alongside the existing per-DSN-key limit. — *source: M3h first real deployment*

@@ -919,6 +919,38 @@ describe("in-process ingest pipeline", () => {
       await c.store.events.get(c.project.project.id, id(18) as EventId),
     ).not.toBeNull();
   });
+  it("gives each grouped claim-check publication an immutable key", async () => {
+    const c = await setup({ recordMode: "grouped" });
+    c.queue.capabilities.maxBytes = 500;
+    expect(
+      (
+        await c.send(
+          body(id(180), "large", { extra: { value: "x".repeat(3000) } }),
+        )
+      ).status,
+    ).toBe(200);
+    const message = c.sent[0];
+    if (!message) throw new Error("missing ingest message");
+    const put = vi.spyOn(c.blobs, "put");
+    const send = vi
+      .spyOn(c.queue.producer, "send")
+      .mockRejectedValueOnce(new Error("temporary"));
+    const delivery = { id: "in", topic: "ingest", attempt: 1, message };
+    expect(await c.consumer.handle([delivery])).toEqual([
+      { deliveryId: "in", action: "retry" },
+    ]);
+    expect(await c.consumer.handle([{ ...delivery, attempt: 2 }])).toEqual([
+      { deliveryId: "in", action: "ack" },
+    ]);
+    const keys = put.mock.calls
+      .map(([key]) => key)
+      .filter((key) => key.startsWith("payloads/records/"));
+    expect(keys).toHaveLength(2);
+    expect(new Set(keys).size).toBe(2);
+    expect(keys.every((key) => /\/\d+-[0-9a-f-]{36}$/.test(key))).toBe(true);
+    expect(send).toHaveBeenCalledTimes(2);
+    for (const key of keys) expect(await c.blobs.get(key)).not.toBeNull();
+  });
   it("retains the staged envelope when publishing a grouped record fails", async () => {
     const c = await setup({ recordMode: "grouped" });
     expect((await c.send(body(id(19), "retry"))).status).toBe(200);
