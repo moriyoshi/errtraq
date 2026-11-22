@@ -140,3 +140,109 @@ it("finishes cleanup with one conditional DeleteItem", async () => {
   }).finishPendingBundleCleanup(bundle.projectId, bundle.id, "cleanup");
   expect(actions).toEqual(["GetItem", "DeleteItem"]);
 });
+
+it("backfills inventoried legacy bundles idempotently, retrying concurrent revisions without scanning", async () => {
+  const { backfillBundleIndexes } = await import("./bundles.js");
+  const { DynamoStoreError } = await import("./errors.js");
+  const bundle = {
+    id: "bundle",
+    projectId: "project",
+    releaseId: "release",
+    state: "pending",
+    pendingExpiresAt: "2025-01-01T00:00:00.000Z",
+  };
+  let row: Record<string, { S?: string }> = {
+    data: { S: JSON.stringify(bundle) },
+    revision: { S: "old" },
+  };
+  const calls: string[] = [];
+  let attempt = 0;
+  const request: Driver["request"] = async (action, input) => {
+    calls.push(action);
+    if (action === "GetItem") return { Item: structuredClone(row) };
+    expect(action).toBe("UpdateItem");
+    expect(input.ConditionExpression).toContain("#rev = :oldRevision");
+    expect(input.ConditionExpression).toContain(
+      "attribute_not_exists(#deleting)",
+    );
+    if (++attempt === 1) {
+      row.revision = { S: "concurrent" };
+      throw new DynamoStoreError("conflict", "ConditionalCheckFailedException");
+    }
+    const values = input.ExpressionAttributeValues as Record<
+      string,
+      { S: string }
+    >;
+    expect(values[":oldRevision"]?.S).toBe("concurrent");
+    row = {
+      ...row,
+      revision: values[":revision"],
+      GSI7PK: values[":g7pk"],
+      GSI7SK: values[":g7sk"],
+      GSI3PK: values[":g3pk"],
+      GSI3SK: values[":g3sk"],
+    };
+    return {};
+  };
+  const driver = { table: "table", request };
+  const inventory = [{ projectId: "project", bundleId: "bundle" }];
+  expect(await backfillBundleIndexes(driver, inventory)).toEqual({
+    updated: 1,
+    unchanged: 0,
+    missing: 0,
+    deleting: 0,
+  });
+  expect(await backfillBundleIndexes(driver, inventory)).toEqual({
+    updated: 0,
+    unchanged: 1,
+    missing: 0,
+    deleting: 0,
+  });
+  expect(calls).toEqual([
+    "GetItem",
+    "UpdateItem",
+    "GetItem",
+    "UpdateItem",
+    "GetItem",
+  ]);
+  expect(row.GSI3SK?.S).toMatch(/^2025-01-01/);
+});
+
+it("skips missing and deleting bundle rows during backfill", async () => {
+  const { backfillBundleIndexes } = await import("./bundles.js");
+  let reads = 0;
+  const request: Driver["request"] = async (action) => {
+    expect(action).toBe("GetItem");
+    return ++reads === 1 ? {} : { Item: { deleting: { S: "1" } } };
+  };
+  expect(
+    await backfillBundleIndexes({ table: "table", request }, [
+      { projectId: "p", bundleId: "missing" },
+      { projectId: "p", bundleId: "deleting" },
+    ]),
+  ).toEqual({ updated: 0, unchanged: 0, missing: 1, deleting: 1 });
+});
+
+it("removes obsolete pending index keys when repairing an active bundle", async () => {
+  const { backfillBundleIndexes } = await import("./bundles.js");
+  const bundle = { id: "b", projectId: "p", releaseId: "r", state: "active" };
+  const request: Driver["request"] = async (action, input) => {
+    if (action === "GetItem")
+      return {
+        Item: {
+          data: { S: JSON.stringify(bundle) },
+          GSI3PK: { S: "stale" },
+          GSI3SK: { S: "stale" },
+        },
+      };
+    expect(action).toBe("UpdateItem");
+    expect(input.UpdateExpression).toContain("REMOVE #g3pk, #g3sk");
+    expect(input.ConditionExpression).toContain("attribute_not_exists(#rev)");
+    return {};
+  };
+  expect(
+    await backfillBundleIndexes({ table: "table", request }, [
+      { projectId: "p", bundleId: "b" },
+    ]),
+  ).toMatchObject({ updated: 1 });
+});

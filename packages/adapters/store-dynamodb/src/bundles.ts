@@ -546,3 +546,119 @@ export function bundleRepository(
     },
   };
 }
+
+/**
+ * Repair legacy bundle indexes using an operator-supplied complete inventory of IDs.
+ * This never scans the table and skips rows already being deleted. Each update advances
+ * the revision so concurrent bundle lifecycle operations cannot lose their changes.
+ */
+export async function backfillBundleIndexes(
+  d: Driver,
+  inventory: readonly { projectId: string; bundleId: string }[],
+): Promise<{
+  updated: number;
+  unchanged: number;
+  missing: number;
+  deleting: number;
+}> {
+  if (inventory.length > 1000)
+    throw new RangeError("Bundle backfill inventory exceeds 1000 entries");
+  const counts = { updated: 0, unchanged: 0, missing: 0, deleting: 0 };
+  const seen = new Set<string>();
+  for (const entry of inventory) {
+    if (!entry.projectId || !entry.bundleId)
+      throw new TypeError("Invalid bundle backfill identifier");
+    const key = bundleKey(entry.projectId, entry.bundleId);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    let done = false;
+    for (let attempt = 0; attempt < 12; attempt++) {
+      const item = await get(d, key);
+      if (!item) {
+        counts.missing++;
+        done = true;
+        break;
+      }
+      if (item.deleting) {
+        counts.deleting++;
+        done = true;
+        break;
+      }
+      const bundle = itemData<ArtifactBundle>(item);
+      if (
+        !bundle ||
+        bundle.id !== entry.bundleId ||
+        bundle.projectId !== entry.projectId ||
+        !bundle.releaseId ||
+        !["active", "pending"].includes(bundle.state)
+      )
+        throw new DynamoStoreError("Invalid bundle backfill row");
+      if (bundle.state === "pending" && !bundle.pendingExpiresAt)
+        throw new DynamoStoreError("Pending bundle missing expiry");
+      const target = index(bundle);
+      const pendingPK =
+        bundle.state === "pending"
+          ? pendingPartition(bundle.projectId)
+          : undefined;
+      const pendingSK = pendingPK
+        ? `${bundle.pendingExpiresAt}#${sortKey(bundle.id)}`
+        : undefined;
+      if (
+        item.GSI7PK?.S === target.partition &&
+        item.GSI7SK?.S === target.sort &&
+        item.GSI3PK?.S === pendingPK &&
+        item.GSI3SK?.S === pendingSK
+      ) {
+        counts.unchanged++;
+        done = true;
+        break;
+      }
+      const names: Record<string, string> = {
+        "#pk": "PK",
+        "#rev": "revision",
+        "#deleting": "deleting",
+        "#g7pk": "GSI7PK",
+        "#g7sk": "GSI7SK",
+        "#g3pk": "GSI3PK",
+        "#g3sk": "GSI3SK",
+      };
+      const values: Item = {
+        ":revision": s(crypto.randomUUID()),
+        ":g7pk": s(target.partition),
+        ":g7sk": s(target.sort),
+      };
+      if (item.revision) values[":oldRevision"] = item.revision;
+      if (pendingPK && pendingSK) {
+        values[":g3pk"] = s(pendingPK);
+        values[":g3sk"] = s(pendingSK);
+      }
+      try {
+        await d.request("UpdateItem", {
+          TableName: d.table,
+          Key: primary(key),
+          UpdateExpression: `SET #rev = :revision, #g7pk = :g7pk, #g7sk = :g7sk${pendingPK ? ", #g3pk = :g3pk, #g3sk = :g3sk" : " REMOVE #g3pk, #g3sk"}`,
+          ConditionExpression: `attribute_exists(#pk) AND attribute_not_exists(#deleting) AND ${item.revision ? "#rev = :oldRevision" : "attribute_not_exists(#rev)"}`,
+          ExpressionAttributeNames: names,
+          ExpressionAttributeValues: values,
+        });
+        counts.updated++;
+        done = true;
+        break;
+      } catch (error) {
+        if (
+          !(error instanceof DynamoStoreError) ||
+          error.providerCode !== "ConditionalCheckFailedException"
+        )
+          throw error;
+        if (attempt < 11) await contentionDelay(attempt);
+      }
+    }
+    if (!done)
+      throw new DynamoStoreError(
+        "DynamoDB bundle backfill contention limit reached",
+        "ConditionalCheckFailedException",
+        true,
+      );
+  }
+  return counts;
+}

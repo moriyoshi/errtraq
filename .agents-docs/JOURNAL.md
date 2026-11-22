@@ -1321,3 +1321,12 @@ New grouped record claim-check writes use a fresh timestamped UUID key per publi
 That prevents a future sweep of an earlier key from deleting an overwritten later publication.
 Legacy digest keys still need safe handling, and the publication / redrive horizon and the
 cleanup cron remain unimplemented. Fresh retry keys can increase orphan storage until then.
+
+
+## 2026-11-22 — DynamoDB bundle index repair
+
+Legacy bundle index keys can be repaired using `DynamoStore.backfillBundleIndexes` and an
+explicit inventory, without a table scan. Revision-guarded updates reread on concurrent
+lifecycle changes and advance the revision themselves. The inventory is supplied externally;
+a partial inventory cannot establish that all legacy bundles were repaired. Issues remain
+permanent and do not receive a TTL.

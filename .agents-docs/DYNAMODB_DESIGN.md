@@ -298,10 +298,19 @@ the domain's ISO `StoredEvent.expiresAt` string. The KV table keeps its existing
 `expiresAt` TTL; module and emulator fixtures use the purpose-specific attribute. Explicit deletion remains primary. Without archival,
 an event can have a retention + margin TTL backstop; with archival, set the numeric TTL only
 after the archive batch is durably committed, because a fixed margin cannot prove the
-no-delete-before-commit invariant during an unbounded outage. Pending bundle and debug markers
-use `ttlEpoch`, subject to the activation caveat above; pending bundle items and manifest chunks never have TTL,
+no-delete-before-commit invariant during an unbounded outage. Pending debug-ID markers use
+`ttlEpoch`, subject to the activation caveat above; pending bundle items and manifest chunks never have TTL,
 and permanent/active markers have no TTL. Cleanup cron is required and must be monitored.
 PITR/backups can retain deleted bytes until their retention expires.
+
+Legacy bundle index repair is exposed as `DynamoStore.backfillBundleIndexes(inventory)` in
+`@errtraq/store-dynamodb/runtime`. Supply explicit `{ projectId, bundleId }` entries in batches
+of at most 1,000; there is no scan and the caller must obtain a complete inventory independently.
+The method strongly reads each row, skips missing or deleting bundles, conditionally repairs
+release and pending-expiry keys and advances the revision. Repeating it is safe; concurrent
+changes are reread and retried. It reports updated, unchanged, missing and deleting counts.
+It requires table `GetItem` and `UpdateItem` permissions. Incomplete inventories leave rows
+unindexed and must not be mistaken for a complete migration.
 
 The module defines the 11 string-key schemas listed above with `KEYS_ONLY` projections, uses
 purpose-specific TTL and records shard count in a protected table metadata item. It versions the

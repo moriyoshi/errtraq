@@ -1,5 +1,6 @@
 import { AwsRequestError, awsRequest } from "@errtraq/aws-signing";
 import type { ActiveStore, Clock, CreateContext, Logger } from "@errtraq/core";
+import { backfillBundleIndexes } from "./bundles.js";
 import {
   DynamoStoreAccessDeniedError,
   DynamoStoreError,
@@ -199,6 +200,12 @@ export class DynamoStore implements ActiveStore {
   }
   async migrate(): Promise<void> {
     await this.loadShards();
+  }
+  /** Repair legacy bundle indexes from an explicit inventory, without a table scan. */
+  backfillBundleIndexes(
+    inventory: readonly { projectId: string; bundleId: string }[],
+  ) {
+    return backfillBundleIndexes(this, inventory);
   }
   /** The persisted count is available after migrate has verified the table. */
   get indexShards(): number | undefined {

@@ -9,6 +9,7 @@ import {
   MemoryQueue,
 } from "@errtraq/testing";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { partition } from "./keys.js";
 import { DynamoStore } from "./runtime.js";
 
 const endpoint = process.env.ERRTRAQ_DYNAMO_EMULATOR;
@@ -96,6 +97,41 @@ describe.skipIf(!endpoint)("DynamoDB store emulator", () => {
       await api("DeleteTable", { TableName: table });
   });
   activeStoreContract(makeStore);
+  it("backfills a legacy bundle index through DynamoDB without scanning", async () => {
+    const store = await makeStore();
+    const bundle = {
+      id: "legacy",
+      projectId: "1",
+      releaseId: "release",
+      state: "pending",
+      pendingExpiresAt: "2025-01-01T00:00:00.000Z",
+      blobKey: "bundle",
+      manifest: { blobKey: "manifest", debugIdCount: 0, digest: "digest" },
+    };
+    await api("PutItem", {
+      TableName: store.table,
+      Item: {
+        PK: { S: partition("BUNDLE", "1", "legacy") },
+        SK: { S: "DATA" },
+        data: { S: JSON.stringify(bundle) },
+        revision: { S: "legacy" },
+      },
+    });
+    const inventory = [{ projectId: "1", bundleId: "legacy" }];
+    expect(await store.backfillBundleIndexes(inventory)).toMatchObject({
+      updated: 1,
+    });
+    expect(await store.backfillBundleIndexes(inventory)).toMatchObject({
+      unchanged: 1,
+    });
+    const result = await api("GetItem", {
+      TableName: store.table,
+      Key: { PK: { S: partition("BUNDLE", "1", "legacy") }, SK: { S: "DATA" } },
+      ConsistentRead: true,
+    });
+    expect(result.Item.GSI7PK.S).toContain("ENTITY|");
+    expect(result.Item.GSI3SK.S).toMatch(/^2025-01-01/);
+  });
   it("measures grouped queue contention end to end on DynamoDB Local", async () => {
     for (const total of [200, 500]) {
       const store = await makeStore();
