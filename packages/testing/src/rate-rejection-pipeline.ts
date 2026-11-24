@@ -7,6 +7,7 @@ import {
   type Message,
   normalizeEvent,
   type ProjectId,
+  type ProjectRateLimits,
   type Queue,
   type RateRejectionConfig,
   RecordHandler,
@@ -25,8 +26,8 @@ interface Spec {
 
 /**
  * Drive rate rejection through the real consumer (and, in grouped mode, the real record
- * handler) over one active store. Counters are approximate by design: increments are not
- * idempotent, so a retried or redelivered batch is charged again. The tests name that.
+ * handler) over one active store. Charging is exact under retries and redelivery: a retried or
+ * redelivered event is not charged again and reuses its first decision.
  */
 async function pipeline(
   createStore: () => Promise<ActiveStore>,
@@ -139,6 +140,22 @@ async function pipeline(
         at,
       )
     )?.count;
+  /** Persist per-project overrides the way the operator CLI does. */
+  const setLimits = async (
+    projectId: ProjectId,
+    rateLimits: ProjectRateLimits,
+  ) => {
+    const project = await store.projects.get(projectId);
+    if (!project) throw new Error("Missing project");
+    await store.projects.put({ ...project, rateLimits });
+  };
+  /** Current value of the per-issue counter for the window containing the clock (windowSec 60). */
+  const issueCounter = async (projectId: ProjectId, message: string) =>
+    Number(
+      (await kv.get(
+        `rate:issue:${projectId}:${await issueId(projectId, message)}:${Math.floor(Date.parse(clock.now()) / 60_000)}`,
+      )) ?? 0,
+    );
   /** Total increment amount applied to counters whose key starts with the prefix. */
   const charged = (spy: { mock: { calls: unknown[][] } }, prefix: string) =>
     spy.mock.calls
@@ -166,6 +183,8 @@ async function pipeline(
     has,
     dropped,
     charged,
+    setLimits,
+    issueCounter,
     failDownstreamOnce,
   };
 }
@@ -181,8 +200,8 @@ export function rateRejectionPipelineSuite(
       const setup = (rate: RateRejectionConfig) =>
         pipeline(createStore, mode, rate);
 
-      it("charges a retried delivery again after a downstream failure, so a retry can be dropped by the limit", async () => {
-        const c = await setup({ issueRateLimit: { events: 2, windowSec: 60 } });
+      it("charges a retried delivery once after a downstream failure and keeps its decisions", async () => {
+        const c = await setup({ issueRateLimit: { events: 1, windowSec: 60 } });
         const delivery = c.claim(c.a, [
           { n: 1, message: "same" },
           { n: 2, message: "same" },
@@ -191,14 +210,17 @@ export function rateRejectionPipelineSuite(
         const increment = vi.spyOn(c.kv, "increment");
         expect((await c.run([delivery])).ingest).toEqual(["retry"]);
         expect(c.charged(increment, "rate:issue:")).toBe(2);
+        expect(await c.dropped(c.a, "same")).toBe(1);
         expect(await c.blobs.head(`envelopes/${c.a}/1`)).not.toBeNull();
         expect((await c.run([delivery])).ingest).toEqual(["ack"]);
-        expect(c.charged(increment, "rate:issue:")).toBe(4);
-        expect(await c.has(c.a, 1)).toBe(false);
+        expect(c.charged(increment, "rate:issue:")).toBe(2);
+        expect(await c.issueCounter(c.a, "same")).toBe(2);
+        expect(await c.has(c.a, 1)).toBe(true);
         expect(await c.has(c.a, 2)).toBe(false);
-        expect(await c.dropped(c.a, "same")).toBe(2);
+        // The rejected event is not counted as dropped again on the retry.
+        expect(await c.dropped(c.a, "same")).toBe(1);
       });
-      it("does not charge a failed KV increment under retry, and the redelivery is charged once", async () => {
+      it("does not charge a failed counter under retry, and the redelivery is charged once", async () => {
         const c = await setup({
           issueRateLimit: { events: 2, windowSec: 60 },
           onKvFailure: "retry",
@@ -208,19 +230,25 @@ export function rateRejectionPipelineSuite(
           { n: 2, message: "same" },
         ]);
         const original = c.kv.increment.bind(c.kv);
-        const increment = vi
-          .spyOn(c.kv, "increment")
-          .mockRejectedValueOnce(new Error("kv down"))
-          .mockImplementation(original);
+        let failed = false;
+        vi.spyOn(c.kv, "increment").mockImplementation(async (key, by, o) => {
+          if (key.startsWith("rate:issue:") && !failed) {
+            failed = true;
+            throw new Error("kv down");
+          }
+          return original(key, by, o);
+        });
         expect((await c.run([delivery])).ingest).toEqual(["retry"]);
         expect(await c.has(c.a, 1)).toBe(false);
+        // The event markers were released, so the redelivery charges instead of skipping.
+        expect(await c.issueCounter(c.a, "same")).toBe(0);
         expect((await c.run([delivery])).ingest).toEqual(["ack"]);
         expect(await c.has(c.a, 1)).toBe(true);
         expect(await c.has(c.a, 2)).toBe(true);
-        expect(increment).toHaveBeenCalledTimes(2);
+        expect(await c.issueCounter(c.a, "same")).toBe(2);
         expect(await c.dropped(c.a, "same")).toBe(0);
       });
-      it("fails open under allow, so a KV failure plus a downstream failure charges the redelivery only once", async () => {
+      it("fails open under allow, and a KV failure plus a downstream failure still charges each event once", async () => {
         const c = await setup({
           issueRateLimit: { events: 2, windowSec: 60 },
           onKvFailure: "allow",
@@ -230,16 +258,50 @@ export function rateRejectionPipelineSuite(
           { n: 2, message: "same" },
         ]);
         const original = c.kv.increment.bind(c.kv);
-        const increment = vi
-          .spyOn(c.kv, "increment")
+        // The first marker fails: that event is admitted uncharged on this attempt.
+        vi.spyOn(c.kv, "increment")
           .mockRejectedValueOnce(new Error("kv down"))
           .mockImplementation(original);
         c.failDownstreamOnce();
         expect((await c.run([delivery])).ingest).toEqual(["retry"]);
+        expect(await c.issueCounter(c.a, "same")).toBe(1);
         expect((await c.run([delivery])).ingest).toEqual(["ack"]);
         expect(await c.has(c.a, 1)).toBe(true);
         expect(await c.has(c.a, 2)).toBe(true);
-        expect(c.charged(increment, "rate:issue:")).toBe(4);
+        expect(await c.issueCounter(c.a, "same")).toBe(2);
+        expect(await c.dropped(c.a, "same")).toBe(0);
+      });
+      it("admits a retried event uncharged when its first attempt stored no outcome", async () => {
+        const c = await setup({ issueRateLimit: { events: 1, windowSec: 60 } });
+        const delivery = c.claim(c.a, [
+          { n: 1, message: "same" },
+          { n: 2, message: "same" },
+        ]);
+        const put = c.kv.put.bind(c.kv);
+        // A crash between the counter and the outcome of the second (over-limit) event.
+        vi.spyOn(c.kv, "put").mockImplementation(async (key, value, o) => {
+          if (key.startsWith("rate:outcome:") && key.includes(id(2)))
+            throw new Error("crash");
+          return put(key, value, o);
+        });
+        c.failDownstreamOnce();
+        expect((await c.run([delivery])).ingest).toEqual(["retry"]);
+        expect(await c.issueCounter(c.a, "same")).toBe(2);
+        expect((await c.run([delivery])).ingest).toEqual(["ack"]);
+        expect(await c.has(c.a, 1)).toBe(true);
+        expect(await c.has(c.a, 2)).toBe(true);
+        expect(await c.issueCounter(c.a, "same")).toBe(2);
+      });
+      it("charges one event once when two consumers attempt it concurrently", async () => {
+        const c = await setup({ issueRateLimit: { events: 5, windowSec: 60 } });
+        const results = await Promise.all([
+          c.run([c.claim(c.a, [{ n: 1, message: "same" }])]),
+          c.run([c.claim(c.a, [{ n: 1, message: "same" }])]),
+        ]);
+        expect(results.flatMap((r) => r.ingest)).toEqual(["ack", "ack"]);
+        expect(await c.issueCounter(c.a, "same")).toBe(1);
+        expect(await c.has(c.a, 1)).toBe(true);
+        expect((await c.issue(c.a, "same"))?.count).toBe(1);
         expect(await c.dropped(c.a, "same")).toBe(0);
       });
       it("keeps limits and dropped counts per project, including identical fingerprints", async () => {
@@ -370,32 +432,120 @@ export function rateRejectionPipelineSuite(
         expect(await c.has(c.a, 4)).toBe(true);
         expect(await c.has(c.a, 5)).toBe(false);
       });
-      it("records a redelivered envelope once and charges the redelivery again where the consumer cannot see it is known", async () => {
+      it("records a redelivered envelope once and does not charge or drop-count the redelivery", async () => {
         const c = await setup({ issueRateLimit: { events: 1, windowSec: 60 } });
         const delivery = c.claim(c.a, [{ n: 1, message: "dup" }]);
-        const increment = vi.spyOn(c.kv, "increment");
         expect((await c.run([delivery])).ingest).toEqual(["ack"]);
         expect((await c.run([delivery])).ingest).toEqual(["ack"]);
         expect((await c.issue(c.a, "dup"))?.count).toBe(1);
         expect(await c.has(c.a, 1)).toBe(true);
-        // Direct mode skips an already stored event before charging; grouped mode has no such
-        // read, so the redelivery is charged and counted as dropped although it was recorded.
-        expect(c.charged(increment, "rate:issue:")).toBe(
-          mode === "direct" ? 1 : 2,
-        );
-        expect(await c.dropped(c.a, "dup")).toBe(mode === "direct" ? 0 : 1);
+        // Direct mode skips the stored event before any KV access; grouped mode reuses the
+        // stored "admit" decision. Either way the second delivery is not charged.
+        expect(await c.issueCounter(c.a, "dup")).toBe(1);
+        expect(await c.dropped(c.a, "dup")).toBe(0);
       });
-      it("records one event once when the same event is delivered twice in one batch", async () => {
+      it("records one event once and charges it once when it is delivered twice in one batch", async () => {
         const c = await setup({ issueRateLimit: { events: 2, windowSec: 60 } });
-        const increment = vi.spyOn(c.kv, "increment");
         const result = await c.run([
           c.claim(c.a, [{ n: 1, message: "dup" }]),
           c.claim(c.a, [{ n: 1, message: "dup" }]),
         ]);
         expect(result.ingest).toEqual(["ack", "ack"]);
         expect((await c.issue(c.a, "dup"))?.count).toBe(1);
-        expect(c.charged(increment, "rate:issue:")).toBe(2);
+        expect(await c.issueCounter(c.a, "dup")).toBe(1);
         expect(await c.dropped(c.a, "dup")).toBe(0);
+      });
+      it("charges a candidate new issue once across batches and redeliveries", async () => {
+        const c = await setup({ newIssueCap: { issues: 1, windowSec: 60 } });
+        const first = c.claim(c.a, [
+          { n: 1, message: "kept" },
+          { n: 2, message: "refused" },
+        ]);
+        const increment = vi.spyOn(c.kv, "increment");
+        expect((await c.run([first])).ingest).toEqual(["ack"]);
+        expect(c.charged(increment, "rate:new-issues:")).toBe(2);
+        expect(await c.has(c.a, 1)).toBe(true);
+        expect(await c.has(c.a, 2)).toBe(false);
+        // A later batch, a redelivery, and a new event of the refused issue are not charged again.
+        const later = c.claim(c.a, [{ n: 3, message: "refused" }]);
+        expect((await c.run([later])).ingest).toEqual(["ack"]);
+        expect((await c.run([first])).ingest).toEqual(["ack"]);
+        expect(c.charged(increment, "rate:new-issues:")).toBe(2);
+        expect(await c.has(c.a, 3)).toBe(false);
+        expect(await c.has(c.a, 2)).toBe(false);
+        expect((await c.issue(c.a, "kept"))?.count).toBe(1);
+        expect(await c.issue(c.a, "refused")).toBeNull();
+        // Each refused event is counted as dropped once, however often it is replayed.
+        expect(await c.dropped(c.a, "refused")).toBe(2);
+        expect((await c.run([later])).ingest).toEqual(["ack"]);
+        expect(await c.dropped(c.a, "refused")).toBe(2);
+      });
+      it("enforces a project's tighter per-issue limit and leaves another project on the stack limit", async () => {
+        const c = await setup({ issueRateLimit: { events: 3, windowSec: 60 } });
+        await c.setLimits(c.a, { issueEvents: 1 });
+        const events = (base: number) =>
+          [0, 1, 2].map((i) => ({ n: base + i, message: "x" }));
+        const read = vi.spyOn(c.store.projects, "get");
+        expect(
+          (await c.run([c.claim(c.a, events(10)), c.claim(c.b, events(20))]))
+            .ingest,
+        ).toEqual(["ack", "ack"]);
+        // Each project is read once for the whole delivery batch.
+        expect(read).toHaveBeenCalledTimes(2);
+        expect(await c.has(c.a, 10)).toBe(true);
+        expect(await c.has(c.a, 11)).toBe(false);
+        expect(await c.has(c.a, 12)).toBe(false);
+        expect(await c.dropped(c.a, "x")).toBe(2);
+        for (const n of [20, 21, 22]) expect(await c.has(c.b, n)).toBe(true);
+        expect(await c.dropped(c.b, "x")).toBe(0);
+        // Retries keep the decisions that the override produced.
+        expect((await c.run([c.claim(c.a, events(10))])).ingest).toEqual([
+          "ack",
+        ]);
+        expect(await c.issueCounter(c.a, "x")).toBe(3);
+      });
+      it("enforces a project's tighter new-issue cap and leaves another project on the stack cap", async () => {
+        const c = await setup({ newIssueCap: { issues: 3, windowSec: 60 } });
+        await c.setLimits(c.a, { newIssues: 1 });
+        const claims = (project: ProjectId, base: number) =>
+          ["i0", "i1", "i2"].map((message, i) =>
+            c.claim(project, [{ n: base + i, message }]),
+          );
+        await c.run([...claims(c.a, 10), ...claims(c.b, 20)]);
+        expect(
+          (
+            await Promise.all(["i0", "i1", "i2"].map((m) => c.issue(c.a, m)))
+          ).map((item) => item !== null),
+        ).toEqual([true, false, false]);
+        expect(
+          (
+            await Promise.all(["i0", "i1", "i2"].map((m) => c.issue(c.b, m)))
+          ).map((item) => item !== null),
+        ).toEqual([true, true, true]);
+        expect(await c.dropped(c.a, "i1")).toBe(1);
+        expect(await c.dropped(c.b, "i1")).toBe(0);
+      });
+      it("never lets an override loosen the stack limit or enable a disabled one", async () => {
+        const c = await setup({ issueRateLimit: { events: 1, windowSec: 60 } });
+        await c.setLimits(c.a, { issueEvents: 50, newIssues: 1 });
+        await c.run([
+          c.claim(c.a, [
+            { n: 1, message: "x" },
+            { n: 2, message: "x" },
+            { n: 3, message: "y" },
+          ]),
+        ]);
+        expect(await c.has(c.a, 1)).toBe(true);
+        // Clamped to the stack's one event per issue; the disabled cap admits issue y.
+        expect(await c.has(c.a, 2)).toBe(false);
+        expect(await c.has(c.a, 3)).toBe(true);
+      });
+      it("does not read projects when rate rejection is disabled", async () => {
+        const c = await setup({});
+        const get = vi.spyOn(c.store.projects, "get");
+        await c.run([c.claim(c.a, [{ n: 1, message: "x" }])]);
+        expect(get).not.toHaveBeenCalled();
+        expect(await c.has(c.a, 1)).toBe(true);
       });
     },
   );

@@ -55,12 +55,25 @@ export interface Org {
   name: string;
 }
 
+/**
+ * Per-project rate rejection limits (counts only; the windows stay stack-wide). A project may
+ * only tighten the stack's limits: a value above the stack's, or for a limit the stack leaves
+ * disabled, is invalid. Absent fields leave the stack's limit in force.
+ */
+export interface ProjectRateLimits {
+  /** Per-issue events per window; at most the stack's `issueRateLimit.events`. */
+  issueEvents?: number;
+  /** Candidate new issues per window; at most the stack's `newIssueCap.issues`. */
+  newIssues?: number;
+}
+
 export interface Project {
   id: ProjectId;
   orgId: OrgId;
   slug: string;
   name: string;
   retentionDays: number;
+  rateLimits?: ProjectRateLimits;
 }
 
 export interface ProjectKey {

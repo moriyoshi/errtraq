@@ -657,7 +657,9 @@ describe("in-process ingest pipeline", () => {
       await c.store.events.get(c.project.project.id, b2.event.eventId),
     ).toBeNull();
     expect(get).toHaveBeenCalledTimes(2);
-    expect(increment).toHaveBeenCalledTimes(3);
+    // Per candidate issue a marker and the cap counter (a, b), then a dropped marker per
+    // rejected event (b, b2) and the one dropped counter they share.
+    expect(increment).toHaveBeenCalledTimes(7);
     expect(
       await readDropped(
         c.kv,
@@ -679,7 +681,7 @@ describe("in-process ingest pipeline", () => {
     expect(
       await c.store.events.get(c.project.project.id, existing.event.eventId),
     ).not.toBeNull();
-    expect(increment).toHaveBeenCalledTimes(3);
+    expect(increment).toHaveBeenCalledTimes(7);
   });
   it("rechecks issue existence between chunks without charging the same candidate twice", async () => {
     const c = await setup({ recordMode: "grouped" });

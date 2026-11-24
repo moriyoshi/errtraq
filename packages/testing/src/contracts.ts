@@ -735,6 +735,52 @@ export function activeStoreContract(
         ),
       ).toEqual(new Set(projects.map((p) => p.id)));
     });
+    it("persists per-project rate limits through reads, updates and clearing", async () => {
+      const store = await factory();
+      const org = { id: "org" as OrgId, slug: "org", name: "Organization" };
+      await store.projects.putOrg(org);
+      const base: Project = {
+        id: "10" as ProjectId,
+        orgId: org.id,
+        slug: "limited",
+        name: "Limited",
+        retentionDays: 30,
+        rateLimits: { issueEvents: 5, newIssues: 2 },
+      };
+      const plain: Project = {
+        id: "11" as ProjectId,
+        orgId: org.id,
+        slug: "plain",
+        name: "Plain",
+        retentionDays: 30,
+      };
+      await store.projects.put(base);
+      await store.projects.put(plain);
+      expect(await store.projects.get(base.id)).toEqual(base);
+      expect(await store.projects.getProjectBySlug(org.id, "limited")).toEqual(
+        base,
+      );
+      expect((await store.projects.get(plain.id))?.rateLimits).toBeUndefined();
+      expect(
+        (await collect((cursor) => store.projects.list(cursor, 1))).find(
+          (item) => item.id === base.id,
+        ),
+      ).toEqual(base);
+      // Partial limits persist as given; an update replaces the whole value.
+      await store.projects.put({ ...base, rateLimits: { issueEvents: 3 } });
+      expect((await store.projects.get(base.id))?.rateLimits).toEqual({
+        issueEvents: 3,
+      });
+      await store.projects.put({ ...base, rateLimits: { newIssues: 1 } });
+      expect(
+        (await store.projects.getProjectBySlug(org.id, "limited"))?.rateLimits,
+      ).toEqual({ newIssues: 1 });
+      const { rateLimits: _cleared, ...cleared } = base;
+      await store.projects.put(cleared);
+      expect((await store.projects.get(base.id))?.rateLimits).toBeUndefined();
+      // The other project is unaffected.
+      expect(await store.projects.get(plain.id)).toEqual(plain);
+    });
     it("pages releases without crossing projects", async () => {
       const store = await factory();
       const releases: Release[] = Array.from({ length: 4 }, (_, i) => ({

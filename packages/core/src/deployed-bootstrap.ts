@@ -1,8 +1,13 @@
 import { bootstrapProject } from "./bootstrap.js";
-import { type ApiTokenId, toTimestamp } from "./domain.js";
+import {
+  type ApiTokenId,
+  type ProjectRateLimits,
+  toTimestamp,
+} from "./domain.js";
 import { ConflictError } from "./errors.js";
 import { generateApiToken, hashApiToken, WebCryptoIdGen } from "./ids.js";
 import type { ActiveStore, KV } from "./ports.js";
+import type { RateRejectionConfig } from "./rate-rejection.js";
 
 /** The vault's create-or-read operation returns the same value to concurrent callers. */
 export interface BootstrapVault {
@@ -24,6 +29,9 @@ export interface BootstrapOptions {
   retentionDays?: number;
   /** Rejects a new or existing project with a longer retention. */
   maxRetentionDays?: number;
+  /** Per-project rate limit overrides for a new project, validated against `rateRejection`. */
+  rateLimits?: ProjectRateLimits;
+  rateRejection?: RateRejectionConfig;
 }
 export async function bootstrapDeployed(
   options: BootstrapOptions,
@@ -49,6 +57,8 @@ export async function bootstrapDeployed(
     projectSlug: options.projectSlug,
     retentionDays: options.retentionDays,
     maxRetentionDays: options.maxRetentionDays,
+    rateLimits: options.rateLimits,
+    rateRejection: options.rateRejection,
   });
   const dsn = new URL(url);
   dsn.username = created.key.publicKey;

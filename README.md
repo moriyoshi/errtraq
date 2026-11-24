@@ -114,6 +114,26 @@ Tokens registered before this feature (DynamoDB) are revocable by id immediately
 migration.
 
 
+### Tighten rate limits for one project
+
+When the stack enables `rateRejection`, a project may use a lower per-issue event limit and/or
+a lower new-issue cap than the stack, never a higher one, and it cannot enable a limit the stack
+leaves off. The windows stay stack-wide. The operator command talks to the store directly, like
+the token commands (there is no HTTP endpoint for project settings yet):
+
+```sh
+pnpm exec errtraq project rate-limits --stack stacks/aws-dynamodb.ts --org my-org --project my-project \
+  [--issue-events <n|none>] [--new-issues <n|none>]
+```
+
+Without flags it prints the current limits; omitted flags keep their value and `none` clears an
+override. `errtraq bootstrap` accepts `--issue-events` and `--new-issues` for a new project (a
+rerun against a project with different limits fails; use this command to change them). The
+per-issue override is rejected for stacks with grouped recording (the Lambda plus SQS default),
+because the grouped consumer has no store access to read it; the new-issue cap override is
+enforced by the record handler and works in both modes.
+
+
 ### Bring-your-own RDS PostgreSQL
 
 The Postgres stack helper supports RDS IAM authentication with

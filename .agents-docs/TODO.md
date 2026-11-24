@@ -138,11 +138,14 @@ item should be resolved or removed once addressed. Milestone work itself is trac
 - [x] M3 stage 3 issue API: expose approximate current-window dropped counts, with window
   bounds and received-at basis, conditional API KV reads, expiry and fail-open reads.
 - [x] M3 remaining queue item 2: aggregate rate-rejection KV failure logging per delivery batch.
-- [ ] M3 stage 3 follow-ups: support project-level overrides constrained by stack limits. KV increments can double-charge on retries; the
-  received-at bucket intentionally excludes delayed events from the current-window count.
-  Preserve privacy-safe logging for retry failures (provider messages may contain secrets), and
-  expand integration coverage of retries, project isolation, issue rotation, resolved issues
-  and duplicate delivery. KV cost includes one increment per issue/window group and additional
-  new-issue and dropped-counter increments; the DynamoDB adapter also reads on increment.
+- [x] M3 stage 3 follow-ups: exact counting under retries (marker and outcome keys), per-project
+  tighter overrides (`Project.rateLimits`, `errtraq project rate-limits`, bootstrap options),
+  privacy-safe retry logging and integration coverage of retries, project isolation, issue
+  rotation, resolved issues and duplicate delivery. Done 2026-11-25.
+- [ ] M3 stage 3 grouped per-issue overrides: the grouped consumer role has no store access, so a
+  per-project `issueEvents` override is rejected for grouped recording. Lifting it needs a store
+  read grant (and store construction) for the consumer role in grouped mode, or carrying the limit
+  elsewhere; decide before implementing. The received-at bucket still excludes delayed events from
+  the current-window dropped count by design.
 
 - [x] Test harness: make the `dynamodb-conditional-atomicity` winterbaume gap check in `scripts/aws-emulated/gap-checks.mjs` tolerant of runs where the probabilistic race does not occur (it flaked in 4 of 8 runs on 2026-11-24), e.g. retry the probe several times before declaring the gap gone. Done 2026-11-25: a round reproduces 7-30% of the time, so the probe now runs up to 150 rounds (about 7 s when the gap is gone) and stops at the first reproduction. — *source: M3 queue items 7-8*

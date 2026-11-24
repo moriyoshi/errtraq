@@ -233,11 +233,27 @@ role receives it for the new-issue cap. Issue list and detail responses include 
 limits are enabled; its bounds and `receivedAt` basis make delayed-event attribution explicit.
 A KV read failure omits the field without failing the request.
 
-Cost and accuracy: the KV cost of a batch is one increment per (project, issue, window) group
-for the per-issue limit, one increment per candidate new issue (and window) for the cap, and one
-per (project, issue, window) dropped counter; the DynamoDB KV adapter also reads on each
-increment. Counts are approximate: increments are not idempotent, so a retried or redelivered
-batch can be charged again, and a delayed event counts in its `receivedAt` window.
+Per-project overrides: `Project.rateLimits` (`issueEvents`, `newIssues`; counts only, the windows
+stay stack-wide) can only tighten the stack. The effective limit is the lower of the stack's and the
+project's value for a limit the stack enables; a project value for a disabled limit is rejected on
+write and ignored on read, and an invalid or higher stored value is clamped to the stack's. The
+operator sets them with `errtraq project rate-limits` and the `errtraq bootstrap` options. The
+consumer and record handler read each project at most once per delivery batch, and not at all when
+`rateRejection` is disabled. The grouped consumer has no store access, so a per-issue override is
+rejected for grouped recording (needs a store read grant for that role to lift); the new-issue cap
+override is enforced by the record handler in both modes.
+
+Cost and accuracy: charging is exact under retries and redelivery. The KV has no put-if-absent, so
+an `increment` that returns 1 on a marker key (`rate:charged:<kind>:...`, per event for the issue
+limit and dropped counter, per issue and window for the new-issue cap) is the atomic first-attempt
+signal. Only a first attempt charges the counter; it then stores its decision under
+`rate:outcome:<kind>:...`, and retries reuse it. If charging fails the marker is deleted so a retry
+charges again. Cost per decision is therefore one marker increment, one counter increment per
+(project, issue, window) group and one outcome write per event, plus a dropped marker per rejected
+event and one dropped counter per group; the DynamoDB KV adapter also reads on each increment.
+A crash between the counter and the outcome admits the retried event once uncharged, concurrent
+attempts that find no outcome yet are admitted uncharged, and a crash can still lose a dropped
+increment. A delayed event counts in its `receivedAt` window.
 
 ### Issue-keyed record stage (M3, partially implemented)
 

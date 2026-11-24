@@ -38,6 +38,7 @@ export class RecordHandler {
         kv: options.kv,
         config: options.rateRejection,
         logger: options.logger,
+        projects: options.store.projects,
       });
     }
   }

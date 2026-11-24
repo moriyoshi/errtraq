@@ -104,6 +104,9 @@ export class ConsumerService {
         kv: options.kv,
         config: rate,
         logger: options.logger,
+        // TODO(M3): the grouped consumer has no store, so per-project issue limits cannot be
+        // resolved there (the CLI rejects them for grouped stacks); grant it a store read to lift.
+        projects: options.store?.projects,
       });
     }
     this.overflowBytes = options.overflowBytes ?? 200000;

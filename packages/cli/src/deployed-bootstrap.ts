@@ -9,6 +9,7 @@ import {
   deployedPlan,
   deriveDeployment,
   type KV,
+  type ProjectRateLimits,
   type SecretSource,
   type StackConfig,
 } from "@errtraq/core";
@@ -16,6 +17,8 @@ import {
   createSecretsManagerSource,
   SecretReadError,
 } from "@errtraq/platform-aws-lambda/handler";
+
+import { assertProjectLimitsAllowed } from "./project-limits.js";
 
 export function awsBootstrapVault(
   environment: Readonly<Record<string, string | undefined>>,
@@ -179,9 +182,12 @@ export async function bootstrapAwsStack(
     ingestUrl: string;
     orgSlug: string;
     projectSlug: string;
+    /** Tighter per-project rate limits for the new project; see `project rate-limits`. */
+    rateLimits?: ProjectRateLimits;
   },
   dependencies?: DeployedDependencies,
 ): Promise<string> {
+  if (options.rateLimits) assertProjectLimitsAllowed(stack, options.rateLimits);
   const opened = await openDeployedStack(stack, environment, dependencies);
   // blob-s3 expires orphaned overflow payloads after the configured longest retention plus a
   // margin, so no bootstrapped project may keep events longer than that.
@@ -199,6 +205,7 @@ export async function bootstrapAwsStack(
           ? undefined
           : Math.min(DEFAULT_PROJECT_RETENTION_DAYS, maxRetentionDays),
       maxRetentionDays,
+      rateRejection: stack.rateRejection,
       stackName: stack.name,
       store: opened.store,
       kv: opened.kv,

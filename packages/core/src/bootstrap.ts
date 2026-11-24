@@ -6,10 +6,15 @@ import {
   type ProjectId,
   type ProjectKey,
   type ProjectKeyId,
+  type ProjectRateLimits,
 } from "./domain.js";
 import { ConflictError } from "./errors.js";
 import { generatePublicKey } from "./ids.js";
 import type { ActiveStore, IdGen, KV } from "./ports.js";
+import {
+  type RateRejectionConfig,
+  validateProjectRateLimits,
+} from "./rate-rejection.js";
 export const DEFAULT_PROJECT_RETENTION_DAYS = 30;
 /** Allocate decimal project IDs through the atomic KV counter and create an org, project and key. */
 export async function bootstrapProject(options: {
@@ -24,6 +29,10 @@ export async function bootstrapProject(options: {
    * orphans after this plus a margin, so a project (new or existing) above it is rejected.
    */
   maxRetentionDays?: number;
+  /** Per-project rate limit overrides for a new project; see {@link validateProjectRateLimits}. */
+  rateLimits?: ProjectRateLimits;
+  /** The stack's `rateRejection`; `rateLimits` may only tighten the limits it enables. */
+  rateRejection?: RateRejectionConfig;
 }): Promise<{ org: Org; project: Project; key: ProjectKey }> {
   const { store, kv, ids } = options;
   const cap = options.maxRetentionDays;
@@ -33,6 +42,8 @@ export async function bootstrapProject(options: {
         `Project retention of ${project.retentionDays} days exceeds the stack maximum of ${cap} days`,
       );
   };
+  if (options.rateLimits)
+    validateProjectRateLimits(options.rateRejection, options.rateLimits);
   let org = await store.projects.getOrgBySlug(options.orgSlug);
   if (!org) {
     org = {
@@ -65,6 +76,7 @@ export async function bootstrapProject(options: {
       slug: options.projectSlug,
       name: options.projectSlug,
       retentionDays: options.retentionDays ?? DEFAULT_PROJECT_RETENTION_DAYS,
+      ...(options.rateLimits ? { rateLimits: { ...options.rateLimits } } : {}),
     };
     checkRetention(project);
     try {
@@ -80,6 +92,15 @@ export async function bootstrapProject(options: {
     }
   }
   checkRetention(project);
+  // Bootstrap is idempotent: it never rewrites an existing project, so differing limits are an error.
+  if (
+    options.rateLimits &&
+    (project.rateLimits?.issueEvents !== options.rateLimits.issueEvents ||
+      project.rateLimits?.newIssues !== options.rateLimits.newIssues)
+  )
+    throw new ConflictError(
+      "Project already exists with different rate limits; change them with the project rate-limits command",
+    );
   let key = (await store.projects.listKeys(project.id)).find(
     (item) => !item.revokedAt,
   );

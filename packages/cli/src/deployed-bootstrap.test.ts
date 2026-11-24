@@ -76,6 +76,55 @@ describe("deployed bootstrap", () => {
       }),
     ).rejects.toThrow("exceeds the stack maximum");
   });
+  it("creates a project with tighter limits, rejects looser or disabled ones and differing reruns", async () => {
+    const rateRejection = {
+      issueRateLimit: { events: 10, windowSec: 60 },
+      newIssueCap: { issues: 5, windowSec: 60 },
+    };
+    const f = fixture();
+    const options = { ...f.options, rateRejection };
+    await bootstrapDeployed({
+      ...options,
+      rateLimits: { issueEvents: 4, newIssues: 2 },
+    });
+    const org = (await f.store.projects.getOrgBySlug("org"))?.id;
+    if (!org) throw new Error("missing org");
+    expect(
+      (await f.store.projects.getProjectBySlug(org, "project"))?.rateLimits,
+    ).toEqual({ issueEvents: 4, newIssues: 2 });
+    // Idempotent with the same limits (or none); a different value is a conflict.
+    await bootstrapDeployed({
+      ...options,
+      rateLimits: { issueEvents: 4, newIssues: 2 },
+    });
+    await expect(
+      bootstrapDeployed({ ...options, rateLimits: { issueEvents: 3 } }),
+    ).rejects.toThrow(/different rate limits/);
+    await expect(
+      bootstrapDeployed({
+        ...fixture().options,
+        rateRejection,
+        rateLimits: { issueEvents: 11 },
+      }),
+    ).rejects.toThrow(/exceeds the stack limit/);
+    await expect(
+      bootstrapDeployed({
+        ...fixture().options,
+        rateRejection: { issueRateLimit: rateRejection.issueRateLimit },
+        rateLimits: { newIssues: 1 },
+      }),
+    ).rejects.toThrow(/does not enable/);
+    const none = fixture();
+    await bootstrapDeployed({ ...none.options, rateRejection });
+    const noneOrg = (await none.store.projects.getOrgBySlug("org"))?.id;
+    if (!noneOrg) throw new Error("missing org");
+    const created = await none.store.projects.getProjectBySlug(
+      noneOrg,
+      "project",
+    );
+    expect(created).not.toBeNull();
+    expect(created?.rateLimits).toBeUndefined();
+  });
   it("constructs only the deployed store and KV with delivered bindings", async () => {
     const f = fixture();
     const seen: string[] = [];

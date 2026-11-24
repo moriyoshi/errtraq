@@ -96,7 +96,8 @@ describe("approximate dropped counts", () => {
         issueId: "issue-1",
         receivedAt: c.clock.now(),
       };
-      await rejector.recordDropped([candidate, candidate]);
+      const dropped = (eventId: string) => ({ ...candidate, eventId });
+      await rejector.recordDropped([dropped("e1"), dropped("e2")]);
       const paths = [
         "/api/0/issues/issue-1",
         "/api/0/projects/org/project/issues/",
@@ -116,7 +117,7 @@ describe("approximate dropped counts", () => {
       }
       c.clock.advance(60000);
       // A delayed old event increments its original received-at bucket, not this one.
-      await rejector.recordDropped([candidate]);
+      await rejector.recordDropped([dropped("e3")]);
       const response = await c.app.request("/api/0/issues/issue-1", {
         headers: c.auth,
       });

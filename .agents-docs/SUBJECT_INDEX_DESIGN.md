@@ -290,8 +290,8 @@ windows permit boundary bursts; clocks, distributed KV contention and retries af
 stored, never advances `lastSeen` and cannot cause a regression/notification.
 
 For each rejected event increment a per-project/issue/window KV dropped counter and surface it as a **windowed, approximate** API
-field, separately from `Issue.count`. No durable rejection ledger: double counting on redelivery and increments lost on a crash are
-accepted; this must not be labeled an exact total. Issue list and detail responses expose `approximateDropped` with `count`, `windowSec`,
+field, separately from `Issue.count`. No durable rejection ledger: increments lost on a crash are accepted (retries are no longer
+double counted, see the 2026-11-25 note below); this must not be labeled an exact total. Issue list and detail responses expose `approximateDropped` with `count`, `windowSec`,
 `windowStart`, `windowEnd` and `timeBasis: "receivedAt"` while a limit is enabled. The window is
 aligned to UTC epoch boundaries using the issue limit's window when configured, otherwise the
 new-issue cap's window. Each drop is charged to its original ingest `receivedAt` bucket; delayed
@@ -305,11 +305,11 @@ per stack an operator can choose retry instead. Project-level new-issue cap limi
 and retries can overcount. This is a conservative approximate cap, not an exact unique-issue quota; using a durable dedupe ledger would
 contradict the cut. A project with a hard quota needs a separately reviewed atomic primitive. Count the issue-rate increment before
 rejection; project-cap and dropped-count increments add further KV requests. A previously persisted duplicate should be recognized
-without re-bumping its issue; rate counters may still be charged twice on redelivery under the accepted policy.
+without re-bumping its issue. Superseded 2026-11-25: counters are charged exactly once per event (issue limit) or per issue and window (cap) through marker and outcome keys, so redelivery no longer double-charges; see ARCHITECTURE.md.
 
 At 1m events/day and 12 WRU/event baseline, one <=1 KiB DynamoDB KV write per event adds about 8.3% write units; the current
 `kv-dynamodb` also performs a strong read per increment and can retry conditional races. Those extra reads, project-cap /
-dropped-counter operations and failures cost more. Tests cover window/batch boundaries, failure policy, doubled redelivery, project
+dropped-counter operations and failures cost more. Tests cover window/batch boundaries, failure policy, exact redelivery, project
 scope and rotating fingerprints, suppression first, rejected regression, and API freshness/expiry; no sampling or rejection-ledger
 tests should be added.
 

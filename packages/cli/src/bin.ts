@@ -21,6 +21,12 @@ import {
 } from "./deployed-token.js";
 import { generateInfra, projectRoot, safeDirectory } from "./infra.js";
 import { assertNodeVersion } from "./node-version.js";
+import {
+  formatProjectLimits,
+  limitsFromInput,
+  parseLimit,
+  setProjectRateLimits,
+} from "./project-limits.js";
 import { devToken } from "./token.js";
 import { formatValidation } from "./validation.js";
 
@@ -56,15 +62,18 @@ export async function main(args: string[]): Promise<void> {
     command === "token" && (initial[0] === "list" || initial[0] === "revoke")
       ? initial[0]
       : undefined;
-  const rest = rotate || infra || tokenAdmin ? initial.slice(1) : initial;
+  const projectLimits = command === "project" && initial[0] === "rate-limits";
+  const rest =
+    rotate || infra || tokenAdmin || projectLimits ? initial.slice(1) : initial;
   if (
     !rotate &&
     !infra &&
     !tokenAdmin &&
+    !projectLimits &&
     !["dev", "validate", "build", "bootstrap"].includes(command ?? "")
   )
     throw new Error(
-      "Usage: errtraq <dev|validate|build|bootstrap|infra generate|token rotate|token list|token revoke> --stack <file> [--out dir]",
+      "Usage: errtraq <dev|validate|build|bootstrap|infra generate|token rotate|token list|token revoke|project rate-limits> --stack <file> [--out dir]",
     );
   const options: Record<string, string> = {};
   let allowMissing = false;
@@ -87,10 +96,19 @@ export async function main(args: string[]): Promise<void> {
         ...(command === "build" || infra ? ["--root"] : []),
         ...(infra ? ["--module-source", "--module-base"] : []),
         ...(command === "bootstrap"
-          ? ["--secret-name", "--ingest-url", "--org", "--project"]
-          : tokenAdmin
-            ? ["--org", ...(tokenAdmin === "revoke" ? ["--id"] : [])]
-            : []),
+          ? [
+              "--secret-name",
+              "--ingest-url",
+              "--org",
+              "--project",
+              "--issue-events",
+              "--new-issues",
+            ]
+          : projectLimits
+            ? ["--org", "--project", "--issue-events", "--new-issues"]
+            : tokenAdmin
+              ? ["--org", ...(tokenAdmin === "revoke" ? ["--id"] : [])]
+              : []),
       ].includes(flag) ||
       !rest[i + 1] ||
       options[flag]
@@ -143,6 +161,25 @@ export async function main(args: string[]): Promise<void> {
     });
     return;
   }
+  if (projectLimits) {
+    const orgSlug = options["--org"];
+    const projectSlug = options["--project"];
+    if (!orgSlug || !projectSlug)
+      throw new Error("project rate-limits requires --org and --project");
+    const change = {
+      issueEvents: parseLimit("--issue-events", options["--issue-events"]),
+      newIssues: parseLimit("--new-issues", options["--new-issues"]),
+    };
+    await withDeployedStore(stack, process.env, async (store) => {
+      const project = await setProjectRateLimits(store, stack, {
+        orgSlug,
+        projectSlug,
+        ...change,
+      });
+      console.log(formatProjectLimits(project));
+    });
+    return;
+  }
   if (command === "bootstrap") {
     if (
       !options["--secret-name"] ||
@@ -153,11 +190,19 @@ export async function main(args: string[]): Promise<void> {
       throw new Error(
         "Bootstrap requires --secret-name, --ingest-url, --org and --project",
       );
+    const issueEvents = parseLimit("--issue-events", options["--issue-events"]);
+    const newIssues = parseLimit("--new-issues", options["--new-issues"]);
+    if (issueEvents === "none" || newIssues === "none")
+      throw new Error(
+        "Bootstrap sets limits only; use project rate-limits to clear them",
+      );
+    const bootstrapLimits = limitsFromInput({ issueEvents, newIssues }).set;
     const arn = await bootstrapAwsStack(stack, process.env, {
       secretName: options["--secret-name"],
       ingestUrl: options["--ingest-url"],
       orgSlug: options["--org"],
       projectSlug: options["--project"],
+      rateLimits: bootstrapLimits,
     });
     console.log(
       `Bootstrap complete; read DSN and API token from Secrets Manager: ${arn}`,
