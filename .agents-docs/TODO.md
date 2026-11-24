@@ -57,7 +57,7 @@ item should be resolved or removed once addressed. Milestone work itself is trac
 - [ ] M4 or retention slice: remove orphaned raw envelope and overflow blobs after crashes between pipeline steps. — *source: M1f review section B*
 - [ ] M5: if snapshot-consistent issue pagination becomes a product requirement, add persistent snapshots or versioned history. M1 uses stateless keyset cursors, so concurrent sort-key changes can move rows across a cursor. — *source: JOURNAL 2026-11-21 — M1e adapter review fixes*
 - [ ] Before adding a MySQL SQL dialect, implement its index-creation syntax without `CREATE INDEX IF NOT EXISTS`, changed-row versus matched-row semantics, type / collation choices and conflict syntax; the M3f hooks and Postgres / SQLite implementations do not establish MySQL behavior. — *source: M1e review section B; narrowed by M3f*
-- [ ] M3 / Postgres: reconcile the 255-character indexed-column limit (including serialized composite keys) with the currently unbounded port identifiers; add explicit input validation or a reviewed key representation before relying on arbitrary-length values. — *source: M3f*
+- [x] M3 / Postgres: reconcile the 255-character indexed-column limit (including serialized composite keys) with the currently unbounded port identifiers; add explicit input validation or a reviewed key representation before relying on arbitrary-length values. — *source: M3f; resolved by the shared core `withIdentifierLimits` rule*
 - [ ] M4: investigate raw-deflate clients; Web DecompressionStream accepts zlib-framed deflate, and raw deflate currently returns 400. — *source: M1f review section B*
 - [ ] M3: provide token management for non-local deployments; M1g adds local token reuse and rotation. — *source: JOURNAL 2026-11-21 — M1d local stack*
 - [ ] M4: decide the physical-erasure (`hardErase`) path for v3 tables: DuckDB 2.0 cannot rewrite v3 data files. First test whether S3 Tables / Lakekeeper maintenance actually applies deletion vectors over a longer window; otherwise copy-forward, format v2, or a native rewrite. — *source: `.agents-docs/S3TABLES_DV_SPIKE.md`*
@@ -74,7 +74,7 @@ item should be resolved or removed once addressed. Milestone work itself is trac
 - [ ] M4: implement DynamoDB subject-erasure semantics; the M3 AWS runtime adapters are implemented (a006055, 45f8d88, 5158fdb, e98a876). — *source: M2b step 1*
 
 - [x] M3: implement SQS partial batch failures. — *source: M2b step 2; resolved in M3c*
-- [ ] M3: add documented real-shaped EventBridge event fixtures and verify dispatch; the recovery job and generated Lambda wiring are implemented (fbeefb7). — *source: M2b step 2*
+- [x] M3: add documented real-shaped EventBridge event fixtures and verify dispatch (packages/platforms/aws-lambda/src/aws-events.test.ts); the recovery job and generated Lambda wiring are implemented (fbeefb7). — *source: M2b step 2*
 - [x] M3e: implement and test stage 1 of the DynamoDB layout, module and policies (21eafd6, e98a876, 9e2734a); subject erasure remains M4. — *source: M2b step 2; revised M3e step 1c*
 
 - [ ] M3 / M6: address second-review follow-ups N9 and N12-N15, including Cloudflare binding authorization and runtime limitations. — *source: `.agents-workspace/tmp/m2a2-review-fixes.md`*
@@ -91,7 +91,7 @@ item should be resolved or removed once addressed. Milestone work itself is trac
 - [ ] M3 / packaging: support projects that depend on errtraq packages without requiring a `pnpm-workspace.yaml` repository or in-repository build and output directories. — *source: M2 final review section B*
 - [x] M3: reduce Lambda bundle size by using the runtime-only core entry and minification; Lambda bundles no longer include Zod. — *source: M2 final review section B*
 - [x] M3: test SQS partial-batch failures with real-shaped AWS events. — *source: M2 final review section B; resolved in M3c*
-- [ ] M3: test EventBridge event handling against real AWS event shapes. — *source: M2 final review section B*
+- [x] M3: test EventBridge event handling against documented AWS event shapes (real captures remain M3h). — *source: M2 final review section B*
 - [x] M3 (store-dynamodb): implement issue-keyed FIFO and measure grouped 200 / 500-event workloads on DynamoDB Local (ffd0ba8, 0ca239b, fbeefb7); real AWS measurement remains in the M3h item above. — *source: owner queue-first decision*
 
 - [ ] M3 / M4: add retention-safe cleanup for grouped-record claim-check blobs after queue
@@ -153,3 +153,5 @@ item should be resolved or removed once addressed. Milestone work itself is trac
   expand integration coverage of retries, project isolation, issue rotation, resolved issues
   and duplicate delivery. KV cost includes one increment per issue/window group and additional
   new-issue and dropped-counter increments; the DynamoDB adapter also reads on increment.
+
+- [ ] Test harness: make the `dynamodb-conditional-atomicity` winterbaume gap check in `scripts/aws-emulated/gap-checks.mjs` tolerant of runs where the probabilistic race does not occur (it flaked in 4 of 8 runs on 2026-11-24), e.g. retry the probe several times before declaring the gap gone. — *source: M3 queue items 7-8*

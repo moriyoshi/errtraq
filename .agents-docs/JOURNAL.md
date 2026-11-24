@@ -1364,3 +1364,39 @@ a conservative 50,000,000-byte direct-upload threshold. The runtime-only core en
 from Lambda bundles; minification preserves names. On the shared AWS stack the five ZIPs changed:
 ingest 213345 to 65273 bytes, API 206996 to 60467, consumer 193241 to 49057, record 211248 to
 63695, cron 193203 to 49018. Real AWS S3 deployment remains for M3h verification.
+
+## 2026-11-24 — Shared identifier limits for stores
+
+Port identifiers were unbounded while Postgres indexes `varchar(255)` columns and the composite
+key `JSON.stringify([projectId, id])`. The rule now lives in core (`identifier-limits.ts`) and is
+applied by every store through `withIdentifierLimits`, a Proxy returned from the SQL store factory
+and from the `DynamoStore` and `MemoryActiveStore` constructors, so adapters cannot diverge and
+the 20-odd write entry points are validated in one place. Identifiers (org, project, key, token,
+issue, event, release, bundle, erasure IDs) are 1-100 characters of `[A-Za-z0-9._:@+=~-]` starting
+alphanumeric: that alphabet never needs JSON escaping, so a two-part key is at most 207 characters.
+Indexed text (slugs, public keys, token hashes, release versions, fingerprints, debug IDs, event
+user / release / environment values) is at most 255 UTF-8 bytes, which bounds Postgres characters
+and btree row size at once. Violations reject with `InvalidIdentifierError` (HTTP API maps it to
+400); reads are not validated, an over-long lookup just misses. `normalizeEvent` truncates event
+user, release and environment values on code point boundaries, because they are client-controlled
+and a rejected event would otherwise poison the queue. Consequences: `vi.spyOn(store, ...)` works
+on the guarded store through set / defineProperty traps; the byte-order Postgres test now uses
+ASCII ids ("B" before "a") since non-ASCII ids are invalid; Biome needs a `noConstructorReturn`
+ignore on the two constructors. `pnpm test:aws-emulated` can fail on its `dynamodb-conditional-
+atomicity` gap check ("no longer reproduces") because the emulator race is probabilistic;
+rerunning passes.
+
+## 2026-11-24 — Documentation-shaped AWS event fixtures
+
+`packages/platforms/aws-lambda/src/aws-event-fixtures.ts` holds fixtures that follow the AWS pages
+cited in each comment: Lambda SQS standard and FIFO events (with-sqs.html), function URL payload
+format 2.0 (urls-invocation.html) and EventBridge scheduled events; `aws-events.test.ts` drives
+`createHandler` with the real `SqsQueue` push source. Findings: our Terraform sets a constant rule
+input `{ job }`, so a default-shaped scheduled event (detail-type "Scheduled Event") or an
+EventBridge Scheduler empty event carries no job name and is logged as an unknown job and
+acknowledged without running anything, which is correct but silent; real function URL responses
+for an unknown DSN key are 403, not 401; a FIFO delivery whose `MessageGroupId` differs from the
+envelope `groupKey` fails together with every later record of the invocation. The default
+scheduled-event example text could not be fetched verbatim from the docs, so its field values
+are the commonly documented ones: M3h real captures should replace it. The aws-lambda package
+gained a test-only `@errtraq/queue-sqs` devDependency (pnpm-lock.yaml updated).

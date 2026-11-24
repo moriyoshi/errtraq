@@ -8,6 +8,7 @@ import {
   type Timestamp,
   toTimestamp,
 } from "./domain.js";
+import { truncateIndexedText } from "./identifier-limits.js";
 
 type Obj = Record<string, unknown>;
 function object(value: unknown): Obj {
@@ -17,6 +18,9 @@ function object(value: unknown): Obj {
 }
 function string(value: unknown): string | undefined {
   return typeof value === "string" && value.length ? value : undefined;
+}
+function truncateOptional(value: string | undefined): string | undefined {
+  return value === undefined ? undefined : truncateIndexedText(value);
 }
 function array(value: unknown): unknown[] {
   return Array.isArray(value) ? value : [];
@@ -196,14 +200,14 @@ export async function normalizeEvent(
   const rawUser = object(event.user);
   const user = {
     id: ["string", "number", "boolean"].includes(typeof rawUser.id)
-      ? String(rawUser.id)
+      ? truncateOptional(String(rawUser.id))
       : undefined,
-    email: string(rawUser.email),
-    username: string(rawUser.username),
+    email: truncateOptional(string(rawUser.email)),
+    username: truncateOptional(string(rawUser.username)),
     ipAddress:
       rawUser.ip_address === "{{auto}}"
         ? undefined
-        : string(rawUser.ip_address),
+        : truncateOptional(string(rawUser.ip_address)),
   };
   const { fingerprint, issueId } = await groupEvent(projectId, event);
   const occurrence: Occurrence = {
@@ -228,9 +232,13 @@ export async function normalizeEvent(
     level,
     tags,
     payload: event,
-    ...(string(event.release) ? { release: string(event.release) } : {}),
+    ...(string(event.release)
+      ? { release: truncateIndexedText(string(event.release) as string) }
+      : {}),
     ...(string(event.environment)
-      ? { environment: string(event.environment) }
+      ? {
+          environment: truncateIndexedText(string(event.environment) as string),
+        }
       : {}),
     ...(Object.values(user).some(Boolean) ? { user } : {}),
   };

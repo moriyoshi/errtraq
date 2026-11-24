@@ -1,5 +1,6 @@
 import { AwsRequestError, awsRequest } from "@errtraq/aws-signing";
 import type { ActiveStore, Clock, CreateContext, Logger } from "@errtraq/core";
+import { withIdentifierLimits } from "@errtraq/core/store";
 import { backfillBundleIndexes } from "./bundles.js";
 import {
   DynamoStoreAccessDeniedError,
@@ -74,6 +75,9 @@ export class DynamoStore implements ActiveStore {
     )
       throw new Error("Invalid DynamoDB store endpoint");
     this.endpoint = url.origin;
+    // Shared identifier limits apply to every write; other members forward bound to this store.
+    // biome-ignore lint/correctness/noConstructorReturn: the guard proxy is the store every caller receives
+    return withIdentifierLimits(this);
   }
   get table(): string {
     return this.options.table;

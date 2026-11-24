@@ -319,7 +319,8 @@ suite("Postgres", () => {
     const issueId = "i" as import("@errtraq/core").IssueId;
     const receivedAt =
       "2024-01-01T00:00:00.000Z" as import("@errtraq/core").Timestamp;
-    for (const id of ["😀", "\uE000"]) {
+    // Identifiers are ASCII-only; byte order still differs from locale collation ("B" < "a").
+    for (const id of ["a", "B"]) {
       const eventId = id as import("@errtraq/core").EventId;
       await store.recordEvent(
         {
@@ -351,10 +352,8 @@ suite("Postgres", () => {
       (
         await store.events.listByIssue({ projectId, issueId, order: "asc" })
       ).items.map((item) => item.eventId),
-    ).toEqual(["\uE000", "😀"]);
-    expect((await store.issues.get(projectId, issueId))?.lastEventId).toBe(
-      "😀",
-    );
+    ).toEqual(["B", "a"]);
+    expect((await store.issues.get(projectId, issueId))?.lastEventId).toBe("a");
   });
 
   it("uses ordered indexes for issue, event, erasure and debug lookups", async () => {

@@ -9,8 +9,14 @@ export {
 export {
   ConflictError,
   InvalidCursorError,
+  InvalidIdentifierError,
   NotFoundError,
   UnsupportedQueryError,
   VersionConflictError,
 } from "./errors.js";
+export {
+  assertIdentifier,
+  assertIndexedText,
+  withIdentifierLimits,
+} from "./identifier-limits.js";
 export { bundleDebugIdsDigest } from "./ids.js";

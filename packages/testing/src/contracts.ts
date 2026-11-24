@@ -20,6 +20,7 @@ import {
   type EventPosition,
   InvalidCounterError,
   InvalidCursorError,
+  InvalidIdentifierError,
   InvalidQueueMessageError,
   type IssueId,
   type KV,
@@ -1319,6 +1320,284 @@ export function activeStoreContract(
       await s.releases.deleteBundle(project, bundle.id);
       await s.releases.deleteBundle(project, bundle.id);
       expect(await s.releases.findBundleByDebugId(project, "debug")).toBeNull();
+    });
+    describe("identifier limits", () => {
+      const longId = "a".repeat(100);
+      const tooLongId = "a".repeat(101);
+      const badIds = [
+        tooLongId,
+        "",
+        "has space",
+        'quote"',
+        "back\\slash",
+        "-leading",
+        "multié",
+      ];
+      const text255 = "x".repeat(255);
+      const text256 = "x".repeat(256);
+      // 85 three-byte characters are exactly 255 bytes; 86 are 258.
+      const wide255 = "あ".repeat(85);
+      const wide258 = "あ".repeat(86);
+      const invalid = (promise: Promise<unknown>) =>
+        expect(promise).rejects.toBeInstanceOf(InvalidIdentifierError);
+
+      it("accepts values at the limit and round-trips them", async () => {
+        const s = await factory();
+        await s.projects.putOrg({
+          id: longId as OrgId,
+          slug: text255,
+          name: "n",
+        });
+        expect((await s.projects.getOrgBySlug(text255))?.id).toBe(longId);
+        await s.projects.put({
+          id: "7" as ProjectId,
+          orgId: longId as OrgId,
+          slug: wide255,
+          name: "n",
+          retentionDays: 30,
+        });
+        expect(
+          (await s.projects.getProjectBySlug(longId as OrgId, wide255))?.id,
+        ).toBe("7");
+        const o = {
+          ...occurrence(longId, 1, longId),
+          projectId: "7" as ProjectId,
+        };
+        const stored = event(longId, 1, {
+          projectId: "7" as ProjectId,
+          issueId: longId as IssueId,
+          release: text255,
+          environment: wide255,
+          user: {
+            id: text255,
+            email: wide255,
+            username: "u",
+            ipAddress: "::1",
+          },
+        });
+        await s.recordEvent(o, stored);
+        expect(
+          (await s.events.get("7" as ProjectId, longId as EventId))?.user
+            ?.email,
+        ).toBe(wide255);
+        expect(
+          (await s.issues.get("7" as ProjectId, longId as IssueId))?.count,
+        ).toBe(1);
+        expect(
+          (
+            await s.events.listByIssue({
+              projectId: "7" as ProjectId,
+              issueId: longId as IssueId,
+            })
+          ).items,
+        ).toHaveLength(1);
+      });
+
+      it("rejects invalid identifiers and over-long indexed text on every write path", async () => {
+        const s = await factory();
+        for (const bad of badIds) {
+          await invalid(
+            s.projects.putOrg({ id: bad as OrgId, slug: "s", name: "n" }),
+          );
+          await invalid(
+            s.projects.put({
+              id: bad as ProjectId,
+              orgId: "org" as OrgId,
+              slug: "s",
+              name: "n",
+              retentionDays: 1,
+            }),
+          );
+          await invalid(
+            s.projects.putKey({
+              id: bad as ProjectKeyId,
+              projectId: project,
+              publicKey: "pk",
+            }),
+          );
+          await invalid(
+            s.projects.createToken({
+              id: bad as ApiTokenId,
+              orgId: "org" as OrgId,
+              tokenHash: "h",
+              scopes: [],
+            }),
+          );
+          await invalid(
+            s.releases.put({
+              id: bad as ReleaseId,
+              projectId: project,
+              version: "1",
+              createdAt: t(1),
+            }),
+          );
+          await invalid(
+            s.recordEvent(
+              occurrence("ok-event", 1),
+              event("ok-event", 1, { eventId: bad as EventId }),
+            ),
+          );
+          await invalid(
+            s.issues.update(project, bad as IssueId, { status: "resolved" }),
+          );
+          await invalid(
+            s.meta.compareAndSetErasureRequest(
+              project,
+              bad as ErasureId,
+              null,
+              erasure("ok"),
+            ),
+          );
+        }
+        for (const bad of [text256, wide258]) {
+          await invalid(
+            s.projects.putOrg({ id: "o" as OrgId, slug: bad, name: "n" }),
+          );
+          await invalid(
+            s.projects.put({
+              id: "8" as ProjectId,
+              orgId: "o" as OrgId,
+              slug: bad,
+              name: "n",
+              retentionDays: 1,
+            }),
+          );
+          await invalid(
+            s.projects.putKey({
+              id: "k" as ProjectKeyId,
+              projectId: project,
+              publicKey: bad,
+            }),
+          );
+          await invalid(
+            s.projects.getOrCreateActiveKey({
+              id: "k" as ProjectKeyId,
+              projectId: project,
+              publicKey: bad,
+            }),
+          );
+          await invalid(
+            s.projects.putToken({
+              id: "t" as ApiTokenId,
+              orgId: "o" as OrgId,
+              tokenHash: bad,
+              scopes: [],
+            }),
+          );
+          await invalid(
+            s.releases.put({
+              id: "r" as ReleaseId,
+              projectId: project,
+              version: bad,
+              createdAt: t(1),
+            }),
+          );
+          await invalid(
+            s.recordEvent(occurrence("ev-text", 1, bad), event("ev-text", 1)),
+          );
+          for (const user of [
+            { id: bad },
+            { email: bad },
+            { username: bad },
+            { ipAddress: bad },
+          ])
+            await invalid(
+              s.recordEvent(
+                occurrence("ev-text", 1),
+                event("ev-text", 1, { user }),
+              ),
+            );
+          await invalid(
+            s.recordEvent(
+              occurrence("ev-text", 1),
+              event("ev-text", 1, { release: bad }),
+            ),
+          );
+          await invalid(
+            s.recordEvent(
+              occurrence("ev-text", 1),
+              event("ev-text", 1, { environment: bad }),
+            ),
+          );
+        }
+      });
+
+      it("rejects over-long bundle debug IDs and identifiers without writing", async () => {
+        const s = await factory();
+        const ids = ["debug-a"];
+        const manifest = {
+          blobKey: "manifest",
+          digest: await bundleDebugIdsDigest(ids),
+          debugIdCount: 1,
+        };
+        const bundle = {
+          id: "bundle-limit" as import("@errtraq/core").ArtifactBundleId,
+          projectId: project,
+          releaseId: "release" as ReleaseId,
+          blobKey: "archive",
+          state: "pending" as const,
+          pendingExpiresAt: t(10),
+          manifest,
+        };
+        await invalid(
+          s.releases.beginBundle(
+            { ...bundle, id: tooLongId as typeof bundle.id },
+            manifest,
+          ),
+        );
+        await invalid(
+          s.releases.beginBundle(
+            { ...bundle, releaseId: tooLongId as ReleaseId },
+            manifest,
+          ),
+        );
+        await s.releases.beginBundle(bundle, manifest);
+        await invalid(
+          s.releases.putBundleDebugIds(
+            project,
+            bundle.id,
+            [text256],
+            [text256],
+          ),
+        );
+        await s.releases.putBundleDebugIds(project, bundle.id, ids, ids);
+        await s.releases.verifyAndActivateBundle(project, bundle.id, ids);
+        expect(
+          (await s.releases.findBundleByDebugId(project, "debug-a"))?.id,
+        ).toBe(bundle.id);
+      });
+
+      it("rejects an invalid member of a group atomically", async () => {
+        const s = await factory();
+        if (!s.capabilities.recordEvents) return;
+        const good = {
+          occurrence: occurrence("grp-a", 1),
+          event: event("grp-a", 1, { issueId: "fp" as IssueId }),
+        };
+        const bad = {
+          occurrence: occurrence("grp-b", 2),
+          event: event("grp-b", 2, {
+            issueId: "fp" as IssueId,
+            user: { email: text256 },
+          }),
+        };
+        await invalid(s.recordEvents([good, bad]));
+        expect(await s.events.get(project, "grp-a" as EventId)).toBeNull();
+        expect(await s.issues.get(project, "fp" as IssueId)).toBeNull();
+      });
+
+      it("rejects invalid project ids on archive state writes", async () => {
+        const s = await factory();
+        await invalid(
+          s.meta.compareAndSetArchiveState(tooLongId as ProjectId, null, {
+            projectId: tooLongId as ProjectId,
+            version: 0,
+            archivedThrough: t(0),
+            seq: 0,
+          }),
+        );
+        expect(await s.meta.getArchiveState(tooLongId as ProjectId)).toBeNull();
+      });
     });
   });
 }

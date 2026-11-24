@@ -7,6 +7,7 @@ import {
   type EventId,
   hashApiToken,
   InvalidCursorError,
+  InvalidIdentifierError,
   type Issue,
   type IssueId,
   type IssueStatus,
@@ -104,7 +105,8 @@ export function createApiApp(options: {
       return error.getResponse();
     if (
       error instanceof UnsupportedQueryError ||
-      error instanceof InvalidCursorError
+      error instanceof InvalidCursorError ||
+      error instanceof InvalidIdentifierError
     )
       return c.json({ detail: error.message }, 400);
     if (error instanceof NotFoundError)

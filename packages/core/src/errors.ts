@@ -86,3 +86,8 @@ export class KVAccessDeniedError extends KVError {
 export class KVInvalidKeyError extends KVError {
   override name = "KVInvalidKeyError";
 }
+
+/** A port identifier or indexed text value violates the shared store limits (see identifier-limits). */
+export class InvalidIdentifierError extends Error {
+  override name = "InvalidIdentifierError";
+}

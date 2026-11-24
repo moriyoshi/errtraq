@@ -22,6 +22,7 @@ import {
   type StoredEvent,
   UnsupportedQueryError,
   VersionConflictError,
+  withIdentifierLimits,
 } from "@errtraq/core";
 import type { SqlStoreDialect } from "./dialect.js";
 import { migrate, type SqlDatabase } from "./schema.js";
@@ -979,5 +980,5 @@ export function createSqlStore({ db, dialect }: SqlStoreOptions): ActiveStore {
         throw new VersionConflictError("Version mismatch");
     }
   }
-  return store;
+  return withIdentifierLimits(store);
 }

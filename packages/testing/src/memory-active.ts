@@ -16,6 +16,7 @@ import {
   type StoredEvent,
   UnsupportedQueryError,
   VersionConflictError,
+  withIdentifierLimits,
 } from "@errtraq/core";
 import { compareKeys, copy, eventOrder, eventPage, page } from "./shared.js";
 
@@ -46,6 +47,8 @@ export class MemoryActiveStore implements ActiveStore {
     if (deleteStrategy === "ttl" && !ttlClock)
       throw new Error("TTL store needs a clock");
     this.events.capabilities.deleteStrategy = deleteStrategy;
+    // biome-ignore lint/correctness/noConstructorReturn: the guard proxy is the store every caller receives
+    return withIdentifierLimits(this);
   }
   private purgeExpired(): void {
     if (this.events.capabilities.deleteStrategy !== "ttl" || !this.ttlClock)
