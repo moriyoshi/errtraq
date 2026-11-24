@@ -8,11 +8,10 @@ item should be resolved or removed once addressed. Milestone work itself is trac
 
 - [x] M3 remaining queue item 0: reconcile completed M3 entries and cite their commits; keep
   direct-mode contention and real-AWS verification open.
-- [ ] M3 remaining queue: item 3 is deferred; item 4 is complete; event TTL activation is deferred to M4 with archival.
-  Item 5 (Lambda CORS, S3 artifacts and bundle size) is implemented. Next are items 6-9: deployed API token listing and
-  revocation; Postgres identifier bounds; documented AWS event fixtures; and, if budget permits,
-  a packaging-outside-the-workspace design. See `.agents-workspace/tmp/m3-remaining.md` for
-  the full ordered requirements. Real-AWS M3h work remains with the orchestrator.
+- [x] M3 remaining queue: items 1-8 are implemented (item 3 as lifecycle-rule blob cleanup,
+  b685a35); event TTL activation is deferred to M4 with archival. Item 9 is a design note only,
+  `.agents-docs/M3_PACKAGING_DESIGN.md`; its implementation is the packaging item below. Real-AWS
+  M3h work remains with the orchestrator.
 
 - [x] M3 issue-keyed recording: require explicit grouped-recording and queue grouping capabilities, remove the temporary optional method fallback, and use one `RoutedTopic` type. Store adapters and the FIFO record pipeline were implemented in 35428f7, 91c4d4b and 2e506b9. — *source: issue-keyed turn 2*
 - [ ] M4: activate the event `ttlEpoch` backstop with the archiver; explicit retention deletes remain primary. `ttl-backstop.ts` now calculates epoch seconds with safe later rounding, but is not wired into writes. Do not set TTL before archival commit when archive is enabled; settle and durably enforce the retention ceiling / retention-increase and archive-transition policy before enabling it. — *source: store review section C*
@@ -88,7 +87,7 @@ item should be resolved or removed once addressed. Milestone work itself is trac
 
 - [x] M3: investigate the intermittent missing staged-blob log observed during e2e recovery; determine whether recovery races the consumer deleting an envelope, and verify that the race is safe and correctly logged. A later M2d e2e also logged `Skipping unreadable blob` with `ENOENT`. — *source: M2b HCL contract validation e2e; M2d final gate*
 
-- [ ] M3 / packaging: support projects that depend on errtraq packages without requiring a `pnpm-workspace.yaml` repository or in-repository build and output directories. — *source: M2 final review section B*
+- [ ] M3 / packaging: support projects that depend on errtraq packages without requiring a `pnpm-workspace.yaml` repository or in-repository build and output directories. Design: `.agents-docs/M3_PACKAGING_DESIGN.md` (project root from the stack file, vendored Terraform modules, published `dist` without the `development` condition, `core` as a peer dependency, a packed-tarball check); publishing details are an owner decision. — *source: M2 final review section B*
 - [x] M3: reduce Lambda bundle size by using the runtime-only core entry and minification; Lambda bundles no longer include Zod. — *source: M2 final review section B*
 - [x] M3: test SQS partial-batch failures with real-shaped AWS events. — *source: M2 final review section B; resolved in M3c*
 - [x] M3: test EventBridge event handling against documented AWS event shapes (real captures remain M3h). — *source: M2 final review section B*
