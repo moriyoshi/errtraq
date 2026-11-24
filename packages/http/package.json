@@ -1,7 +1,6 @@
 {
   "name": "@errtraq/http",
   "version": "0.0.0",
-  "private": true,
   "type": "module",
   "exports": {
     ".": {
@@ -10,14 +9,30 @@
       "import": "./dist/index.js"
     }
   },
+  "publishConfig": {
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "import": "./dist/index.js"
+      }
+    }
+  },
   "files": [
     "dist"
   ],
+  "scripts": {
+    "prepack": "pnpm --workspace-root run build"
+  },
   "engines": {
     "node": "^22.18.0 || >=23.6.0"
   },
   "dependencies": {
-    "@errtraq/core": "workspace:*",
     "hono": "^4.13.19"
+  },
+  "peerDependencies": {
+    "@errtraq/core": "workspace:^"
+  },
+  "devDependencies": {
+    "@errtraq/core": "workspace:*"
   }
 }

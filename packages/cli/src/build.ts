@@ -22,7 +22,7 @@ import {
 } from "@errtraq/core";
 import { build } from "esbuild";
 import { strToU8, zipSync } from "fflate";
-import { safeDirectory } from "./infra.js";
+import { isErrtraqWorkspace, safeDirectory } from "./infra.js";
 
 function sourceValue(value: unknown): string {
   if (isEnvRef(value))
@@ -131,6 +131,7 @@ export async function buildStack(
       if (previousFunctions.has(entry) && !current.has(entry))
         await rm(join(output, entry), { recursive: true });
   }
+  const conditions = (await isErrtraqWorkspace(repo)) ? ["development"] : [];
   for (const fn of view.functions) {
     let entry: string;
     if (stack.platform.manifest.id === "aws-lambda") {
@@ -174,7 +175,7 @@ const getHandler=retryableInitialization(async()=>{ const built=await constructD
       const modules = specs
         .map((spec, index) => `${JSON.stringify(spec)}:m${index}`)
         .join(",");
-      entry = `${imports}\nimport stack from ${JSON.stringify(localImport(stackFile))};\nimport {constructStack} from "./packages/cli/src/construction.ts";\nimport {devToken} from "./packages/cli/src/token.ts";\nimport {dsnOrigin} from "./packages/cli/src/address.ts";\nconst modules={${modules}};\nconst built=await constructStack(stack,${JSON.stringify(fn.roles)},process.env,async(name)=>{if(!Object.hasOwn(modules,name)) throw new Error("Unknown module "+name); return modules[name];});\nconst project=await built.platform.prepare(false,devToken); const server=await built.platform.start();\nconst destination=dsnOrigin(server.host,server.port,server.publicUrl); if(destination.fallback) console.log("Note: DSN uses localhost; use your public host for remote clients."); const dsn=new URL(destination.origin); dsn.username=project.publicKey; dsn.pathname="/"+project.projectId; console.log("DSN: "+dsn.toString()); console.log("API token: "+project.token); console.log("Listening: http://"+server.host+":"+server.port);\nlet stopping=false;
+      entry = `${imports}\nimport stack from ${JSON.stringify(localImport(stackFile))};\nimport {constructStack,devToken,dsnOrigin} from "@errtraq/cli/standalone-entry";\nconst modules={${modules}};\nconst built=await constructStack(stack,${JSON.stringify(fn.roles)},process.env,async(name)=>{if(!Object.hasOwn(modules,name)) throw new Error("Unknown module "+name); return modules[name];});\nconst project=await built.platform.prepare(false,devToken); const server=await built.platform.start();\nconst destination=dsnOrigin(server.host,server.port,server.publicUrl); if(destination.fallback) console.log("Note: DSN uses localhost; use your public host for remote clients."); const dsn=new URL(destination.origin); dsn.username=project.publicKey; dsn.pathname="/"+project.projectId; console.log("DSN: "+dsn.toString()); console.log("API token: "+project.token); console.log("Listening: http://"+server.host+":"+server.port);\nlet stopping=false;
 for(const signal of ["SIGTERM","SIGINT"]) process.on(signal,()=>{if(stopping){if(process.pid===1) process.exit(signal==="SIGTERM"?143:130); process.removeAllListeners(signal); process.kill(process.pid,signal); return;} stopping=true; void server.close().then(()=>built.close()).catch((error)=>{console.error(error);process.exitCode=1;});});`;
     } else
       throw new Error(
@@ -193,7 +194,7 @@ for(const signal of ["SIGTERM","SIGINT"]) process.on(signal,()=>{if(stopping){if
       target: "node22",
       minify: stack.platform.manifest.id === "aws-lambda",
       keepNames: true,
-      conditions: ["development"],
+      conditions,
       write: false,
       metafile: true,
       outfile: "index.mjs",

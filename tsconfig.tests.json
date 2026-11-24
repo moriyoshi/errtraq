@@ -13,6 +13,7 @@
       "@errtraq/testing": ["packages/testing/src/index.ts"],
       "@errtraq/http": ["packages/http/src/index.ts"],
       "@errtraq/cli": ["packages/cli/src/index.ts"],
+      "@errtraq/cli/standalone-entry": ["packages/cli/src/standalone-entry.ts"],
       "@errtraq/infra-gen": ["packages/infra-gen/src/index.ts"],
       "@errtraq/store-sql": ["packages/adapters/store-sql/src/index.ts"],
       "@errtraq/store-sql/stack": ["packages/adapters/store-sql/src/stack.ts"],

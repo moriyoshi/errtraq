@@ -2038,6 +2038,16 @@ export function resolveStack(stack: unknown): ResolvedStack {
   resolvedOrders.set(snapshot, result.order ?? []);
   return snapshot;
 }
+/** Whether a value came out of `resolveStack` of this module instance, another copy of core, or neither. */
+export function stackOrigin(
+  value: unknown,
+): "this-core" | "other-core" | "unresolved" {
+  if (typeof value !== "object" || value === null || !(resolvedMarker in value))
+    return "unresolved";
+  return resolvedOrders.has(value as unknown as StackConfig)
+    ? "this-core"
+    : "other-core";
+}
 export function constructionOrder(stack: StackConfig): string[] {
   const cached = resolvedOrders.get(stack);
   if (cached) return [...cached];

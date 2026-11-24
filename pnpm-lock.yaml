@@ -226,13 +226,13 @@ importers:
 
   packages/adapters/blob-fs:
     dependencies:
-      '@errtraq/core':
-        specifier: workspace:*
-        version: link:../../core
       zod:
         specifier: 4.6.7
         version: 4.6.7
     devDependencies:
+      '@errtraq/core':
+        specifier: workspace:*
+        version: link:../../core
       '@errtraq/testing':
         specifier: workspace:*
         version: link:../../testing
@@ -242,9 +242,6 @@ importers:
       '@errtraq/aws-signing':
         specifier: workspace:*
         version: link:../../aws-signing
-      '@errtraq/core':
-        specifier: workspace:*
-        version: link:../../core
       fast-xml-parser:
         specifier: 5.3.8
         version: 5.3.8
@@ -252,6 +249,9 @@ importers:
         specifier: 4.6.7
         version: 4.6.7
     devDependencies:
+      '@errtraq/core':
+        specifier: workspace:*
+        version: link:../../core
       '@errtraq/testing':
         specifier: workspace:*
         version: link:../../testing
@@ -261,39 +261,39 @@ importers:
       '@errtraq/aws-signing':
         specifier: workspace:*
         version: link:../../aws-signing
-      '@errtraq/core':
-        specifier: workspace:*
-        version: link:../../core
       zod:
         specifier: 4.6.7
         version: 4.6.7
     devDependencies:
+      '@errtraq/core':
+        specifier: workspace:*
+        version: link:../../core
       '@errtraq/testing':
         specifier: workspace:*
         version: link:../../testing
 
   packages/adapters/kv-memory:
     dependencies:
-      '@errtraq/core':
-        specifier: workspace:*
-        version: link:../../core
       zod:
         specifier: 4.6.7
         version: 4.6.7
     devDependencies:
+      '@errtraq/core':
+        specifier: workspace:*
+        version: link:../../core
       '@errtraq/testing':
         specifier: workspace:*
         version: link:../../testing
 
   packages/adapters/queue-memory:
     dependencies:
-      '@errtraq/core':
-        specifier: workspace:*
-        version: link:../../core
       zod:
         specifier: 4.6.7
         version: 4.6.7
     devDependencies:
+      '@errtraq/core':
+        specifier: workspace:*
+        version: link:../../core
       '@errtraq/testing':
         specifier: workspace:*
         version: link:../../testing
@@ -303,13 +303,13 @@ importers:
       '@errtraq/aws-signing':
         specifier: workspace:*
         version: link:../../aws-signing
-      '@errtraq/core':
-        specifier: workspace:*
-        version: link:../../core
       zod:
         specifier: 4.6.7
         version: 4.6.7
     devDependencies:
+      '@errtraq/core':
+        specifier: workspace:*
+        version: link:../../core
       '@errtraq/testing':
         specifier: workspace:*
         version: link:../../testing
@@ -319,13 +319,13 @@ importers:
       '@errtraq/aws-signing':
         specifier: workspace:*
         version: link:../../aws-signing
-      '@errtraq/core':
-        specifier: workspace:*
-        version: link:../../core
       zod:
         specifier: 4.6.7
         version: 4.6.7
     devDependencies:
+      '@errtraq/core':
+        specifier: workspace:*
+        version: link:../../core
       '@errtraq/testing':
         specifier: workspace:*
         version: link:../../testing
@@ -335,9 +335,6 @@ importers:
       '@errtraq/aws-signing':
         specifier: workspace:*
         version: link:../../aws-signing
-      '@errtraq/core':
-        specifier: workspace:*
-        version: link:../../core
       kysely:
         specifier: ^0.29.9
         version: 0.29.9
@@ -348,6 +345,9 @@ importers:
         specifier: 4.6.7
         version: 4.6.7
     devDependencies:
+      '@errtraq/core':
+        specifier: workspace:*
+        version: link:../../core
       '@errtraq/testing':
         specifier: workspace:*
         version: link:../../testing
@@ -369,9 +369,6 @@ importers:
       '@errtraq/blob-fs':
         specifier: workspace:*
         version: link:../adapters/blob-fs
-      '@errtraq/core':
-        specifier: workspace:*
-        version: link:../core
       '@errtraq/infra-gen':
         specifier: workspace:*
         version: link:../infra-gen
@@ -396,6 +393,9 @@ importers:
       '@errtraq/store-sql':
         specifier: workspace:*
         version: link:../adapters/store-sql
+      '@errtraq/terraform-modules':
+        specifier: workspace:*
+        version: link:../terraform-modules
       esbuild:
         specifier: 0.28.2
         version: 0.28.2
@@ -403,6 +403,9 @@ importers:
         specifier: 0.8.2
         version: 0.8.2
     devDependencies:
+      '@errtraq/core':
+        specifier: workspace:*
+        version: link:../core
       '@errtraq/testing':
         specifier: workspace:*
         version: link:../testing
@@ -415,15 +418,16 @@ importers:
 
   packages/http:
     dependencies:
-      '@errtraq/core':
-        specifier: workspace:*
-        version: link:../core
       hono:
         specifier: ^4.13.19
         version: 4.13.19
+    devDependencies:
+      '@errtraq/core':
+        specifier: workspace:*
+        version: link:../core
 
   packages/infra-gen:
-    dependencies:
+    devDependencies:
       '@errtraq/core':
         specifier: workspace:*
         version: link:../core
@@ -433,9 +437,6 @@ importers:
       '@errtraq/aws-signing':
         specifier: workspace:*
         version: link:../../aws-signing
-      '@errtraq/core':
-        specifier: workspace:*
-        version: link:../../core
       '@errtraq/http':
         specifier: workspace:*
         version: link:../../http
@@ -446,6 +447,9 @@ importers:
         specifier: 4.6.7
         version: 4.6.7
     devDependencies:
+      '@errtraq/core':
+        specifier: workspace:*
+        version: link:../../core
       '@errtraq/queue-sqs':
         specifier: workspace:*
         version: link:../../adapters/queue-sqs
@@ -455,9 +459,6 @@ importers:
 
   packages/platforms/standalone:
     dependencies:
-      '@errtraq/core':
-        specifier: workspace:*
-        version: link:../../core
       '@errtraq/http':
         specifier: workspace:*
         version: link:../../http
@@ -471,9 +472,14 @@ importers:
         specifier: 4.6.7
         version: 4.6.7
     devDependencies:
+      '@errtraq/core':
+        specifier: workspace:*
+        version: link:../../core
       '@errtraq/testing':
         specifier: workspace:*
         version: link:../../testing
+
+  packages/terraform-modules: {}
 
   packages/testing:
     dependencies:

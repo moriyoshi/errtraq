@@ -1498,3 +1498,20 @@ project has a `dist/**/*.js` at least as new, then `tsc -b --force` on the stale
 a failure if anything is still stale. A source that was only touched costs one forced rebuild of its
 project; the next build is a no-op. Putting `tsBuildInfoFile` under `dist/` would only cover
 deletion, not old files restored over current ones.
+
+## 2026-11-24 — Packaging outside the workspace implemented (Claude)
+
+The M3 packaging design is implemented; `pnpm verify:packaging` packs the 16 public packages,
+installs the tarballs with npm into `.agents-workspace/tmp/pack/project` and drives the installed CLI
+(validate, build, vendor-mode `infra generate`, `terraform init -backend=false` + `validate`, one
+envelope into the standalone bundle). Findings: (1) the throwaway project sits below this
+repository's `pnpm-workspace.yaml`, so root discovery picks the repository unless `--root` is passed
+(the check passes it); (2) an installed `@errtraq/terraform-modules` is inside the project root, so
+"inside the root means relative" produced `../../../node_modules/...` sources; the default is now
+`relative` only outside `node_modules`; (3) `npm install a.tgz b.tgz ...` satisfies the exact
+`workspace:*` versions pnpm writes (`0.0.0`) from the tarballs given together, no overrides needed;
+(4) a stack built by a second copy of core fails in `resolveStack` with "A resolved stack copy cannot
+be re-parsed" (the resolved marker is a registered symbol, the order cache is per module), so the CLI
+checks `stackOrigin` first. The test for the `package.json` fallback of `projectRoot` uses the OS
+temporary directory, because every directory under this repository has a workspace file above it.
+

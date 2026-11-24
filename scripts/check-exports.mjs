@@ -5,6 +5,7 @@ import { pathToFileURL } from "node:url";
 export function checkExports(manifest, directory, paths) {
   const errors = [];
   for (const [entry, target] of Object.entries(manifest.exports ?? {})) {
+    if (typeof target === "string") continue;
     const specifier = manifest.name + (entry === "." ? "" : entry.slice(1));
     if (
       !target ||
@@ -20,6 +21,28 @@ export function checkExports(manifest, directory, paths) {
       errors.push(`${specifier}: missing typecheck path to ${expected}`);
   }
   return errors;
+}
+function withoutDevelopment(target) {
+  if (!target || typeof target !== "object") return target;
+  const { development: _, ...rest } = target;
+  return rest;
+}
+/** Public packages publish the same exports minus the `development` condition. */
+export function checkPublishConfig(manifest) {
+  if (manifest.private) return [];
+  const expected = Object.fromEntries(
+    Object.entries(manifest.exports ?? {}).map(([entry, target]) => [
+      entry,
+      withoutDevelopment(target),
+    ]),
+  );
+  const actual = manifest.publishConfig?.exports;
+  if (!actual) return [`${manifest.name}: missing publishConfig.exports`];
+  return JSON.stringify(actual) === JSON.stringify(expected)
+    ? []
+    : [
+        `${manifest.name}: publishConfig.exports must equal exports without the development condition`,
+      ];
 }
 async function run() {
   const configs = JSON.parse(await readFile("tsconfig.tests.json", "utf8"));
@@ -41,6 +64,7 @@ async function run() {
       await readFile(join(dir, "package.json"), "utf8"),
     );
     errors.push(...checkExports(manifest, dir, paths));
+    errors.push(...checkPublishConfig(manifest));
     for (const target of Object.values(manifest.exports ?? {}))
       if (
         target &&

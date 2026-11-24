@@ -21,10 +21,16 @@ export interface GenerateOptions {
   /** POSIX paths, either both absolute or both relative to the same root. */
   outputDirectory: string;
   modulesDirectory: string;
+  /** Defaults to relative paths into `modulesDirectory`. */
+  moduleSource?: ModuleSourceMode;
   generationEnv: Readonly<Record<string, string | undefined>>;
   /** Per-function ZIP paths relative to the generated Terraform root. */
   artifactPaths: Readonly<Record<string, string | undefined>>;
 }
+export type ModuleSourceMode =
+  | { mode: "relative" }
+  | { mode: "vendor" }
+  | { mode: "remote"; base: string; version: string };
 export type GeneratedFileSet = Readonly<Record<string, string>>;
 export type GenerationResult =
   | { kind: "terraform"; files: GeneratedFileSet }
@@ -88,6 +94,42 @@ export function relativeModuleSource(
   return result.startsWith("../") || result.startsWith("./")
     ? result
     : `./${result}`;
+}
+/** Modules copied next to the generated root, see `vendorModuleDirectory`. */
+export const vendorModuleDirectory = "modules";
+const remoteBase =
+  /^(?:git::)?(?:https?|ssh):\/\/[A-Za-z0-9._~@-]+(?::\d+)?\/[^\s?#\\]+$|^github\.com\/[^\s?#\\]+$/;
+export function validateModuleBase(base: string): string {
+  const trimmed = base.replace(/\/+$/, "");
+  if (
+    !remoteBase.test(trimmed) ||
+    trimmed.split("/").some((part) => part === "..")
+  )
+    throw new Error(
+      "Module base must be a remote Terraform source prefix such as git::https://example.com/org/repo.git//infra/modules",
+    );
+  return trimmed;
+}
+export function moduleSource(
+  outputDirectory: string,
+  modulesDirectory: string,
+  mode: ModuleSourceMode,
+  provider: string,
+  component: string,
+): string {
+  if (mode.mode === "vendor")
+    return `./${vendorModuleDirectory}/${provider}/${component}`;
+  if (mode.mode === "remote") {
+    if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(mode.version))
+      throw new Error("Module version must be a semantic version");
+    return `${validateModuleBase(mode.base)}/${provider}/${component}?ref=v${mode.version}`;
+  }
+  return relativeModuleSource(
+    outputDirectory,
+    modulesDirectory,
+    provider,
+    component,
+  );
 }
 function own<T>(
   record: Readonly<Record<string, T>> | undefined,
@@ -407,9 +449,10 @@ export function generate(
     const { provider, component } = selection.infra.module;
     if (provider === "local")
       throw new Error(`No Terraform module for local selection ${path}`);
-    const source = relativeModuleSource(
+    const source = moduleSource(
       options.outputDirectory,
       options.modulesDirectory,
+      options.moduleSource ?? { mode: "relative" },
       provider,
       component,
     );

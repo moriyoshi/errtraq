@@ -1,0 +1,23 @@
+{
+  "name": "@errtraq/terraform-modules",
+  "version": "0.0.0",
+  "description": "Terraform modules for errtraq stacks",
+  "type": "module",
+  "exports": {
+    "./package.json": "./package.json"
+  },
+  "publishConfig": {
+    "exports": {
+      "./package.json": "./package.json"
+    }
+  },
+  "files": [
+    "aws"
+  ],
+  "scripts": {
+    "prepack": "node ./prepack.mjs"
+  },
+  "engines": {
+    "node": "^22.18.0 || >=23.6.0"
+  }
+}

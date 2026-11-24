@@ -1,7 +1,6 @@
 {
   "name": "@errtraq/core",
   "version": "0.0.0",
-  "private": true,
   "type": "module",
   "exports": {
     ".": {
@@ -35,9 +34,40 @@
       "import": "./dist/runtime.js"
     }
   },
+  "publishConfig": {
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "import": "./dist/index.js"
+      },
+      "./blob": {
+        "types": "./dist/blob.d.ts",
+        "import": "./dist/blob.js"
+      },
+      "./kv": {
+        "types": "./dist/kv.d.ts",
+        "import": "./dist/kv.js"
+      },
+      "./queue": {
+        "types": "./dist/queue.d.ts",
+        "import": "./dist/queue.js"
+      },
+      "./store": {
+        "types": "./dist/store.d.ts",
+        "import": "./dist/store.js"
+      },
+      "./runtime": {
+        "types": "./dist/runtime.d.ts",
+        "import": "./dist/runtime.js"
+      }
+    }
+  },
   "files": [
     "dist"
   ],
+  "scripts": {
+    "prepack": "pnpm --workspace-root run build"
+  },
   "engines": {
     "node": "^22.18.0 || >=23.6.0"
   },

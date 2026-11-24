@@ -1,7 +1,6 @@
 {
   "name": "@errtraq/store-sql",
   "version": "0.0.0",
-  "private": true,
   "type": "module",
   "exports": {
     ".": {
@@ -25,21 +24,47 @@
       "import": "./dist/postgres-stack.js"
     }
   },
+  "publishConfig": {
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "import": "./dist/index.js"
+      },
+      "./stack": {
+        "types": "./dist/stack.d.ts",
+        "import": "./dist/stack.js"
+      },
+      "./postgres": {
+        "types": "./dist/postgres.d.ts",
+        "import": "./dist/postgres.js"
+      },
+      "./postgres/stack": {
+        "types": "./dist/postgres-stack.d.ts",
+        "import": "./dist/postgres-stack.js"
+      }
+    }
+  },
   "files": [
     "dist"
   ],
+  "scripts": {
+    "prepack": "pnpm --workspace-root run build"
+  },
   "engines": {
     "node": "^22.18.0 || >=23.6.0"
   },
   "dependencies": {
     "@errtraq/aws-signing": "workspace:*",
-    "@errtraq/core": "workspace:*",
     "kysely": "^0.29.9",
     "pg": "8.16.3",
     "zod": "4.6.7"
   },
+  "peerDependencies": {
+    "@errtraq/core": "workspace:^"
+  },
   "devDependencies": {
     "@errtraq/testing": "workspace:*",
-    "@types/pg": "8.15.6"
+    "@types/pg": "8.15.6",
+    "@errtraq/core": "workspace:*"
   }
 }

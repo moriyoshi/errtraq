@@ -1,8 +1,14 @@
 #!/usr/bin/env node
+import { realpath } from "node:fs/promises";
 import { homedir } from "node:os";
 import { relative, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
-import { physicalFunctions, resolveStack, selections } from "@errtraq/core";
+import {
+  physicalFunctions,
+  resolveStack,
+  selections,
+  stackOrigin,
+} from "@errtraq/core";
 import { buildSummary, dsnHost, dsnOrigin } from "./address.js";
 import { buildStack } from "./build.js";
 import { constructStack } from "./construction.js";
@@ -13,7 +19,7 @@ import {
   revokeToken,
   withDeployedStore,
 } from "./deployed-token.js";
-import { generateInfra, repositoryRoot, safeDirectory } from "./infra.js";
+import { generateInfra, projectRoot, safeDirectory } from "./infra.js";
 import { assertNodeVersion } from "./node-version.js";
 import { devToken } from "./token.js";
 import { formatValidation } from "./validation.js";
@@ -40,6 +46,7 @@ function isDevPlatform(value: unknown): value is DevPlatform {
     typeof value.start === "function"
   );
 }
+let scrubRoot: string | undefined;
 export async function main(args: string[]): Promise<void> {
   assertNodeVersion(process.versions.node);
   const [command, ...initial] = args;
@@ -77,6 +84,8 @@ export async function main(args: string[]): Promise<void> {
         "--stack",
         "--out",
         "--build-dir",
+        ...(command === "build" || infra ? ["--root"] : []),
+        ...(infra ? ["--module-source", "--module-base"] : []),
         ...(command === "bootstrap"
           ? ["--secret-name", "--ingest-url", "--org", "--project"]
           : tokenAdmin
@@ -95,10 +104,22 @@ export async function main(args: string[]): Promise<void> {
     (options["--build-dir"] && !infra)
   )
     throw new Error("Invalid command arguments: --stack is required");
-  const file = resolve(options["--stack"]);
+  const moduleSource = options["--module-source"];
+  if (
+    moduleSource !== undefined &&
+    !["relative", "vendor", "remote"].includes(moduleSource)
+  )
+    throw new Error("--module-source must be relative, vendor or remote");
+  const file = await realpath(resolve(options["--stack"])).catch(() =>
+    resolve(options["--stack"] ?? ""),
+  );
   const imported: unknown = await import(pathToFileURL(file).href);
   if (!imported || typeof imported !== "object" || !("default" in imported))
     throw new Error("Stack must export a default configuration");
+  if (stackOrigin(imported.default) === "other-core")
+    throw new Error(
+      "The stack file loads a different copy of @errtraq/core than the errtraq CLI; install one shared @errtraq/core (it is a peer dependency of every errtraq package) and avoid duplicate copies in node_modules",
+    );
   const stack = resolveStack(imported.default);
   if (tokenAdmin) {
     const orgSlug = options["--org"];
@@ -148,7 +169,8 @@ export async function main(args: string[]): Promise<void> {
     return;
   }
   if (command === "build" || infra) {
-    const repo = await repositoryRoot(process.cwd());
+    const repo = await projectRoot(file, { root: options["--root"] });
+    scrubRoot = repo;
     const defaultBuild = resolve(repo, "dist", stack.name);
     if (command === "build") {
       const directory = await safeDirectory(
@@ -174,6 +196,10 @@ export async function main(args: string[]): Promise<void> {
           ),
           resolve(options["--build-dir"] ?? defaultBuild),
           allowMissing,
+          {
+            moduleSource: moduleSource as "relative" | "vendor" | "remote",
+            moduleBase: options["--module-base"],
+          },
         ),
       );
     return;
@@ -246,8 +272,17 @@ export async function main(args: string[]): Promise<void> {
     if (!failed) await created.close();
   }
 }
+function stackArgument(): string | undefined {
+  const index = process.argv.indexOf("--stack");
+  return index >= 0 ? process.argv[index + 1] : undefined;
+}
 main(process.argv.slice(2)).catch(async (error) => {
-  const repo = await repositoryRoot(process.cwd()).catch(() => undefined);
+  const stackFile = stackArgument();
+  const repo =
+    scrubRoot ??
+    (stackFile
+      ? await projectRoot(stackFile).catch(() => undefined)
+      : undefined);
   let message = error instanceof Error ? error.message : String(error);
   if (repo)
     message = message.replaceAll(`${repo}${sep}`, "").replaceAll(repo, ".");

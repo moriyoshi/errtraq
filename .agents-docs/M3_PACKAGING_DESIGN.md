@@ -1,6 +1,6 @@
 # Packaging outside the workspace: design note
 
-Status: design only (item 9 of the M3 queue). Nothing here is implemented. The TODO item is
+Status: implemented (item 9 of the M3 queue); see "Implementation notes and deviations" at the end. The TODO item was
 "support projects that depend on errtraq packages without requiring a `pnpm-workspace.yaml`
 repository or in-repository build and output directories" (M2 final review section B).
 
@@ -117,3 +117,26 @@ when those are unavailable.
   M6.
 - Whether `remote` module mode should be the default once release tags exist is left for the first
   public release.
+
+## Implementation notes and deviations
+
+- `projectRoot` is in `packages/cli/src/infra.ts`; `--root` is accepted by `build` and `infra generate`.
+  A workspace file anywhere above the stack wins over a nearer `package.json`, as written, so a
+  project nested in some other pnpm workspace gets that workspace as its root unless `--root` is used.
+  `verify:packaging` passes `--root` because its throwaway project lives under this repository.
+- `@errtraq/terraform-modules` exports only `./package.json`. `prepack` (`prepack.mjs`) copies each
+  `infra/modules/<provider>/<component>` without `tests/` and `*.tftest.hcl` into the git-ignored
+  `packages/terraform-modules/<provider>/`; `files` lists `aws` (add providers there). The CLI finds
+  it with `createRequire(...).resolve`, not `import.meta.resolve`.
+- Default module source is `relative` only when the modules directory is inside the project root
+  and not under `node_modules` (the note's rule alone would pick `relative` for an installed package
+  in the user's own project, which the first packaging run caught). The workspace uses
+  `infra/modules` directly; elsewhere the installed package is used.
+- Vendor mode marks ownership with `"modules": true` in `.errtraq-generated.json`; only a marked
+  `modules` directory is replaced (or removed when switching to another mode); an unmarked one makes
+  generation fail. Child modules are found by scanning `.tf` files for `source = "./..."` or
+  `"../..."` and must stay under the modules directory.
+- Two additions beyond the note: `stackOrigin` in core (a stack resolved by another copy of core is
+  reported by `validate`, `build` and `infra generate` before the confusing "cannot be re-parsed"
+  error), and `scripts/version.mjs <version>` (sets all public packages, fails if they differ).
+- `prepack` of each public package runs `pnpm --workspace-root run build`.

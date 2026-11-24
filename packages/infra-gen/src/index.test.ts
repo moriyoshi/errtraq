@@ -23,6 +23,7 @@ import local from "../../../stacks/local.js";
 import {
   type GenerateOptions,
   generate,
+  moduleSource,
   relativeModuleSource,
   renderInfraValue,
 } from "./index.js";
@@ -348,6 +349,66 @@ describe("Terraform generator", () => {
     expect(() =>
       relativeModuleSource("/repo/out", "infra/modules", "aws", "s3"),
     ).toThrow("same path root");
+  });
+  it("computes relative, vendored and remote module sources", () => {
+    const relative = { mode: "relative" } as const;
+    expect(
+      moduleSource("infra/generated/s", "infra/modules", relative, "aws", "s3"),
+    ).toBe("../../modules/aws/s3");
+    expect(
+      moduleSource("out", "ignored", { mode: "vendor" }, "aws", "s3"),
+    ).toBe("./modules/aws/s3");
+    const remote = (base: string, version = "1.2.3") =>
+      moduleSource(
+        "out",
+        "ignored",
+        { mode: "remote", base, version },
+        "aws",
+        "sqs",
+      );
+    expect(
+      remote("git::https://example.com/org/errtraq.git//infra/modules"),
+    ).toBe(
+      "git::https://example.com/org/errtraq.git//infra/modules/aws/sqs?ref=v1.2.3",
+    );
+    expect(remote("github.com/org/errtraq//infra/modules/", "1.0.0-rc.1")).toBe(
+      "github.com/org/errtraq//infra/modules/aws/sqs?ref=v1.0.0-rc.1",
+    );
+    for (const base of [
+      "../modules",
+      "./infra/modules",
+      "/abs/modules",
+      "file:///abs/modules",
+      "git::https://example.com/a/b.git//x?ref=main",
+      "https://example.com/../x",
+      "",
+    ])
+      expect(() => remote(base)).toThrow("Module base");
+    expect(() => remote("github.com/o/r//m", "main")).toThrow("semantic");
+  });
+  it("renders vendored and remote sources into main.tf.json", () => {
+    const render = (moduleSource: GenerateOptions["moduleSource"]) => {
+      const result = generate(shared, { ...options, moduleSource });
+      if (result.kind !== "terraform") throw new Error("expected terraform");
+      return JSON.parse(result.files["main.tf.json"] ?? "{}").module as Record<
+        string,
+        { source: string }
+      >;
+    };
+    const vendored = render({ mode: "vendor" });
+    expect(Object.values(vendored).map((m) => m.source)).toSatisfy(
+      (sources: string[]) =>
+        sources.length > 0 &&
+        sources.every((s) => s.startsWith("./modules/aws/")),
+    );
+    const remote = render({
+      mode: "remote",
+      base: "git::https://example.com/o/r.git//infra/modules",
+      version: "0.1.0",
+    });
+    expect(
+      Object.values(remote).every((m) => m.source.endsWith("?ref=v0.1.0")),
+    ).toBe(true);
   });
   it("renders qualified, keyed, stack and artifact references", () => {
     expect(

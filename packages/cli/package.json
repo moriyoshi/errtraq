@@ -1,24 +1,45 @@
 {
   "name": "@errtraq/cli",
   "version": "0.0.0",
-  "private": true,
   "type": "module",
   "exports": {
     ".": {
       "development": "./src/index.ts",
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./standalone-entry": {
+      "development": "./src/standalone-entry.ts",
+      "types": "./dist/standalone-entry.d.ts",
+      "import": "./dist/standalone-entry.js"
     }
+  },
+  "publishConfig": {
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "import": "./dist/index.js"
+      },
+      "./standalone-entry": {
+        "types": "./dist/standalone-entry.d.ts",
+        "import": "./dist/standalone-entry.js"
+      }
+    }
+  },
+  "bin": {
+    "errtraq": "./dist/bin.js"
   },
   "files": [
     "dist"
   ],
+  "scripts": {
+    "prepack": "pnpm --workspace-root run build"
+  },
   "engines": {
     "node": "^22.18.0 || >=23.6.0"
   },
   "dependencies": {
     "@errtraq/blob-fs": "workspace:*",
-    "@errtraq/core": "workspace:*",
     "@errtraq/infra-gen": "workspace:*",
     "@errtraq/kv-memory": "workspace:*",
     "@errtraq/platform-standalone": "workspace:*",
@@ -29,12 +50,14 @@
     "@errtraq/aws-signing": "workspace:*",
     "@errtraq/platform-aws-lambda": "workspace:*",
     "@errtraq/store-dynamodb": "workspace:*",
-    "@errtraq/kv-dynamodb": "workspace:*"
+    "@errtraq/kv-dynamodb": "workspace:*",
+    "@errtraq/terraform-modules": "workspace:*"
   },
-  "bin": {
-    "errtraq": "./dist/bin.js"
+  "peerDependencies": {
+    "@errtraq/core": "workspace:^"
   },
   "devDependencies": {
-    "@errtraq/testing": "workspace:*"
+    "@errtraq/testing": "workspace:*",
+    "@errtraq/core": "workspace:*"
   }
 }

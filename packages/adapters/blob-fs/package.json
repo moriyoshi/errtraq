@@ -1,7 +1,6 @@
 {
   "name": "@errtraq/blob-fs",
   "version": "0.0.0",
-  "private": true,
   "type": "module",
   "exports": {
     ".": {
@@ -15,17 +14,35 @@
       "import": "./dist/stack.js"
     }
   },
+  "publishConfig": {
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "import": "./dist/index.js"
+      },
+      "./stack": {
+        "types": "./dist/stack.d.ts",
+        "import": "./dist/stack.js"
+      }
+    }
+  },
   "files": [
     "dist"
   ],
+  "scripts": {
+    "prepack": "pnpm --workspace-root run build"
+  },
   "engines": {
     "node": "^22.18.0 || >=23.6.0"
   },
   "dependencies": {
-    "@errtraq/core": "workspace:*",
     "zod": "4.6.7"
   },
+  "peerDependencies": {
+    "@errtraq/core": "workspace:^"
+  },
   "devDependencies": {
-    "@errtraq/testing": "workspace:*"
+    "@errtraq/testing": "workspace:*",
+    "@errtraq/core": "workspace:*"
   }
 }

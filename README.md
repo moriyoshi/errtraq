@@ -48,6 +48,16 @@ ignored by Git. Use `--out` to choose a directory and `--build-dir` on `infra ge
 build written elsewhere. Generation requires the build unless `--allow-missing-artifacts` is
 explicitly supplied. Regeneration preserves Terraform working directories, lock files, state,
 plans and crash logs. Terraform state and provider credentials remain the operator's responsibility.
+
+Outside this repository, install `@errtraq/cli`, the adapters you use and `@errtraq/core` (a peer
+dependency of all of them) from npm. The project root is `--root <dir>` if given, otherwise the
+nearest directory above the stack file with a `pnpm-workspace.yaml`, then a `package.json`; outputs
+stay inside it. `infra generate --module-source vendor` (the default outside this repository) copies
+the Terraform modules the stack uses into `<out>/modules`; `relative` points at `infra/modules` (the
+default here), and `remote` (with `--module-base <git source prefix>`) points at a tagged repository.
+`pnpm verify:packaging` packs every public package and exercises them from a throwaway project
+(opt-in; needs npm, the npm registry and Terraform).
+
 See [ARCHITECTURE.md](./ARCHITECTURE.md) for the design and `.agents-docs/QUALITY_GATE.md` for
 verification commands.
 
