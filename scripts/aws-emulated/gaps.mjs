@@ -26,11 +26,12 @@ export function loadGaps() {
     if (
       !doc.includes(`## ${gap.heading}\n`) ||
       !gap.effect ||
-      !(
-        gap.issue === null ||
+      !Array.isArray(gap.issues) ||
+      gap.issues.length === 0 ||
+      !gap.issues.every((issue) =>
         /^https:\/\/github\.com\/moriyoshi\/winterbaume\/issues\/\d+$/.test(
-          gap.issue,
-        )
+          issue,
+        ),
       )
     )
       throw new Error(`Missing documentation for emulator exception ${id}`);
@@ -39,6 +40,6 @@ export function loadGaps() {
 export function skipped(gaps, id) {
   if (!gaps[id]) throw new Error(`Undeclared emulator exception ${id}`);
   console.log(
-    `SKIPPED (winterbaume gap: ${id}): ${gaps[id].effect} (${gaps[id].issue ?? "upstream issue not filed"})`,
+    `SKIPPED (winterbaume gap: ${id}): ${gaps[id].effect} (${gaps[id].issues.join(", ")})`,
   );
 }

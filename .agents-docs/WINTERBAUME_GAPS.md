@@ -91,7 +91,8 @@ Fixed at pinned revision `79c452d2bb2844abf771cfa4a497275c24b46489`: a protected
   but its tag readback does not retain the `app=errtraq` default tag. A repeat plan proposes
   `tags_all` changing from `{}` to `{app = "errtraq"}`; no API error is returned. The apply
   harness checks that this exact named gap still occurs and ignores only that drift. EventBridge
-  tag persistence remains unproven. This additional service-specific gap has not been filed.
+  tag persistence remains unproven. Filed as
+  [issue #67](https://github.com/moriyoshi/winterbaume/issues/67).
 
 ## CloudWatch alarm datapoint and missing-data settings are not returned
 
@@ -109,7 +110,9 @@ Fixed at pinned revision `79c452d2bb2844abf771cfa4a497275c24b46489`: a protected
 - Separately, a hand-built query-API `PutMetricAlarm` (period 300, three evaluation periods)
   came back as period 60 and one evaluation period, while the provider's request retained
   both; the provider appears to use a different request protocol than the query API.
-  Evaluation, state changes and SNS delivery are unverified. No upstream issue has been filed.
+  Evaluation, state changes and SNS delivery are unverified. Filed as
+  [issue #68](https://github.com/moriyoshi/winterbaume/issues/68); the protocol failure is
+  [issue #69](https://github.com/moriyoshi/winterbaume/issues/69).
 
 ## DynamoDB conditional updates are not atomic with their checks
 
@@ -284,3 +287,6 @@ scope, timing or delivery correctness. No AWS error text was returned: the servi
 accepted the requests and returned the incorrect values above. FIFO ordering, group exclusion,
 Lambda event attributes, high-throughput settings and full Terraform convergence remain unproven
 by this emulator; mock-provider tests and ultimately a real AWS deployment must cover them.
+Filed as [#64](https://github.com/moriyoshi/winterbaume/issues/64),
+[#65](https://github.com/moriyoshi/winterbaume/issues/65) and
+[#66](https://github.com/moriyoshi/winterbaume/issues/66).

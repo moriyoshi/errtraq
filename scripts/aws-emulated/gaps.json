@@ -2,51 +2,55 @@
   "tags-dynamodb": {
     "heading": "Resource tag readback is incomplete",
     "effect": "exclude DynamoDB tags_all drift from repeat-plan comparison",
-    "issue": "https://github.com/moriyoshi/winterbaume/issues/51"
+    "issues": ["https://github.com/moriyoshi/winterbaume/issues/51"]
   },
   "tags-iam": {
     "heading": "Resource tag readback is incomplete",
     "effect": "exclude IAM role tags_all drift from repeat-plan comparison",
-    "issue": "https://github.com/moriyoshi/winterbaume/issues/52"
+    "issues": ["https://github.com/moriyoshi/winterbaume/issues/52"]
   },
   "tags-s3": {
     "heading": "Resource tag readback is incomplete",
     "effect": "exclude S3 bucket tags_all drift from repeat-plan comparison",
-    "issue": "https://github.com/moriyoshi/winterbaume/issues/53"
+    "issues": ["https://github.com/moriyoshi/winterbaume/issues/53"]
   },
   "tags-lambda-mapping": {
     "heading": "Resource tag readback is incomplete",
     "effect": "exclude event mapping tags_all drift from repeat-plan comparison",
-    "issue": "https://github.com/moriyoshi/winterbaume/issues/54"
+    "issues": ["https://github.com/moriyoshi/winterbaume/issues/54"]
   },
   "s3-ownership-delete": {
     "heading": "S3 ownership-control deletion is ignored",
     "effect": "exclude ownership controls from emulator apply so destroy can complete",
-    "issue": "https://github.com/moriyoshi/winterbaume/issues/50"
+    "issues": ["https://github.com/moriyoshi/winterbaume/issues/50"]
   },
   "lambda-vpc-readback": {
     "heading": "Lambda VPC configuration is discarded",
     "effect": "omit the Lambda VPC block only in the copied emulator module after verifying the gap",
-    "issue": "https://github.com/moriyoshi/winterbaume/issues/62"
+    "issues": ["https://github.com/moriyoshi/winterbaume/issues/62"]
   },
   "dynamodb-conditional-atomicity": {
     "heading": "DynamoDB conditional updates are not atomic with their checks",
     "effect": "emulator tests cannot prove conditional-write atomicity",
-    "issue": "https://github.com/moriyoshi/winterbaume/issues/61"
+    "issues": ["https://github.com/moriyoshi/winterbaume/issues/61"]
   },
   "sqs-fifo": {
     "heading": "FIFO settings and delivery are incomplete",
     "effect": "test FIFO creation and deduplication only; exclude unsupported settings and ordering assertions",
-    "issue": null
+    "issues": [
+      "https://github.com/moriyoshi/winterbaume/issues/64",
+      "https://github.com/moriyoshi/winterbaume/issues/65",
+      "https://github.com/moriyoshi/winterbaume/issues/66"
+    ]
   },
   "tags-eventbridge": {
     "heading": "EventBridge rule tag readback is incomplete",
     "effect": "exclude EventBridge rule tags_all drift from repeat-plan comparison",
-    "issue": null
+    "issues": ["https://github.com/moriyoshi/winterbaume/issues/67"]
   },
   "cloudwatch-alarm-readback": {
     "heading": "CloudWatch alarm datapoint and missing-data settings are not returned",
     "effect": "assert alarm inventory, metric, dimensions, statistic, threshold, period, evaluation periods, comparison and actions through the emulator API; exclude only datapoints_to_alarm and treat_missing_data drift from repeat-plan comparison (the Terraform mock tests assert both)",
-    "issue": null
+    "issues": ["https://github.com/moriyoshi/winterbaume/issues/68"]
   }
 }
