@@ -213,6 +213,17 @@ objects for ten minutes, then republishes old claims; a recovered claim whose bl
 deleted is acknowledged because the successful consumer deletes only after its durable handoff.
 Known M4 placeholders log that they are not implemented, and unknown jobs log an error.
 
+### Blob lifecycle inputs (M3)
+
+`blob-s3` stack config maps to the `s3` module inputs `record_claim_retention_days` (config
+`recordClaimRetentionDays`, default 30, minimum 15), `max_event_retention_days`
+(`maxEventRetentionDays`, default 30) and `overflow_orphan_margin_days`
+(`overflowOrphanMarginDays`, default 7). They drive the lifecycle rules on `payloads/records/`
+(claim checks) and `payloads/<digit>` (orphaned overflow payloads, expiring after the sum of the
+last two). The deployed bootstrap creates its project with retention
+`min(30, maxEventRetentionDays)` and rejects any project above the maximum, so the rule cannot
+expire a live event's blob. See `M3_BLOB_CLEANUP_DESIGN.md`.
+
 ### Grouped recording (M3)
 
 Core models stack `recordMode: "direct" | "grouped"` and a `record` function role; SQS FIFO,

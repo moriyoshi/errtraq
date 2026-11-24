@@ -51,6 +51,31 @@ resource "aws_s3_bucket_lifecycle_configuration" "this" {
     filter { prefix = "envelopes/" }
     expiration { days = var.raw_retention_days }
   }
+  # Versioning is disabled on this bucket (erasure must remove data, not retain old versions),
+  # so expiration deletes the only copy and no noncurrent-version rule is needed.
+  # Grouped-record claim checks. Keys are unique per publication and never reused, so age is a
+  # safe expiry. The age must exceed SQS's 14-day maximum message retention; a message redriven
+  # after expiry fails as poison and lands in the DLQ.
+  rule {
+    id     = "expired-record-claims"
+    status = "Enabled"
+    filter { prefix = "payloads/records/" }
+    expiration { days = var.record_claim_retention_days }
+  }
+  # Orphaned overflow event payloads (payloads/<projectId>/...). Retention deletes the event
+  # first and its blob second, so only a crash between the two leaves an orphan. The age is the
+  # longest project retention plus a margin, so a live event's blob is never expired. Project
+  # IDs are decimal digits, so one rule per leading digit covers every project while leaving
+  # payloads/records/ to the rule above (an S3 prefix filter cannot exclude a sub-prefix).
+  dynamic "rule" {
+    for_each = toset(["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"])
+    content {
+      id     = "orphaned-overflow-payloads-${rule.value}"
+      status = "Enabled"
+      filter { prefix = "payloads/${rule.value}" }
+      expiration { days = var.max_event_retention_days + var.overflow_orphan_margin_days }
+    }
+  }
   rule {
     id     = "abandoned-archive-staging"
     status = "Enabled"

@@ -10,6 +10,7 @@ import {
 import { ConflictError } from "./errors.js";
 import { generatePublicKey } from "./ids.js";
 import type { ActiveStore, IdGen, KV } from "./ports.js";
+export const DEFAULT_PROJECT_RETENTION_DAYS = 30;
 /** Allocate decimal project IDs through the atomic KV counter and create an org, project and key. */
 export async function bootstrapProject(options: {
   store: ActiveStore;
@@ -18,8 +19,20 @@ export async function bootstrapProject(options: {
   orgSlug: string;
   projectSlug: string;
   retentionDays?: number;
+  /**
+   * The stack's longest allowed project retention. Overflow payload lifecycle rules expire
+   * orphans after this plus a margin, so a project (new or existing) above it is rejected.
+   */
+  maxRetentionDays?: number;
 }): Promise<{ org: Org; project: Project; key: ProjectKey }> {
   const { store, kv, ids } = options;
+  const cap = options.maxRetentionDays;
+  const checkRetention = (project: Project) => {
+    if (cap !== undefined && project.retentionDays > cap)
+      throw new RangeError(
+        `Project retention of ${project.retentionDays} days exceeds the stack maximum of ${cap} days`,
+      );
+  };
   let org = await store.projects.getOrgBySlug(options.orgSlug);
   if (!org) {
     org = {
@@ -51,8 +64,9 @@ export async function bootstrapProject(options: {
       orgId: org.id,
       slug: options.projectSlug,
       name: options.projectSlug,
-      retentionDays: options.retentionDays ?? 30,
+      retentionDays: options.retentionDays ?? DEFAULT_PROJECT_RETENTION_DAYS,
     };
+    checkRetention(project);
     try {
       await store.projects.put(project);
     } catch (error) {
@@ -65,6 +79,7 @@ export async function bootstrapProject(options: {
       project = existing;
     }
   }
+  checkRetention(project);
   let key = (await store.projects.listKeys(project.id)).find(
     (item) => !item.revokedAt,
   );

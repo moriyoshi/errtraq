@@ -83,7 +83,7 @@ item should be resolved or removed once addressed. Milestone work itself is trac
 - [x] M3: require the full Secrets Manager ARN including its random suffix. — *source: M2b HCL review section B; M3g part 1*
 - [x] M3: never map an S3 403 directly to missing; use an authorized exact-prefix list to establish absence and propagate real access failures. — *source: M2b HCL review section B*
 - [x] M3: schedule cron-based staged-envelope recovery for deployed stacks; keep idempotency and a recovery window longer than the sweep interval. — *source: M2b HCL review A3*
-- [ ] M3 / M4: delete overflow payloads when their corresponding events are retained, archived or erased; a fixed bucket lifecycle would violate per-project retention. — *source: M2b HCL review A9*
+- [x] M3: overflow payloads are deleted with retained events and orphans expire by lifecycle at the longest retention plus a margin; archive / erasure hooks remain M4 (see above). — *source: M2b HCL review A9*
 - [x] M3: avoid duplicate Lambda Function URL and ingest app CORS headers, and support S3-based deployment for ZIPs too large for direct upload. — *source: M2b HCL review A8*
 
 - [x] M3: investigate the intermittent missing staged-blob log observed during e2e recovery; determine whether recovery races the consumer deleting an envelope, and verify that the race is safe and correctly logged. A later M2d e2e also logged `Skipping unreadable blob` with `ENOENT`. — *source: M2b HCL contract validation e2e; M2d final gate*
@@ -94,22 +94,11 @@ item should be resolved or removed once addressed. Milestone work itself is trac
 - [x] M3: test EventBridge event handling against documented AWS event shapes (real captures remain M3h). — *source: M2 final review section B*
 - [x] M3 (store-dynamodb): implement issue-keyed FIFO and measure grouped 200 / 500-event workloads on DynamoDB Local (ffd0ba8, 0ca239b, fbeefb7); real AWS measurement remains in the M3h item above. — *source: owner queue-first decision*
 
-- [ ] M3 / M4: add retention-safe cleanup for grouped-record claim-check blobs after queue
-  retention, DLQ and a bounded redrive window; legacy content-addressed retries reuse the same
-  key, so an age check followed by unconditional delete can race a republish. New claim keys
-  use a timestamp and fresh UUID; they can leave multiple orphaned objects across retries until
-  cleanup is implemented. The blob port exposes
-  neither modification time nor conditional delete. The SQS module sets a 4-day source and
-  14-day DLQ retention but does not bound repeated manual redrive. Establish a safe publication /
-  redrive horizon and race-safe key or deletion protocol before wiring the cron. Existing keys
-  need a migration or explicit safe handling. — *source: issue-keyed queue turn 5; M3 queue item 3*
-- [ ] M3: implement retention and crash-resumable overflow cleanup. `deleteBatch` currently
-  deletes event IDs without returning or durably recording payload keys, and overflow keys are
-  reused for the same project / event. Deleting the event first can leak its blob on a crash;
-  deleting the blob first can leave a live event unreadable. Account for concurrent reinsertion
-  and retries, then wire the cron and its least-privilege grants. Archive and erasure hooks remain
-  TODO(M4). The investigation and race cases are in `.agents-docs/M3_BLOB_CLEANUP_DESIGN.md`.
-  — *source: M3 queue item 3*
+- [x] M3: grouped-record claim checks expire through an S3 lifecycle rule (default 30 days, validated above SQS's 14-day maximum retention); a missing claim is poison and redrives to the DLQ. No cron; standalone has no sweep (see `M3_BLOB_CLEANUP_DESIGN.md`). — *source: issue-keyed queue turn 5; M3 queue item 3; resolved in M3 item 3*
+- [x] M3: `deleteExpiredEvents` deletes events first and their overflow blobs second; orphans expire through lifecycle rules after the longest retention plus a margin. — *source: M3 queue item 3; resolved in M3 item 3*
+- [ ] M4: wire the `retention` cron job to `deleteExpiredEvents` (archived events only when archival is selected) and hand overflow blob keys to the archive and erasure hooks. — *source: M3 item 3*
+- [ ] M3h: verify the lifecycle rules (claim and overflow prefixes) and a DLQ redrive after claim expiry against real AWS. — *source: M3 item 3*
+- [ ] M3 / product: a project-settings API must validate retention against the stack's `maxEventRetentionDays`. — *source: M3 item 3*
 
 - [x] M3: make the ingest rate limit configurable on the Lambda platform. — *source: M3h first real deployment*
 - [ ] M3 / product: decide whether an additional per-project ingest limit is needed alongside the existing per-DSN-key limit. — *source: M3h first real deployment*

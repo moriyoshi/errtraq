@@ -15,6 +15,8 @@ const object = (value: unknown): Record<string, unknown> | undefined =>
     ? (value as Record<string, unknown>)
     : undefined;
 class PoisonRecord extends Error {}
+/** The claim check expired or was never written; no retry can recover it. */
+class MissingClaim extends PoisonRecord {}
 
 /** Consume normalized records in issue order. Delivery remains at-least-once. */
 export class RecordHandler {
@@ -46,7 +48,9 @@ export class RecordHandler {
       if (!value.blobKey.startsWith("payloads/records/"))
         throw new PoisonRecord();
       const stream = await this.options.blobs.get(value.blobKey);
-      if (!stream) throw new Error("Record claim unavailable");
+      // A claim past its bucket lifecycle expiry (redrive after the horizon) is poison: the
+      // queue redrives it to the DLQ at maxReceiveCount instead of it being treated as transient.
+      if (!stream) throw new MissingClaim();
       const reader = stream.getReader();
       const chunks: Uint8Array[] = [];
       let size = 0;
@@ -170,7 +174,12 @@ export class RecordHandler {
             index++;
           } catch (error) {
             failed = item;
-            if (error instanceof PoisonRecord && item.attempt === 1)
+            if (error instanceof MissingClaim)
+              this.options.logger.error("Record claim blob is missing", {
+                deliveryId: item.id,
+                attempt: item.attempt,
+              });
+            else if (error instanceof PoisonRecord && item.attempt === 1)
               this.options.logger.error("Invalid record delivery", {
                 deliveryId: item.id,
               });

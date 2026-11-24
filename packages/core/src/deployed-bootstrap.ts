@@ -20,6 +20,10 @@ export interface BootstrapOptions {
   ingestUrl: string;
   orgSlug: string;
   projectSlug: string;
+  /** Retention of a newly created project, in days. */
+  retentionDays?: number;
+  /** Rejects a new or existing project with a longer retention. */
+  maxRetentionDays?: number;
 }
 export async function bootstrapDeployed(
   options: BootstrapOptions,
@@ -43,6 +47,8 @@ export async function bootstrapDeployed(
     ids: new WebCryptoIdGen(),
     orgSlug: options.orgSlug,
     projectSlug: options.projectSlug,
+    retentionDays: options.retentionDays,
+    maxRetentionDays: options.maxRetentionDays,
   });
   const dsn = new URL(url);
   dsn.username = created.key.publicKey;

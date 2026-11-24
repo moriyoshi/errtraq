@@ -57,6 +57,54 @@ run "policies_and_lifecycle" {
   }
 }
 
+run "claim_and_overflow_lifecycle" {
+  command = apply
+  variables {
+    name           = "example"
+    tags           = {}
+    staging_prefix = "archive-staging/"
+  }
+  assert {
+    condition     = one([for rule in aws_s3_bucket_lifecycle_configuration.this.rule : rule.expiration[0].days if rule.id == "expired-record-claims"]) == 30 && one([for rule in aws_s3_bucket_lifecycle_configuration.this.rule : one(rule.filter).prefix if rule.id == "expired-record-claims"]) == "payloads/records/"
+    error_message = "Record claim checks must expire after 30 days by default under payloads/records/."
+  }
+  assert {
+    condition = length([for rule in aws_s3_bucket_lifecycle_configuration.this.rule : rule if startswith(rule.id, "orphaned-overflow-payloads-")]) == 10 && alltrue([
+      for rule in aws_s3_bucket_lifecycle_configuration.this.rule : rule.expiration[0].days == 37 && length(one(rule.filter).prefix) == 10 && !startswith("payloads/records/", one(rule.filter).prefix) && !startswith(one(rule.filter).prefix, "payloads/records/")
+      if startswith(rule.id, "orphaned-overflow-payloads-")
+    ])
+    error_message = "Overflow orphans must expire after retention plus margin, one rule per project-ID digit, none overlapping payloads/records/."
+  }
+  assert {
+    condition     = toset([for rule in aws_s3_bucket_lifecycle_configuration.this.rule : one(rule.filter).prefix if startswith(rule.id, "orphaned-overflow-payloads-")]) == toset([for d in range(10) : "payloads/${d}"])
+    error_message = "Overflow rules must cover exactly the decimal project-ID prefixes."
+  }
+}
+run "custom_overflow_age" {
+  command = apply
+  variables {
+    name                        = "example"
+    tags                        = {}
+    staging_prefix              = "archive-staging/"
+    max_event_retention_days    = 90
+    overflow_orphan_margin_days = 10
+    record_claim_retention_days = 20
+  }
+  assert {
+    condition     = alltrue([for rule in aws_s3_bucket_lifecycle_configuration.this.rule : rule.expiration[0].days == 100 if startswith(rule.id, "orphaned-overflow-payloads-")]) && one([for rule in aws_s3_bucket_lifecycle_configuration.this.rule : rule.expiration[0].days if rule.id == "expired-record-claims"]) == 20
+    error_message = "Configured ages must reach the lifecycle rules."
+  }
+}
+run "claim_age_below_sqs_retention" {
+  command = plan
+  variables {
+    name                        = "example"
+    tags                        = {}
+    staging_prefix              = "archive-staging/"
+    record_claim_retention_days = 14
+  }
+  expect_failures = [var.record_claim_retention_days]
+}
 run "disposable_bucket" {
   command = apply
   variables {

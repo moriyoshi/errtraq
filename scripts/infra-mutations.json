@@ -105,6 +105,34 @@
     "replace": "expiration { days = 1 }"
   },
   {
+    "id": "s3-record-claim-days",
+    "module": "s3",
+    "file": "main.tf",
+    "find": "expiration { days = var.record_claim_retention_days }",
+    "replace": "expiration { days = 1 }"
+  },
+  {
+    "id": "s3-overflow-orphan-days",
+    "module": "s3",
+    "file": "main.tf",
+    "find": "expiration { days = var.max_event_retention_days + var.overflow_orphan_margin_days }",
+    "replace": "expiration { days = var.max_event_retention_days }"
+  },
+  {
+    "id": "s3-overflow-prefix-covers-claims",
+    "module": "s3",
+    "file": "main.tf",
+    "find": "filter { prefix = \"payloads/${rule.value}\" }",
+    "replace": "filter { prefix = \"payloads/\" }"
+  },
+  {
+    "id": "s3-record-claim-minimum",
+    "module": "s3",
+    "file": "variables.tf",
+    "find": "var.record_claim_retention_days >= 15",
+    "replace": "var.record_claim_retention_days >= 1"
+  },
+  {
     "id": "lambda-url-auth",
     "module": "lambda-app",
     "file": "main.tf",

@@ -78,9 +78,19 @@ cover the current `envelopes/`, `payloads/`, and reserved `artifacts/` namespace
 permissions cover only the configured staging prefix. New primary namespaces require policy
 updates. Abandoned envelopes expire after 14 days by default and archive staging after seven;
 operators must choose retention periods longer than their recovery windows. Incomplete multipart
-uploads are aborted after seven days. No fixed lifecycle expiry applies to durable overflow
-payloads: event retention is project-specific and premature deletion would lose live event data.
-M3 / M4 must remove them when the corresponding events are retained, archived or erased.
+uploads are aborted after seven days. Grouped-record claim checks under `payloads/records/`
+expire after `record_claim_retention_days` (default 30, validated at least 15 because SQS retains
+messages for up to 14 days); keys are unique per publication, so age alone is a safe expiry, and a
+message redriven after expiry fails as poison and lands in the DLQ. Orphaned overflow event
+payloads (`payloads/<projectId>/...`) expire after `max_event_retention_days` (default 30, the
+longest project retention in the stack) plus `overflow_orphan_margin_days` (default 7). Retention
+deletes the event first and its blob second, so only a crash between the two leaves an orphan; the
+rule is therefore never earlier than a live event's retention. Project IDs are decimal digits,
+so one rule per leading digit (`payloads/0` to `payloads/9`) covers every project without
+overlapping `payloads/records/` (an S3 prefix filter cannot exclude a sub-prefix, and an
+overlapping shorter rule would expire claim checks early). Versioning is disabled, so expiration
+removes the only copy and no noncurrent-version rule exists; enabling versioning would require
+adding one for these prefixes. Archive and erasure still remove blobs themselves (M4).
 `protection` defaults to `production`: DynamoDB deletion protection is on and bucket force
 teardown is off. An explicit `disposable` stack allows both to be destroyed.
 

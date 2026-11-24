@@ -1422,3 +1422,20 @@ offline operator command. `summarizeApiToken` is exported from `@errtraq/core/st
 importing it from the root pulled zod into the DynamoDB runtime bundle (caught by
 `runtime-bundles.test.ts`). Gate: typecheck, lint, test, test:postgres, e2e green.
 
+
+## 2026-11-24 — M3 item 3: blob cleanup by lifecycle rules
+
+Implemented the owner's decisions (see `M3_BLOB_CLEANUP_DESIGN.md`). Findings worth keeping:
+
+- The S3 module has versioning disabled, not enabled, so lifecycle expiry needs no noncurrent
+  version rule; add one if versioning is ever turned on.
+- An S3 prefix filter cannot exclude a sub-prefix, and overlapping expiration rules expire at the
+  earliest age. A rule on `payloads/` would have expired claim checks at the overflow age, so the
+  overflow rules are one per leading project-ID digit (`payloads/0` to `payloads/9`).
+- No retention caller of `deleteBatch` existed (the `retention` cron job is a placeholder scheduled
+  only with archive). `deleteExpiredEvents` now owns event-then-blob ordering; cron wiring is M4.
+- The queue port has no dead-letter-now action, so "poison" means logged and retried until the
+  queue redrives to the DLQ. Missing claims now log on every attempt.
+- "Longest project retention" is runtime data, so the stack carries `maxEventRetentionDays` and
+  `bootstrapProject` enforces it (deployed bootstrap creates `min(30, max)`).
+- Standalone gets no claim sweep: `queue-memory` has no redrive horizon and `blob-fs` has no mtimes.

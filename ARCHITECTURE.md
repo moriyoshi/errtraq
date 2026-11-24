@@ -264,8 +264,11 @@ byte raw-payload threshold alone does not bound normalized metadata or JSON expa
 it writes the complete normalized record to a uniquely keyed durable blob and queues a bounded
 claim check. Publish failures retry the original envelope; it is deleted and acknowledged only
 after every record has been accepted. Earlier accepted records can be resent, so both publishing
-and recording are idempotent. Claim-check retention and cleanup must cover queue retention, DLQ,
-redrive and retries; a producer cannot delete data merely because it sent the reference.
+and recording are idempotent. A producer cannot delete data merely because it sent the reference:
+claim checks expire through a bucket lifecycle rule (default 30 days, validated above SQS's 14-day
+maximum retention), and a message redriven after expiry fails as poison back into the DLQ.
+Overflow payloads are deleted after their events by retention (event first, blob second), with a
+lifecycle rule sweeping orphans after the longest project retention plus a margin.
 
 `per-key-serial` means an adapter delivers accepted messages in queue acceptance order within a
 key and does not intentionally dispatch a second live batch for that key until the first is

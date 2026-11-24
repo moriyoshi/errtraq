@@ -7,6 +7,8 @@ import {
 } from "@errtraq/core";
 import { z } from "zod";
 
+/** SQS retains messages for at most 14 days; claim checks must outlive any redrive. */
+export const MIN_RECORD_CLAIM_RETENTION_DAYS = 15;
 export const configSchema = z.strictObject({
   region: z.string().min(1).optional(),
   endpoint: z.url().optional(),
@@ -14,6 +16,24 @@ export const configSchema = z.strictObject({
   requestTimeoutMs: z.number().int().min(1).max(300000).optional(),
   overallTimeoutMs: z.number().int().min(1).max(300000).optional(),
   bodyIdleTimeoutMs: z.number().int().min(1).max(300000).optional(),
+  /**
+   * Days before grouped-record claim checks (`payloads/records/`) expire. It must exceed SQS's
+   * 14-day maximum message retention; a message redriven after expiry fails as poison and lands
+   * in the DLQ.
+   */
+  recordClaimRetentionDays: z
+    .number()
+    .int()
+    .min(MIN_RECORD_CLAIM_RETENTION_DAYS)
+    .max(3650)
+    .optional(),
+  /**
+   * The longest per-project event retention in the stack. Projects must not be configured with a
+   * longer retention: orphaned overflow payloads expire after this plus the margin.
+   */
+  maxEventRetentionDays: z.number().int().min(1).max(3650).optional(),
+  /** Days added to `maxEventRetentionDays` before orphaned overflow payloads expire. */
+  overflowOrphanMarginDays: z.number().int().min(1).max(3650).optional(),
 });
 export type Config = z.input<typeof configSchema>;
 export const manifest: AdapterManifest = {
@@ -35,7 +55,10 @@ export const infra: InfraDescriptor<Config> = {
       policies: { map: { map: "json-document" } },
     },
   },
-  inputs: () => ({
+  inputs: (config) => ({
+    record_claim_retention_days: config.recordClaimRetentionDays ?? 30,
+    max_event_retention_days: config.maxEventRetentionDays ?? 30,
+    overflow_orphan_margin_days: config.overflowOrphanMarginDays ?? 7,
     name: stackValue("name"),
     protection: stackValue("protection"),
     tags: stackValue("tags"),

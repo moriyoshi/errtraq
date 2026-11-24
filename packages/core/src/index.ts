@@ -21,4 +21,5 @@ export * from "./queue.js";
 export * from "./rate-rejection.js";
 export * from "./record-handler.js";
 export * from "./recover-ingest.js";
+export * from "./retention.js";
 export * from "./stack.js";

@@ -54,6 +54,28 @@ describe("deployed bootstrap", () => {
     expect(again?.createdAt).toBeDefined();
     expect(again?.label).toBe("bootstrap");
   });
+  it("creates the project within the stack's maximum retention and rejects a longer existing one", async () => {
+    const f = fixture();
+    await bootstrapDeployed({
+      ...f.options,
+      retentionDays: 7,
+      maxRetentionDays: 7,
+    });
+    const org = (await f.store.projects.getOrgBySlug("org"))?.id;
+    if (!org) throw new Error("missing org");
+    const project = await f.store.projects.getProjectBySlug(org, "project");
+    expect(project?.retentionDays).toBe(7);
+    await expect(
+      bootstrapDeployed({ ...f.options, maxRetentionDays: 3 }),
+    ).rejects.toThrow("exceeds the stack maximum");
+    await expect(
+      bootstrapDeployed({
+        ...fixture().options,
+        retentionDays: 90,
+        maxRetentionDays: 30,
+      }),
+    ).rejects.toThrow("exceeds the stack maximum");
+  });
   it("constructs only the deployed store and KV with delivered bindings", async () => {
     const f = fixture();
     const seen: string[] = [];

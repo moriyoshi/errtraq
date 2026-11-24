@@ -951,6 +951,42 @@ describe("in-process ingest pipeline", () => {
     expect(send).toHaveBeenCalledTimes(2);
     for (const key of keys) expect(await c.blobs.get(key)).not.toBeNull();
   });
+  it("treats an expired record claim as poison so the queue redrives it to the DLQ", async () => {
+    const c = await setup({ recordMode: "grouped" });
+    c.queue.capabilities.maxBytes = 500;
+    await c.send(
+      body(id(181), "large", { extra: { value: "x".repeat(3000) } }),
+    );
+    const message = c.sent[0];
+    if (!message) throw new Error("missing ingest message");
+    const send = vi.spyOn(c.queue.producer, "send");
+    await c.consumer.handle([
+      { id: "in", topic: "ingest", attempt: 1, message },
+    ]);
+    const queued = send.mock.calls[0]?.[1][0];
+    if (!queued) throw new Error("missing record message");
+    // The bucket lifecycle rule expired the claim before a manual redrive.
+    await c.blobs.delete((queued.body as { blobKey: string }).blobKey);
+    const record = new RecordHandler({
+      store: c.store,
+      blobs: c.blobs,
+      logger: c.logger,
+    });
+    for (const attempt of [1, 2])
+      expect(
+        await record.handle([
+          { id: "out", topic: "record", attempt, message: queued },
+        ]),
+      ).toEqual([{ deliveryId: "out", action: "retry" }]);
+    expect(
+      vi
+        .mocked(c.logger.error)
+        .mock.calls.filter(([m]) => m === "Record claim blob is missing"),
+    ).toHaveLength(2);
+    expect(
+      await c.store.events.get(c.project.project.id, id(181) as EventId),
+    ).toBeNull();
+  });
   it("retains the staged envelope when publishing a grouped record fails", async () => {
     const c = await setup({ recordMode: "grouped" });
     expect((await c.send(body(id(19), "retry"))).status).toBe(200);

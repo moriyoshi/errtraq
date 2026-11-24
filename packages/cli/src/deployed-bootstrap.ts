@@ -4,6 +4,7 @@ import {
   type BootstrapVault,
   bootstrapDeployed,
   constructDeployedPlan,
+  DEFAULT_PROJECT_RETENTION_DAYS,
   type DeployedModuleLoader,
   deployedPlan,
   deriveDeployment,
@@ -182,8 +183,22 @@ export async function bootstrapAwsStack(
   dependencies?: DeployedDependencies,
 ): Promise<string> {
   const opened = await openDeployedStack(stack, environment, dependencies);
+  // blob-s3 expires orphaned overflow payloads after the configured longest retention plus a
+  // margin, so no bootstrapped project may keep events longer than that.
+  const blobConfig = (stack.blob.config ?? {}) as {
+    maxEventRetentionDays?: number;
+  };
+  const maxRetentionDays =
+    stack.blob.manifest.id === "blob-s3"
+      ? (blobConfig.maxEventRetentionDays ?? DEFAULT_PROJECT_RETENTION_DAYS)
+      : undefined;
   try {
     return await bootstrapDeployed({
+      retentionDays:
+        maxRetentionDays === undefined
+          ? undefined
+          : Math.min(DEFAULT_PROJECT_RETENTION_DAYS, maxRetentionDays),
+      maxRetentionDays,
       stackName: stack.name,
       store: opened.store,
       kv: opened.kv,
