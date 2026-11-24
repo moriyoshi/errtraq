@@ -233,6 +233,12 @@ role receives it for the new-issue cap. Issue list and detail responses include 
 limits are enabled; its bounds and `receivedAt` basis make delayed-event attribution explicit.
 A KV read failure omits the field without failing the request.
 
+Cost and accuracy: the KV cost of a batch is one increment per (project, issue, window) group
+for the per-issue limit, one increment per candidate new issue (and window) for the cap, and one
+per (project, issue, window) dropped counter; the DynamoDB KV adapter also reads on each
+increment. Counts are approximate: increments are not idempotent, so a retried or redelivered
+batch can be charged again, and a delayed event counts in its `receivedAt` window.
+
 ### Issue-keyed record stage (M3, partially implemented)
 
 `recordMode` is a stack-level setting: `direct` retains the current consumer write path;

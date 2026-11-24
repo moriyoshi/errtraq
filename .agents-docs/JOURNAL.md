@@ -1532,3 +1532,7 @@ conflicting-settings error names the roles. N15 bootstrap ownership: deployed bo
 operator-run `errtraq bootstrap` (M3g), so nothing else owns it. N15 type and trigger-setting
 items need a descriptor design decision and were left open in TODO.md.
 
+
+## 2026-11-25 — Rate-rejection integration coverage
+
+Added `rateRejectionPipelineSuite` (testing package, run on the in-memory and SQLite stores) driving the real consumer and record handler in both record modes. It pins two behaviours that follow from non-idempotent counters: a retried delivery is charged again (a retry can be dropped wholesale by the per-issue limit), and a redelivered event is skipped before charging in direct mode but charged and counted as dropped in grouped mode, where the consumer has no event read; the record is still stored once. A failed KV increment under `retry` is not charged, so its redelivery is charged once. No production code changed and no contradiction with the documented design was found.

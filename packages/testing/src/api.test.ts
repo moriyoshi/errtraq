@@ -1,6 +1,7 @@
 import {
   type ApiTokenId,
   bootstrapProject,
+  ConsumerService,
   type EventId,
   hashApiToken,
   type IssueId,
@@ -139,6 +140,59 @@ describe("approximate dropped counts", () => {
       ).toEqual({ count: 0, windowSec: 60 });
     });
   }
+  it("reports drops from the real consumer for the right issue and window only", async () => {
+    const config = { issueRateLimit: { events: 1, windowSec: 60 } };
+    const c = await setup(config);
+    const consumer = new ConsumerService({
+      store: c.store,
+      blobs: c.blobs,
+      kv: c.kv,
+      logger: { debug() {}, info() {}, warn() {}, error() {} },
+      rateRejection: config,
+    });
+    let seq = 0;
+    const deliver = async (messages: string[]) => {
+      const blobKey = `envelopes/${++seq}`;
+      const text = `{}\n${messages.map((message, i) => `{"type":"event"}\n${JSON.stringify({ event_id: (seq * 100 + i).toString(16).padStart(32, "0"), message })}\n`).join("")}`;
+      const bytes = new TextEncoder().encode(text);
+      await c.blobs.put(blobKey, bytes, { size: bytes.length });
+      const results = await consumer.handle([
+        {
+          id: `d${seq}`,
+          topic: "ingest",
+          attempt: 1,
+          message: {
+            key: (seq * 100).toString(16).padStart(32, "0"),
+            body: {
+              projectId: c.boot.project.id,
+              blobKey,
+              receivedAt: c.clock.now(),
+            },
+          },
+        },
+      ]);
+      expect(results.map((r) => r.action)).toEqual(["ack"]);
+    };
+    const drops = async () => {
+      const response = await c.app.request(
+        "/api/0/projects/org/project/issues/",
+        { headers: c.auth },
+      );
+      const issues = (await response.json()) as {
+        title: string;
+        approximateDropped: { count: number; windowStart: string };
+      }[];
+      return Object.fromEntries(
+        issues.map((i) => [i.title, i.approximateDropped.count]),
+      );
+    };
+    await deliver(["alpha", "alpha", "alpha", "beta", "beta"]);
+    expect(await drops()).toEqual({ alpha: 2, beta: 1 });
+    c.clock.advance(60_000);
+    expect(await drops()).toEqual({ alpha: 0, beta: 0 });
+    await deliver(["alpha", "alpha"]);
+    expect(await drops()).toEqual({ alpha: 1, beta: 0 });
+  });
   it("omits the field when disabled or if the KV read fails, without exposing the error", async () => {
     const disabled = await setup();
     await disabled.seed(1);
