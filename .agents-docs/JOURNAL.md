@@ -1552,3 +1552,22 @@ Owner decision: instead of rejecting a per-project `issueEvents` override for gr
 ## 2026-11-25 — Package scope renamed for GitHub Packages
 
 The owner releases from `github.com/moriyoshi/errtraq` to GitHub Packages, which requires the npm scope to be the owning account, so every `@errtraq/<name>` package became `@moriyoshi/errtraq-<name>` (CLI binary still `errtraq`). Earlier JOURNAL entries keep the old names. Code or tests that derive an adapter name from a module specifier must strip the `errtraq-` prefix from the package segment, not take the segment after the slash: a `runtimeModule` can carry a subpath. Consumers need `@moriyoshi:registry=https://npm.pkg.github.com` in `.npmrc`.
+
+## 2026-11-25 — RDS PostgreSQL test fixture (M3h run 3)
+
+- The fixture lives in `infra/fixtures/aws/rds-postgres/`, outside `infra/modules`, so the module
+  loops (shape snapshots, `infra:mutate`) never see it. `scripts/infra-validate.mjs` has a separate
+  fixture loop (fmt, validate, mocked `terraform test` at both pinned provider versions). It has no
+  `contract.tftest.hcl` output-shape snapshot and no mutation entries: the mutation registry targets
+  product module controls, and the fixture's assertions are plain behaviour tests.
+- Mocked tests need defaults the provider schema does not give: `aws_db_instance.master_user_secret`
+  (a list block, otherwise the proxy secret policy has no ARN), a `prx-` suffixed proxy ARN for the
+  `proxy_resource_id` output, and `aws_db_proxy_default_target_group.name` (mock strings start with a
+  random character and fail the provider's "first character must be a letter" validation).
+- In `.tftest.hcl` assertions, comparing a resource attribute list or `keys()` result to a literal
+  list is false (tuple vs list); compare with `toset(...)` or `join(",", ...)`.
+- Partial bring-your-own inputs are rejected with preconditions on `aws_vpc.this` (subnets or
+  security group without `vpc_id`) and `aws_db_subnet_group.this` (`vpc_id` without two subnets);
+  tests use `expect_failures` on those resources.
+- Backups are off (`backup_retention_period = 0`), which the provider and RDS allow for a
+  non-replica instance; there is no PITR, acceptable for a throwaway fixture.

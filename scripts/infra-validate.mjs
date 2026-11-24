@@ -18,6 +18,7 @@ import {
 } from "./infra-shapes.mjs";
 
 const root = resolve("infra/modules");
+const fixtureRoot = resolve("infra/fixtures");
 const scratch = resolve(".agents-workspace/tmp");
 const cache = resolve(scratch, "terraform-plugin-cache");
 mkdirSync(cache, { recursive: true });
@@ -63,6 +64,7 @@ try {
   const { fixtures, prepareRoot } = await import("./infra-roots.mjs");
   console.log("Checking Terraform module formatting");
   run(["fmt", "-check", "-recursive", root], process.cwd());
+  run(["fmt", "-check", "-recursive", fixtureRoot], process.cwd());
   for (const provider of readdirSync(root, { withFileTypes: true }).filter(
     (entry) => entry.isDirectory(),
   )) {
@@ -151,6 +153,47 @@ try {
         } else checkShape(component.name, current);
         console.log(`  shape: matched`);
       }
+    }
+  }
+  // Test-only fixtures (not product modules): validate and mock-test only.
+  for (const version of ["6.32.1", "6.73.0"]) {
+    for (const fixture of ["aws/rds-postgres"]) {
+      const target = resolve(temporary, `fixtures-${version}`, fixture);
+      mkdirSync(target, { recursive: true });
+      cpSync(resolve(fixtureRoot, fixture), target, { recursive: true });
+      const versions = resolve(target, "versions.tf");
+      const source = readFileSync(versions, "utf8");
+      if (!source.includes('version = ">= 6.32.1, < 7.0"'))
+        throw new Error(`Unexpected provider constraint in fixture ${fixture}`);
+      writeFileSync(
+        versions,
+        source.replace(
+          'version = ">= 6.32.1, < 7.0"',
+          `version = "= ${version}"`,
+        ),
+      );
+      console.log(
+        `\nValidating fixture ${fixture} with AWS provider ${version}`,
+      );
+      const platform = `${process.platform === "win32" ? "windows" : process.platform}_${process.arch === "x64" ? "amd64" : process.arch}`;
+      const cachedDirectory = resolve(
+        cache,
+        "registry.terraform.io",
+        "hashicorp",
+        "aws",
+        version,
+        platform,
+      );
+      const cached =
+        existsSync(cachedDirectory) &&
+        readdirSync(cachedDirectory).some((name) =>
+          name.startsWith(`terraform-provider-aws_v${version}`),
+        );
+      const initArgs = ["init", "-backend=false", "-input=false", "-no-color"];
+      if (cached) initArgs.push(`-plugin-dir=${cache}`);
+      run(initArgs, target, cached);
+      run(["validate", "-no-color"], target);
+      run(["test", "-no-color"], target);
     }
   }
   if (process.env.UPDATE_INFRA_SHAPES === "1")
