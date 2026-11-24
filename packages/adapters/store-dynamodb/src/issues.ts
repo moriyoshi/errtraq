@@ -1,4 +1,4 @@
-import type { Issue, IssueQuery, IssueRepo } from "@errtraq/core";
+import type { Issue, IssueQuery, IssueRepo } from "@moriyoshi/errtraq-core";
 import {
   decodeCursor,
   encodeCursor,
@@ -6,7 +6,7 @@ import {
   NotFoundError,
   pageLimit,
   UnsupportedQueryError,
-} from "@errtraq/core/store";
+} from "@moriyoshi/errtraq-core/store";
 import { DynamoStoreError } from "./errors.js";
 import { issueFromItem, issueMutableAttributes } from "./issue-item.js";
 import { issueTimeSort, partition, sortKey } from "./keys.js";

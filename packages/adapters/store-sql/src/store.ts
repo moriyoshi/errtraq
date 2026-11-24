@@ -25,7 +25,7 @@ import {
   UnsupportedQueryError,
   VersionConflictError,
   withIdentifierLimits,
-} from "@errtraq/core";
+} from "@moriyoshi/errtraq-core";
 import type { SqlStoreDialect } from "./dialect.js";
 import { migrate, type SqlDatabase } from "./schema.js";
 

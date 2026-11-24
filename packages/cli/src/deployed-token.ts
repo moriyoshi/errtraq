@@ -6,7 +6,7 @@ import {
   type OrgId,
   type StackConfig,
   toTimestamp,
-} from "@errtraq/core";
+} from "@moriyoshi/errtraq-core";
 import {
   type DeployedDependencies,
   openDeployedStack,

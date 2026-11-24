@@ -12,8 +12,8 @@ import {
   toTimestamp,
   VersionConflictError,
   WebCryptoIdGen,
-} from "@errtraq/core";
-import { createApiApp } from "@errtraq/http";
+} from "@moriyoshi/errtraq-core";
+import { createApiApp } from "@moriyoshi/errtraq-http";
 import { describe, expect, it, vi } from "vitest";
 import { MemoryActiveStore } from "./memory-active.js";
 import { MemoryBlobStore, MemoryKV } from "./memory-other.js";
@@ -254,7 +254,7 @@ describe("minimal API", () => {
     vi.spyOn(c.store.events, "listByIssue").mockResolvedValueOnce({
       items: [],
       hasMore: true,
-      nextCursor: "opaque" as import("@errtraq/core").Cursor,
+      nextCursor: "opaque" as import("@moriyoshi/errtraq-core").Cursor,
     });
     const response = await c.app.request("/api/0/issues/issue-1/events/", {
       headers: c.auth,

@@ -1,5 +1,9 @@
-import type { ArchiveState, ErasureRequest, MetaRepo } from "@errtraq/core";
-import { VersionConflictError } from "@errtraq/core/store";
+import type {
+  ArchiveState,
+  ErasureRequest,
+  MetaRepo,
+} from "@moriyoshi/errtraq-core";
+import { VersionConflictError } from "@moriyoshi/errtraq-core/store";
 import { DynamoStoreError } from "./errors.js";
 import { partition, sortKey } from "./keys.js";
 import {

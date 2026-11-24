@@ -1,5 +1,5 @@
 {
-  "name": "@errtraq/aws-signing",
+  "name": "@moriyoshi/errtraq-aws-signing",
   "version": "0.0.0",
   "type": "module",
   "exports": {
@@ -10,6 +10,7 @@
     }
   },
   "publishConfig": {
+    "registry": "https://npm.pkg.github.com",
     "exports": {
       ".": {
         "types": "./dist/index.d.ts",
@@ -29,5 +30,10 @@
   "dependencies": {
     "aws4fetch": "1.0.20"
   },
-  "errtraqWorkersRuntime": "./src/index.ts"
+  "errtraqWorkersRuntime": "./src/index.ts",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/moriyoshi/errtraq.git",
+    "directory": "packages/aws-signing"
+  }
 }

@@ -1,4 +1,4 @@
-import { bootstrapProject, readDropped } from "@errtraq/core";
+import { bootstrapProject, readDropped } from "@moriyoshi/errtraq-core";
 import {
   DeterministicIdGen,
   FakeClock,
@@ -6,7 +6,7 @@ import {
   MemoryBlobStore,
   MemoryKV,
   MemoryQueue,
-} from "@errtraq/testing";
+} from "@moriyoshi/errtraq-testing";
 import { describe, expect, it, vi } from "vitest";
 import { create as createAdapter, cronMatches } from "./index.js";
 
@@ -108,7 +108,9 @@ describe("standalone platform", () => {
 
 it("accepts grouped recording with the in-memory queue and record role", async () => {
   const { default: local } = await import("../../../../stacks/local.js");
-  const { resolveStack, deriveDeployment } = await import("@errtraq/core");
+  const { resolveStack, deriveDeployment } = await import(
+    "@moriyoshi/errtraq-core"
+  );
   const { standalone } = await import("./stack.js");
   const stack = resolveStack({
     ...Object.fromEntries(Object.entries(local)),

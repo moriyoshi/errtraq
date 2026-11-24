@@ -1,4 +1,4 @@
-import { selections } from "@errtraq/core";
+import { selections } from "@moriyoshi/errtraq-core";
 import { expect, it } from "vitest";
 import { constructStack } from "../packages/cli/src/construction.js";
 import local from "./local.js";
@@ -15,7 +15,7 @@ const pathByModule = new Map(
 
 it("enforces the issue limit through a constructed standalone stack", async () => {
   const { bootstrapProject, readDropped, toTimestamp } = await import(
-    "@errtraq/core"
+    "@moriyoshi/errtraq-core"
   );
   const {
     MemoryActiveStore,
@@ -24,7 +24,7 @@ it("enforces the issue limit through a constructed standalone stack", async () =
     MemoryQueue,
     DeterministicIdGen,
   } = await import("../packages/testing/src/index.js");
-  const { create } = await import("@errtraq/platform-standalone");
+  const { create } = await import("@moriyoshi/errtraq-platform-standalone");
   const store = new MemoryActiveStore();
   const blob = new MemoryBlobStore();
   const kv = new MemoryKV();

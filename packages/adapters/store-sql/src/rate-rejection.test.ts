@@ -1,4 +1,4 @@
-import { rateRejectionPipelineSuite } from "@errtraq/testing";
+import { rateRejectionPipelineSuite } from "@moriyoshi/errtraq-testing";
 import { Kysely } from "kysely";
 import { afterEach } from "vitest";
 import type { SqlDatabase } from "./schema.js";

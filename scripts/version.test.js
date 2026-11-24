@@ -24,10 +24,16 @@ afterEach(async () => {
 });
 describe("version script", () => {
   it("sets every public package and leaves private ones alone", async () => {
-    await manifest("core", { name: "@errtraq/core", version: "0.0.0" });
-    await manifest("adapters/kv", { name: "@errtraq/kv", version: "0.0.0" });
+    await manifest("core", {
+      name: "@moriyoshi/errtraq-core",
+      version: "0.0.0",
+    });
+    await manifest("adapters/kv", {
+      name: "@moriyoshi/errtraq-kv",
+      version: "0.0.0",
+    });
     await manifest("testing", {
-      name: "@errtraq/testing",
+      name: "@moriyoshi/errtraq-testing",
       version: "0.0.0",
       private: true,
     });
@@ -37,8 +43,14 @@ describe("version script", () => {
     expect((await read("testing")).version).toBe("0.0.0");
   });
   it("fails when public versions differ or the version is malformed", async () => {
-    await manifest("core", { name: "@errtraq/core", version: "0.0.0" });
-    await manifest("http", { name: "@errtraq/http", version: "0.1.0" });
+    await manifest("core", {
+      name: "@moriyoshi/errtraq-core",
+      version: "0.0.0",
+    });
+    await manifest("http", {
+      name: "@moriyoshi/errtraq-http",
+      version: "0.1.0",
+    });
     await expect(setVersion(root, "1.0.0")).rejects.toThrow(
       "different versions",
     );

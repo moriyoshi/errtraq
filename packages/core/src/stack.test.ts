@@ -1175,7 +1175,7 @@ describe("infrastructure model", () => {
     expect(Object.isFrozen(v.blob.config)).toBe(false);
   });
   it("distinguishes all reference types from ordinary kind-bearing data", () => {
-    expect(REF).toBe(Symbol.for("@errtraq/infra-reference"));
+    expect(REF).toBe(Symbol.for("@moriyoshi/errtraq-infra-reference"));
     expect(isOutputRef(out("id"))).toBe(true);
     expect(isStackRef(stackValue("name"))).toBe(true);
     expect(isEnvRef(env("TOKEN"))).toBe(true);

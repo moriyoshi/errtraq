@@ -16,13 +16,13 @@ import {
   deriveDeployment,
   type ResolvedStack,
   selections,
-} from "@errtraq/core";
+} from "@moriyoshi/errtraq-core";
 import {
   generate,
   type ModuleSourceMode,
   validateModuleBase,
   vendorModuleDirectory,
-} from "@errtraq/infra-gen";
+} from "@moriyoshi/errtraq-infra-gen";
 import type { BuildManifest } from "./build.js";
 import { terraformModulesPackage, vendorModules } from "./modules.js";
 
@@ -74,7 +74,7 @@ export async function isErrtraqWorkspace(root: string): Promise<boolean> {
     const core = JSON.parse(
       await readFile(join(root, "packages/core/package.json"), "utf8"),
     ) as { name?: unknown };
-    return core.name === "@errtraq/core";
+    return core.name === "@moriyoshi/errtraq-core";
   } catch {
     return false;
   }

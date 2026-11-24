@@ -1,4 +1,4 @@
-import type { Issue, Org, Project, StoredEvent } from "@errtraq/core";
+import type { Issue, Org, Project, StoredEvent } from "@moriyoshi/errtraq-core";
 
 type Payload = Record<string, unknown>;
 /** Map stored fields to the subset of Sentry's issue representation available locally. */

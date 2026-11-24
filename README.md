@@ -49,12 +49,21 @@ build written elsewhere. Generation requires the build unless `--allow-missing-a
 explicitly supplied. Regeneration preserves Terraform working directories, lock files, state,
 plans and crash logs. Terraform state and provider credentials remain the operator's responsibility.
 
-Outside this repository, install `@errtraq/cli`, the adapters you use and `@errtraq/core` (a peer
-dependency of all of them) from npm. The project root is `--root <dir>` if given, otherwise the
+Outside this repository, install `@moriyoshi/errtraq-cli`, the adapters you use and
+`@moriyoshi/errtraq-core` (a peer dependency of all of them). The packages are published to GitHub
+Packages, so map the scope in your project's `.npmrc` (GitHub Packages also requires a token with
+`read:packages` for installs):
+
+```
+@moriyoshi:registry=https://npm.pkg.github.com
+```
+
+The project root is `--root <dir>` if given, otherwise the
 nearest directory above the stack file with a `pnpm-workspace.yaml`, then a `package.json`; outputs
 stay inside it. `infra generate --module-source vendor` (the default outside this repository) copies
 the Terraform modules the stack uses into `<out>/modules`; `relative` points at `infra/modules` (the
-default here), and `remote` (with `--module-base <git source prefix>`) points at a tagged repository.
+default here), and `remote` (with `--module-base <git source prefix>`, e.g.
+`git::https://github.com/moriyoshi/errtraq.git//infra/modules`) points at a tagged repository.
 `pnpm verify:packaging` packs every public package and exercises them from a throwaway project
 (opt-in; needs npm, the npm registry and Terraform).
 
@@ -139,7 +148,7 @@ the new-issue cap override.
 
 The Postgres stack helper supports RDS IAM authentication with
 `postgres({ mode: "iam", host, port, database, user, region, resourceId })` from
-`@errtraq/store-sql/postgres/stack`. Use the actual RDS, Aurora or RDS Proxy endpoint as
+`@moriyoshi/errtraq-store-sql/postgres/stack`. Use the actual RDS, Aurora or RDS Proxy endpoint as
 `host` and the `db-`, `cluster-` or `prx-` resource ID, not the database's display name.
 The AWS provider account must own the named resource. The database user is restricted to a
 1-63 character ASCII identifier without IAM wildcard or path characters. A fresh 15-minute token is generated on

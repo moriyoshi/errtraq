@@ -67,7 +67,7 @@ For each approved work unit, launch an Agent (subagent_type: general-purpose) wi
 1. The specific TODO(s) to address
 2. The files to modify
 3. The expected behaviour
-4. Instructions to run the local gate after making changes: `pnpm typecheck`, `pnpm lint`, and the relevant focused tests (`pnpm --filter @errtraq/<pkg> test`); see `.agents-docs/QUALITY_GATE.md`.
+4. Instructions to run the local gate after making changes: `pnpm typecheck`, `pnpm lint`, and the relevant focused tests (`pnpm --filter @moriyoshi/errtraq-<pkg> test`); see `.agents-docs/QUALITY_GATE.md`.
 
 Launch as many agents in parallel as there are independent work units, in a single batch.
 
@@ -86,4 +86,4 @@ After all agents complete:
 
 - **Do not attempt design-category items** without user approval. These require architectural decisions.
 - Respect the `AGENTS.md` Git Workflow rules: no `git checkout`, no `git restore`, and commit only as that section currently allows. Parallel subagents should only edit files; the dispatching agent commits their results.
-- When running tests, always use focused package targeting (`pnpm --filter @errtraq/<pkg> test`) rather than the whole suite when iterating. Tests that need emulators (winterbaume, Lakekeeper, databases) are opt-in and skip when the service is absent.
+- When running tests, always use focused package targeting (`pnpm --filter @moriyoshi/errtraq-<pkg> test`) rather than the whole suite when iterating. Tests that need emulators (winterbaume, Lakekeeper, databases) are opt-in and skip when the service is absent.

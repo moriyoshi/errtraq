@@ -1,5 +1,8 @@
-import type { ArtifactBundle } from "@errtraq/core";
-import { bundleDebugIdsDigest, ConflictError } from "@errtraq/core/store";
+import type { ArtifactBundle } from "@moriyoshi/errtraq-core";
+import {
+  bundleDebugIdsDigest,
+  ConflictError,
+} from "@moriyoshi/errtraq-core/store";
 import { expect, it } from "vitest";
 import { bundleRepository } from "./bundles.js";
 import { DynamoTransactionCanceledError } from "./errors.js";

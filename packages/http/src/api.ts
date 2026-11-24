@@ -21,7 +21,7 @@ import {
   type StoredEvent,
   UnsupportedQueryError,
   VersionConflictError,
-} from "@errtraq/core/runtime";
+} from "@moriyoshi/errtraq-core/runtime";
 import { Hono } from "hono";
 import { HTTPException } from "hono/http-exception";
 import { eventJson, issueJson } from "./api-mappers.js";
@@ -252,7 +252,7 @@ export function createApiApp(options: {
     if (!org || org.id !== c.get("token").orgId)
       return c.json({ detail: "Not found" }, 404);
     const p = await store.projects.get(
-      ids[0] as import("@errtraq/core").ProjectId,
+      ids[0] as import("@moriyoshi/errtraq-core").ProjectId,
     );
     if (!p || p.orgId !== org.id) return c.json({ detail: "Not found" }, 404);
     return listIssues(c, p, true);

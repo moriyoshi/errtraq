@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { signAwsRequest } from "@errtraq/aws-signing";
-import { FakeClock, kvContract } from "@errtraq/testing";
+import { signAwsRequest } from "@moriyoshi/errtraq-aws-signing";
+import { FakeClock, kvContract } from "@moriyoshi/errtraq-testing";
 import { afterEach, describe, expect, it } from "vitest";
 import { DynamoKV } from "./runtime.js";
 

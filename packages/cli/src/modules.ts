@@ -13,7 +13,7 @@ export interface ModuleRef {
   provider: string;
   component: string;
 }
-/** The installed `@errtraq/terraform-modules` package: its directory holds `<provider>/<component>`. */
+/** The installed `@moriyoshi/errtraq-terraform-modules` package: its directory holds `<provider>/<component>`. */
 export async function terraformModulesPackage(): Promise<{
   directory: string;
   version: string;
@@ -21,10 +21,10 @@ export async function terraformModulesPackage(): Promise<{
   let manifest: string;
   try {
     manifest = createRequire(import.meta.url).resolve(
-      "@errtraq/terraform-modules/package.json",
+      "@moriyoshi/errtraq-terraform-modules/package.json",
     );
   } catch {
-    throw new Error("Cannot find @errtraq/terraform-modules");
+    throw new Error("Cannot find @moriyoshi/errtraq-terraform-modules");
   }
   const { version } = JSON.parse(await readFile(manifest, "utf8")) as {
     version: string;

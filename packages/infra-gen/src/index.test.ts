@@ -14,7 +14,7 @@ import {
   stackValue,
   validateStack,
   variable,
-} from "@errtraq/core";
+} from "@moriyoshi/errtraq-core";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import shared from "../../../stacks/aws-dynamodb.js";

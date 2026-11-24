@@ -73,7 +73,7 @@ for (const { manifest, file } of tarballs) {
   const listing = run("tar", ["-tzf", file]).stdout.split("\n").filter(Boolean);
   const problems = [];
   const expected =
-    manifest.name === "@errtraq/terraform-modules"
+    manifest.name === "@moriyoshi/errtraq-terraform-modules"
       ? "package/aws/"
       : "package/dist/";
   if (!listing.some((entry) => entry.startsWith(expected)))

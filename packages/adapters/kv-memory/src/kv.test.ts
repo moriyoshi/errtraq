@@ -1,4 +1,4 @@
-import { FakeClock, kvContract } from "@errtraq/testing";
+import { FakeClock, kvContract } from "@moriyoshi/errtraq-testing";
 import { expect, it } from "vitest";
 import { create as createAdapter } from "./index.js";
 

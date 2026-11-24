@@ -4,7 +4,7 @@ Status: implemented (item 9 of the M3 queue); see "Implementation notes and devi
 "support projects that depend on errtraq packages without requiring a `pnpm-workspace.yaml`
 repository or in-repository build and output directories" (M2 final review section B).
 
-Goal: a user creates their own project, installs `@errtraq/cli` and the adapter packages from
+Goal: a user creates their own project, installs `@moriyoshi/errtraq-cli` and the adapter packages from
 npm, writes `stacks/prod.ts`, and runs `errtraq build` and `errtraq infra generate` there. The
 generated Terraform root and the Lambda ZIPs must be usable without this repository.
 
@@ -18,13 +18,13 @@ generated Terraform root and the Lambda ZIPs must be usable without this reposit
    `relativeModuleSource` turns it into a relative `source` in `main.tf.json`. A consumer project
    has no `infra/modules`, and the HCL is not part of any package.
 3. **Bundling.** `buildStack` runs esbuild with `resolveDir: <root>` and
-   `conditions: ["development"]`, so `@errtraq/*` resolves to `./src/*.ts`. The standalone entry
+   `conditions: ["development"]`, so `@moriyoshi/errtraq-*` resolves to `./src/*.ts`. The standalone entry
    also imports `./packages/cli/src/construction.ts`, `token.ts` and `address.ts` by path.
 4. **Package manifests.** Every package is `"private": true`, version `0.0.0`, with
    `workspace:*` dependencies, and `exports` lists the `development` condition first.
 
 Stack loading itself is not coupled: `import(pathToFileURL(file))` uses Node type stripping
-(available unflagged on the supported Node versions), and the stack's `@errtraq/*` imports
+(available unflagged on the supported Node versions), and the stack's `@moriyoshi/errtraq-*` imports
 resolve from the user's own `node_modules`.
 
 ## Design
@@ -44,7 +44,7 @@ the root" stays: it is what keeps absolute local paths out of generated files.
 
 ### Terraform modules
 
-Ship the HCL in a new package `@errtraq/terraform-modules` whose `files` are `aws/**` (later
+Ship the HCL in a new package `@moriyoshi/errtraq-terraform-modules` whose `files` are `aws/**` (later
 `cloudflare/**`, ...). Its directory is found with `import.meta.resolve` on its `package.json`
 from the CLI, so it follows the installed version.
 
@@ -68,10 +68,10 @@ one new test generates a root in `vendor` mode into a temporary project and runs
   `dist/*.js`. The `development` condition is added only when the project root is this
   workspace (detected by the `pnpm-workspace.yaml` that also declares `packages/*`), keeping
   today's no-build development loop.
-- `resolveDir` becomes the project root, so `@errtraq/*` resolves from the user's
+- `resolveDir` becomes the project root, so `@moriyoshi/errtraq-*` resolves from the user's
   `node_modules`, the same copies the stack file imported.
-- The standalone entry stops importing CLI source by path. `@errtraq/cli` gains an export
-  `@errtraq/cli/standalone-entry` that exposes `constructStack`, `devToken` and `dsnOrigin`; the
+- The standalone entry stops importing CLI source by path. `@moriyoshi/errtraq-cli` gains an export
+  `@moriyoshi/errtraq-cli/standalone-entry` that exposes `constructStack`, `devToken` and `dsnOrigin`; the
   generated entry imports that specifier in both modes.
 
 ### Package manifests and release
@@ -84,7 +84,7 @@ one new test generates a root in `vendor` mode into a temporary project and runs
 - Use `publishConfig.exports` to publish manifests **without** the `development` condition. Some
   consumer tool chains (Vite and its plugins) set `development` themselves, and would otherwise
   resolve `./src/*.ts`, which is not in the tarball.
-- `@errtraq/core` becomes a `peerDependency` of adapters, platforms and the CLI. Infra
+- `@moriyoshi/errtraq-core` becomes a `peerDependency` of adapters, platforms and the CLI. Infra
   references are tagged with `Symbol.for`, so two copies would still interoperate there, but
   `stack-schema.ts` checks `instanceof z.ZodType`, and a second `core` (with its own `zod`) in the
   user's tree would fail that check in confusing ways. A peer dependency makes the package
@@ -110,8 +110,10 @@ when those are unavailable.
 
 ## Out of scope and open questions
 
-- Where to publish (npm organisation name, provenance, registry module) is an owner decision; this
-  note assumes the `@errtraq` scope on npm.
+- Where to publish: decided 2026-11-25. Packages are published to GitHub Packages
+  (`npm.pkg.github.com`) from `github.com/moriyoshi/errtraq`, so the scope must be the owner's and
+  packages are named `@moriyoshi/errtraq-<name>` (formerly `@errtraq/<name>`). Each public package
+  sets `publishConfig.registry` and `repository`. Provenance and a registry module remain open.
 - A project template (`npm create errtraq`) is not planned.
 - Cloudflare (M6) bundles through Wrangler, not this esbuild path; its packaging is designed with
   M6.
@@ -124,7 +126,7 @@ when those are unavailable.
   A workspace file anywhere above the stack wins over a nearer `package.json`, as written, so a
   project nested in some other pnpm workspace gets that workspace as its root unless `--root` is used.
   `verify:packaging` passes `--root` because its throwaway project lives under this repository.
-- `@errtraq/terraform-modules` exports only `./package.json`. `prepack` (`prepack.mjs`) copies each
+- `@moriyoshi/errtraq-terraform-modules` exports only `./package.json`. `prepack` (`prepack.mjs`) copies each
   `infra/modules/<provider>/<component>` without `tests/` and `*.tftest.hcl` into the git-ignored
   `packages/terraform-modules/<provider>/`; `files` lists `aws` (add providers there). The CLI finds
   it with `createRequire(...).resolve`, not `import.meta.resolve`.

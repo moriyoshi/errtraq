@@ -93,7 +93,7 @@ export interface PlatformConfig {
   settings?: Partial<Record<FunctionRole, FunctionSettings>>;
 }
 /** In-process reference tag; generators must render references, not JSON-serialize them. */
-export const REF = Symbol.for("@errtraq/infra-reference");
+export const REF = Symbol.for("@moriyoshi/errtraq-infra-reference");
 export interface OutputRef {
   readonly [REF]: "output";
   readonly selection?: string;

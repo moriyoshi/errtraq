@@ -3,7 +3,7 @@ import {
   type AdapterSelection,
   configReference,
   type InfraDescriptor,
-} from "@errtraq/core";
+} from "@moriyoshi/errtraq-core";
 import { z } from "zod";
 export const configSchema = z.strictObject({ root: z.string().min(1) });
 export type BlobConfig = z.infer<typeof configSchema>;
@@ -40,5 +40,10 @@ export const infra: InfraDescriptor<BlobStackConfig> = {
 export function fsBlob(
   config: BlobStackConfig,
 ): AdapterSelection<BlobStackConfig> {
-  return { manifest, infra, config, runtimeModule: "@errtraq/blob-fs" };
+  return {
+    manifest,
+    infra,
+    config,
+    runtimeModule: "@moriyoshi/errtraq-blob-fs",
+  };
 }

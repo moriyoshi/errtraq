@@ -1,4 +1,4 @@
-import { FakeClock, queueContract } from "@errtraq/testing";
+import { FakeClock, queueContract } from "@moriyoshi/errtraq-testing";
 import { expect, it, vi } from "vitest";
 import { create as createAdapter } from "./index.js";
 

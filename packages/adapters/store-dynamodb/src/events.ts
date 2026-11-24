@@ -1,4 +1,9 @@
-import type { EventQuery, EventRepo, Page, StoredEvent } from "@errtraq/core";
+import type {
+  EventQuery,
+  EventRepo,
+  Page,
+  StoredEvent,
+} from "@moriyoshi/errtraq-core";
 import {
   decodeCursor,
   encodeCursor,
@@ -6,7 +11,7 @@ import {
   InvalidCursorError,
   pageLimit,
   UnsupportedQueryError,
-} from "@errtraq/core/store";
+} from "@moriyoshi/errtraq-core/store";
 import { DynamoStoreError } from "./errors.js";
 import { eventTimeSort, partition } from "./keys.js";
 import { eventKey } from "./record-event.js";

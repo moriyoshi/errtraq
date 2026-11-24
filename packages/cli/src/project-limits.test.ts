@@ -1,5 +1,10 @@
-import type { OrgId, Project, ProjectId, StackConfig } from "@errtraq/core";
-import { MemoryActiveStore } from "@errtraq/testing";
+import type {
+  OrgId,
+  Project,
+  ProjectId,
+  StackConfig,
+} from "@moriyoshi/errtraq-core";
+import { MemoryActiveStore } from "@moriyoshi/errtraq-testing";
 import { describe, expect, it } from "vitest";
 import {
   assertProjectLimitsAllowed,

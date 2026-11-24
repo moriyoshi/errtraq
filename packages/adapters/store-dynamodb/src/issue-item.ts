@@ -1,4 +1,4 @@
-import type { Issue } from "@errtraq/core";
+import type { Issue } from "@moriyoshi/errtraq-core";
 import { DynamoStoreError } from "./errors.js";
 import { type Item, itemData, s } from "./repository-base.js";
 

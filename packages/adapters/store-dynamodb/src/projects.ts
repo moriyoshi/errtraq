@@ -5,8 +5,11 @@ import type {
   Project,
   ProjectKey,
   ProjectRepo,
-} from "@errtraq/core";
-import { ConflictError, summarizeApiToken } from "@errtraq/core/store";
+} from "@moriyoshi/errtraq-core";
+import {
+  ConflictError,
+  summarizeApiToken,
+} from "@moriyoshi/errtraq-core/store";
 import { DynamoStoreError } from "./errors.js";
 import { partition, sortKey } from "./keys.js";
 import {
@@ -263,7 +266,7 @@ export function projectRepository(driver: Driver): ProjectRepo {
     listKeys: async (projectId) => {
       const hash = indexPartition("keys", projectId),
         result: ProjectKey[] = [];
-      let cursor: import("@errtraq/core").Cursor | null = null;
+      let cursor: import("@moriyoshi/errtraq-core").Cursor | null = null;
       do {
         const page: Page<ProjectKey> = await pageIndex<ProjectKey>(
           driver,

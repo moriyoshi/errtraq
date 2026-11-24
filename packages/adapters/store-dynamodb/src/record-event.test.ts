@@ -6,7 +6,7 @@ import type {
   ProjectId,
   StoredEvent,
   Timestamp,
-} from "@errtraq/core";
+} from "@moriyoshi/errtraq-core";
 import { describe, expect, it } from "vitest";
 import { issueMutableAttributes } from "./issue-item.js";
 import { DynamoStore } from "./runtime.js";

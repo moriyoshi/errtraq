@@ -324,7 +324,7 @@ item 3 cleanup protocol must account for this before claiming full payload reten
 No issue row receives TTL. The operator-facing activation and migration details remain open.
 
 Legacy bundle index repair is exposed as `DynamoStore.backfillBundleIndexes(inventory)` in
-`@errtraq/store-dynamodb/runtime`. Supply explicit `{ projectId, bundleId }` entries in batches
+`@moriyoshi/errtraq-store-dynamodb/runtime`. Supply explicit `{ projectId, bundleId }` entries in batches
 of at most 1,000; there is no scan and the caller must obtain a complete inventory independently.
 The method strongly reads each row, skips missing or deleting bundles, conditionally repairs
 release and pending-expiry keys and advances the revision. Repeating it is safe; concurrent

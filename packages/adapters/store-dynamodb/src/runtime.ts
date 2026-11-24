@@ -1,6 +1,11 @@
-import { AwsRequestError, awsRequest } from "@errtraq/aws-signing";
-import type { ActiveStore, Clock, CreateContext, Logger } from "@errtraq/core";
-import { withIdentifierLimits } from "@errtraq/core/store";
+import { AwsRequestError, awsRequest } from "@moriyoshi/errtraq-aws-signing";
+import type {
+  ActiveStore,
+  Clock,
+  CreateContext,
+  Logger,
+} from "@moriyoshi/errtraq-core";
+import { withIdentifierLimits } from "@moriyoshi/errtraq-core/store";
 import { backfillBundleIndexes } from "./bundles.js";
 import {
   DynamoStoreAccessDeniedError,

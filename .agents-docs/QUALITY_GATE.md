@@ -19,7 +19,7 @@ change runs section 1 at minimum.
 pnpm install --frozen-lockfile   # only if dependencies changed; otherwise skip
 pnpm typecheck
 pnpm lint
-pnpm test                        # or focused while iterating: pnpm --filter @errtraq/<pkg> test
+pnpm test                        # or focused while iterating: pnpm --filter @moriyoshi/errtraq-<pkg> test
 ```
 
 Fix violations and re-run until clean. `pnpm test` needs no external daemons, network, or
@@ -50,7 +50,7 @@ pull the image. The planner tests use default cost settings after `ANALYZE`; pla
 with other statistics, distributions and PostgreSQL configurations.
 
 A standalone stack can select `postgres(variable("postgres_secret"))` from
-`@errtraq/store-sql/postgres/stack`. Declare `postgres_secret` as a non-sensitive string
+`@moriyoshi/errtraq-store-sql/postgres/stack`. Declare `postgres_secret` as a non-sensitive string
 stack variable holding the *name* of an environment variable, such as `DATABASE_URL`;
 set that named environment variable to the connection URL. The standalone constructor resolves
 that identifier locally without putting the URL in the stack or Terraform. This is an existing

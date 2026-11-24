@@ -4,7 +4,7 @@ import {
   type InfraDescriptor,
   out,
   stackValue,
-} from "@errtraq/core";
+} from "@moriyoshi/errtraq-core";
 import { z } from "zod";
 
 /** SQS retains messages for at most 14 days; claim checks must outlive any redrive. */
@@ -105,5 +105,10 @@ export const infra: InfraDescriptor<Config> = {
   ],
 };
 export function s3Blob(config: Config = {}): AdapterSelection<Config> {
-  return { manifest, infra, config, runtimeModule: "@errtraq/blob-s3/runtime" };
+  return {
+    manifest,
+    infra,
+    config,
+    runtimeModule: "@moriyoshi/errtraq-blob-s3/runtime",
+  };
 }

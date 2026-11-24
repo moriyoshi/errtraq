@@ -543,7 +543,9 @@ export function bindingsForRoles(
 // A resolved stack has already passed all checks, including potentially transforming
 // adapter schemas. Keep its construction order alongside its identity.
 const resolvedOrders = new WeakMap<StackConfig, string[]>();
-const resolvedMarker: unique symbol = Symbol.for("@errtraq/resolved-stack");
+const resolvedMarker: unique symbol = Symbol.for(
+  "@moriyoshi/errtraq-resolved-stack",
+);
 export type ResolvedStack = StackConfig & { readonly [resolvedMarker]: true };
 
 // Clone only data objects; schemas are shared, executable objects owned by adapters.

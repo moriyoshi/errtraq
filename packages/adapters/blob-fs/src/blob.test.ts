@@ -9,8 +9,8 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { join } from "node:path";
-import { BlobCorruptError, BlobInvalidKeyError } from "@errtraq/core";
-import { blobStoreContract } from "@errtraq/testing";
+import { BlobCorruptError, BlobInvalidKeyError } from "@moriyoshi/errtraq-core";
+import { blobStoreContract } from "@moriyoshi/errtraq-testing";
 import { afterAll, expect, it, vi } from "vitest";
 import { create as createAdapter, FsBlobStore } from "./index.js";
 

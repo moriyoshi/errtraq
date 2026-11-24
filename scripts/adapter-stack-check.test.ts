@@ -15,7 +15,7 @@ describe("stack helper import restrictions", () => {
       const child = resolve(dir, "child.ts");
       await writeFile(
         root,
-        'import { z } from "zod"; import type { PortKind } from "@errtraq/core"; export * from "./child.js";',
+        'import { z } from "zod"; import type { PortKind } from "@moriyoshi/errtraq-core"; export * from "./child.js";',
       );
       await writeFile(child, "export const safe = true;");
       await expect(
@@ -23,8 +23,8 @@ describe("stack helper import restrictions", () => {
       ).resolves.toBeUndefined();
       for (const specifier of [
         "node:sqlite",
-        "@errtraq/queue-memory",
-        "@errtraq/core/internal",
+        "@moriyoshi/errtraq-queue-memory",
+        "@moriyoshi/errtraq-core/internal",
       ]) {
         await writeFile(child, `import "${specifier}";`);
         await expect(

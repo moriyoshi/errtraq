@@ -6,8 +6,12 @@ import {
   type OrgId,
   type Timestamp,
   WebCryptoIdGen,
-} from "@errtraq/core";
-import { activeStoreContract, FakeClock, MemoryKV } from "@errtraq/testing";
+} from "@moriyoshi/errtraq-core";
+import {
+  activeStoreContract,
+  FakeClock,
+  MemoryKV,
+} from "@moriyoshi/errtraq-testing";
 import { Kysely, sql } from "kysely";
 import { afterAll, afterEach, describe, expect, it } from "vitest";
 import { create as createAdapter } from "./index.js";
@@ -63,12 +67,12 @@ describe("SQLite migrations and indexes", () => {
     };
     const store = createSqlStore({ db, dialect });
     await store.migrate();
-    const projectId = "1" as import("@errtraq/core").ProjectId;
-    const issueId = "issue" as import("@errtraq/core").IssueId;
+    const projectId = "1" as import("@moriyoshi/errtraq-core").ProjectId;
+    const issueId = "issue" as import("@moriyoshi/errtraq-core").IssueId;
     const time =
-      "2025-01-01T00:00:00.000Z" as import("@errtraq/core").Timestamp;
+      "2025-01-01T00:00:00.000Z" as import("@moriyoshi/errtraq-core").Timestamp;
     const group = ["first", "second"].map((id) => {
-      const eventId = id as import("@errtraq/core").EventId;
+      const eventId = id as import("@moriyoshi/errtraq-core").EventId;
       const common = {
         projectId,
         issueId,
@@ -95,7 +99,7 @@ describe("SQLite migrations and indexes", () => {
     expect(
       await store.events.get(
         projectId,
-        group[0]?.event.eventId as import("@errtraq/core").EventId,
+        group[0]?.event.eventId as import("@moriyoshi/errtraq-core").EventId,
       ),
     ).toBeNull();
     expect(await store.issues.get(projectId, issueId)).toBeNull();
@@ -218,7 +222,7 @@ describe("SQLite migrations and indexes", () => {
     await store.migrate();
     expect(
       await store.releases.findBundleByDebugId(
-        "1" as import("@errtraq/core").ProjectId,
+        "1" as import("@moriyoshi/errtraq-core").ProjectId,
         "debug",
       ),
     ).toMatchObject({
@@ -277,11 +281,11 @@ it("retries interleaved writes from two connections without snapshot upgrade fai
     b = createSqlStore({ db: right, dialect: sqliteStoreDialect });
   await a.migrate();
   await b.migrate();
-  const projectId = "1" as import("@errtraq/core").ProjectId,
-    issueId = "i" as import("@errtraq/core").IssueId,
-    eventId = "e" as import("@errtraq/core").EventId,
+  const projectId = "1" as import("@moriyoshi/errtraq-core").ProjectId,
+    issueId = "i" as import("@moriyoshi/errtraq-core").IssueId,
+    eventId = "e" as import("@moriyoshi/errtraq-core").EventId,
     receivedAt =
-      "2024-01-01T00:00:00.000Z" as import("@errtraq/core").Timestamp;
+      "2024-01-01T00:00:00.000Z" as import("@moriyoshi/errtraq-core").Timestamp;
   await a.recordEvent(
     {
       projectId,
@@ -331,13 +335,13 @@ it("chunks large event ID lists and respects the deletion limit", async () => {
   const db = database(":memory:");
   const store = createSqlStore({ db, dialect: sqliteStoreDialect });
   await store.migrate();
-  const projectId = "1" as import("@errtraq/core").ProjectId,
-    issueId = "i" as import("@errtraq/core").IssueId,
+  const projectId = "1" as import("@moriyoshi/errtraq-core").ProjectId,
+    issueId = "i" as import("@moriyoshi/errtraq-core").IssueId,
     receivedAt =
-      "2024-01-01T00:00:00.000Z" as import("@errtraq/core").Timestamp;
+      "2024-01-01T00:00:00.000Z" as import("@moriyoshi/errtraq-core").Timestamp;
   const ids = Array.from(
     { length: 40000 },
-    (_, i) => `e${i}` as import("@errtraq/core").EventId,
+    (_, i) => `e${i}` as import("@moriyoshi/errtraq-core").EventId,
   );
   for (const eventId of ids.slice(0, 3))
     await store.recordEvent(
@@ -369,7 +373,7 @@ it("chunks large event ID lists and respects the deletion limit", async () => {
   expect(
     await store.events.get(
       projectId,
-      ids[2] as import("@errtraq/core").EventId,
+      ids[2] as import("@moriyoshi/errtraq-core").EventId,
     ),
   ).toBeNull();
 });

@@ -1,9 +1,9 @@
-import type { Logger } from "@errtraq/core/runtime";
+import type { Logger } from "@moriyoshi/errtraq-core/runtime";
 import {
   IngestError,
   type IngestService,
   parseDsnKey,
-} from "@errtraq/core/runtime";
+} from "@moriyoshi/errtraq-core/runtime";
 import { Hono } from "hono";
 import { logUnexpected } from "./errors.js";
 

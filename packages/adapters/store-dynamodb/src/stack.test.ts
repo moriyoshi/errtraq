@@ -1,4 +1,4 @@
-import { out } from "@errtraq/core";
+import { out } from "@moriyoshi/errtraq-core";
 import { describe, expect, it } from "vitest";
 import { configSchema, infra, manifest } from "./stack.js";
 

@@ -2,13 +2,13 @@ import {
   AwsRequestError,
   awsRequest,
   signAwsRequest,
-} from "@errtraq/aws-signing";
+} from "@moriyoshi/errtraq-aws-signing";
 import type {
   BlobMetadata,
   BlobStore,
   CreateContext,
   Cursor,
-} from "@errtraq/core";
+} from "@moriyoshi/errtraq-core";
 import {
   BlobAccessDeniedError,
   BlobBucketNotFoundError,
@@ -23,7 +23,7 @@ import {
   InvalidCursorError,
   pageLimit,
   validateBlobKey,
-} from "@errtraq/core/blob";
+} from "@moriyoshi/errtraq-core/blob";
 import { XMLParser, XMLValidator } from "fast-xml-parser";
 import type { Config } from "./stack.js";
 

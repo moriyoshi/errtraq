@@ -60,7 +60,7 @@ export async function assertSafeStackImports(stackUrl: URL): Promise<void> {
       ) {
         const specifier = node.moduleSpecifier.text;
         if (specifier.startsWith(".")) edges.push(specifier);
-        else if (specifier !== "zod" && specifier !== "@errtraq/core")
+        else if (specifier !== "zod" && specifier !== "@moriyoshi/errtraq-core")
           throw new Error(`Forbidden stack package import: ${specifier}`);
       }
       ts.forEachChild(node, visit);

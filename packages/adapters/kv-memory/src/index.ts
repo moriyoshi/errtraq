@@ -4,7 +4,7 @@ import {
   InvalidCounterError,
   type KV,
   toTimestamp,
-} from "@errtraq/core";
+} from "@moriyoshi/errtraq-core";
 import { configSchema, type KvConfig } from "./stack.js";
 
 export { infra, manifest } from "./stack.js";

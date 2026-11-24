@@ -1,4 +1,4 @@
-import { AwsRequestError, awsRequest } from "@errtraq/aws-signing";
+import { AwsRequestError, awsRequest } from "@moriyoshi/errtraq-aws-signing";
 import {
   type ActiveStore,
   type BootstrapVault,
@@ -12,11 +12,11 @@ import {
   type ProjectRateLimits,
   type SecretSource,
   type StackConfig,
-} from "@errtraq/core";
+} from "@moriyoshi/errtraq-core";
 import {
   createSecretsManagerSource,
   SecretReadError,
-} from "@errtraq/platform-aws-lambda/handler";
+} from "@moriyoshi/errtraq-platform-aws-lambda/handler";
 
 import { assertProjectLimitsAllowed } from "./project-limits.js";
 

@@ -2,7 +2,7 @@ import type {
   AdapterManifest,
   AdapterSelection,
   InfraDescriptor,
-} from "@errtraq/core";
+} from "@moriyoshi/errtraq-core";
 import { z } from "zod";
 export const configSchema = z.strictObject({});
 export type KvConfig = z.infer<typeof configSchema>;
@@ -27,5 +27,10 @@ export const infra: InfraDescriptor<KvConfig> = {
   resources: { primary: "local" },
 };
 export function memoryKv(config: KvConfig = {}): AdapterSelection<KvConfig> {
-  return { manifest, infra, config, runtimeModule: "@errtraq/kv-memory" };
+  return {
+    manifest,
+    infra,
+    config,
+    runtimeModule: "@moriyoshi/errtraq-kv-memory",
+  };
 }

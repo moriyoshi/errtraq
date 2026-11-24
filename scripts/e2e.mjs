@@ -5,8 +5,8 @@ import { createServer, request as httpRequest } from "node:http";
 import { connect } from "node:net";
 import { join, resolve } from "node:path";
 import { gunzipSync, gzipSync } from "node:zlib";
-import { create as createBlobs } from "@errtraq/blob-fs";
-import { parseEnvelope } from "@errtraq/core";
+import { create as createBlobs } from "@moriyoshi/errtraq-blob-fs";
+import { parseEnvelope } from "@moriyoshi/errtraq-core";
 import * as Sentry from "@sentry/node";
 
 const root = resolve(".agents-workspace/tmp");

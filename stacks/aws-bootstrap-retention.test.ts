@@ -1,9 +1,9 @@
-import { s3Blob } from "@errtraq/blob-s3/stack";
-import { defineStack, output } from "@errtraq/core";
-import { dynamoKv } from "@errtraq/kv-dynamodb/stack";
-import { awsLambda } from "@errtraq/platform-aws-lambda/stack";
-import { sqsQueue } from "@errtraq/queue-sqs/stack";
-import { dynamoStore } from "@errtraq/store-dynamodb/stack";
+import { s3Blob } from "@moriyoshi/errtraq-blob-s3/stack";
+import { defineStack, output } from "@moriyoshi/errtraq-core";
+import { dynamoKv } from "@moriyoshi/errtraq-kv-dynamodb/stack";
+import { awsLambda } from "@moriyoshi/errtraq-platform-aws-lambda/stack";
+import { sqsQueue } from "@moriyoshi/errtraq-queue-sqs/stack";
+import { dynamoStore } from "@moriyoshi/errtraq-store-dynamodb/stack";
 import { expect, it } from "vitest";
 import { bootstrapAwsStack } from "../packages/cli/src/deployed-bootstrap.js";
 import { MemoryActiveStore, MemoryKV } from "../packages/testing/src/index.js";

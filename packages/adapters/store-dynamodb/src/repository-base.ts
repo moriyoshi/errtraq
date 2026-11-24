@@ -1,9 +1,9 @@
-import type { Cursor, Page } from "@errtraq/core";
+import type { Cursor, Page } from "@moriyoshi/errtraq-core";
 import {
   ConflictError,
   InvalidCursorError,
   pageLimit,
-} from "@errtraq/core/store";
+} from "@moriyoshi/errtraq-core/store";
 import { DynamoStoreError } from "./errors.js";
 import { indexCursor, readIndexCursor } from "./keys.js";
 

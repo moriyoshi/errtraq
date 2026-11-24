@@ -1,4 +1,4 @@
-import { UnsupportedQueryError } from "@errtraq/core/store";
+import { UnsupportedQueryError } from "@moriyoshi/errtraq-core/store";
 import { describe, expect, it, vi } from "vitest";
 import { DynamoTransactionCanceledError } from "./errors.js";
 import {
@@ -32,9 +32,9 @@ describe("DynamoDB store runtime", () => {
       environment,
       fetch: fetcher,
     });
-    const project = "project" as import("@errtraq/core").ProjectId;
+    const project = "project" as import("@moriyoshi/errtraq-core").ProjectId;
     const cutoff =
-      "2025-01-01T00:00:00.000Z" as import("@errtraq/core").Timestamp;
+      "2025-01-01T00:00:00.000Z" as import("@moriyoshi/errtraq-core").Timestamp;
     expect(reads).toBe(0);
     await Promise.all([
       store.events.scanOlderThan(project, cutoff),

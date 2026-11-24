@@ -13,7 +13,7 @@ import {
   type RateRejectionConfig,
   RecordHandler,
   readDropped,
-} from "@errtraq/core";
+} from "@moriyoshi/errtraq-core";
 import { describe, expect, it, vi } from "vitest";
 import { MemoryBlobStore, MemoryKV } from "./memory-other.js";
 import { DeterministicIdGen, FakeClock } from "./shared.js";

@@ -1,3 +1,4 @@
+import { serve } from "@hono/node-server";
 import {
   type ActiveStore,
   type BatchHandler,
@@ -17,9 +18,8 @@ import {
   recoverStagedEnvelopes,
   toTimestamp,
   WebCryptoIdGen,
-} from "@errtraq/core";
-import { createApiApp, createIngestApp } from "@errtraq/http";
-import { serve } from "@hono/node-server";
+} from "@moriyoshi/errtraq-core";
+import { createApiApp, createIngestApp } from "@moriyoshi/errtraq-http";
 import { Hono } from "hono";
 import { configSchema, type StandaloneConfig } from "./stack.js";
 import type { DevTokenManager } from "./token.js";

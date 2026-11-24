@@ -1,4 +1,4 @@
-import type { EventId, ProjectId } from "@errtraq/core";
+import type { EventId, ProjectId } from "@moriyoshi/errtraq-core";
 import { describe, expect, it, vi } from "vitest";
 import { eventRepository } from "./events.js";
 import { eventTimeSort, partition } from "./keys.js";
@@ -7,7 +7,7 @@ import { type Driver, primary, s } from "./repository-base.js";
 describe("DynamoDB event repository", () => {
   it("prefetches and hydrates pages over 100 in bounded batches", async () => {
     const projectId = "project" as ProjectId;
-    const issueId = "issue" as import("@errtraq/core").IssueId;
+    const issueId = "issue" as import("@moriyoshi/errtraq-core").IssueId;
     const time = "2025-01-01T00:00:00.000Z";
     const rows = Array.from({ length: 130 }, (_, i) => {
       const id = String(i).padStart(3, "0");
@@ -60,9 +60,9 @@ describe("DynamoDB event repository", () => {
   });
   it("advances the examined cursor over stale candidates without skipping live events", async () => {
     const projectId = "project" as ProjectId;
-    const issueId = "issue" as import("@errtraq/core").IssueId;
+    const issueId = "issue" as import("@moriyoshi/errtraq-core").IssueId;
     const time =
-      "2025-01-01T00:00:00.000Z" as import("@errtraq/core").Timestamp;
+      "2025-01-01T00:00:00.000Z" as import("@moriyoshi/errtraq-core").Timestamp;
     const hash = partition("EVENTISSUE", projectId, issueId);
     const rows = ["a", "b", "c"].map((id) => ({
       ...primary(id),

@@ -9,12 +9,12 @@ import type {
   KV,
   Queue,
   StoredEvent,
-} from "@errtraq/core";
+} from "@moriyoshi/errtraq-core";
 import {
   InvalidCounterError,
   validateBlobKey,
   validateQueueBody,
-} from "@errtraq/core";
+} from "@moriyoshi/errtraq-core";
 import {
   bytes,
   compareUtf8,
@@ -74,7 +74,7 @@ export class MemoryBlobStore implements BlobStore {
   }
   async list(
     prefix: string,
-    cursor?: import("@errtraq/core").Cursor,
+    cursor?: import("@moriyoshi/errtraq-core").Cursor,
     limit?: number,
   ) {
     return page(

@@ -3,7 +3,7 @@ import type {
   Issue,
   Occurrence,
   StoredEvent,
-} from "@errtraq/core";
+} from "@moriyoshi/errtraq-core";
 import { DynamoStoreError, DynamoTransactionCanceledError } from "./errors.js";
 import { issueFromItem, issueMutableAttributes } from "./issue-item.js";
 import { issueKey, issuePointerKey, issuePointerSort } from "./issues.js";
@@ -476,7 +476,7 @@ export function recordEvents(
           const saved = issueFromItem(await get(d, PK));
           if (!saved) throw new Error("Committed issue is missing");
           const seen = new Set<string>();
-          const result: import("@errtraq/core").RecordResult[] = [];
+          const result: import("@moriyoshi/errtraq-core").RecordResult[] = [];
           for (const { event } of group) {
             const duplicate = duplicates.get(event.eventId);
             let issue = saved;
@@ -537,7 +537,7 @@ export function recordEvents(
           if (attempt < 79) await contentionDelay(attempt);
         }
       } else {
-        const results: import("@errtraq/core").RecordResult[] = [];
+        const results: import("@moriyoshi/errtraq-core").RecordResult[] = [];
         for (const { event } of group) {
           const duplicate = duplicates.get(event.eventId);
           if (!duplicate) throw new Error("Missing duplicate event");

@@ -43,13 +43,13 @@ Shared agent skills live under `./.agents/skills/` (Codex reads them there; `./.
 
 ## Building
 
-* pnpm workspace, TypeScript strict, ESM only, Node `^22.18.0 || >=23.6.0` for tooling. Package names are `@errtraq/<name>`.
+* pnpm workspace, TypeScript strict, ESM only, Node `^22.18.0 || >=23.6.0` for tooling. Package names are `@moriyoshi/errtraq-<name>`.
 * Validation: zod. HTTP: Hono. SQL: Kysely. Keep dependencies minimal and Workers-compatible in `core` / `http`; justify each new dependency in your report.
 * The standard local gate for any change you make (this applies to subagents too):
   ```
   pnpm typecheck
   pnpm lint
-  pnpm test                      # or focused: pnpm --filter @errtraq/<pkg> test
+  pnpm test                      # or focused: pnpm --filter @moriyoshi/errtraq-<pkg> test
   ```
   Fix violations and re-run until clean. Do not declare a change complete with failing typecheck, lint, or tests. See [QUALITY_GATE.md](./.agents-docs/QUALITY_GATE.md) for the deeper levels.
 

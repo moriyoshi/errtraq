@@ -1,4 +1,4 @@
-import type { Issue, IssueQuery, ProjectId } from "@errtraq/core";
+import type { Issue, IssueQuery, ProjectId } from "@moriyoshi/errtraq-core";
 import { describe, expect, it } from "vitest";
 import { issueRepository } from "./issues.js";
 import { issueAttributes } from "./record-event.js";

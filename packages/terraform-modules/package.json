@@ -1,5 +1,5 @@
 {
-  "name": "@errtraq/terraform-modules",
+  "name": "@moriyoshi/errtraq-terraform-modules",
   "version": "0.0.0",
   "description": "Terraform modules for errtraq stacks",
   "type": "module",
@@ -7,6 +7,7 @@
     "./package.json": "./package.json"
   },
   "publishConfig": {
+    "registry": "https://npm.pkg.github.com",
     "exports": {
       "./package.json": "./package.json"
     }
@@ -19,5 +20,10 @@
   },
   "engines": {
     "node": "^22.18.0 || >=23.6.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/moriyoshi/errtraq.git",
+    "directory": "packages/terraform-modules"
   }
 }

@@ -39,7 +39,7 @@ store and KV tables and SQS queue/DLQ shape, then verifies removal. Runtime valu
 visibility and redrive counts are chosen by the caller; cloud security settings such as
 SSE and TLS-only policies are Terraform concerns and are not exercised by HTTP emulator
 probes. TTL registration does not prove an asynchronous TTL sweeper. The namespace helper
-is exported by `@errtraq/testing`; callers must always close it in a `finally` block.
+is exported by `@moriyoshi/errtraq-testing`; callers must always close it in a `finally` block.
 
 The unmodified pinned server corrupts percent-encoded UTF-8 S3 keys; see
 [WINTERBAUME_GAPS.md](./WINTERBAUME_GAPS.md). The S3 contract runs against a separate,
@@ -54,7 +54,7 @@ Winterbaume for all three until a more demanding adapter contract demonstrates a
 
 ## S3 runtime contract
 
-`@errtraq/blob-s3` takes its bucket from `ERRTRAQ_BLOB_BUCKET` (or the staging
+`@moriyoshi/errtraq-blob-s3` takes its bucket from `ERRTRAQ_BLOB_BUCKET` (or the staging
 binding when only that purpose is supplied). Configuration accepts optional `region`,
 `endpoint` and `forcePathStyle`; region otherwise comes from `AWS_REGION` or
 `AWS_DEFAULT_REGION`. Lambda credentials are read from `AWS_ACCESS_KEY_ID`,

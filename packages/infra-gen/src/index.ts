@@ -15,7 +15,7 @@ import {
   resolveStack,
   selections,
   terraformVariableType,
-} from "@errtraq/core";
+} from "@moriyoshi/errtraq-core";
 
 export interface GenerateOptions {
   /** POSIX paths, either both absolute or both relative to the same root. */

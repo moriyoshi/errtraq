@@ -1,4 +1,4 @@
-import type { CreateContext } from "@errtraq/core";
+import type { CreateContext } from "@moriyoshi/errtraq-core";
 import { Kysely } from "kysely";
 import type { SqlDatabase } from "./schema.js";
 import { sqliteDialect, sqliteStoreDialect } from "./sqlite.js";

@@ -1,9 +1,9 @@
-import { fsBlob } from "@errtraq/blob-fs/stack";
-import { defineStack, env } from "@errtraq/core";
-import { memoryKv } from "@errtraq/kv-memory/stack";
-import { standalone } from "@errtraq/platform-standalone/stack";
-import { memoryQueue } from "@errtraq/queue-memory/stack";
-import { sqlite } from "@errtraq/store-sql/stack";
+import { fsBlob } from "@moriyoshi/errtraq-blob-fs/stack";
+import { defineStack, env } from "@moriyoshi/errtraq-core";
+import { memoryKv } from "@moriyoshi/errtraq-kv-memory/stack";
+import { standalone } from "@moriyoshi/errtraq-platform-standalone/stack";
+import { memoryQueue } from "@moriyoshi/errtraq-queue-memory/stack";
+import { sqlite } from "@moriyoshi/errtraq-store-sql/stack";
 
 export default defineStack({
   name: "local",

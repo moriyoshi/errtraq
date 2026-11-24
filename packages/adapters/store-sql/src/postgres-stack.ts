@@ -7,7 +7,7 @@ import {
   isVariableRef,
   out,
   type VariableRef,
-} from "@errtraq/core";
+} from "@moriyoshi/errtraq-core";
 import { z } from "zod";
 
 const stringRef = z.custom<VariableRef | EnvRef>(
@@ -98,7 +98,7 @@ export function postgres(
           },
         ],
       },
-      runtimeModule: "@errtraq/store-sql/postgres",
+      runtimeModule: "@moriyoshi/errtraq-store-sql/postgres",
       config: { mode: "secret" },
       existing: {},
     };
@@ -151,7 +151,7 @@ export function postgres(
       requires: ["aws-credentials"],
     },
     infra: iamInfra,
-    runtimeModule: "@errtraq/store-sql/postgres",
+    runtimeModule: "@moriyoshi/errtraq-store-sql/postgres",
     config: {
       mode: "iam",
       host: config.host,

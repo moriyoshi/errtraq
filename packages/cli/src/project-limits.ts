@@ -5,7 +5,7 @@ import {
   type ProjectRateLimits,
   type StackConfig,
   validateProjectRateLimits,
-} from "@errtraq/core";
+} from "@moriyoshi/errtraq-core";
 
 /** A flag value: a positive count, `none` to clear the override, or absent to leave it alone. */
 export type LimitInput = number | "none" | undefined;

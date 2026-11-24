@@ -10,7 +10,7 @@ import {
   type IdGen,
   type OrgId,
   toTimestamp,
-} from "@errtraq/core";
+} from "@moriyoshi/errtraq-core";
 
 /** Dev-only token file: plaintext is protected locally; the store holds only its hash. */
 export async function devToken(

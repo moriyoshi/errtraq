@@ -2,7 +2,7 @@ import type {
   AdapterManifest,
   AdapterSelection,
   InfraDescriptor,
-} from "@errtraq/core";
+} from "@moriyoshi/errtraq-core";
 import { z } from "zod";
 
 export const QUEUE_MAX_BYTES = 262144;
@@ -54,5 +54,10 @@ export const infra: InfraDescriptor<QueueConfig> = {
 export function memoryQueue(
   config: QueueConfig = {},
 ): AdapterSelection<QueueConfig> {
-  return { manifest, infra, config, runtimeModule: "@errtraq/queue-memory" };
+  return {
+    manifest,
+    infra,
+    config,
+    runtimeModule: "@moriyoshi/errtraq-queue-memory",
+  };
 }

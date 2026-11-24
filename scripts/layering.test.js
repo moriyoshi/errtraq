@@ -68,14 +68,14 @@ describe("layering checker", () => {
     expect(findLayeringViolations(program, source).length).toBe(2);
     const named = ts.createSourceFile(
       "packages/adapters/a/src/a.ts",
-      'import "@errtraq/store-b"; import "@errtraq/cloudflare"',
+      'import "@moriyoshi/errtraq-store-b"; import "@moriyoshi/errtraq-cloudflare"',
       ts.ScriptTarget.Latest,
       true,
     );
     expect(
       findLayeringViolations(program, named, {
-        "@errtraq/store-b": "packages/adapters/b",
-        "@errtraq/cloudflare": "packages/platforms/cloudflare",
+        "@moriyoshi/errtraq-store-b": "packages/adapters/b",
+        "@moriyoshi/errtraq-cloudflare": "packages/platforms/cloudflare",
       }).length,
     ).toBe(2);
   });

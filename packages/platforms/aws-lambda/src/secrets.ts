@@ -1,5 +1,5 @@
-import { AwsRequestError, awsRequest } from "@errtraq/aws-signing";
-import type { SecretSource } from "@errtraq/core";
+import { AwsRequestError, awsRequest } from "@moriyoshi/errtraq-aws-signing";
+import type { SecretSource } from "@moriyoshi/errtraq-core";
 
 /** Errors never contain the identifier, provider response, or secret value. */
 export class SecretReadError extends Error {

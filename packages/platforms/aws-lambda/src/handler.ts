@@ -18,8 +18,8 @@ import {
   type RateRejectionConfig,
   RecordHandler,
   toTimestamp,
-} from "@errtraq/core/runtime";
-import { createApiApp, createIngestApp } from "@errtraq/http";
+} from "@moriyoshi/errtraq-core/runtime";
+import { createApiApp, createIngestApp } from "@moriyoshi/errtraq-http";
 import { Hono } from "hono";
 import { handle, type LambdaEvent } from "hono/aws-lambda";
 

@@ -9,7 +9,7 @@ import {
   type ProjectId,
   type StoredEvent,
   toTimestamp,
-} from "@errtraq/core";
+} from "@moriyoshi/errtraq-core";
 import { describe, expect, it } from "vitest";
 import { eventJson, issueJson } from "../../http/src/api-mappers.js";
 

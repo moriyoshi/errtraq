@@ -1,4 +1,4 @@
-import { bootstrapProject, type Message } from "@errtraq/core";
+import { bootstrapProject, type Message } from "@moriyoshi/errtraq-core";
 import {
   DeterministicIdGen,
   FakeClock,
@@ -6,7 +6,7 @@ import {
   MemoryBlobStore,
   MemoryKV,
   MemoryQueue,
-} from "@errtraq/testing";
+} from "@moriyoshi/errtraq-testing";
 import { expect, it, vi } from "vitest";
 import {
   createHandler,
@@ -122,7 +122,10 @@ it("delegates SQS to the queue push source with the consumer handler", async () 
 it("routes record deliveries to the record handler in grouped mode", async () => {
   const memory = new MemoryQueue();
   const push = vi.fn(
-    async (_event: unknown, handler: import("@errtraq/core").BatchHandler) => {
+    async (
+      _event: unknown,
+      handler: import("@moriyoshi/errtraq-core").BatchHandler,
+    ) => {
       const results = await handler([
         {
           id: "poison",
@@ -265,9 +268,9 @@ it("executes staged-envelope recovery through its delivered blob and queue adapt
 it("enforces the configured limit independently for each DSN key and can disable it", async () => {
   const store = new MemoryActiveStore();
   vi.spyOn(store.projects, "getKey").mockImplementation(async (key) => ({
-    id: key as import("@errtraq/core").ProjectKeyId,
+    id: key as import("@moriyoshi/errtraq-core").ProjectKeyId,
     publicKey: key,
-    projectId: "1" as import("@errtraq/core").ProjectId,
+    projectId: "1" as import("@moriyoshi/errtraq-core").ProjectId,
   }));
   const adapters = {
     store,
@@ -357,7 +360,7 @@ it("wires KV and rate rejection to the API role only when configured", () => {
 
 /** Run one ingest claim of three events through a grouped consumer-only handler. */
 async function groupedConsumerRun(
-  rateRejection: import("@errtraq/core").RateRejectionConfig,
+  rateRejection: import("@moriyoshi/errtraq-core").RateRejectionConfig,
   options: { withStore: boolean; issueEvents?: number },
 ) {
   const clock = new FakeClock();
@@ -399,7 +402,7 @@ async function groupedConsumerRun(
     push: {
       handle: async (
         _event: unknown,
-        handler: import("@errtraq/core").BatchHandler,
+        handler: import("@moriyoshi/errtraq-core").BatchHandler,
       ) => {
         await handler([
           {
@@ -419,7 +422,7 @@ async function groupedConsumerRun(
         return {};
       },
     },
-  } as unknown as import("@errtraq/core").Queue;
+  } as unknown as import("@moriyoshi/errtraq-core").Queue;
   const handler = createHandler({
     roles: ["consumer"],
     recordMode: "grouped",

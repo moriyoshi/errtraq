@@ -5,7 +5,7 @@ import {
   stackValue,
   validateStack,
   variable,
-} from "@errtraq/core";
+} from "@moriyoshi/errtraq-core";
 import { expect, it } from "vitest";
 import local from "../../../stacks/local.js";
 import { resolveRoleBindings, resolveRuntimeValue } from "./runtime.js";

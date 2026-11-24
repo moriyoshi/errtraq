@@ -1,5 +1,8 @@
-import type { ArtifactBundle, ReleaseRepo } from "@errtraq/core";
-import { bundleDebugIdsDigest, ConflictError } from "@errtraq/core/store";
+import type { ArtifactBundle, ReleaseRepo } from "@moriyoshi/errtraq-core";
+import {
+  bundleDebugIdsDigest,
+  ConflictError,
+} from "@moriyoshi/errtraq-core/store";
 import { DynamoStoreError, DynamoTransactionCanceledError } from "./errors.js";
 import { partition, sortKey } from "./keys.js";
 import { indexPartition } from "./projects.js";

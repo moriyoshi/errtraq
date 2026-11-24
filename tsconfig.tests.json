@@ -9,73 +9,97 @@
     "types": [],
     "baseUrl": ".",
     "paths": {
-      "@errtraq/core": ["packages/core/src/index.ts"],
-      "@errtraq/testing": ["packages/testing/src/index.ts"],
-      "@errtraq/http": ["packages/http/src/index.ts"],
-      "@errtraq/cli": ["packages/cli/src/index.ts"],
-      "@errtraq/cli/standalone-entry": ["packages/cli/src/standalone-entry.ts"],
-      "@errtraq/infra-gen": ["packages/infra-gen/src/index.ts"],
-      "@errtraq/store-sql": ["packages/adapters/store-sql/src/index.ts"],
-      "@errtraq/store-sql/stack": ["packages/adapters/store-sql/src/stack.ts"],
-      "@errtraq/queue-memory": ["packages/adapters/queue-memory/src/index.ts"],
-      "@errtraq/queue-memory/stack": [
+      "@moriyoshi/errtraq-core": ["packages/core/src/index.ts"],
+      "@moriyoshi/errtraq-testing": ["packages/testing/src/index.ts"],
+      "@moriyoshi/errtraq-http": ["packages/http/src/index.ts"],
+      "@moriyoshi/errtraq-cli": ["packages/cli/src/index.ts"],
+      "@moriyoshi/errtraq-cli/standalone-entry": [
+        "packages/cli/src/standalone-entry.ts"
+      ],
+      "@moriyoshi/errtraq-infra-gen": ["packages/infra-gen/src/index.ts"],
+      "@moriyoshi/errtraq-store-sql": [
+        "packages/adapters/store-sql/src/index.ts"
+      ],
+      "@moriyoshi/errtraq-store-sql/stack": [
+        "packages/adapters/store-sql/src/stack.ts"
+      ],
+      "@moriyoshi/errtraq-queue-memory": [
+        "packages/adapters/queue-memory/src/index.ts"
+      ],
+      "@moriyoshi/errtraq-queue-memory/stack": [
         "packages/adapters/queue-memory/src/stack.ts"
       ],
-      "@errtraq/blob-fs": ["packages/adapters/blob-fs/src/index.ts"],
-      "@errtraq/blob-fs/stack": ["packages/adapters/blob-fs/src/stack.ts"],
-      "@errtraq/kv-memory": ["packages/adapters/kv-memory/src/index.ts"],
-      "@errtraq/kv-memory/stack": ["packages/adapters/kv-memory/src/stack.ts"],
-      "@errtraq/platform-standalone": [
+      "@moriyoshi/errtraq-blob-fs": ["packages/adapters/blob-fs/src/index.ts"],
+      "@moriyoshi/errtraq-blob-fs/stack": [
+        "packages/adapters/blob-fs/src/stack.ts"
+      ],
+      "@moriyoshi/errtraq-kv-memory": [
+        "packages/adapters/kv-memory/src/index.ts"
+      ],
+      "@moriyoshi/errtraq-kv-memory/stack": [
+        "packages/adapters/kv-memory/src/stack.ts"
+      ],
+      "@moriyoshi/errtraq-platform-standalone": [
         "packages/platforms/standalone/src/index.ts"
       ],
-      "@errtraq/platform-standalone/stack": [
+      "@moriyoshi/errtraq-platform-standalone/stack": [
         "packages/platforms/standalone/src/stack.ts"
       ],
-      "@errtraq/store-dynamodb": [
+      "@moriyoshi/errtraq-store-dynamodb": [
         "packages/adapters/store-dynamodb/src/index.ts"
       ],
-      "@errtraq/store-dynamodb/stack": [
+      "@moriyoshi/errtraq-store-dynamodb/stack": [
         "packages/adapters/store-dynamodb/src/stack.ts"
       ],
-      "@errtraq/queue-sqs": ["packages/adapters/queue-sqs/src/index.ts"],
-      "@errtraq/queue-sqs/stack": ["packages/adapters/queue-sqs/src/stack.ts"],
-      "@errtraq/blob-s3": ["packages/adapters/blob-s3/src/index.ts"],
-      "@errtraq/blob-s3/stack": ["packages/adapters/blob-s3/src/stack.ts"],
-      "@errtraq/kv-dynamodb": ["packages/adapters/kv-dynamodb/src/index.ts"],
-      "@errtraq/kv-dynamodb/stack": [
+      "@moriyoshi/errtraq-queue-sqs": [
+        "packages/adapters/queue-sqs/src/index.ts"
+      ],
+      "@moriyoshi/errtraq-queue-sqs/stack": [
+        "packages/adapters/queue-sqs/src/stack.ts"
+      ],
+      "@moriyoshi/errtraq-blob-s3": ["packages/adapters/blob-s3/src/index.ts"],
+      "@moriyoshi/errtraq-blob-s3/stack": [
+        "packages/adapters/blob-s3/src/stack.ts"
+      ],
+      "@moriyoshi/errtraq-kv-dynamodb": [
+        "packages/adapters/kv-dynamodb/src/index.ts"
+      ],
+      "@moriyoshi/errtraq-kv-dynamodb/stack": [
         "packages/adapters/kv-dynamodb/src/stack.ts"
       ],
-      "@errtraq/platform-aws-lambda": [
+      "@moriyoshi/errtraq-platform-aws-lambda": [
         "packages/platforms/aws-lambda/src/index.ts"
       ],
-      "@errtraq/platform-aws-lambda/handler": [
+      "@moriyoshi/errtraq-platform-aws-lambda/handler": [
         "packages/platforms/aws-lambda/src/handler.ts"
       ],
-      "@errtraq/platform-aws-lambda/stack": [
+      "@moriyoshi/errtraq-platform-aws-lambda/stack": [
         "packages/platforms/aws-lambda/src/stack.ts"
       ],
-      "@errtraq/aws-signing": ["packages/aws-signing/src/index.ts"],
-      "@errtraq/blob-s3/runtime": ["packages/adapters/blob-s3/src/runtime.ts"],
-      "@errtraq/queue-sqs/runtime": [
+      "@moriyoshi/errtraq-aws-signing": ["packages/aws-signing/src/index.ts"],
+      "@moriyoshi/errtraq-blob-s3/runtime": [
+        "packages/adapters/blob-s3/src/runtime.ts"
+      ],
+      "@moriyoshi/errtraq-queue-sqs/runtime": [
         "packages/adapters/queue-sqs/src/runtime.ts"
       ],
-      "@errtraq/core/blob": ["packages/core/src/blob.ts"],
-      "@errtraq/core/kv": ["packages/core/src/kv.ts"],
-      "@errtraq/core/store": ["packages/core/src/store.ts"],
-      "@errtraq/kv-dynamodb/runtime": [
+      "@moriyoshi/errtraq-core/blob": ["packages/core/src/blob.ts"],
+      "@moriyoshi/errtraq-core/kv": ["packages/core/src/kv.ts"],
+      "@moriyoshi/errtraq-core/store": ["packages/core/src/store.ts"],
+      "@moriyoshi/errtraq-kv-dynamodb/runtime": [
         "packages/adapters/kv-dynamodb/src/runtime.ts"
       ],
-      "@errtraq/core/queue": ["packages/core/src/queue.ts"],
-      "@errtraq/store-dynamodb/runtime": [
+      "@moriyoshi/errtraq-core/queue": ["packages/core/src/queue.ts"],
+      "@moriyoshi/errtraq-store-dynamodb/runtime": [
         "packages/adapters/store-dynamodb/src/runtime.ts"
       ],
-      "@errtraq/store-sql/postgres": [
+      "@moriyoshi/errtraq-store-sql/postgres": [
         "packages/adapters/store-sql/src/postgres.ts"
       ],
-      "@errtraq/store-sql/postgres/stack": [
+      "@moriyoshi/errtraq-store-sql/postgres/stack": [
         "packages/adapters/store-sql/src/postgres-stack.ts"
       ],
-      "@errtraq/core/runtime": ["packages/core/src/runtime.ts"]
+      "@moriyoshi/errtraq-core/runtime": ["packages/core/src/runtime.ts"]
     }
   },
   "include": ["packages/core/src/**/*.ts", "packages/http/src/**/*.ts"]

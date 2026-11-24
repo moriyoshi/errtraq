@@ -169,40 +169,40 @@ importers:
       '@biomejs/biome':
         specifier: 2.5.15
         version: 2.5.15
-      '@errtraq/blob-fs':
+      '@moriyoshi/errtraq-blob-fs':
         specifier: workspace:*
         version: link:packages/adapters/blob-fs
-      '@errtraq/blob-s3':
+      '@moriyoshi/errtraq-blob-s3':
         specifier: workspace:*
         version: link:packages/adapters/blob-s3
-      '@errtraq/cli':
+      '@moriyoshi/errtraq-cli':
         specifier: workspace:*
         version: link:packages/cli
-      '@errtraq/core':
+      '@moriyoshi/errtraq-core':
         specifier: workspace:*
         version: link:packages/core
-      '@errtraq/kv-dynamodb':
+      '@moriyoshi/errtraq-kv-dynamodb':
         specifier: workspace:*
         version: link:packages/adapters/kv-dynamodb
-      '@errtraq/kv-memory':
+      '@moriyoshi/errtraq-kv-memory':
         specifier: workspace:*
         version: link:packages/adapters/kv-memory
-      '@errtraq/platform-aws-lambda':
+      '@moriyoshi/errtraq-platform-aws-lambda':
         specifier: workspace:*
         version: link:packages/platforms/aws-lambda
-      '@errtraq/platform-standalone':
+      '@moriyoshi/errtraq-platform-standalone':
         specifier: workspace:*
         version: link:packages/platforms/standalone
-      '@errtraq/queue-memory':
+      '@moriyoshi/errtraq-queue-memory':
         specifier: workspace:*
         version: link:packages/adapters/queue-memory
-      '@errtraq/queue-sqs':
+      '@moriyoshi/errtraq-queue-sqs':
         specifier: workspace:*
         version: link:packages/adapters/queue-sqs
-      '@errtraq/store-dynamodb':
+      '@moriyoshi/errtraq-store-dynamodb':
         specifier: workspace:*
         version: link:packages/adapters/store-dynamodb
-      '@errtraq/store-sql':
+      '@moriyoshi/errtraq-store-sql':
         specifier: workspace:*
         version: link:packages/adapters/store-sql
       '@sentry/node':
@@ -230,16 +230,16 @@ importers:
         specifier: 4.6.7
         version: 4.6.7
     devDependencies:
-      '@errtraq/core':
+      '@moriyoshi/errtraq-core':
         specifier: workspace:*
         version: link:../../core
-      '@errtraq/testing':
+      '@moriyoshi/errtraq-testing':
         specifier: workspace:*
         version: link:../../testing
 
   packages/adapters/blob-s3:
     dependencies:
-      '@errtraq/aws-signing':
+      '@moriyoshi/errtraq-aws-signing':
         specifier: workspace:*
         version: link:../../aws-signing
       fast-xml-parser:
@@ -249,26 +249,26 @@ importers:
         specifier: 4.6.7
         version: 4.6.7
     devDependencies:
-      '@errtraq/core':
+      '@moriyoshi/errtraq-core':
         specifier: workspace:*
         version: link:../../core
-      '@errtraq/testing':
+      '@moriyoshi/errtraq-testing':
         specifier: workspace:*
         version: link:../../testing
 
   packages/adapters/kv-dynamodb:
     dependencies:
-      '@errtraq/aws-signing':
+      '@moriyoshi/errtraq-aws-signing':
         specifier: workspace:*
         version: link:../../aws-signing
       zod:
         specifier: 4.6.7
         version: 4.6.7
     devDependencies:
-      '@errtraq/core':
+      '@moriyoshi/errtraq-core':
         specifier: workspace:*
         version: link:../../core
-      '@errtraq/testing':
+      '@moriyoshi/errtraq-testing':
         specifier: workspace:*
         version: link:../../testing
 
@@ -278,10 +278,10 @@ importers:
         specifier: 4.6.7
         version: 4.6.7
     devDependencies:
-      '@errtraq/core':
+      '@moriyoshi/errtraq-core':
         specifier: workspace:*
         version: link:../../core
-      '@errtraq/testing':
+      '@moriyoshi/errtraq-testing':
         specifier: workspace:*
         version: link:../../testing
 
@@ -291,48 +291,48 @@ importers:
         specifier: 4.6.7
         version: 4.6.7
     devDependencies:
-      '@errtraq/core':
+      '@moriyoshi/errtraq-core':
         specifier: workspace:*
         version: link:../../core
-      '@errtraq/testing':
+      '@moriyoshi/errtraq-testing':
         specifier: workspace:*
         version: link:../../testing
 
   packages/adapters/queue-sqs:
     dependencies:
-      '@errtraq/aws-signing':
+      '@moriyoshi/errtraq-aws-signing':
         specifier: workspace:*
         version: link:../../aws-signing
       zod:
         specifier: 4.6.7
         version: 4.6.7
     devDependencies:
-      '@errtraq/core':
+      '@moriyoshi/errtraq-core':
         specifier: workspace:*
         version: link:../../core
-      '@errtraq/testing':
+      '@moriyoshi/errtraq-testing':
         specifier: workspace:*
         version: link:../../testing
 
   packages/adapters/store-dynamodb:
     dependencies:
-      '@errtraq/aws-signing':
+      '@moriyoshi/errtraq-aws-signing':
         specifier: workspace:*
         version: link:../../aws-signing
       zod:
         specifier: 4.6.7
         version: 4.6.7
     devDependencies:
-      '@errtraq/core':
+      '@moriyoshi/errtraq-core':
         specifier: workspace:*
         version: link:../../core
-      '@errtraq/testing':
+      '@moriyoshi/errtraq-testing':
         specifier: workspace:*
         version: link:../../testing
 
   packages/adapters/store-sql:
     dependencies:
-      '@errtraq/aws-signing':
+      '@moriyoshi/errtraq-aws-signing':
         specifier: workspace:*
         version: link:../../aws-signing
       kysely:
@@ -345,10 +345,10 @@ importers:
         specifier: 4.6.7
         version: 4.6.7
     devDependencies:
-      '@errtraq/core':
+      '@moriyoshi/errtraq-core':
         specifier: workspace:*
         version: link:../../core
-      '@errtraq/testing':
+      '@moriyoshi/errtraq-testing':
         specifier: workspace:*
         version: link:../../testing
       '@types/pg':
@@ -363,37 +363,37 @@ importers:
 
   packages/cli:
     dependencies:
-      '@errtraq/aws-signing':
+      '@moriyoshi/errtraq-aws-signing':
         specifier: workspace:*
         version: link:../aws-signing
-      '@errtraq/blob-fs':
+      '@moriyoshi/errtraq-blob-fs':
         specifier: workspace:*
         version: link:../adapters/blob-fs
-      '@errtraq/infra-gen':
+      '@moriyoshi/errtraq-infra-gen':
         specifier: workspace:*
         version: link:../infra-gen
-      '@errtraq/kv-dynamodb':
+      '@moriyoshi/errtraq-kv-dynamodb':
         specifier: workspace:*
         version: link:../adapters/kv-dynamodb
-      '@errtraq/kv-memory':
+      '@moriyoshi/errtraq-kv-memory':
         specifier: workspace:*
         version: link:../adapters/kv-memory
-      '@errtraq/platform-aws-lambda':
+      '@moriyoshi/errtraq-platform-aws-lambda':
         specifier: workspace:*
         version: link:../platforms/aws-lambda
-      '@errtraq/platform-standalone':
+      '@moriyoshi/errtraq-platform-standalone':
         specifier: workspace:*
         version: link:../platforms/standalone
-      '@errtraq/queue-memory':
+      '@moriyoshi/errtraq-queue-memory':
         specifier: workspace:*
         version: link:../adapters/queue-memory
-      '@errtraq/store-dynamodb':
+      '@moriyoshi/errtraq-store-dynamodb':
         specifier: workspace:*
         version: link:../adapters/store-dynamodb
-      '@errtraq/store-sql':
+      '@moriyoshi/errtraq-store-sql':
         specifier: workspace:*
         version: link:../adapters/store-sql
-      '@errtraq/terraform-modules':
+      '@moriyoshi/errtraq-terraform-modules':
         specifier: workspace:*
         version: link:../terraform-modules
       esbuild:
@@ -403,10 +403,10 @@ importers:
         specifier: 0.8.2
         version: 0.8.2
     devDependencies:
-      '@errtraq/core':
+      '@moriyoshi/errtraq-core':
         specifier: workspace:*
         version: link:../core
-      '@errtraq/testing':
+      '@moriyoshi/errtraq-testing':
         specifier: workspace:*
         version: link:../testing
 
@@ -422,22 +422,22 @@ importers:
         specifier: ^4.13.19
         version: 4.13.19
     devDependencies:
-      '@errtraq/core':
+      '@moriyoshi/errtraq-core':
         specifier: workspace:*
         version: link:../core
 
   packages/infra-gen:
     devDependencies:
-      '@errtraq/core':
+      '@moriyoshi/errtraq-core':
         specifier: workspace:*
         version: link:../core
 
   packages/platforms/aws-lambda:
     dependencies:
-      '@errtraq/aws-signing':
+      '@moriyoshi/errtraq-aws-signing':
         specifier: workspace:*
         version: link:../../aws-signing
-      '@errtraq/http':
+      '@moriyoshi/errtraq-http':
         specifier: workspace:*
         version: link:../../http
       hono:
@@ -447,19 +447,19 @@ importers:
         specifier: 4.6.7
         version: 4.6.7
     devDependencies:
-      '@errtraq/core':
+      '@moriyoshi/errtraq-core':
         specifier: workspace:*
         version: link:../../core
-      '@errtraq/queue-sqs':
+      '@moriyoshi/errtraq-queue-sqs':
         specifier: workspace:*
         version: link:../../adapters/queue-sqs
-      '@errtraq/testing':
+      '@moriyoshi/errtraq-testing':
         specifier: workspace:*
         version: link:../../testing
 
   packages/platforms/standalone:
     dependencies:
-      '@errtraq/http':
+      '@moriyoshi/errtraq-http':
         specifier: workspace:*
         version: link:../../http
       '@hono/node-server':
@@ -472,10 +472,10 @@ importers:
         specifier: 4.6.7
         version: 4.6.7
     devDependencies:
-      '@errtraq/core':
+      '@moriyoshi/errtraq-core':
         specifier: workspace:*
         version: link:../../core
-      '@errtraq/testing':
+      '@moriyoshi/errtraq-testing':
         specifier: workspace:*
         version: link:../../testing
 
@@ -483,14 +483,14 @@ importers:
 
   packages/testing:
     dependencies:
-      '@errtraq/core':
+      '@moriyoshi/errtraq-core':
         specifier: workspace:*
         version: link:../core
       vitest:
         specifier: ^5.0.5
         version: 5.0.5(@opentelemetry/api@1.10.0)(@types/node@26.6.6)(vite@8.3.4(@types/node@26.6.6)(esbuild@0.28.2)(tsx@4.23.15))
     devDependencies:
-      '@errtraq/http':
+      '@moriyoshi/errtraq-http':
         specifier: workspace:*
         version: link:../http
 

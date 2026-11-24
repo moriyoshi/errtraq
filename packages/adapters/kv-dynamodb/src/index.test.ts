@@ -5,7 +5,7 @@ import {
   KVInvalidKeyError,
   KVThrottledError,
   KVUnavailableError,
-} from "@errtraq/core";
+} from "@moriyoshi/errtraq-core";
 import { describe, expect, it, vi } from "vitest";
 import { create, DynamoKV } from "./runtime.js";
 

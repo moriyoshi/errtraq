@@ -22,7 +22,7 @@ import {
   type Logger,
   pageLimit,
   validateBlobKey,
-} from "@errtraq/core";
+} from "@moriyoshi/errtraq-core";
 import { type BlobConfig, configSchema } from "./stack.js";
 
 export { infra, manifest } from "./stack.js";

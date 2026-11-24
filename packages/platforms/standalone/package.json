@@ -1,5 +1,5 @@
 {
-  "name": "@errtraq/platform-standalone",
+  "name": "@moriyoshi/errtraq-platform-standalone",
   "version": "0.0.0",
   "type": "module",
   "exports": {
@@ -15,6 +15,7 @@
     }
   },
   "publishConfig": {
+    "registry": "https://npm.pkg.github.com",
     "exports": {
       ".": {
         "types": "./dist/index.d.ts",
@@ -36,16 +37,21 @@
     "node": "^22.18.0 || >=23.6.0"
   },
   "dependencies": {
-    "@errtraq/http": "workspace:*",
+    "@moriyoshi/errtraq-http": "workspace:*",
     "@hono/node-server": "^2.1.9",
     "hono": "^4.13.19",
     "zod": "4.6.7"
   },
   "peerDependencies": {
-    "@errtraq/core": "workspace:^"
+    "@moriyoshi/errtraq-core": "workspace:^"
   },
   "devDependencies": {
-    "@errtraq/testing": "workspace:*",
-    "@errtraq/core": "workspace:*"
+    "@moriyoshi/errtraq-testing": "workspace:*",
+    "@moriyoshi/errtraq-core": "workspace:*"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/moriyoshi/errtraq.git",
+    "directory": "packages/platforms/standalone"
   }
 }

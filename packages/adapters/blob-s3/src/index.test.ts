@@ -8,7 +8,7 @@ import {
   BlobThrottledError,
   BlobUnavailableError,
   InvalidCursorError,
-} from "@errtraq/core";
+} from "@moriyoshi/errtraq-core";
 import { describe, expect, it, vi } from "vitest";
 import { create } from "./index.js";
 import { S3BlobStore, signS3Request } from "./runtime.js";

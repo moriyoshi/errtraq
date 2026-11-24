@@ -19,7 +19,7 @@ import {
   deployedPlan,
   deriveDeployment,
   resolveStack,
-} from "@errtraq/core";
+} from "@moriyoshi/errtraq-core";
 import { unzipSync } from "fflate";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import shared from "../../../stacks/aws-dynamodb.js";
@@ -331,8 +331,8 @@ describe("built stacks", () => {
         ])
           expect(inputs).not.toContain(`packages/adapters/${localAdapter}/`);
         const selected = new Set(
-          deployedPlan(stack, fn.id).selections.map(
-            (item) => item.runtimeModule.split("/")[1],
+          deployedPlan(stack, fn.id).selections.map((item) =>
+            item.runtimeModule.split("/")[1]?.replace(/^errtraq-/, ""),
           ),
         );
         for (const adapter of [

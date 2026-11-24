@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
-import { signAwsRequest } from "@errtraq/aws-signing";
-import { bootstrapDeployed, hashApiToken } from "@errtraq/core";
-import { DynamoKV } from "@errtraq/kv-dynamodb/runtime";
-import { DynamoStore } from "@errtraq/store-dynamodb/runtime";
+import { signAwsRequest } from "@moriyoshi/errtraq-aws-signing";
+import { bootstrapDeployed, hashApiToken } from "@moriyoshi/errtraq-core";
+import { DynamoKV } from "@moriyoshi/errtraq-kv-dynamodb/runtime";
+import { DynamoStore } from "@moriyoshi/errtraq-store-dynamodb/runtime";
 import { afterEach, describe, expect, it } from "vitest";
 
 const endpoint = process.env.ERRTRAQ_DYNAMO_EMULATOR;

@@ -3,7 +3,7 @@ import {
   type InfraDescriptor,
   type PlatformManifest,
   type PlatformSelection,
-} from "@errtraq/core";
+} from "@moriyoshi/errtraq-core";
 import { z } from "zod";
 
 const publicUrl = z
@@ -122,7 +122,7 @@ export function standalone(
   return {
     manifest,
     infra,
-    runtimeModule: "@errtraq/platform-standalone",
+    runtimeModule: "@moriyoshi/errtraq-platform-standalone",
     config,
   };
 }

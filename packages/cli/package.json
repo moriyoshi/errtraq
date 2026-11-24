@@ -1,5 +1,5 @@
 {
-  "name": "@errtraq/cli",
+  "name": "@moriyoshi/errtraq-cli",
   "version": "0.0.0",
   "type": "module",
   "exports": {
@@ -15,6 +15,7 @@
     }
   },
   "publishConfig": {
+    "registry": "https://npm.pkg.github.com",
     "exports": {
       ".": {
         "types": "./dist/index.d.ts",
@@ -39,25 +40,30 @@
     "node": "^22.18.0 || >=23.6.0"
   },
   "dependencies": {
-    "@errtraq/blob-fs": "workspace:*",
-    "@errtraq/infra-gen": "workspace:*",
-    "@errtraq/kv-memory": "workspace:*",
-    "@errtraq/platform-standalone": "workspace:*",
-    "@errtraq/queue-memory": "workspace:*",
-    "@errtraq/store-sql": "workspace:*",
+    "@moriyoshi/errtraq-blob-fs": "workspace:*",
+    "@moriyoshi/errtraq-infra-gen": "workspace:*",
+    "@moriyoshi/errtraq-kv-memory": "workspace:*",
+    "@moriyoshi/errtraq-platform-standalone": "workspace:*",
+    "@moriyoshi/errtraq-queue-memory": "workspace:*",
+    "@moriyoshi/errtraq-store-sql": "workspace:*",
     "esbuild": "0.28.2",
     "fflate": "0.8.2",
-    "@errtraq/aws-signing": "workspace:*",
-    "@errtraq/platform-aws-lambda": "workspace:*",
-    "@errtraq/store-dynamodb": "workspace:*",
-    "@errtraq/kv-dynamodb": "workspace:*",
-    "@errtraq/terraform-modules": "workspace:*"
+    "@moriyoshi/errtraq-aws-signing": "workspace:*",
+    "@moriyoshi/errtraq-platform-aws-lambda": "workspace:*",
+    "@moriyoshi/errtraq-store-dynamodb": "workspace:*",
+    "@moriyoshi/errtraq-kv-dynamodb": "workspace:*",
+    "@moriyoshi/errtraq-terraform-modules": "workspace:*"
   },
   "peerDependencies": {
-    "@errtraq/core": "workspace:^"
+    "@moriyoshi/errtraq-core": "workspace:^"
   },
   "devDependencies": {
-    "@errtraq/testing": "workspace:*",
-    "@errtraq/core": "workspace:*"
+    "@moriyoshi/errtraq-testing": "workspace:*",
+    "@moriyoshi/errtraq-core": "workspace:*"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/moriyoshi/errtraq.git",
+    "directory": "packages/cli"
   }
 }

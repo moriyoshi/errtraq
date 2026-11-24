@@ -11,7 +11,7 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { stackOrigin } from "@errtraq/core";
+import { stackOrigin } from "@moriyoshi/errtraq-core";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import shared from "../../../stacks/aws-dynamodb.js";
 import { generateInfra, isErrtraqWorkspace, projectRoot } from "./infra.js";
@@ -260,7 +260,7 @@ describe("vendored Terraform modules", () => {
     const installed = join(temp, "default-installed");
     await cp(
       modulesDirectory,
-      join(installed, "node_modules/@errtraq/terraform-modules"),
+      join(installed, "node_modules/@moriyoshi/errtraq-terraform-modules"),
       {
         recursive: true,
       },
@@ -269,7 +269,7 @@ describe("vendored Terraform modules", () => {
       await generate("default-installed", {
         modulesDirectory: join(
           installed,
-          "node_modules/@errtraq/terraform-modules",
+          "node_modules/@moriyoshi/errtraq-terraform-modules",
         ),
       }),
     ))

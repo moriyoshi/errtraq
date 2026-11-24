@@ -8,7 +8,7 @@ import {
   resolveStack,
   selections,
   stackOrigin,
-} from "@errtraq/core";
+} from "@moriyoshi/errtraq-core";
 import { buildSummary, dsnHost, dsnOrigin } from "./address.js";
 import { buildStack } from "./build.js";
 import { constructStack } from "./construction.js";
@@ -136,7 +136,7 @@ export async function main(args: string[]): Promise<void> {
     throw new Error("Stack must export a default configuration");
   if (stackOrigin(imported.default) === "other-core")
     throw new Error(
-      "The stack file loads a different copy of @errtraq/core than the errtraq CLI; install one shared @errtraq/core (it is a peer dependency of every errtraq package) and avoid duplicate copies in node_modules",
+      "The stack file loads a different copy of @moriyoshi/errtraq-core than the errtraq CLI; install one shared @moriyoshi/errtraq-core (it is a peer dependency of every errtraq package) and avoid duplicate copies in node_modules",
     );
   const stack = resolveStack(imported.default);
   if (tokenAdmin) {

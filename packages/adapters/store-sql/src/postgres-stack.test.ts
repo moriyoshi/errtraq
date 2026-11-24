@@ -3,7 +3,7 @@ import {
   resolveStack,
   validateStack,
   variable,
-} from "@errtraq/core";
+} from "@moriyoshi/errtraq-core";
 import { expect, it } from "vitest";
 import local from "../../../../stacks/local.js";
 import { constructStack } from "../../../cli/src/construction.js";
@@ -28,7 +28,7 @@ it("constructs a bring-your-own Postgres using a local secret identifier", async
     ["ingest", "api", "consumer", "cron"],
     { DATABASE_URL: "postgresql://user:password@localhost/db" },
     async (module) =>
-      module === "@errtraq/store-sql/postgres"
+      module === "@moriyoshi/errtraq-store-sql/postgres"
         ? import("./postgres.js")
         : { create: () => ({}) },
   );

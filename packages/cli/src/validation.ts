@@ -3,7 +3,7 @@ import {
   deriveDeployment,
   type ResolvedStack,
   selections,
-} from "@errtraq/core";
+} from "@moriyoshi/errtraq-core";
 
 /** Format only names and structural relationships; never render binding values. */
 export function formatValidation(stack: ResolvedStack): string {

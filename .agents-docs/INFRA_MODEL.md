@@ -64,7 +64,7 @@ is least privilege. The adapter author and HCL module must provide that guarante
 
 ## Reference phases and literals
 
-All reference objects use the global `Symbol.for("@errtraq/infra-reference")` tag and the
+All reference objects use the global `Symbol.for("@moriyoshi/errtraq-infra-reference")` tag and the
 exported guards (`isOutputRef`, `isStackRef`, `isEnvRef`, `isVariableRef`, `isArtifactRef`,
 `isInfraRef`). They are in-process values, not JSON data. They must be rendered explicitly:
 
@@ -537,7 +537,7 @@ Known gaps for the M6 Cloudflare platform (recorded from the M2 review, not impl
 
 ## M2b / M2c handoff
 
-`@errtraq/infra-gen` turns a resolved stack into deterministic Terraform JSON files without I/O.
+`@moriyoshi/errtraq-infra-gen` turns a resolved stack into deterministic Terraform JSON files without I/O.
 Its caller supplies the output and module directories, generation-time environment values, and a
 map from function IDs to artifact paths relative to the generated root. Both directory paths must
 be POSIX paths, either both absolute or both relative to the same root. Standalone returns a

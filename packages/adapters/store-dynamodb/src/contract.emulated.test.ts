@@ -1,13 +1,17 @@
 import { randomUUID } from "node:crypto";
-import { signAwsRequest } from "@errtraq/aws-signing";
-import { bootstrapDeployed, hashApiToken, RecordHandler } from "@errtraq/core";
-import { bundleDebugIdsDigest } from "@errtraq/core/store";
+import { signAwsRequest } from "@moriyoshi/errtraq-aws-signing";
+import {
+  bootstrapDeployed,
+  hashApiToken,
+  RecordHandler,
+} from "@moriyoshi/errtraq-core";
+import { bundleDebugIdsDigest } from "@moriyoshi/errtraq-core/store";
 import {
   activeStoreContract,
   MemoryBlobStore,
   MemoryKV,
   MemoryQueue,
-} from "@errtraq/testing";
+} from "@moriyoshi/errtraq-testing";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { partition } from "./keys.js";
 import { DynamoStore } from "./runtime.js";
@@ -167,12 +171,12 @@ describe.skipIf(!endpoint)("DynamoDB store emulator", () => {
         },
       ],
     });
-    const org = token.orgId as import("@errtraq/core").OrgId;
+    const org = token.orgId as import("@moriyoshi/errtraq-core").OrgId;
     expect((await store.projects.listTokens(org)).items).toEqual([]);
     const revoked = await store.projects.revokeToken(
       org,
-      token.id as import("@errtraq/core").ApiTokenId,
-      "2025-01-01T00:00:00.000Z" as import("@errtraq/core").Timestamp,
+      token.id as import("@moriyoshi/errtraq-core").ApiTokenId,
+      "2025-01-01T00:00:00.000Z" as import("@moriyoshi/errtraq-core").Timestamp,
     );
     expect(revoked?.revokedAt).toBe("2025-01-01T00:00:00.000Z");
     expect(
@@ -208,7 +212,9 @@ describe.skipIf(!endpoint)("DynamoDB store emulator", () => {
         maxWorkers = 0,
         workersActive = 0;
       const stop = new AbortController();
-      const handler: import("@errtraq/core").BatchHandler = async (batch) => {
+      const handler: import("@moriyoshi/errtraq-core").BatchHandler = async (
+        batch,
+      ) => {
         const group = batch[0]?.message.groupKey ?? "missing";
         const count = (active.get(group) ?? 0) + 1;
         active.set(group, count);
@@ -303,8 +309,8 @@ describe.skipIf(!endpoint)("DynamoDB store emulator", () => {
       expect(
         (
           await store.issues.get(
-            "1" as import("@errtraq/core").ProjectId,
-            "hot" as import("@errtraq/core").IssueId,
+            "1" as import("@moriyoshi/errtraq-core").ProjectId,
+            "hot" as import("@moriyoshi/errtraq-core").IssueId,
           )
         )?.count,
       ).toBe(total);
@@ -322,14 +328,15 @@ describe.skipIf(!endpoint)("DynamoDB store emulator", () => {
         if (action === "TransactWriteItems") transactions++;
         return request(action, input);
       });
-      const projectId = "benchmark" as import("@errtraq/core").ProjectId;
-      const issueId = "issue" as import("@errtraq/core").IssueId;
+      const projectId =
+        "benchmark" as import("@moriyoshi/errtraq-core").ProjectId;
+      const issueId = "issue" as import("@moriyoshi/errtraq-core").IssueId;
       const receivedAt =
-        "2025-01-01T00:00:00.000Z" as import("@errtraq/core").Timestamp;
+        "2025-01-01T00:00:00.000Z" as import("@moriyoshi/errtraq-core").Timestamp;
       for (let start = 0; start < total; start += 10) {
         const group = Array.from({ length: 10 }, (_, n) => {
           const eventId =
-            `event-${start + n}` as import("@errtraq/core").EventId;
+            `event-${start + n}` as import("@moriyoshi/errtraq-core").EventId;
           const common = {
             projectId,
             issueId,
@@ -402,13 +409,15 @@ describe.skipIf(!endpoint)("DynamoDB store emulator", () => {
       if (action === "TransactWriteItems") transactions++;
       return request(action, input);
     });
-    const projectId = "benchmark" as import("@errtraq/core").ProjectId;
-    const issueId = "issue" as import("@errtraq/core").IssueId;
+    const projectId =
+      "benchmark" as import("@moriyoshi/errtraq-core").ProjectId;
+    const issueId = "issue" as import("@moriyoshi/errtraq-core").IssueId;
     const receivedAt =
-      "2025-01-01T00:00:00.000Z" as import("@errtraq/core").Timestamp;
+      "2025-01-01T00:00:00.000Z" as import("@moriyoshi/errtraq-core").Timestamp;
     const outcomes = await Promise.allSettled(
       Array.from({ length: 40 }, (_, n) => {
-        const eventId = `event-${n}` as import("@errtraq/core").EventId;
+        const eventId =
+          `event-${n}` as import("@moriyoshi/errtraq-core").EventId;
         return store.recordEvent(
           {
             projectId,
@@ -447,15 +456,15 @@ describe.skipIf(!endpoint)("DynamoDB store emulator", () => {
   it("resumes an interrupted active bundle deletion from strongly read chunks", async () => {
     const store = await makeStore();
     const ids = Array.from({ length: 150 }, (_, i) => `debug-${i}`);
-    const project = "project" as import("@errtraq/core").ProjectId;
+    const project = "project" as import("@moriyoshi/errtraq-core").ProjectId;
     const bundle = {
-      id: "bundle" as import("@errtraq/core").ArtifactBundleId,
+      id: "bundle" as import("@moriyoshi/errtraq-core").ArtifactBundleId,
       projectId: project,
-      releaseId: "release" as import("@errtraq/core").ReleaseId,
+      releaseId: "release" as import("@moriyoshi/errtraq-core").ReleaseId,
       blobKey: "bundle",
       state: "pending" as const,
       pendingExpiresAt:
-        "2099-01-01T00:00:00.000Z" as import("@errtraq/core").Timestamp,
+        "2099-01-01T00:00:00.000Z" as import("@moriyoshi/errtraq-core").Timestamp,
       manifest: {
         blobKey: "manifest",
         debugIdCount: ids.length,

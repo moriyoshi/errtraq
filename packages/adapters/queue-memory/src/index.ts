@@ -6,7 +6,7 @@ import {
   type Queue,
   toTimestamp,
   validateQueueBody,
-} from "@errtraq/core";
+} from "@moriyoshi/errtraq-core";
 import { configSchema, QUEUE_MAX_BYTES, type QueueConfig } from "./stack.js";
 
 export { infra, manifest } from "./stack.js";

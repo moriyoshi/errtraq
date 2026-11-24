@@ -1,4 +1,4 @@
-import { signRdsAuthToken } from "@errtraq/aws-signing";
+import { signRdsAuthToken } from "@moriyoshi/errtraq-aws-signing";
 import { PostgresDialect, sql } from "kysely";
 import pg from "pg";
 import type { SqlStoreDialect } from "./dialect.js";

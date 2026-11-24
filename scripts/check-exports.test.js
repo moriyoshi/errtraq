@@ -4,7 +4,7 @@ import { checkExports, checkPublishConfig } from "./check-exports.mjs";
 describe("workspace source exports", () => {
   it("requires a development source and matching typecheck path on every subpath", () => {
     const manifest = {
-      name: "@errtraq/example",
+      name: "@moriyoshi/errtraq-example",
       exports: {
         ".": { development: "./src/index.ts" },
         "./stack": { types: "./dist/stack.d.ts" },
@@ -12,15 +12,17 @@ describe("workspace source exports", () => {
     };
     expect(
       checkExports(manifest, "packages/example", {
-        "@errtraq/example": ["packages/example/src/index.ts"],
+        "@moriyoshi/errtraq-example": ["packages/example/src/index.ts"],
       }),
-    ).toEqual(["@errtraq/example/stack: missing development source export"]);
+    ).toEqual([
+      "@moriyoshi/errtraq-example/stack: missing development source export",
+    ]);
     manifest.exports["./stack"].development = "./src/stack.ts";
     expect(checkExports(manifest, "packages/example", {})).toHaveLength(2);
     expect(
       checkExports(manifest, "packages/example", {
-        "@errtraq/example": ["packages/example/src/index.ts"],
-        "@errtraq/example/stack": ["packages/example/src/stack.ts"],
+        "@moriyoshi/errtraq-example": ["packages/example/src/index.ts"],
+        "@moriyoshi/errtraq-example/stack": ["packages/example/src/stack.ts"],
       }),
     ).toEqual([]);
   });
@@ -38,9 +40,9 @@ describe("publishConfig exports", () => {
     ".": { types: "./dist/index.d.ts", import: "./dist/index.js" },
   };
   it("requires the exports minus development on public packages", () => {
-    const manifest = { name: "@errtraq/example", exports };
+    const manifest = { name: "@moriyoshi/errtraq-example", exports };
     expect(checkPublishConfig(manifest)).toEqual([
-      "@errtraq/example: missing publishConfig.exports",
+      "@moriyoshi/errtraq-example: missing publishConfig.exports",
     ]);
     expect(
       checkPublishConfig({

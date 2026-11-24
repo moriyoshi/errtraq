@@ -1,5 +1,5 @@
 {
-  "name": "@errtraq/queue-memory",
+  "name": "@moriyoshi/errtraq-queue-memory",
   "version": "0.0.0",
   "type": "module",
   "exports": {
@@ -15,6 +15,7 @@
     }
   },
   "publishConfig": {
+    "registry": "https://npm.pkg.github.com",
     "exports": {
       ".": {
         "types": "./dist/index.d.ts",
@@ -39,10 +40,15 @@
     "zod": "4.6.7"
   },
   "peerDependencies": {
-    "@errtraq/core": "workspace:^"
+    "@moriyoshi/errtraq-core": "workspace:^"
   },
   "devDependencies": {
-    "@errtraq/testing": "workspace:*",
-    "@errtraq/core": "workspace:*"
+    "@moriyoshi/errtraq-testing": "workspace:*",
+    "@moriyoshi/errtraq-core": "workspace:*"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/moriyoshi/errtraq.git",
+    "directory": "packages/adapters/queue-memory"
   }
 }

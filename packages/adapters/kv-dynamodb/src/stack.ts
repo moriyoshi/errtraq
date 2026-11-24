@@ -4,7 +4,7 @@ import {
   type InfraDescriptor,
   out,
   stackValue,
-} from "@errtraq/core";
+} from "@moriyoshi/errtraq-core";
 import { z } from "zod";
 
 export const configSchema = z.strictObject({
@@ -59,6 +59,6 @@ export function dynamoKv(config: Config = {}): AdapterSelection<Config> {
     manifest,
     infra,
     config,
-    runtimeModule: "@errtraq/kv-dynamodb/runtime",
+    runtimeModule: "@moriyoshi/errtraq-kv-dynamodb/runtime",
   };
 }

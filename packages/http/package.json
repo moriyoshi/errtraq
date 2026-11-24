@@ -1,5 +1,5 @@
 {
-  "name": "@errtraq/http",
+  "name": "@moriyoshi/errtraq-http",
   "version": "0.0.0",
   "type": "module",
   "exports": {
@@ -10,6 +10,7 @@
     }
   },
   "publishConfig": {
+    "registry": "https://npm.pkg.github.com",
     "exports": {
       ".": {
         "types": "./dist/index.d.ts",
@@ -30,9 +31,14 @@
     "hono": "^4.13.19"
   },
   "peerDependencies": {
-    "@errtraq/core": "workspace:^"
+    "@moriyoshi/errtraq-core": "workspace:^"
   },
   "devDependencies": {
-    "@errtraq/core": "workspace:*"
+    "@moriyoshi/errtraq-core": "workspace:*"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/moriyoshi/errtraq.git",
+    "directory": "packages/http"
   }
 }

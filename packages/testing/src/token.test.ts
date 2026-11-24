@@ -1,6 +1,6 @@
 import { mkdir, mkdtemp, rm, stat } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { bootstrapProject, hashApiToken } from "@errtraq/core";
+import { bootstrapProject, hashApiToken } from "@moriyoshi/errtraq-core";
 import { describe, expect, it } from "vitest";
 import { devToken } from "../../cli/src/token.js";
 import { MemoryActiveStore } from "./memory-active.js";

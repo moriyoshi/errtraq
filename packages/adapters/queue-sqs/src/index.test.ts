@@ -1,4 +1,4 @@
-import type { Delivery } from "@errtraq/core";
+import type { Delivery } from "@moriyoshi/errtraq-core";
 import { describe, expect, it, vi } from "vitest";
 import { type SqsEvent, SqsQueue } from "./runtime.js";
 

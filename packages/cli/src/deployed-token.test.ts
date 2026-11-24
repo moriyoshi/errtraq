@@ -1,5 +1,5 @@
-import type { ApiTokenId, OrgId, Timestamp } from "@errtraq/core";
-import { MemoryActiveStore } from "@errtraq/testing";
+import type { ApiTokenId, OrgId, Timestamp } from "@moriyoshi/errtraq-core";
+import { MemoryActiveStore } from "@moriyoshi/errtraq-testing";
 import { describe, expect, it } from "vitest";
 import { formatTokens, listTokens, revokeToken } from "./deployed-token.js";
 

@@ -1,5 +1,5 @@
-import { AwsRequestError, awsRequest } from "@errtraq/aws-signing";
-import type { Clock, CreateContext, KV } from "@errtraq/core";
+import { AwsRequestError, awsRequest } from "@moriyoshi/errtraq-aws-signing";
+import type { Clock, CreateContext, KV } from "@moriyoshi/errtraq-core";
 import {
   InvalidCounterError,
   KVAccessDeniedError,
@@ -7,7 +7,7 @@ import {
   KVInvalidKeyError,
   KVThrottledError,
   KVUnavailableError,
-} from "@errtraq/core/kv";
+} from "@moriyoshi/errtraq-core/kv";
 import type { Config } from "./stack.js";
 
 type Environment = Readonly<Record<string, string | undefined>>;

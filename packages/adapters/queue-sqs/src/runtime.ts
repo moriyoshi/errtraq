@@ -1,12 +1,12 @@
-import { awsBackoffMs, awsRequest } from "@errtraq/aws-signing";
+import { awsBackoffMs, awsRequest } from "@moriyoshi/errtraq-aws-signing";
 import type {
   BatchHandler,
   CreateContext,
   Delivery,
   Logger,
   Queue,
-} from "@errtraq/core";
-import { validateQueueBody } from "@errtraq/core/queue";
+} from "@moriyoshi/errtraq-core";
+import { validateQueueBody } from "@moriyoshi/errtraq-core/queue";
 import { SQS_MAX_BYTES } from "./constants.js";
 import type { Config } from "./stack.js";
 

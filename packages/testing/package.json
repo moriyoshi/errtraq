@@ -1,5 +1,5 @@
 {
-  "name": "@errtraq/testing",
+  "name": "@moriyoshi/errtraq-testing",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -17,12 +17,12 @@
     "node": "^22.18.0 || >=23.6.0"
   },
   "dependencies": {
-    "@errtraq/core": "workspace:*"
+    "@moriyoshi/errtraq-core": "workspace:*"
   },
   "peerDependencies": {
     "vitest": "^5.0.5"
   },
   "devDependencies": {
-    "@errtraq/http": "workspace:*"
+    "@moriyoshi/errtraq-http": "workspace:*"
   }
 }

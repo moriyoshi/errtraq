@@ -19,7 +19,7 @@ import {
   isVariableRef,
   type StackConfig,
   selections,
-} from "@errtraq/core";
+} from "@moriyoshi/errtraq-core";
 import { build } from "esbuild";
 import { strToU8, zipSync } from "fflate";
 import { isErrtraqWorkspace, safeDirectory } from "./infra.js";
@@ -150,7 +150,7 @@ export async function buildStack(
           .filter((item) => !item.path.includes("."))
           .map((item) => [item.kind, item.path]),
       );
-      entry = `${imports}\nimport { constructDeployedPlan, env, variable } from "@errtraq/core/runtime";\nimport { createHandler, createSecretsManagerSource, lambdaRateLimit, retryableInitialization } from "@errtraq/platform-aws-lambda/handler";\nconst plan=${sourceValue(plan)}; const modules={${modules}}; const kinds=${JSON.stringify(kinds)}; const logger={debug:(m,f)=>console.debug(m,f??{}),info:(m,f)=>console.info(m,f??{}),warn:(m,f)=>console.warn(m,f??{}),error:(m,f)=>console.error(m,f??{})};\nconst secretSource=createSecretsManagerSource({environment:process.env});
+      entry = `${imports}\nimport { constructDeployedPlan, env, variable } from "@moriyoshi/errtraq-core/runtime";\nimport { createHandler, createSecretsManagerSource, lambdaRateLimit, retryableInitialization } from "@moriyoshi/errtraq-platform-aws-lambda/handler";\nconst plan=${sourceValue(plan)}; const modules={${modules}}; const kinds=${JSON.stringify(kinds)}; const logger={debug:(m,f)=>console.debug(m,f??{}),info:(m,f)=>console.info(m,f??{}),warn:(m,f)=>console.warn(m,f??{}),error:(m,f)=>console.error(m,f??{})};\nconst secretSource=createSecretsManagerSource({environment:process.env});
 const getHandler=retryableInitialization(async()=>{ const built=await constructDeployedPlan(plan,process.env, async (name)=>{ if(!Object.hasOwn(modules,name)) throw new Error("Unknown module "+name); return modules[name]; }, logger, secretSource); try { const adapters=Object.fromEntries(Object.entries(kinds).map(([kind,path])=>[kind,built.instances.get(path)])); return createHandler({roles:${JSON.stringify(fn.roles)},http:${JSON.stringify(fn.http)},recordMode:plan.recordMode,rateRejection:plan.rateRejection,rateLimit:lambdaRateLimit(process.env.ERRTRAQ_INGEST_RATE_LIMIT),adapters,logger}); } catch(error) { try { await built.close(); } catch(cleanup) { throw new AggregateError([error,cleanup],"Handler creation and cleanup failed"); } throw error; } });\nexport async function handler(event){return (await getHandler())(event);}\n`;
     } else if (stack.platform.manifest.id === "standalone") {
       const localImport = (path: string) => {
@@ -175,7 +175,7 @@ const getHandler=retryableInitialization(async()=>{ const built=await constructD
       const modules = specs
         .map((spec, index) => `${JSON.stringify(spec)}:m${index}`)
         .join(",");
-      entry = `${imports}\nimport stack from ${JSON.stringify(localImport(stackFile))};\nimport {constructStack,devToken,dsnOrigin} from "@errtraq/cli/standalone-entry";\nconst modules={${modules}};\nconst built=await constructStack(stack,${JSON.stringify(fn.roles)},process.env,async(name)=>{if(!Object.hasOwn(modules,name)) throw new Error("Unknown module "+name); return modules[name];});\nconst project=await built.platform.prepare(false,devToken); const server=await built.platform.start();\nconst destination=dsnOrigin(server.host,server.port,server.publicUrl); if(destination.fallback) console.log("Note: DSN uses localhost; use your public host for remote clients."); const dsn=new URL(destination.origin); dsn.username=project.publicKey; dsn.pathname="/"+project.projectId; console.log("DSN: "+dsn.toString()); console.log("API token: "+project.token); console.log("Listening: http://"+server.host+":"+server.port);\nlet stopping=false;
+      entry = `${imports}\nimport stack from ${JSON.stringify(localImport(stackFile))};\nimport {constructStack,devToken,dsnOrigin} from "@moriyoshi/errtraq-cli/standalone-entry";\nconst modules={${modules}};\nconst built=await constructStack(stack,${JSON.stringify(fn.roles)},process.env,async(name)=>{if(!Object.hasOwn(modules,name)) throw new Error("Unknown module "+name); return modules[name];});\nconst project=await built.platform.prepare(false,devToken); const server=await built.platform.start();\nconst destination=dsnOrigin(server.host,server.port,server.publicUrl); if(destination.fallback) console.log("Note: DSN uses localhost; use your public host for remote clients."); const dsn=new URL(destination.origin); dsn.username=project.publicKey; dsn.pathname="/"+project.projectId; console.log("DSN: "+dsn.toString()); console.log("API token: "+project.token); console.log("Listening: http://"+server.host+":"+server.port);\nlet stopping=false;
 for(const signal of ["SIGTERM","SIGINT"]) process.on(signal,()=>{if(stopping){if(process.pid===1) process.exit(signal==="SIGTERM"?143:130); process.removeAllListeners(signal); process.kill(process.pid,signal); return;} stopping=true; void server.close().then(()=>built.close()).catch((error)=>{console.error(error);process.exitCode=1;});});`;
     } else
       throw new Error(

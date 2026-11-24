@@ -3,7 +3,7 @@ import {
   type AdapterSelection,
   configReference,
   type InfraDescriptor,
-} from "@errtraq/core";
+} from "@moriyoshi/errtraq-core";
 import { z } from "zod";
 
 export const configSchema = z.strictObject({ path: z.string().min(1) });
@@ -47,5 +47,10 @@ export const infra: InfraDescriptor<SqliteStackConfig> = {
 export function sqlite(
   config: SqliteStackConfig,
 ): AdapterSelection<SqliteStackConfig> {
-  return { manifest, infra, runtimeModule: "@errtraq/store-sql", config };
+  return {
+    manifest,
+    infra,
+    runtimeModule: "@moriyoshi/errtraq-store-sql",
+    config,
+  };
 }

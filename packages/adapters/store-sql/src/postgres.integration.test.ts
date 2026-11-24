@@ -1,5 +1,5 @@
-import { bootstrapDeployed, hashApiToken } from "@errtraq/core";
-import { activeStoreContract, MemoryKV } from "@errtraq/testing";
+import { bootstrapDeployed, hashApiToken } from "@moriyoshi/errtraq-core";
+import { activeStoreContract, MemoryKV } from "@moriyoshi/errtraq-testing";
 import { Kysely, sql } from "kysely";
 import pg from "pg";
 import { afterAll, describe, expect, it } from "vitest";
@@ -51,13 +51,14 @@ suite("Postgres", () => {
     const left = createSqlStore({ db: a, dialect: postgresStoreDialect });
     const right = createSqlStore({ db: b, dialect: postgresStoreDialect });
     await left.migrate();
-    const projectId = "1" as import("@errtraq/core").ProjectId;
-    const issueId = "issue" as import("@errtraq/core").IssueId;
+    const projectId = "1" as import("@moriyoshi/errtraq-core").ProjectId;
+    const issueId = "issue" as import("@moriyoshi/errtraq-core").IssueId;
     const time =
-      "2025-01-01T00:00:00.000Z" as import("@errtraq/core").Timestamp;
+      "2025-01-01T00:00:00.000Z" as import("@moriyoshi/errtraq-core").Timestamp;
     const groups = Array.from({ length: 4 }, (_, n) =>
       Array.from({ length: 10 }, (_, i) => {
-        const eventId = `${n}-${i}` as import("@errtraq/core").EventId;
+        const eventId =
+          `${n}-${i}` as import("@moriyoshi/errtraq-core").EventId;
         const common = {
           projectId,
           issueId,
@@ -155,7 +156,7 @@ suite("Postgres", () => {
     await store.migrate();
     expect(
       await store.releases.findBundleByDebugId(
-        "1" as import("@errtraq/core").ProjectId,
+        "1" as import("@moriyoshi/errtraq-core").ProjectId,
         "debug",
       ),
     ).toMatchObject({
@@ -171,12 +172,12 @@ suite("Postgres", () => {
     const right = createSqlStore({ db: b, dialect: postgresStoreDialect });
     await Promise.all([left.migrate(), right.migrate()]);
     const receivedAt =
-      "2024-01-01T00:00:00.000Z" as import("@errtraq/core").Timestamp;
-    const projectId = "1" as import("@errtraq/core").ProjectId;
-    const issueId = "i" as import("@errtraq/core").IssueId;
+      "2024-01-01T00:00:00.000Z" as import("@moriyoshi/errtraq-core").Timestamp;
+    const projectId = "1" as import("@moriyoshi/errtraq-core").ProjectId;
+    const issueId = "i" as import("@moriyoshi/errtraq-core").IssueId;
     await Promise.all(
       Array.from({ length: 40 }, async (_, i) => {
-        const eventId = `e${i}` as import("@errtraq/core").EventId;
+        const eventId = `e${i}` as import("@moriyoshi/errtraq-core").EventId;
         await (i % 2 ? left : right).recordEvent(
           {
             projectId,
@@ -204,7 +205,7 @@ suite("Postgres", () => {
         );
       }),
     );
-    const eventId = "duplicate" as import("@errtraq/core").EventId;
+    const eventId = "duplicate" as import("@moriyoshi/errtraq-core").EventId;
     const occurrence = {
       projectId,
       issueId,
@@ -315,13 +316,13 @@ suite("Postgres", () => {
     const { db } = await database();
     const store = createSqlStore({ db, dialect: postgresStoreDialect });
     await store.migrate();
-    const projectId = "1" as import("@errtraq/core").ProjectId;
-    const issueId = "i" as import("@errtraq/core").IssueId;
+    const projectId = "1" as import("@moriyoshi/errtraq-core").ProjectId;
+    const issueId = "i" as import("@moriyoshi/errtraq-core").IssueId;
     const receivedAt =
-      "2024-01-01T00:00:00.000Z" as import("@errtraq/core").Timestamp;
+      "2024-01-01T00:00:00.000Z" as import("@moriyoshi/errtraq-core").Timestamp;
     // Identifiers are ASCII-only; byte order still differs from locale collation ("B" < "a").
     for (const id of ["a", "B"]) {
-      const eventId = id as import("@errtraq/core").EventId;
+      const eventId = id as import("@moriyoshi/errtraq-core").EventId;
       await store.recordEvent(
         {
           projectId,

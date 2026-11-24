@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import type { CreateContext } from "@errtraq/core";
+import type { CreateContext } from "@moriyoshi/errtraq-core";
 import { Kysely } from "kysely";
 import {
   postgresDialect,

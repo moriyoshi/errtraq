@@ -1,4 +1,4 @@
-import { InvalidCursorError } from "@errtraq/core/store";
+import { InvalidCursorError } from "@moriyoshi/errtraq-core/store";
 import { describe, expect, it, vi } from "vitest";
 import { DynamoStoreError } from "./errors.js";
 import { indexCursor } from "./keys.js";

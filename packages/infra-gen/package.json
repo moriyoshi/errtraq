@@ -1,5 +1,5 @@
 {
-  "name": "@errtraq/infra-gen",
+  "name": "@moriyoshi/errtraq-infra-gen",
   "version": "0.0.0",
   "type": "module",
   "exports": {
@@ -10,6 +10,7 @@
     }
   },
   "publishConfig": {
+    "registry": "https://npm.pkg.github.com",
     "exports": {
       ".": {
         "types": "./dist/index.d.ts",
@@ -27,9 +28,14 @@
     "node": "^22.18.0 || >=23.6.0"
   },
   "peerDependencies": {
-    "@errtraq/core": "workspace:^"
+    "@moriyoshi/errtraq-core": "workspace:^"
   },
   "devDependencies": {
-    "@errtraq/core": "workspace:*"
+    "@moriyoshi/errtraq-core": "workspace:*"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/moriyoshi/errtraq.git",
+    "directory": "packages/infra-gen"
   }
 }

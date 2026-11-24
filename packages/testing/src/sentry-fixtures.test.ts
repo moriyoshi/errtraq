@@ -14,7 +14,7 @@ import {
   containsLocalPath,
   parseEnvelope,
   parseEventPayload,
-} from "@errtraq/core";
+} from "@moriyoshi/errtraq-core";
 import { describe, expect, it } from "vitest";
 
 const directory = new URL("../fixtures/sentry/", import.meta.url);

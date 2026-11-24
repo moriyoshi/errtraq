@@ -1,5 +1,5 @@
-import * as blobModule from "@errtraq/blob-s3";
-import { s3Blob } from "@errtraq/blob-s3/stack";
+import * as blobModule from "@moriyoshi/errtraq-blob-s3";
+import { s3Blob } from "@moriyoshi/errtraq-blob-s3/stack";
 import {
   artifact,
   configReference,
@@ -12,17 +12,17 @@ import {
   stackValue,
   validateStack,
   variable,
-} from "@errtraq/core";
-import * as kvModule from "@errtraq/kv-dynamodb";
-import { dynamoKv } from "@errtraq/kv-dynamodb/stack";
-import * as lambdaModule from "@errtraq/platform-aws-lambda";
-import { awsLambda } from "@errtraq/platform-aws-lambda/stack";
-import * as queueModule from "@errtraq/queue-sqs";
-import { SQS_MAX_BYTES, sqsQueue } from "@errtraq/queue-sqs/stack";
-import * as storeModule from "@errtraq/store-dynamodb";
-import { dynamoStore } from "@errtraq/store-dynamodb/stack";
-import { create as createPostgres } from "@errtraq/store-sql/postgres";
-import { postgres } from "@errtraq/store-sql/postgres/stack";
+} from "@moriyoshi/errtraq-core";
+import * as kvModule from "@moriyoshi/errtraq-kv-dynamodb";
+import { dynamoKv } from "@moriyoshi/errtraq-kv-dynamodb/stack";
+import * as lambdaModule from "@moriyoshi/errtraq-platform-aws-lambda";
+import { awsLambda } from "@moriyoshi/errtraq-platform-aws-lambda/stack";
+import * as queueModule from "@moriyoshi/errtraq-queue-sqs";
+import { SQS_MAX_BYTES, sqsQueue } from "@moriyoshi/errtraq-queue-sqs/stack";
+import * as storeModule from "@moriyoshi/errtraq-store-dynamodb";
+import { dynamoStore } from "@moriyoshi/errtraq-store-dynamodb/stack";
+import { create as createPostgres } from "@moriyoshi/errtraq-store-sql/postgres";
+import { postgres } from "@moriyoshi/errtraq-store-sql/postgres/stack";
 import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { assertSafeStackImports } from "../scripts/adapter-stack-check.js";
@@ -129,7 +129,7 @@ describe("AWS descriptor stacks", () => {
       "ingest",
       environment,
       async (name) =>
-        name === "@errtraq/store-sql/postgres"
+        name === "@moriyoshi/errtraq-store-sql/postgres"
           ? { create: createPostgres }
           : { create: () => ({}) },
       undefined,

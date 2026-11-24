@@ -5,8 +5,8 @@ import {
   isOutputRef,
   type OutputType,
   resolveStack,
-} from "@errtraq/core";
-import { postgres } from "@errtraq/store-sql/postgres/stack";
+} from "@moriyoshi/errtraq-core";
+import { postgres } from "@moriyoshi/errtraq-store-sql/postgres/stack";
 import { describe, expect, it } from "vitest";
 import stack from "./aws-dynamodb.js";
 import perTopic from "./aws-dynamodb-per-topic.js";

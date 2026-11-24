@@ -1,5 +1,5 @@
 {
-  "name": "@errtraq/blob-s3",
+  "name": "@moriyoshi/errtraq-blob-s3",
   "version": "0.0.0",
   "type": "module",
   "exports": {
@@ -20,6 +20,7 @@
     }
   },
   "publishConfig": {
+    "registry": "https://npm.pkg.github.com",
     "exports": {
       ".": {
         "types": "./dist/index.d.ts",
@@ -47,14 +48,19 @@
   "dependencies": {
     "fast-xml-parser": "5.3.8",
     "zod": "4.6.7",
-    "@errtraq/aws-signing": "workspace:*"
+    "@moriyoshi/errtraq-aws-signing": "workspace:*"
   },
   "peerDependencies": {
-    "@errtraq/core": "workspace:^"
+    "@moriyoshi/errtraq-core": "workspace:^"
   },
   "devDependencies": {
-    "@errtraq/testing": "workspace:*",
-    "@errtraq/core": "workspace:*"
+    "@moriyoshi/errtraq-testing": "workspace:*",
+    "@moriyoshi/errtraq-core": "workspace:*"
   },
-  "errtraqWorkersRuntime": "./src/runtime.ts"
+  "errtraqWorkersRuntime": "./src/runtime.ts",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/moriyoshi/errtraq.git",
+    "directory": "packages/adapters/blob-s3"
+  }
 }

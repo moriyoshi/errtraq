@@ -41,7 +41,7 @@ import {
   type Timestamp,
   UnsupportedQueryError,
   VersionConflictError,
-} from "@errtraq/core";
+} from "@moriyoshi/errtraq-core";
 import { describe, expect, it, vi } from "vitest";
 import { MemoryBlobStore } from "./memory-other.js";
 import { bytes, stream } from "./shared.js";
@@ -953,7 +953,7 @@ export function activeStoreContract(
         s.projects.put({ ...p, id: otherProject }),
       ).rejects.toBeInstanceOf(ConflictError);
       const key = {
-        id: "k1" as import("@errtraq/core").ProjectKeyId,
+        id: "k1" as import("@moriyoshi/errtraq-core").ProjectKeyId,
         projectId: project,
         publicKey: "pub",
       };
@@ -1148,7 +1148,7 @@ export function activeStoreContract(
         debugIdCount: ids.length,
       };
       const pending = {
-        id: "bundle-many" as import("@errtraq/core").ArtifactBundleId,
+        id: "bundle-many" as import("@moriyoshi/errtraq-core").ArtifactBundleId,
         projectId: project,
         releaseId: "release" as ReleaseId,
         blobKey: "archive",
@@ -1277,7 +1277,7 @@ export function activeStoreContract(
         digest: await bundleDebugIdsDigest(ids),
       };
       const bundle = {
-        id: "cleanup" as import("@errtraq/core").ArtifactBundleId,
+        id: "cleanup" as import("@moriyoshi/errtraq-core").ArtifactBundleId,
         projectId: project,
         releaseId: "release" as ReleaseId,
         blobKey: "bundle",
@@ -1673,7 +1673,7 @@ export function activeStoreContract(
           debugIdCount: 1,
         };
         const bundle = {
-          id: "bundle-limit" as import("@errtraq/core").ArtifactBundleId,
+          id: "bundle-limit" as import("@moriyoshi/errtraq-core").ArtifactBundleId,
           projectId: project,
           releaseId: "release" as ReleaseId,
           blobKey: "archive",
@@ -1750,7 +1750,7 @@ export interface QueueContractOptions extends ContractOptions {
     queue: Queue,
     handler: (
       batch: Delivery[],
-    ) => Promise<import("@errtraq/core").BatchResult>,
+    ) => Promise<import("@moriyoshi/errtraq-core").BatchResult>,
   ) => Promise<void>;
 }
 

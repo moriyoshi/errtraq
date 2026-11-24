@@ -1,5 +1,5 @@
 {
-  "name": "@errtraq/platform-aws-lambda",
+  "name": "@moriyoshi/errtraq-platform-aws-lambda",
   "version": "0.0.0",
   "type": "module",
   "exports": {
@@ -20,6 +20,7 @@
     }
   },
   "publishConfig": {
+    "registry": "https://npm.pkg.github.com",
     "exports": {
       ".": {
         "types": "./dist/index.d.ts",
@@ -45,17 +46,22 @@
     "node": "^22.18.0 || >=23.6.0"
   },
   "dependencies": {
-    "@errtraq/http": "workspace:*",
+    "@moriyoshi/errtraq-http": "workspace:*",
     "hono": "^4.13.19",
     "zod": "4.6.7",
-    "@errtraq/aws-signing": "workspace:*"
+    "@moriyoshi/errtraq-aws-signing": "workspace:*"
   },
   "peerDependencies": {
-    "@errtraq/core": "workspace:^"
+    "@moriyoshi/errtraq-core": "workspace:^"
   },
   "devDependencies": {
-    "@errtraq/queue-sqs": "workspace:*",
-    "@errtraq/testing": "workspace:*",
-    "@errtraq/core": "workspace:*"
+    "@moriyoshi/errtraq-queue-sqs": "workspace:*",
+    "@moriyoshi/errtraq-testing": "workspace:*",
+    "@moriyoshi/errtraq-core": "workspace:*"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/moriyoshi/errtraq.git",
+    "directory": "packages/platforms/aws-lambda"
   }
 }

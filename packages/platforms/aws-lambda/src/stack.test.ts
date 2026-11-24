@@ -1,4 +1,4 @@
-import { resolveStack, validateStack, variable } from "@errtraq/core";
+import { resolveStack, validateStack, variable } from "@moriyoshi/errtraq-core";
 import { expect, it } from "vitest";
 import shared from "../../../../stacks/aws-dynamodb.js";
 import { awsLambda } from "./stack.js";

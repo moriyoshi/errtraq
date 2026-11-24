@@ -1,4 +1,4 @@
-import type { Release, ReleaseRepo } from "@errtraq/core";
+import type { Release, ReleaseRepo } from "@moriyoshi/errtraq-core";
 import { bundleRepository } from "./bundles.js";
 import { partition, sortKey } from "./keys.js";
 import { indexPartition, markerLookup, writeUnique } from "./projects.js";

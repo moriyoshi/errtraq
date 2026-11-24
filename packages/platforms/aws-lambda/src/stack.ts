@@ -4,7 +4,7 @@ import {
   type PlatformManifest,
   type PlatformSelection,
   stackValue,
-} from "@errtraq/core";
+} from "@moriyoshi/errtraq-core";
 import { z } from "zod";
 
 const role = z.enum(["ingest", "api", "consumer", "record", "cron"]);
@@ -206,6 +206,6 @@ export function awsLambda(config: Config = {}): PlatformSelection {
     manifest,
     infra,
     config: configSchema.parse(config),
-    runtimeModule: "@errtraq/platform-aws-lambda",
+    runtimeModule: "@moriyoshi/errtraq-platform-aws-lambda",
   };
 }

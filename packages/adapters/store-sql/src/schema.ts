@@ -1,4 +1,4 @@
-import { UnsupportedSchemaVersionError } from "@errtraq/core";
+import { UnsupportedSchemaVersionError } from "@moriyoshi/errtraq-core";
 import { type Kysely, sql } from "kysely";
 import { createIndexIfAbsent, type SqlStoreDialect } from "./dialect.js";
 

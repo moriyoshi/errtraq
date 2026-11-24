@@ -6,15 +6,15 @@ import {
   type Logger,
   type Message,
   type QueueProducer,
-} from "@errtraq/core";
-import { SqsQueue } from "@errtraq/queue-sqs/runtime";
+} from "@moriyoshi/errtraq-core";
+import { SqsQueue } from "@moriyoshi/errtraq-queue-sqs/runtime";
 import {
   DeterministicIdGen,
   MemoryActiveStore,
   MemoryBlobStore,
   MemoryKV,
   MemoryQueue,
-} from "@errtraq/testing";
+} from "@moriyoshi/errtraq-testing";
 import { describe, expect, it, vi } from "vitest";
 import {
   eventBridgeConstantInput,

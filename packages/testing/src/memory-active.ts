@@ -18,7 +18,7 @@ import {
   UnsupportedQueryError,
   VersionConflictError,
   withIdentifierLimits,
-} from "@errtraq/core";
+} from "@moriyoshi/errtraq-core";
 import { compareKeys, copy, eventOrder, eventPage, page } from "./shared.js";
 
 export class MemoryActiveStore implements ActiveStore {
@@ -161,9 +161,9 @@ export class MemoryActiveStore implements ActiveStore {
     },
   };
   private recordOne: (
-    occurrence: import("@errtraq/core").Occurrence,
+    occurrence: import("@moriyoshi/errtraq-core").Occurrence,
     event: StoredEvent,
-  ) => import("@errtraq/core").RecordResult = (occurrence, event) => {
+  ) => import("@moriyoshi/errtraq-core").RecordResult = (occurrence, event) => {
     this.purgeExpired();
     if (
       occurrence.projectId !== event.projectId ||

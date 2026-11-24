@@ -1,5 +1,5 @@
-import type { ArchiveState, ProjectId } from "@errtraq/core";
-import { VersionConflictError } from "@errtraq/core/store";
+import type { ArchiveState, ProjectId } from "@moriyoshi/errtraq-core";
+import { VersionConflictError } from "@moriyoshi/errtraq-core/store";
 import { expect, it, vi } from "vitest";
 import { DynamoStoreError } from "./errors.js";
 import { metaRepository } from "./meta.js";

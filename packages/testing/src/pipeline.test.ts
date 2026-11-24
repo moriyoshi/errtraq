@@ -21,8 +21,8 @@ import {
   readDropped,
   recoverStagedEnvelopes,
   WebCryptoIdGen,
-} from "@errtraq/core";
-import { createIngestApp } from "@errtraq/http";
+} from "@moriyoshi/errtraq-core";
+import { createIngestApp } from "@moriyoshi/errtraq-http";
 import { describe, expect, it, vi } from "vitest";
 import { MemoryActiveStore } from "./memory-active.js";
 import { MemoryBlobStore, MemoryKV, MemoryQueue } from "./memory-other.js";

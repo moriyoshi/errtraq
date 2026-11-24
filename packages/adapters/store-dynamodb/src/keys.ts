@@ -1,9 +1,9 @@
-import type { Cursor } from "@errtraq/core";
+import type { Cursor } from "@moriyoshi/errtraq-core";
 import {
   decodeCursor,
   encodeCursor,
   InvalidCursorError,
-} from "@errtraq/core/store";
+} from "@moriyoshi/errtraq-core/store";
 
 /** Hex-encoded UTF-8 preserves byte order; ! terminates each component before any hex digit. */
 export function component(value: string): string {

@@ -1,4 +1,4 @@
-import { InvalidCursorError } from "@errtraq/core/store";
+import { InvalidCursorError } from "@moriyoshi/errtraq-core/store";
 import { describe, expect, it } from "vitest";
 import {
   component,

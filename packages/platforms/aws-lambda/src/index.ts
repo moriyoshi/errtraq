@@ -1,4 +1,4 @@
-import type { CreateContext } from "@errtraq/core";
+import type { CreateContext } from "@moriyoshi/errtraq-core";
 
 export { infra, manifest } from "./stack.js";
 /** Runtime adapter is intentionally deferred to M3. */

@@ -1,4 +1,4 @@
-import { constructionOrder, selections } from "@errtraq/core";
+import { constructionOrder, selections } from "@moriyoshi/errtraq-core";
 import { expect, it } from "vitest";
 import local from "../../../stacks/local.js";
 import { constructStack } from "./construction.js";

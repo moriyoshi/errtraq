@@ -2,8 +2,8 @@ import {
   type BootstrapVault,
   bootstrapDeployed,
   hashApiToken,
-} from "@errtraq/core";
-import { MemoryActiveStore, MemoryKV } from "@errtraq/testing";
+} from "@moriyoshi/errtraq-core";
+import { MemoryActiveStore, MemoryKV } from "@moriyoshi/errtraq-testing";
 import { describe, expect, it, vi } from "vitest";
 import stack from "../../../stacks/aws-dynamodb.js";
 import { awsBootstrapVault, bootstrapAwsStack } from "./deployed-bootstrap.js";
@@ -159,8 +159,8 @@ describe("deployed bootstrap", () => {
     );
     expect(result).toBe(arn);
     expect(seen.sort()).toEqual([
-      "@errtraq/kv-dynamodb/runtime",
-      "@errtraq/store-dynamodb/runtime",
+      "@moriyoshi/errtraq-kv-dynamodb/runtime",
+      "@moriyoshi/errtraq-store-dynamodb/runtime",
     ]);
   });
   it("converges concurrent and repeated calls on one stored token and DSN", async () => {
@@ -227,7 +227,7 @@ describe("deployed bootstrap", () => {
     await f.store.projects.putToken({
       ...token,
       revokedAt:
-        "2025-01-01T00:00:00.000Z" as import("@errtraq/core").Timestamp,
+        "2025-01-01T00:00:00.000Z" as import("@moriyoshi/errtraq-core").Timestamp,
     });
     await expect(bootstrapDeployed(f.options)).rejects.toThrow(
       "revoked or has changed",

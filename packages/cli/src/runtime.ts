@@ -9,7 +9,7 @@ import {
   output,
   type StackConfig,
   selections,
-} from "@errtraq/core";
+} from "@moriyoshi/errtraq-core";
 
 /** Only resolve bindings the requested roles actually use. */
 export function resolveRoleBindings(

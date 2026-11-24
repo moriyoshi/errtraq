@@ -8,14 +8,14 @@ import type {
   StoredEvent,
   SubjectSelector,
   Timestamp,
-} from "@errtraq/core";
+} from "@moriyoshi/errtraq-core";
 import {
   decodeCursor,
   encodeCursor,
   eventCursorScope,
   InvalidCursorError,
   pageLimit,
-} from "@errtraq/core";
+} from "@moriyoshi/errtraq-core";
 
 export class FakeClock implements Clock {
   private time: number;

@@ -54,11 +54,11 @@ export function findLayeringViolations(
           specifier === "zod" ||
           specifier === "hono" ||
           specifier.startsWith("hono/") ||
-          specifier === "@errtraq/core" ||
+          specifier === "@moriyoshi/errtraq-core" ||
           (!coreRestricted &&
             options.workers &&
-            (specifier.startsWith("@errtraq/core/") ||
-              specifier === "@errtraq/aws-signing" ||
+            (specifier.startsWith("@moriyoshi/errtraq-core/") ||
+              specifier === "@moriyoshi/errtraq-aws-signing" ||
               specifier === "aws4fetch" ||
               specifier === "fast-xml-parser")) ||
           (specifier === "vitest" && /\.test\.[cm]?[jt]sx?$/.test(path))

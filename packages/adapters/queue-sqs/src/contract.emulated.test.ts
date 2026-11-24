@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { signAwsRequest } from "@errtraq/aws-signing";
-import type { BatchHandler, Queue } from "@errtraq/core";
-import { queueContract } from "@errtraq/testing";
+import { signAwsRequest } from "@moriyoshi/errtraq-aws-signing";
+import type { BatchHandler, Queue } from "@moriyoshi/errtraq-core";
+import { queueContract } from "@moriyoshi/errtraq-testing";
 import { afterEach, describe, expect, it } from "vitest";
 import { SqsQueue } from "./runtime.js";
 

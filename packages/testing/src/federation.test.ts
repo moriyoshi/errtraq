@@ -5,7 +5,7 @@ import type {
   ProjectId,
   StoredEvent,
   Timestamp,
-} from "@errtraq/core";
+} from "@moriyoshi/errtraq-core";
 import { expect, it } from "vitest";
 import { MemoryActiveStore } from "./memory-active.js";
 import { MemoryArchiveStore } from "./memory-other.js";

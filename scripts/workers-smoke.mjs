@@ -7,7 +7,7 @@ const build = spawnSync(
   "pnpm",
   [
     "--filter",
-    "@errtraq/cli",
+    "@moriyoshi/errtraq-cli",
     "exec",
     "esbuild",
     "../../scripts/workers-smoke-entry.ts",

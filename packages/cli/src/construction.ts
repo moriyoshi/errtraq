@@ -7,7 +7,7 @@ import {
   type FunctionRole,
   type StackConfig,
   selections,
-} from "@errtraq/core";
+} from "@moriyoshi/errtraq-core";
 import { resolveRoleBindings, resolveRuntimeValue } from "./runtime.js";
 
 type ModuleLoader = (specifier: string) => Promise<unknown>;

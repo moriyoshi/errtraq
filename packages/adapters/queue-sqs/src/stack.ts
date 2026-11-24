@@ -7,7 +7,7 @@ import {
   type RoutedTopic,
   stackValue,
   type TopicMapping,
-} from "@errtraq/core";
+} from "@moriyoshi/errtraq-core";
 import { z } from "zod";
 
 // SQS counts the entire encoded message body; M3 must include its envelope overhead.
@@ -167,6 +167,6 @@ export function sqsQueue(config: Config = {}): AdapterSelection<Config> {
     manifest,
     infra: descriptor(parsed),
     config: parsed,
-    runtimeModule: "@errtraq/queue-sqs/runtime",
+    runtimeModule: "@moriyoshi/errtraq-queue-sqs/runtime",
   };
 }
