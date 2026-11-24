@@ -3,6 +3,8 @@ data "aws_availability_zones" "available" {
   state = "available"
 }
 data "aws_region" "current" {}
+data "aws_partition" "current" {}
+data "aws_caller_identity" "current" {}
 
 locals {
   create_network = var.vpc_id == null
@@ -250,6 +252,11 @@ data "aws_iam_policy_document" "proxy_secret" {
     actions   = ["secretsmanager:GetSecretValue"]
     resources = [aws_db_instance.this.master_user_secret[0].secret_arn]
   }
+  # End-to-end IAM authentication: the proxy itself logs in to the instance as the IAM user.
+  statement {
+    actions   = ["rds-db:connect"]
+    resources = ["arn:${data.aws_partition.current.partition}:rds-db:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:dbuser:${aws_db_instance.this.resource_id}/*"]
+  }
 }
 resource "aws_iam_role" "proxy" {
   count              = var.create_proxy ? 1 : 0
@@ -268,6 +275,7 @@ resource "aws_db_proxy" "this" {
   name                   = var.name_prefix
   engine_family          = "POSTGRESQL"
   require_tls            = true
+  default_auth_scheme    = "IAM_AUTH"
   idle_client_timeout    = 1800
   role_arn               = aws_iam_role.proxy[0].arn
   vpc_subnet_ids         = local.subnet_ids

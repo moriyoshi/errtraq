@@ -92,7 +92,7 @@ run "database_hardening" {
     error_message = "rds.force_ssl is on"
   }
   assert {
-    condition     = aws_db_proxy.this[0].require_tls && aws_db_proxy.this[0].engine_family == "POSTGRESQL" && one(aws_db_proxy.this[0].auth).iam_auth == "REQUIRED"
+    condition     = aws_db_proxy.this[0].require_tls && aws_db_proxy.this[0].engine_family == "POSTGRESQL" && one(aws_db_proxy.this[0].auth).iam_auth == "REQUIRED" && aws_db_proxy.this[0].default_auth_scheme == "IAM_AUTH"
     error_message = "proxy requires TLS and IAM auth"
   }
   assert {

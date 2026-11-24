@@ -11,7 +11,9 @@ reference this directory. Nothing under `infra/fixtures` is generated into or im
   managed by RDS in Secrets Manager, not public, no deletion protection, no final snapshot, and
   automated backups off (`backup_retention_period = 0`, so there is no point-in-time recovery).
 - An RDS Proxy (`create_proxy`, default true): engine family POSTGRESQL, TLS required, IAM
-  authentication required, its own IAM role that reads only the master secret, default target group
+  authentication required end to end (`default_auth_scheme = "IAM_AUTH"`: the proxy logs in to the
+  instance as the IAM user, so IAM-only users such as the store's work through it), its own IAM role
+  that reads only the master secret and may `rds-db:connect` to this instance, default target group
   targeting the instance.
 - Security groups: the database accepts TCP 5432 from the Lambda security group and the proxy
   security group only; the proxy accepts 5432 from the Lambda security group only.
