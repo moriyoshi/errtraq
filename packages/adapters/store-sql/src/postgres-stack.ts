@@ -10,6 +10,8 @@ import {
 } from "@moriyoshi/errtraq-core";
 import { z } from "zod";
 
+/** Binding that delivers the administrator secret ARN to the bootstrap role only. */
+export const ADMIN_SECRET_BINDING = "ERRTRAQ_POSTGRES_ADMIN_SECRET";
 const stringRef = z.custom<VariableRef | EnvRef>(
   (v) =>
     isVariableRef(v) ||
@@ -28,9 +30,15 @@ const iamSchema = z.strictObject({
   region: z.string().regex(/^[a-z]{2}(-[a-z0-9]+)+-[0-9]+$/),
   resourceId: z.string().regex(/^(db|cluster|prx)-[A-Za-z0-9]+$/),
   sslRootCert: z.union([z.string().min(1), stringRef]).optional(),
+  /**
+   * Secrets Manager secret holding administrator credentials (`username`, `password`), for
+   * example the RDS-managed master secret. Only the optional bootstrap role is given it, to
+   * create the IAM user; runtime roles never receive it.
+   */
+  adminSecret: z.custom<VariableRef>(isVariableRef).optional(),
 });
 const secretModeSchema = z.strictObject({ mode: z.literal("secret") });
-const iamModeSchema = iamSchema.omit({ sslRootCert: true });
+const iamModeSchema = iamSchema.omit({ sslRootCert: true, adminSecret: true });
 const modeSchema = z.discriminatedUnion("mode", [
   secretModeSchema,
   iamModeSchema,
@@ -131,13 +139,28 @@ export function postgres(
       write: { primary: out("policies", "write", "primary") },
       delete: { primary: out("policies", "delete", "primary") },
       "metadata-delete": { primary: out("policies", "write", "primary") },
+      // Delivered only as the secret binding below, to the bootstrap role: no policy output.
+      ...(config.adminSecret ? { admin: { primary: null } } : {}),
     },
-    bindings: Object.entries(names).map(([name, value]) => ({
-      name,
-      kind: "env" as const,
-      purpose: "primary",
-      value,
-    })),
+    bindings: [
+      ...Object.entries(names).map(([name, value]) => ({
+        name,
+        kind: "env" as const,
+        purpose: "primary",
+        value,
+      })),
+      ...(config.adminSecret
+        ? [
+            {
+              name: ADMIN_SECRET_BINDING,
+              kind: "secret" as const,
+              purpose: "primary",
+              value: config.adminSecret,
+              capabilities: ["admin"],
+            },
+          ]
+        : []),
+    ],
   };
   return {
     manifest: {

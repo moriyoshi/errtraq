@@ -80,8 +80,12 @@ whole run including the 500-writer contention tests.
 ## Bootstrap Lambda (product feature, built before the run)
 
 A private database cannot be reached from the operator's machine, so `errtraq bootstrap` gains a
-deployed mode that runs inside the stack's network. Sketch, to be confirmed in ARCHITECTURE.md when
-implemented:
+deployed mode that runs inside the stack's network. Status: implemented; the final design is in ARCHITECTURE.md "Deployed bootstrap" and the README section "Bootstrap
+from inside the stack's network". Deviations from this sketch: the function creates the secret with
+CreateSecret (plus Describe and Get on that one name pattern) instead of PutSecretValue on a
+pre-created secret, so no empty secret exists in Terraform state and concurrent runs converge as the
+local path does; the secret name is platform config (`bootstrapSecretName`), not a request field;
+the flag is `--remote`. Original sketch:
 
 - A new optional function role `bootstrap`: no HTTP URL, no queue trigger, no schedule; invoked
   only by the operator (`lambda:InvokeFunction` on the operator's own credentials). It shares the

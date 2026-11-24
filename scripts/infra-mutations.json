@@ -164,8 +164,8 @@
     "id": "lambda-extra-env",
     "module": "lambda-app",
     "file": "main.tf",
-    "find": "merge(each.value.environment, each.value.secrets)",
-    "replace": "merge(each.value.environment, each.value.secrets, { EXTRA = \"injected\" })"
+    "find": "variables = merge(each.value.environment, each.value.secrets,",
+    "replace": "variables = merge(each.value.environment, each.value.secrets, { EXTRA = \"injected\" },"
   },
   {
     "id": "root-drop-policy",
@@ -721,5 +721,86 @@
     "file": "main.tf",
     "find": "${var.name}/${each.key}/${filesha256(each.value.artifact)}.zip",
     "replace": "${var.name}/${each.key}/fixed.zip"
+  },
+  {
+    "id": "lambda-bootstrap-secret-wildcard",
+    "module": "lambda-app",
+    "file": "main.tf",
+    "find": ":secret:${var.bootstrap_secret_name}-??????",
+    "replace": ":secret:*"
+  },
+  {
+    "id": "lambda-bootstrap-secret-all-functions",
+    "module": "lambda-app",
+    "file": "main.tf",
+    "find": "for_each = local.bootstrap_functions\n  name     = \"bootstrap-secret\"",
+    "replace": "for_each = var.functions\n  name     = \"bootstrap-secret\""
+  },
+  {
+    "id": "lambda-bootstrap-secret-any-action",
+    "module": "lambda-app",
+    "file": "main.tf",
+    "find": "\"secretsmanager:DescribeSecret\", \"secretsmanager:GetSecretValue\"]",
+    "replace": "\"secretsmanager:DescribeSecret\", \"secretsmanager:GetSecretValue\", \"secretsmanager:PutSecretValue\", \"secretsmanager:DeleteSecret\"]"
+  },
+  {
+    "id": "lambda-bootstrap-env-all-functions",
+    "module": "lambda-app",
+    "file": "main.tf",
+    "find": "contains(each.value.roles, \"bootstrap\") ? { ERRTRAQ_BOOTSTRAP_SECRET_NAME",
+    "replace": "true ? { ERRTRAQ_BOOTSTRAP_SECRET_NAME"
+  },
+  {
+    "id": "lambda-bootstrap-output-wrong",
+    "module": "lambda-app",
+    "file": "outputs.tf",
+    "find": "aws_lambda_function.function[keys(local.bootstrap_functions)[0]].function_name : \"\"",
+    "replace": "aws_lambda_function.function[keys(local.bootstrap_functions)[0]].arn : \"\""
+  },
+  {
+    "id": "lambda-bootstrap-grouping-allowed",
+    "module": "lambda-app",
+    "file": "variables.tf",
+    "find": "(length(fn.roles) == 1 && length(fn.http) == 0 && ",
+    "replace": "(length(fn.http) == 0 && "
+  },
+  {
+    "id": "lambda-bootstrap-cron-allowed",
+    "module": "lambda-app",
+    "file": "variables.tf",
+    "find": " && !contains(try(var.functions[trigger.function_id].roles, []), \"bootstrap\") &&\n      trigger.retry_attempts",
+    "replace": " &&\n      trigger.retry_attempts"
+  },
+  {
+    "id": "lambda-bootstrap-secret-name-optional",
+    "module": "lambda-app",
+    "file": "variables.tf",
+    "find": "(var.bootstrap_secret_name != null) == anytrue(",
+    "replace": "true || anytrue("
+  },
+  {
+    "id": "root-bootstrap-admin-to-runtime",
+    "root": "bootstrap-postgres",
+    "operation": "bootstrap-admin-to-runtime"
+  },
+  {
+    "id": "root-bootstrap-drop-admin-binding",
+    "root": "bootstrap-postgres",
+    "operation": "bootstrap-drop-admin-binding"
+  },
+  {
+    "id": "root-bootstrap-drop-secret-name",
+    "root": "bootstrap-dynamodb",
+    "operation": "bootstrap-drop-secret-name"
+  },
+  {
+    "id": "root-bootstrap-drop-store-policy",
+    "root": "bootstrap-dynamodb",
+    "operation": "bootstrap-drop-store-policy"
+  },
+  {
+    "id": "root-bootstrap-extra-api-binding",
+    "root": "bootstrap-dynamodb",
+    "operation": "bootstrap-add-secret-name-to-ingest"
   }
 ]

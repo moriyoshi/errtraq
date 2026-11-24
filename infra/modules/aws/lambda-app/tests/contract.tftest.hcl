@@ -1,4 +1,13 @@
 mock_provider "aws" {
+  mock_data "aws_caller_identity" {
+    defaults = { account_id = "000000000000" }
+  }
+  mock_data "aws_partition" {
+    defaults = { partition = "aws" }
+  }
+  mock_data "aws_region" {
+    defaults = { region = "us-east-1" }
+  }
   mock_data "aws_iam_policy_document" {
     defaults = { json = "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":[\"sts:AssumeRole\"],\"Principal\":{\"Service\":[\"lambda.amazonaws.com\"]}}]}" }
   }
@@ -277,4 +286,106 @@ run "s3_artifact_deployment" {
     condition     = aws_lambda_function.function["ingest"].filename == null && aws_lambda_function.function["ingest"].s3_bucket == "existing-deployment-bucket" && aws_lambda_function.function["ingest"].s3_key == aws_s3_object.artifact["ingest"].key && aws_lambda_function.function["ingest"].source_code_hash == filebase64sha256("tests/artifact.txt")
     error_message = "Lambda must deploy the uploaded object with the local content hash."
   }
+}
+
+run "bootstrap_function" {
+  command = apply
+  variables {
+    name                   = "example"
+    tags                   = {}
+    bootstrap_secret_name  = "errtraq/bootstrap/example"
+    vpc_subnet_ids         = ["subnet-12345678"]
+    vpc_security_group_ids = ["sg-12345678"]
+    functions = {
+      ingest    = { roles = ["ingest"], http = ["ingest"], artifact = "tests/artifact.txt", memory_mb = 512, timeout_sec = 30, architecture = "arm64", environment = { TABLE = "store" }, secrets = {}, secret_reads = [], policies = [] }
+      bootstrap = { roles = ["bootstrap"], http = [], artifact = "tests/artifact.txt", memory_mb = 512, timeout_sec = 120, architecture = "arm64", environment = { TABLE = "store" }, secrets = { ADMIN = "arn:aws:secretsmanager:us-east-1:000000000000:secret:admin-ABC123" }, secret_reads = ["arn:aws:secretsmanager:us-east-1:000000000000:secret:admin-ABC123"], policies = [] }
+    }
+    queue_triggers = {}
+    cron_triggers  = {}
+  }
+  assert {
+    condition     = toset(keys(aws_iam_role_policy.bootstrap_secret)) == toset(["bootstrap"]) && aws_iam_role_policy.bootstrap_secret["bootstrap"].role == aws_iam_role.function["bootstrap"].id && jsonencode(jsondecode(aws_iam_role_policy.bootstrap_secret["bootstrap"].policy)) == jsonencode({ Version = "2012-10-17", Statement = [{ Effect = "Allow", Action = ["secretsmanager:CreateSecret", "secretsmanager:DescribeSecret", "secretsmanager:GetSecretValue"], Resource = ["arn:aws:secretsmanager:us-east-1:000000000000:secret:errtraq/bootstrap/example-??????"] }] })
+    error_message = "Only the bootstrap function may create and read exactly the bootstrap secret."
+  }
+  assert {
+    condition     = jsonencode(aws_lambda_function.function["bootstrap"].environment[0].variables) == jsonencode({ ADMIN = "arn:aws:secretsmanager:us-east-1:000000000000:secret:admin-ABC123", ERRTRAQ_BOOTSTRAP_SECRET_NAME = "errtraq/bootstrap/example", TABLE = "store" }) && jsonencode(aws_lambda_function.function["ingest"].environment[0].variables) == jsonencode({ TABLE = "store" })
+    error_message = "The bootstrap secret name is delivered to the bootstrap function and to no other."
+  }
+  assert {
+    condition     = toset(keys(aws_lambda_function_url.http)) == toset(["ingest"]) && length(aws_lambda_permission.url) == 1 && length(aws_lambda_event_source_mapping.queue) == 0 && length(aws_cloudwatch_event_target.cron) == 0
+    error_message = "The bootstrap function has no URL, public permission or trigger."
+  }
+  assert {
+    condition     = toset(aws_lambda_function.function["bootstrap"].vpc_config[0].subnet_ids) == toset(var.vpc_subnet_ids) && toset(aws_lambda_function.function["bootstrap"].vpc_config[0].security_group_ids) == toset(var.vpc_security_group_ids) && length(aws_iam_role_policy.vpc) == 2
+    error_message = "The bootstrap function shares the platform VPC placement."
+  }
+  assert {
+    condition     = jsondecode(aws_iam_role_policy.secret_reads["bootstrap"].policy).Statement[0].Resource == ["arn:aws:secretsmanager:us-east-1:000000000000:secret:admin-ABC123"] && !contains(keys(aws_iam_role_policy.secret_reads), "ingest")
+    error_message = "Only the bootstrap function reads the administrator secret."
+  }
+  assert {
+    condition     = output.bootstrap_function_name == "example-bootstrap" && output.bootstrap_function_arn == aws_lambda_function.function["bootstrap"].arn
+    error_message = "The bootstrap function name and ARN are exported for lambda:InvokeFunction."
+  }
+}
+run "no_bootstrap_function" {
+  command = apply
+  variables {
+    name           = "example"
+    tags           = {}
+    functions      = { ingest = { roles = ["ingest"], http = ["ingest"], artifact = "tests/artifact.txt", memory_mb = 512, timeout_sec = 30, architecture = "arm64", environment = {}, secrets = {}, secret_reads = [], policies = [] } }
+    queue_triggers = {}
+    cron_triggers  = {}
+  }
+  assert {
+    condition     = length(aws_iam_role_policy.bootstrap_secret) == 0 && length(data.aws_region.current) == 0 && output.bootstrap_function_name == "" && output.bootstrap_function_arn == "" && !contains(keys(aws_lambda_function.function["ingest"].environment[0].variables), "ERRTRAQ_BOOTSTRAP_SECRET_NAME")
+    error_message = "Without the bootstrap role nothing bootstrap-related exists."
+  }
+}
+run "bootstrap_requires_secret_name" {
+  command = plan
+  variables {
+    name           = "example"
+    tags           = {}
+    functions      = { bootstrap = { roles = ["bootstrap"], http = [], artifact = "tests/artifact.txt", memory_mb = 512, timeout_sec = 120, architecture = "arm64", environment = {}, secrets = {}, secret_reads = [], policies = [] } }
+    queue_triggers = {}
+    cron_triggers  = {}
+  }
+  expect_failures = [var.bootstrap_secret_name]
+}
+run "secret_name_without_bootstrap" {
+  command = plan
+  variables {
+    name                  = "example"
+    tags                  = {}
+    bootstrap_secret_name = "errtraq/bootstrap/example"
+    functions             = { ingest = { roles = ["ingest"], http = ["ingest"], artifact = "tests/artifact.txt", memory_mb = 512, timeout_sec = 30, architecture = "arm64", environment = {}, secrets = {}, secret_reads = [], policies = [] } }
+    queue_triggers        = {}
+    cron_triggers         = {}
+  }
+  expect_failures = [var.bootstrap_secret_name]
+}
+run "bootstrap_is_never_grouped" {
+  command = plan
+  variables {
+    name                  = "example"
+    tags                  = {}
+    bootstrap_secret_name = "errtraq/bootstrap/example"
+    functions             = { shared = { roles = ["consumer", "bootstrap"], http = [], artifact = "tests/artifact.txt", memory_mb = 512, timeout_sec = 120, architecture = "arm64", environment = {}, secrets = {}, secret_reads = [], policies = [] } }
+    queue_triggers        = {}
+    cron_triggers         = {}
+  }
+  expect_failures = [var.functions]
+}
+run "bootstrap_has_no_triggers" {
+  command = plan
+  variables {
+    name                  = "example"
+    tags                  = {}
+    bootstrap_secret_name = "errtraq/bootstrap/example"
+    functions             = { bootstrap = { roles = ["bootstrap"], http = [], artifact = "tests/artifact.txt", memory_mb = 512, timeout_sec = 120, architecture = "arm64", environment = {}, secrets = {}, secret_reads = [], policies = [] } }
+    queue_triggers        = {}
+    cron_triggers         = { retention = { function_id = "bootstrap", schedule = "0 * * * *" } }
+  }
+  expect_failures = [var.cron_triggers]
 }

@@ -20,9 +20,11 @@ import {
   deriveDeployment,
   resolveStack,
 } from "@moriyoshi/errtraq-core";
+import { MemoryActiveStore, MemoryKV } from "@moriyoshi/errtraq-testing";
 import { unzipSync } from "fflate";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import shared from "../../../stacks/aws-dynamodb.js";
+import bootstrapStack from "../../../stacks/aws-dynamodb-bootstrap.js";
 import perTopic from "../../../stacks/aws-dynamodb-per-topic.js";
 import local from "../../../stacks/local.js";
 import { buildStack } from "./build.js";
@@ -117,6 +119,142 @@ describe("built stacks", () => {
       Reflect.deleteProperty(globalThis, "__m2dInit");
     }
   }, 30000);
+  it("builds the bootstrap role as its own function that bootstraps through the generated entry", async () => {
+    const storeFile = join(temp, "fake-bootstrap-store.ts");
+    const kvFile = join(temp, "fake-bootstrap-kv.ts");
+    await writeFile(
+      storeFile,
+      "export async function create(){ return globalThis.__bootstrapFake.store; }",
+    );
+    await writeFile(
+      kvFile,
+      "export async function create(){ return globalThis.__bootstrapFake.kv; }",
+    );
+    const spec = (file: string) =>
+      `./${relative(repo, file).split("\\").join("/")}`;
+    const stack = resolveStack({
+      ...Object.fromEntries(Object.entries(bootstrapStack)),
+      store: { ...bootstrapStack.store, runtimeModule: spec(storeFile) },
+      kv: { ...bootstrapStack.kv, runtimeModule: spec(kvFile) },
+    });
+    const output = join(temp, "bootstrap-role");
+    const manifest = await buildStack(
+      stack,
+      repo,
+      output,
+      resolve(repo, "stacks/aws-dynamodb-bootstrap.ts"),
+    );
+    expect(Object.keys(manifest.artifacts).sort()).toEqual([
+      "api",
+      "bootstrap",
+      "consumer",
+      "cron",
+      "ingest",
+    ]);
+    const bundle = await readFile(
+      join(output, "bootstrap", "index.mjs"),
+      "utf8",
+    );
+    expect(bundle).toContain("ERRTRAQ_BOOTSTRAP_SECRET_NAME");
+    // No HTTP app and no other function's secret name handling.
+    expect(bundle).not.toContain("x-sentry-auth");
+    expect(
+      await readFile(join(output, "ingest", "index.mjs"), "utf8"),
+    ).not.toContain("ERRTRAQ_BOOTSTRAP_SECRET_NAME");
+    const fn = deriveDeployment(stack).functions.find(
+      (item) => item.id === "bootstrap",
+    );
+    if (!fn) throw new Error("missing bootstrap function");
+    for (const binding of fn.envBindings)
+      vi.stubEnv(binding.binding.name, "configured");
+    vi.stubEnv("ERRTRAQ_BOOTSTRAP_SECRET_NAME", "errtraq/bootstrap/test");
+    vi.stubEnv("AWS_REGION", "us-east-1");
+    vi.stubEnv("AWS_ACCESS_KEY_ID", "AKIDEXAMPLE");
+    vi.stubEnv("AWS_SECRET_ACCESS_KEY", "secret");
+    const secrets = new Map<string, { ARN: string; value: string }>();
+    const requests: string[] = [];
+    vi.stubGlobal("fetch", async (_url: unknown, init?: RequestInit) => {
+      const action = new Headers(init?.headers).get("x-amz-target") ?? "";
+      const body = JSON.parse(String(init?.body ?? "{}"));
+      requests.push(`${action} ${body.Name ?? body.SecretId ?? ""}`);
+      if (action.endsWith("CreateSecret")) {
+        if (secrets.has(body.Name))
+          return Response.json(
+            { __type: "ResourceExistsException" },
+            { status: 400 },
+          );
+        const ARN = `arn:aws:secretsmanager:us-east-1:123456789012:secret:${body.Name}-ABC123`;
+        secrets.set(body.Name, { ARN, value: body.SecretString });
+        return Response.json({ ARN });
+      }
+      const found = [...secrets.entries()].find(
+        ([name, item]) => name === body.SecretId || item.ARN === body.SecretId,
+      )?.[1];
+      if (!found)
+        return Response.json(
+          { __type: "ResourceNotFoundException" },
+          { status: 400 },
+        );
+      return action.endsWith("DescribeSecret")
+        ? Response.json({ ARN: found.ARN })
+        : Response.json({ SecretString: found.value });
+    });
+    const info = vi.spyOn(console, "info").mockImplementation(() => {});
+    const failures = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      Object.assign(globalThis, {
+        __bootstrapFake: { store: new MemoryActiveStore(), kv: new MemoryKV() },
+      });
+      const url = pathToFileURL(join(output, "bootstrap/index.mjs")).href;
+      const entry = await import(`${url}?bootstrap`);
+      const request = {
+        version: 1,
+        orgSlug: "org",
+        projectSlug: "project",
+        ingestUrl: "https://ingest.example/",
+      };
+      const first = await entry.handler(request);
+      expect(first).toMatchObject({
+        ok: true,
+        org: { created: true },
+        token: { created: true },
+        secret: { created: true },
+      });
+      const second = await entry.handler(request);
+      expect(second).toMatchObject({
+        ok: true,
+        org: { created: false },
+        token: { created: false },
+        secret: { created: false },
+      });
+      // The request cannot redirect the secret, and nothing secret is returned or logged.
+      expect(
+        await entry.handler({ ...request, secretName: "other/secret" }),
+      ).toMatchObject({ ok: false, error: { code: "InvalidRequest" } });
+      const saved = secrets.get("errtraq/bootstrap/test")?.value ?? "";
+      const token = (JSON.parse(saved) as { token: string }).token;
+      expect(
+        requests.every(
+          (item) =>
+            item.endsWith("errtraq/bootstrap/test") || item.includes("arn:"),
+        ),
+      ).toBe(true);
+      const visible = JSON.stringify([
+        first,
+        second,
+        info.mock.calls,
+        failures.mock.calls,
+      ]);
+      expect(visible).not.toContain(token);
+      expect(visible).not.toContain("AKIDEXAMPLE");
+    } finally {
+      info.mockRestore();
+      failures.mockRestore();
+      vi.unstubAllEnvs();
+      vi.unstubAllGlobals();
+      Reflect.deleteProperty(globalThis, "__bootstrapFake");
+    }
+  }, 60000);
   it("carries disabled rate-rejection settings into generated Lambda entries", async () => {
     const stack = resolveStack({
       ...Object.fromEntries(Object.entries(shared)),

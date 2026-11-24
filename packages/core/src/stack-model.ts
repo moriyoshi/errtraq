@@ -11,14 +11,27 @@ export type PortKind =
   | "kv"
   | "catalog"
   | "engine";
-export type FunctionRole = "ingest" | "api" | "consumer" | "record" | "cron";
+export type FunctionRole =
+  | "ingest"
+  | "api"
+  | "consumer"
+  | "record"
+  | "cron"
+  | "bootstrap";
 export const FUNCTION_ROLES: readonly FunctionRole[] = [
   "ingest",
   "api",
   "consumer",
   "record",
   "cron",
+  "bootstrap",
 ];
+/**
+ * Roles that are never grouped into the shared function: `bootstrap` carries administrative
+ * access (migrations, secret creation, the optional database admin secret) that no runtime
+ * role may share, and it has no trigger, so a shared function would only widen another role.
+ */
+export const ALWAYS_SPLIT_ROLES: readonly FunctionRole[] = ["bootstrap"];
 /** Logical topics are part of core's contract; later handlers must not acknowledge unknown topics. */
 export const TOPICS = [
   "ingest",

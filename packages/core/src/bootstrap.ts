@@ -33,7 +33,13 @@ export async function bootstrapProject(options: {
   rateLimits?: ProjectRateLimits;
   /** The stack's `rateRejection`; `rateLimits` may only tighten the limits it enables. */
   rateRejection?: RateRejectionConfig;
-}): Promise<{ org: Org; project: Project; key: ProjectKey }> {
+}): Promise<{
+  org: Org;
+  project: Project;
+  key: ProjectKey;
+  /** Whether this call created each record, as opposed to finding an existing one. */
+  created: { org: boolean; project: boolean; key: boolean };
+}> {
   const { store, kv, ids } = options;
   const cap = options.maxRetentionDays;
   const checkRetention = (project: Project) => {
@@ -45,7 +51,9 @@ export async function bootstrapProject(options: {
   if (options.rateLimits)
     validateProjectRateLimits(options.rateRejection, options.rateLimits);
   let org = await store.projects.getOrgBySlug(options.orgSlug);
+  const created = { org: false, project: false, key: false };
   if (!org) {
+    created.org = true;
     org = {
       id: ids.next() as OrgId,
       slug: options.orgSlug,
@@ -58,6 +66,7 @@ export async function bootstrapProject(options: {
       const existing = await store.projects.getOrgBySlug(options.orgSlug);
       if (!existing) throw error;
       org = existing;
+      created.org = false;
     }
   }
   let project = await store.projects.getProjectBySlug(
@@ -65,6 +74,7 @@ export async function bootstrapProject(options: {
     options.projectSlug,
   );
   if (!project) {
+    created.project = true;
     let id: string;
     do {
       id = String(await kv.increment("bootstrap:project-id", 1));
@@ -89,6 +99,7 @@ export async function bootstrapProject(options: {
       );
       if (!existing) throw error;
       project = existing;
+      created.project = false;
     }
   }
   checkRetention(project);
@@ -110,7 +121,9 @@ export async function bootstrapProject(options: {
       projectId: project.id,
       publicKey: generatePublicKey(),
     };
-    key = await store.projects.getOrCreateActiveKey(key);
+    const candidate = key;
+    key = await store.projects.getOrCreateActiveKey(candidate);
+    created.key = key.id === candidate.id;
   }
-  return { org, project, key };
+  return { org, project, key, created };
 }

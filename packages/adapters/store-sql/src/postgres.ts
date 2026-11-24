@@ -1,11 +1,13 @@
 import { readFile } from "node:fs/promises";
 import type { CreateContext } from "@moriyoshi/errtraq-core";
 import { Kysely } from "kysely";
+import { parseAdminSecret, provisionIamUser } from "./postgres-admin.js";
 import {
   postgresDialect,
   postgresStoreDialect,
   rdsIamPoolConfig,
 } from "./postgres-dialect.js";
+import { ADMIN_SECRET_BINDING } from "./postgres-stack.js";
 import type { SqlDatabase } from "./schema.js";
 import { createSqlStore } from "./store.js";
 
@@ -22,6 +24,7 @@ export async function create({
       ? config.mode
       : undefined;
   let dialect: ReturnType<typeof postgresDialect>;
+  let provision: (() => Promise<void>) | undefined;
   if (mode === "iam") {
     const required = (name: string) => {
       const value = bindings[name];
@@ -42,6 +45,22 @@ export async function create({
       ca = await readFile(path, "utf8");
     } catch {
       throw new Error("Cannot read RDS CA bundle");
+    }
+    // Only the bootstrap role is delivered the administrator secret; every other role connects
+    // as the IAM user alone.
+    const adminSecret = bindings[ADMIN_SECRET_BINDING];
+    if (typeof adminSecret === "string" && adminSecret) {
+      if (!secretSource)
+        throw new Error("Postgres administration requires a secret source");
+      provision = async () =>
+        provisionIamUser({
+          host,
+          port,
+          database,
+          user,
+          ca,
+          admin: parseAdminSecret(await secretSource.read(adminSecret)),
+        });
     }
     dialect = postgresDialect(
       rdsIamPoolConfig({
@@ -71,7 +90,17 @@ export async function create({
     dialect = postgresDialect(await secretSource.read(identifier));
   } else throw new Error("Invalid Postgres authentication mode");
   const db: SqlDatabase = new Kysely({ dialect });
-  return Object.assign(createSqlStore({ db, dialect: postgresStoreDialect }), {
+  const store = createSqlStore({ db, dialect: postgresStoreDialect });
+  const migrate = store.migrate;
+  return Object.assign(store, {
+    // With administrator credentials, migration first makes sure the IAM user exists with the
+    // privileges to create and own the schema, then migrates as that user.
+    migrate: provision
+      ? async () => {
+          await provision();
+          await migrate();
+        }
+      : migrate,
     close: () => db.destroy(),
   });
 }

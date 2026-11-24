@@ -325,6 +325,7 @@ describe("deployed bootstrap", () => {
     expect(await vault.claim("bootstrap", candidate)).toEqual({
       identifier: arn,
       value: candidate,
+      created: true,
     });
   });
 });

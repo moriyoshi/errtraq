@@ -6,8 +6,19 @@ import {
   stackValue,
 } from "@moriyoshi/errtraq-core";
 import { z } from "zod";
+import {
+  BOOTSTRAP_SECRET_ENV,
+  BOOTSTRAP_SECRET_NAME,
+} from "./bootstrap-constants.js";
 
-const role = z.enum(["ingest", "api", "consumer", "record", "cron"]);
+const role = z.enum([
+  "ingest",
+  "api",
+  "consumer",
+  "record",
+  "cron",
+  "bootstrap",
+]);
 const settings = z.strictObject({
   memoryMb: z.number().int().min(128).max(10240).optional(),
   timeoutSec: z.number().int().min(1).max(900).optional(),
@@ -35,6 +46,12 @@ export const configSchema = z
     ).optional(),
     cronRetryAttempts: z.number().int().min(0).max(185).default(185),
     cronMaxEventAgeSec: z.number().int().min(60).max(86400).default(86400),
+    /**
+     * Name of the Secrets Manager secret the optional `bootstrap` role creates with the DSN and
+     * first API token. Required with that role and invalid without it: the role's IAM access is
+     * limited to exactly this one secret name.
+     */
+    bootstrapSecretName: z.string().regex(BOOTSTRAP_SECRET_NAME).optional(),
     cronDlqArn: z
       .string()
       .regex(/^arn:[^:]+:sqs:/)
@@ -58,6 +75,15 @@ export const configSchema = z
         "VPC subnet IDs and security group IDs must be provided together",
     },
   )
+  .refine(
+    (config) =>
+      config.roles.includes("bootstrap") ===
+      (config.bootstrapSecretName !== undefined),
+    {
+      message:
+        "bootstrapSecretName is required with the bootstrap role and invalid without it",
+    },
+  )
   .transform((config) => ({
     ...config,
     settings: {
@@ -65,6 +91,10 @@ export const configSchema = z
       consumer: { timeoutSec: 30, ...config.settings.consumer },
       ...(config.roles.includes("record")
         ? { record: { timeoutSec: 30, ...config.settings.record } }
+        : {}),
+      // Migrations plus a cold start inside the VPC; override with settings.bootstrap.
+      ...(config.roles.includes("bootstrap")
+        ? { bootstrap: { timeoutSec: 120, ...config.settings.bootstrap } }
         : {}),
     },
   }));
@@ -90,6 +120,7 @@ export const manifest: PlatformManifest = {
   },
   reservedBindings: [
     "ERRTRAQ_INGEST_RATE_LIMIT",
+    BOOTSTRAP_SECRET_ENV,
     "_HANDLER",
     "_X_AMZN_TRACE_ID",
     "AWS_DEFAULT_REGION",
@@ -108,12 +139,20 @@ export const infra: InfraDescriptor<Config> = {
   module: {
     provider: "aws",
     component: "lambda-app",
-    outputs: { ingest_url: "string", api_url: "string" },
+    outputs: {
+      ingest_url: "string",
+      api_url: "string",
+      bootstrap_function_name: "string",
+      bootstrap_function_arn: "string",
+    },
   },
   inputs: (config, deployment) => ({
     name: stackValue("name"),
     tags: stackValue("tags"),
     ...(config.alarmTopicArn ? { alarm_topic_arn: config.alarmTopicArn } : {}),
+    ...(config.bootstrapSecretName
+      ? { bootstrap_secret_name: config.bootstrapSecretName }
+      : {}),
     ...(config.artifactBucket
       ? { artifact_bucket: config.artifactBucket }
       : {}),

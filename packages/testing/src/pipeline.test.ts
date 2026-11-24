@@ -1364,7 +1364,12 @@ describe("in-process ingest pipeline", () => {
       orgSlug: "org",
       projectSlug: "project",
     });
-    expect(again).toEqual(c.project);
+    expect(c.project.created).toEqual({ org: true, project: true, key: true });
+    expect(again.created).toEqual({ org: false, project: false, key: false });
+    expect({ ...again, created: undefined }).toEqual({
+      ...c.project,
+      created: undefined,
+    });
     expect(c.project.project.id).toMatch(/^\d+$/);
   });
   it("does not acknowledge messages for other topics", async () => {

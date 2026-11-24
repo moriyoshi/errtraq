@@ -9,6 +9,7 @@ function ownValue<T>(
 
 import {
   type AdapterSelection,
+  ALWAYS_SPLIT_ROLES,
   artifact,
   CRON_JOBS,
   configBinding,
@@ -109,31 +110,37 @@ function featureEnabled(
     | "rate-api"
     | "rate-consumer"
     | "rate-record"
-    | "rate-project",
+    | "rate-project"
+    | "store-admin",
   milestone?: "M3" | "M4",
 ): boolean {
   return (
     (feature === undefined && milestone === undefined) ||
-    (feature === "rate-api"
-      ? !!stack.rateRejection?.issueRateLimit ||
-        !!stack.rateRejection?.newIssueCap
-      : feature === "rate-consumer"
+    // Only a store that declares an `admin` capability (a database administrator secret
+    // delivered to the bootstrap role) has anything to grant for it.
+    (feature === "store-admin"
+      ? Object.hasOwn(stack.store.infra.capabilities, "admin")
+      : feature === "rate-api"
         ? !!stack.rateRejection?.issueRateLimit ||
-          ((stack.recordMode ?? "direct") === "direct" &&
-            !!stack.rateRejection?.newIssueCap)
-        : feature === "rate-record"
-          ? stack.recordMode === "grouped" && !!stack.rateRejection?.newIssueCap
-          : feature === "rate-project"
+          !!stack.rateRejection?.newIssueCap
+        : feature === "rate-consumer"
+          ? !!stack.rateRejection?.issueRateLimit ||
+            ((stack.recordMode ?? "direct") === "direct" &&
+              !!stack.rateRejection?.newIssueCap)
+          : feature === "rate-record"
             ? stack.recordMode === "grouped" &&
-              !!stack.rateRejection?.issueRateLimit
-            : feature === "archive"
-              ? !!stack.archive
-              : feature === "direct"
-                ? (stack.recordMode ?? "direct") === "direct"
-                : feature === "grouped"
-                  ? stack.recordMode === "grouped"
-                  : feature === "notifications" &&
-                    stack.features?.notifications === true)
+              !!stack.rateRejection?.newIssueCap
+            : feature === "rate-project"
+              ? stack.recordMode === "grouped" &&
+                !!stack.rateRejection?.issueRateLimit
+              : feature === "archive"
+                ? !!stack.archive
+                : feature === "direct"
+                  ? (stack.recordMode ?? "direct") === "direct"
+                  : feature === "grouped"
+                    ? stack.recordMode === "grouped"
+                    : feature === "notifications" &&
+                      stack.features?.notifications === true)
   );
 }
 interface AccessRequirement {
@@ -618,10 +625,12 @@ export function physicalFunctions(input: unknown): PhysicalFunction[] {
     throw new Error("Invalid platform function configuration");
   const config = parsed.data;
   const roles = FUNCTION_ROLES.filter((role) => config.roles.includes(role));
+  const isSplit = (role: FunctionRole) =>
+    config.split.includes(role) || ALWAYS_SPLIT_ROLES.includes(role);
   const groups = roles
-    .filter((role) => config.split.includes(role))
+    .filter(isSplit)
     .map((role) => ({ id: role as string, roles: [role] }));
-  const shared = roles.filter((role) => !config.split.includes(role));
+  const shared = roles.filter((role) => !isSplit(role));
   if (shared.length) groups.push({ id: "shared", roles: shared });
   return groups.map(({ id, roles: groupRoles }) => {
     const settings: FunctionSettings = {};
@@ -1806,13 +1815,15 @@ function inspect(input: unknown): {
         row.purpose,
       ) === null &&
       !(
-        sel.manifest.adapterAuthorization === "secret-binding" &&
+        // A capability delivered only as a secret read (the database administrator secret)
+        // has no policy output; it must name itself on that secret binding.
         sel.infra.bindings.some(
           (binding) =>
             binding.kind === "secret" &&
             binding.purpose === row.purpose &&
-            (!binding.capabilities ||
-              binding.capabilities.includes(row.capability)),
+            (binding.capabilities
+              ? binding.capabilities.includes(row.capability)
+              : sel.manifest.adapterAuthorization === "secret-binding"),
         )
       )
     )

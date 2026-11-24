@@ -18,7 +18,8 @@ export interface PortRequirement {
     | "rate-api"
     | "rate-consumer"
     | "rate-record"
-    | "rate-project";
+    | "rate-project"
+    | "store-admin";
   milestone?: "M3" | "M4";
 }
 /** M1 calls are unconditional; M4 rows model the archive and erasure design. */
@@ -125,6 +126,26 @@ export const PORT_REQUIREMENTS: readonly PortRequirement[] = [
     capability: "project-read",
     purpose: "primary",
     feature: "rate-project",
+  },
+  // The optional bootstrap role migrates the store and creates the first organization, project,
+  // key and token through ordinary repository calls, so it needs the store and KV read and write
+  // access the API and ingest roles already use (project ID allocation is a KV counter).
+  ...(["store", "kv"] as const).flatMap((kind) =>
+    (["read", "write"] as const).map((capability) => ({
+      kind,
+      role: "bootstrap" as const,
+      capability,
+      purpose: "primary",
+    })),
+  ),
+  // Database administration (creating the runtime database user) is delivered by a store's
+  // `admin` capability, a secret binding only: no runtime role has this row.
+  {
+    kind: "store",
+    role: "bootstrap",
+    capability: "admin",
+    purpose: "primary",
+    feature: "store-admin",
   },
   // TODO(M4): archive workers, erasure suppression, and archive-aware queries.
   ...(["consumer", "cron"] as const).flatMap((role) => [

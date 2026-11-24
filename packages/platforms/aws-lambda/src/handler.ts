@@ -1,3 +1,9 @@
+export {
+  type BootstrapHandlerOptions,
+  bootstrapSecretName,
+  createBootstrapHandler,
+} from "./bootstrap-handler.js";
+export { awsBootstrapVault } from "./bootstrap-vault.js";
 export { createSecretsManagerSource, SecretReadError } from "./secrets.js";
 
 import {

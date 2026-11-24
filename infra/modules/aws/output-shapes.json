@@ -25,6 +25,8 @@
   },
   "lambda-app": {
     "api_url": "string",
+    "bootstrap_function_arn": "string",
+    "bootstrap_function_name": "string",
     "ingest_url": "string"
   },
   "rds-iam-access": {

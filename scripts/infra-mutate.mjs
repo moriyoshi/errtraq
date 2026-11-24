@@ -240,6 +240,40 @@ try {
         platform.functions.record.environment.ERRTRAQ_KV_TABLE =
           platform.functions.ingest.environment.ERRTRAQ_KV_TABLE;
         break;
+      case "bootstrap-admin-to-runtime": {
+        // The administrator secret reaches a runtime function (binding and read grant).
+        const admin = platform.functions.bootstrap.secrets;
+        const name = Object.keys(admin).find((key) =>
+          key.endsWith("ADMIN_SECRET"),
+        );
+        if (!name) throw new Error("Admin secret mutation target missing");
+        platform.functions.ingest.secrets[name] = admin[name];
+        platform.functions.ingest.secret_reads.push(admin[name]);
+        break;
+      }
+      case "bootstrap-drop-admin-binding": {
+        const secrets = platform.functions.bootstrap.secrets;
+        const name = Object.keys(secrets).find((key) =>
+          key.endsWith("ADMIN_SECRET"),
+        );
+        if (!name) throw new Error("Admin secret mutation target missing");
+        delete secrets[name];
+        break;
+      }
+      case "bootstrap-drop-secret-name":
+        delete platform.bootstrap_secret_name;
+        break;
+      case "bootstrap-drop-store-policy": {
+        const policies = platform.functions.bootstrap.policies;
+        const index = policies.findIndex((p) => p.includes("module.store"));
+        if (index < 0) throw new Error("Store policy mutation target missing");
+        policies.splice(index, 1);
+        break;
+      }
+      case "bootstrap-add-secret-name-to-ingest":
+        platform.functions.ingest.environment.ERRTRAQ_BOOTSTRAP_SECRET_NAME =
+          platform.bootstrap_secret_name;
+        break;
       case "drop-policy":
         platform.functions.ingest.policies.pop();
         break;

@@ -3,6 +3,7 @@ import { activeStoreContract, MemoryKV } from "@moriyoshi/errtraq-testing";
 import { Kysely, sql } from "kysely";
 import pg from "pg";
 import { afterAll, describe, expect, it } from "vitest";
+import { ensureIamUser } from "./postgres-admin.js";
 import {
   postgresDialect,
   postgresStoreDialect,
@@ -454,6 +455,68 @@ suite("Postgres", () => {
       expect(plan, query).toMatch(
         /Index Scan|Index Only Scan|Bitmap Index Scan/,
       );
+    }
+  }, 30000);
+  it("creates the IAM user as an administrator, then migrates and bootstraps as that user", async () => {
+    const database = `bootstrap_${process.pid}`;
+    const user = `iam_user_${process.pid}`;
+    const hadRdsIam =
+      (await admin.query("select 1 from pg_roles where rolname = 'rds_iam'"))
+        .rowCount === 1;
+    // RDS provides rds_iam; a plain server needs a stand-in for the grant to succeed.
+    if (!hadRdsIam) await admin.query("create role rds_iam");
+    await admin.query(`create database "${database}"`);
+    if (!connection) throw new Error("Postgres test connection missing");
+    const url = new URL(connection);
+    url.pathname = `/${database}`;
+    const adminClient = new pg.Client({ connectionString: url.toString() });
+    await adminClient.connect();
+    let db: SqlDatabase | undefined;
+    try {
+      await ensureIamUser(adminClient, user, database);
+      await ensureIamUser(adminClient, user, database);
+      await adminClient.query(`alter role "${user}" password 'iam-user-pw'`);
+      const asUser = new URL(url);
+      asUser.username = user;
+      asUser.password = "iam-user-pw";
+      db = new Kysely({ dialect: postgresDialect(asUser.toString()) });
+      const store = createSqlStore({ db, dialect: postgresStoreDialect });
+      await store.migrate();
+      let secret: string | undefined;
+      await bootstrapDeployed({
+        stackName: "stack",
+        store,
+        kv: new MemoryKV(),
+        vault: {
+          async claim(_name, candidate) {
+            secret ??= candidate;
+            return { identifier: "arn", value: secret };
+          },
+        },
+        secretName: "bootstrap",
+        ingestUrl: "https://ingest.example/",
+        orgSlug: "org",
+        projectSlug: "project",
+      });
+      // The runtime user owns what it created, so later migrations need no further grants.
+      const owners = await adminClient.query(
+        "select distinct tableowner from pg_tables where schemaname = 'public'",
+      );
+      expect(owners.rows).toEqual([{ tableowner: user }]);
+      expect(
+        (
+          await adminClient.query(
+            "select 1 from pg_auth_members m join pg_roles r on r.oid = m.roleid join pg_roles u on u.oid = m.member where r.rolname = 'rds_iam' and u.rolname = $1",
+            [user],
+          )
+        ).rowCount,
+      ).toBe(1);
+    } finally {
+      await db?.destroy();
+      await adminClient.end();
+      await admin.query(`drop database "${database}" with (force)`);
+      await admin.query(`drop role if exists "${user}"`);
+      if (!hadRdsIam) await admin.query("drop role if exists rds_iam");
     }
   }, 30000);
 });

@@ -51,7 +51,7 @@ variable "functions" {
   validation {
     condition = alltrue([for id, fn in var.functions :
       can(regex("^[a-zA-Z0-9_-]{1,23}$", id)) &&
-      length(fn.roles) > 0 && alltrue([for role in fn.roles : contains(["ingest", "api", "consumer", "record", "cron"], role)]) &&
+      length(fn.roles) > 0 && alltrue([for role in fn.roles : contains(["ingest", "api", "consumer", "record", "cron", "bootstrap"], role)]) &&
       alltrue([for role in fn.http : contains(["ingest", "api"], role) && contains(fn.roles, role)]) &&
       fn.memory_mb >= 128 && fn.memory_mb <= 10240 && floor(fn.memory_mb) == fn.memory_mb &&
       fn.timeout_sec >= 1 && fn.timeout_sec <= 900 && floor(fn.timeout_sec) == fn.timeout_sec &&
@@ -60,13 +60,28 @@ variable "functions" {
       (fn.reserved_concurrency == null ? true : fn.reserved_concurrency >= 0 && floor(fn.reserved_concurrency) == fn.reserved_concurrency) &&
       length(setintersection(toset(keys(fn.environment)), toset(keys(fn.secrets)))) == 0 &&
       alltrue([for secret in fn.secret_reads : can(regex("^arn:[^:]+:secretsmanager:[^:]+:[0-9]{12}:secret:.+", secret))]) &&
-      alltrue([for secret in values(fn.secrets) : contains(fn.secret_reads, secret)])
+      alltrue([for secret in values(fn.secrets) : contains(fn.secret_reads, secret)]) &&
+      # The bootstrap role is operator-invoked only: its own function, never exposed or triggered.
+      (!contains(fn.roles, "bootstrap") || (length(fn.roles) == 1 && length(fn.http) == 0 && !contains(keys(fn.environment), "ERRTRAQ_BOOTSTRAP_SECRET_NAME") && !contains(keys(fn.secrets), "ERRTRAQ_BOOTSTRAP_SECRET_NAME")))
     ])
     error_message = "Functions must have valid roles, limits, artifact, distinct bindings and Secrets Manager ARN read grants."
   }
   validation {
     condition     = alltrue([for role in ["ingest", "api"] : length([for fn in values(var.functions) : fn if contains(fn.http, role)]) <= 1])
     error_message = "Each HTTP role may be exposed by at most one function."
+  }
+}
+variable "bootstrap_secret_name" {
+  type        = string
+  description = "Name of the Secrets Manager secret the bootstrap function creates with the DSN and first API token; required exactly when a function has the bootstrap role. Its IAM access is limited to this one name."
+  default     = null
+  validation {
+    condition     = var.bootstrap_secret_name == null ? true : can(regex("^[A-Za-z0-9/_+=.@-]{1,512}$", var.bootstrap_secret_name))
+    error_message = "bootstrap_secret_name must be a valid Secrets Manager secret name."
+  }
+  validation {
+    condition     = (var.bootstrap_secret_name != null) == anytrue([for fn in values(var.functions) : contains(fn.roles, "bootstrap")]) && length([for fn in values(var.functions) : fn if contains(fn.roles, "bootstrap")]) <= 1
+    error_message = "bootstrap_secret_name is required with exactly one bootstrap function and invalid without one."
   }
 }
 variable "queue_triggers" {
@@ -81,7 +96,7 @@ variable "queue_triggers" {
   }))
   validation {
     condition = alltrue([for trigger in values(var.queue_triggers) :
-      contains(keys(var.functions), trigger.function_id) &&
+      contains(keys(var.functions), trigger.function_id) && !contains(try(var.functions[trigger.function_id].roles, []), "bootstrap") &&
       can(regex("^arn:[^:]+:sqs:", trigger.resource)) &&
       trigger.visibility_timeout_sec >= 1 && trigger.visibility_timeout_sec <= 43200 && floor(trigger.visibility_timeout_sec) == trigger.visibility_timeout_sec &&
       trigger.batch_size >= 1 && trigger.batch_size <= 10 && floor(trigger.batch_size) == trigger.batch_size &&
@@ -101,7 +116,7 @@ variable "cron_triggers" {
   }))
   validation {
     condition = alltrue([for job, trigger in var.cron_triggers :
-      can(regex("^[a-zA-Z0-9_-]{1,23}$", job)) && contains(keys(var.functions), trigger.function_id) &&
+      can(regex("^[a-zA-Z0-9_-]{1,23}$", job)) && contains(keys(var.functions), trigger.function_id) && !contains(try(var.functions[trigger.function_id].roles, []), "bootstrap") &&
       trigger.retry_attempts >= 0 && trigger.retry_attempts <= 185 && floor(trigger.retry_attempts) == trigger.retry_attempts &&
       trigger.max_event_age_seconds >= 60 && trigger.max_event_age_seconds <= 86400 && floor(trigger.max_event_age_seconds) == trigger.max_event_age_seconds &&
       (trigger.dlq_arn == null ? true : can(regex("^arn:[^:]+:sqs:", trigger.dlq_arn))) &&

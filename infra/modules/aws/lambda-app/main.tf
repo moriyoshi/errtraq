@@ -5,9 +5,10 @@ locals {
   policies         = { for item in flatten([for id, fn in var.functions : [for index, policy in fn.policies : { key = "${id}-${index}", id = id, policy = policy }]]) : item.key => item }
   secret_functions = { for id, fn in var.functions : id => fn if length(fn.secret_reads) > 0 }
   # Core emits standard five-field cron; EventBridge requires six fields and ? in one day field.
-  cron        = { for job, trigger in var.cron_triggers : job => split(" ", trigger.schedule) }
-  vpc_enabled = length(var.vpc_subnet_ids) > 0 && length(var.vpc_security_group_ids) > 0
-  vpc_policy  = jsonencode({ Version = "2012-10-17", Statement = [{ Effect = "Allow", Action = ["ec2:CreateNetworkInterface", "ec2:DescribeNetworkInterfaces", "ec2:DescribeSubnets", "ec2:DeleteNetworkInterface", "ec2:AssignPrivateIpAddresses", "ec2:UnassignPrivateIpAddresses"], Resource = ["*"] }] })
+  cron                = { for job, trigger in var.cron_triggers : job => split(" ", trigger.schedule) }
+  bootstrap_functions = { for id, fn in var.functions : id => fn if contains(fn.roles, "bootstrap") }
+  vpc_enabled         = length(var.vpc_subnet_ids) > 0 && length(var.vpc_security_group_ids) > 0
+  vpc_policy          = jsonencode({ Version = "2012-10-17", Statement = [{ Effect = "Allow", Action = ["ec2:CreateNetworkInterface", "ec2:DescribeNetworkInterfaces", "ec2:DescribeSubnets", "ec2:DeleteNetworkInterface", "ec2:AssignPrivateIpAddresses", "ec2:UnassignPrivateIpAddresses"], Resource = ["*"] }] })
 }
 data "aws_iam_policy_document" "assume" {
   statement {
@@ -17,6 +18,15 @@ data "aws_iam_policy_document" "assume" {
       identifiers = ["lambda.amazonaws.com"]
     }
   }
+}
+data "aws_caller_identity" "current" {
+  count = length(local.bootstrap_functions) > 0 ? 1 : 0
+}
+data "aws_partition" "current" {
+  count = length(local.bootstrap_functions) > 0 ? 1 : 0
+}
+data "aws_region" "current" {
+  count = length(local.bootstrap_functions) > 0 ? 1 : 0
 }
 resource "aws_iam_role" "function" {
   for_each           = var.functions
@@ -54,6 +64,18 @@ resource "aws_iam_role_policy" "secret_reads" {
   role     = aws_iam_role.function[each.key].id
   policy   = jsonencode({ Version = "2012-10-17", Statement = [{ Effect = "Allow", Action = ["secretsmanager:GetSecretValue"], Resource = distinct(each.value.secret_reads) }] })
 }
+# The bootstrap function creates (or, on a rerun, reads) exactly one secret and may do nothing else
+# with Secrets Manager. Secrets Manager appends a hyphen and six characters to the name in the ARN.
+resource "aws_iam_role_policy" "bootstrap_secret" {
+  for_each = local.bootstrap_functions
+  name     = "bootstrap-secret"
+  role     = aws_iam_role.function[each.key].id
+  policy = jsonencode({ Version = "2012-10-17", Statement = [{
+    Effect   = "Allow"
+    Action   = ["secretsmanager:CreateSecret", "secretsmanager:DescribeSecret", "secretsmanager:GetSecretValue"]
+    Resource = ["arn:${data.aws_partition.current[0].partition}:secretsmanager:${data.aws_region.current[0].region}:${data.aws_caller_identity.current[0].account_id}:secret:${var.bootstrap_secret_name}-??????"]
+  }] })
+}
 resource "aws_iam_role_policy" "vpc" {
   for_each = local.vpc_enabled ? var.functions : {}
   name     = "vpc-network-interfaces"
@@ -83,7 +105,7 @@ resource "aws_lambda_function" "function" {
   memory_size                    = each.value.memory_mb
   timeout                        = each.value.timeout_sec
   architectures                  = [each.value.architecture]
-  environment { variables = merge(each.value.environment, each.value.secrets) }
+  environment { variables = merge(each.value.environment, each.value.secrets, contains(each.value.roles, "bootstrap") ? { ERRTRAQ_BOOTSTRAP_SECRET_NAME = var.bootstrap_secret_name } : {}) }
   dynamic "vpc_config" {
     for_each = local.vpc_enabled ? [1] : []
     content {
@@ -98,7 +120,7 @@ resource "aws_lambda_function" "function" {
     }
   }
   tags       = var.tags
-  depends_on = [aws_iam_role_policy.logs, aws_iam_role_policy.vpc]
+  depends_on = [aws_iam_role_policy.logs, aws_iam_role_policy.vpc, aws_iam_role_policy.bootstrap_secret]
 }
 # Public URL is required for ordinary Sentry clients; request authentication is in the application.
 resource "aws_lambda_function_url" "http" {

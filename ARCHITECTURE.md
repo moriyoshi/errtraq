@@ -553,6 +553,45 @@ private functions need NAT or suitable service endpoints for their AWS API calls
 adapters and deployed secret sources are implemented; the first real AWS deployment passed.
 Further AWS verification and remaining M3 work are tracked in the agent documents.
 
+### Deployed bootstrap
+
+Bootstrap (migrations, the first organization, project, DSN key and API token, and the bootstrap
+secret holding the DSN and token) has two paths that share one idempotent implementation in core
+(`bootstrapDeployed`). The direct path runs `errtraq bootstrap` from the operator's machine with
+the operator's AWS credentials; it needs network access to the store. When the store is reachable
+only inside the VPC, the AWS Lambda platform offers an optional sixth function role, `bootstrap`
+(`awsLambda({ roles: [..., "bootstrap"], bootstrapSecretName })`), and `errtraq bootstrap --remote`
+invokes it synchronously through the Lambda Invoke API (signed with `aws-signing`, no SDK).
+
+The role is operator-invoked only: no function URL, queue trigger or schedule. It is never grouped
+into `shared` (core always gives it its own physical function), shares the platform's VPC
+placement, and its requirement rows are store and KV `read` and `write`, which is exactly what the
+bootstrap repository calls need (project IDs come from the KV counter). For DynamoDB these are
+the ordinary table policies; for Postgres IAM the same connect grant every runtime role has. Its
+only other IAM statement, created by the `lambda-app` module, allows `secretsmanager:CreateSecret`,
+`DescribeSecret` and `GetSecretValue` on `arn:...:secret:<bootstrapSecretName>-??????`, the one
+secret name fixed in the platform config and delivered as `ERRTRAQ_BOOTSTRAP_SECRET_NAME`. The
+function creates the secret with its value (create-or-read, so concurrent and repeated runs
+converge), so `PutSecretValue` is not needed and nothing secret passes through Terraform.
+
+The request accepts only non-secret fields (`orgSlug`, `projectSlug`, `ingestUrl`, optional
+tighter `rateLimits`; unknown fields are refused) and is validated with the local path's rules,
+with retention and rate limits checked against the stack baked into the artifact. The response is
+a summary of ids, slugs and created-or-existing flags; failures return a scrubbed error document
+(fixed text, or the stack's own messages) and log only the error class and a short code. The
+operator needs `lambda:InvokeFunction` on that one function and, to read the DSN and token,
+`secretsmanager:GetSecretValue` on the secret.
+
+For Postgres IAM, the `postgres({ mode: "iam", ..., adminSecret })` selection accepts a stack
+variable holding the ARN of a Secrets Manager secret with administrator credentials (`username`
+and `password`, the RDS-managed master secret format). Core models this as a store capability
+`admin` with no policy output, delivered as a secret binding to the bootstrap role alone; runtime
+roles never receive the binding or the read grant. With it, the store's `migrate()` first connects
+as the administrator over verified TLS, idempotently creates the IAM user (`CREATE ROLE ... LOGIN`,
+`GRANT rds_iam`, connect, schema and existing-table privileges, identifiers quoted), then migrates
+as the IAM user. Migrating as the IAM user makes it the owner of the tables, so later migrations
+need no further grants and the administrator credentials are used only for role administration.
+
 ## Milestones
 
 | | Scope | Proves |

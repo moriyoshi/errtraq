@@ -27,6 +27,10 @@ import {
   parseLimit,
   setProjectRateLimits,
 } from "./project-limits.js";
+import {
+  formatRemoteBootstrap,
+  invokeRemoteBootstrap,
+} from "./remote-bootstrap.js";
 import { devToken } from "./token.js";
 import { formatValidation } from "./validation.js";
 
@@ -73,12 +77,16 @@ export async function main(args: string[]): Promise<void> {
     !["dev", "validate", "build", "bootstrap"].includes(command ?? "")
   )
     throw new Error(
-      "Usage: errtraq <dev|validate|build|bootstrap|infra generate|token rotate|token list|token revoke|project rate-limits> --stack <file> [--out dir]",
+      "Usage: errtraq <dev|validate|build|bootstrap [--remote]|infra generate|token rotate|token list|token revoke|project rate-limits> --stack <file> [--out dir]",
     );
   const options: Record<string, string> = {};
   let allowMissing = false;
   for (let i = 0; i < rest.length; i++) {
     const flag = rest[i];
+    if (flag === "--remote" && command === "bootstrap") {
+      options[flag] = "true";
+      continue;
+    }
     if (flag === "--force" && tokenAdmin === "revoke") {
       options[flag] = "true";
       continue;
@@ -103,6 +111,7 @@ export async function main(args: string[]): Promise<void> {
               "--project",
               "--issue-events",
               "--new-issues",
+              "--function-name",
             ]
           : projectLimits
             ? ["--org", "--project", "--issue-events", "--new-issues"]
@@ -181,14 +190,18 @@ export async function main(args: string[]): Promise<void> {
     return;
   }
   if (command === "bootstrap") {
+    const remote = options["--remote"] === "true";
     if (
-      !options["--secret-name"] ||
       !options["--ingest-url"] ||
       !options["--org"] ||
-      !options["--project"]
+      !options["--project"] ||
+      (remote ? !!options["--secret-name"] : !options["--secret-name"]) ||
+      (!remote && options["--function-name"])
     )
       throw new Error(
-        "Bootstrap requires --secret-name, --ingest-url, --org and --project",
+        remote
+          ? "Remote bootstrap requires --ingest-url, --org and --project (the secret name is fixed by the deployment)"
+          : "Bootstrap requires --secret-name, --ingest-url, --org and --project",
       );
     const issueEvents = parseLimit("--issue-events", options["--issue-events"]);
     const newIssues = parseLimit("--new-issues", options["--new-issues"]);
@@ -197,6 +210,21 @@ export async function main(args: string[]): Promise<void> {
         "Bootstrap sets limits only; use project rate-limits to clear them",
       );
     const bootstrapLimits = limitsFromInput({ issueEvents, newIssues }).set;
+    if (remote) {
+      const result = await invokeRemoteBootstrap(stack, process.env, {
+        orgSlug: options["--org"],
+        projectSlug: options["--project"],
+        ingestUrl: options["--ingest-url"],
+        rateLimits: bootstrapLimits,
+        functionName: options["--function-name"],
+      });
+      if (!result.ok)
+        throw new Error(
+          `Bootstrap failed (${result.error.code}): ${result.error.message}`,
+        );
+      console.log(formatRemoteBootstrap(result));
+      return;
+    }
     const arn = await bootstrapAwsStack(stack, process.env, {
       secretName: options["--secret-name"],
       ingestUrl: options["--ingest-url"],

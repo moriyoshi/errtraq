@@ -100,6 +100,65 @@ who can read it. If interrupted, rerun with the same arguments; an existing secr
 the deployment, and its token is registered if the earlier attempt stopped before that step.
 
 
+#### Bootstrap from inside the stack's network (`--remote`)
+
+When the database is reachable only inside the VPC, enable the optional `bootstrap` function role
+and let a Lambda function inside the network do the work. The role is its own function with no
+URL, queue trigger or schedule, shares the stack's VPC placement, and may write exactly one
+Secrets Manager secret:
+
+```ts
+platform: awsLambda({
+  roles: ["ingest", "api", "consumer", "cron", "bootstrap"],
+  bootstrapSecretName: "errtraq/bootstrap/example",
+  vpcSubnetIds: variable("SUBNETS"),
+  vpcSecurityGroupIds: variable("SECURITY_GROUPS"),
+}),
+```
+
+See `stacks/aws-dynamodb-bootstrap.ts`. After `terraform apply`, from any machine with AWS
+credentials and `AWS_REGION`:
+
+```sh
+pnpm exec errtraq bootstrap --remote --stack stacks/aws-dynamodb-bootstrap.ts \
+  --ingest-url https://example.lambda-url.us-east-1.on.aws/ --org my-org --project my-project
+```
+
+The command invokes the function synchronously and prints ids, slugs and whether each record was
+created or already existed. The DSN and first API token are written by the function to the
+`bootstrapSecretName` secret and never returned or logged; read them from Secrets Manager as in
+the direct path. The secret name is fixed by the deployment, so `--secret-name` is not accepted
+with `--remote`. The function name defaults to `<stack name>-bootstrap` (the Terraform output
+`bootstrap_function_name`); `--function-name` overrides it. Reruns are idempotent. The operator
+needs only `lambda:InvokeFunction` on that function, plus `secretsmanager:GetSecretValue` on the
+secret to read the result; no network path to the database is needed. Failures are reported as
+an error code and, for the stack's own validation messages, their text; provider messages are
+never printed, so see the function's CloudWatch log group for the error class.
+
+The function's role has the store and KV read and write access the API role has, the module
+policy `secretsmanager:CreateSecret`, `DescribeSecret` and `GetSecretValue` on
+`secret:<bootstrapSecretName>-??????` only, and the VPC network-interface permissions. It runs
+migrations. Its timeout defaults to 120 seconds (`settings: { bootstrap: { timeoutSec } }`). The
+Lambda needs to reach Secrets Manager (a NAT or an interface endpoint) in a private network.
+
+For RDS PostgreSQL with IAM authentication, the database user must exist with the `rds_iam` role
+before IAM logins work. Give the selection an administrator secret and the bootstrap function
+creates the user for you:
+
+```ts
+store: postgres({
+  mode: "iam", host, database, user, region, resourceId,
+  adminSecret: variable("ADMIN_SECRET_ARN"), // e.g. the RDS-managed master secret ARN
+}),
+```
+
+Only the bootstrap function receives the secret (`secretsmanager:GetSecretValue` on that ARN and
+its binding `ERRTRAQ_POSTGRES_ADMIN_SECRET`); runtime functions never do. The secret JSON needs
+`username` and `password`. On each run the function connects as that administrator over verified
+TLS (the CA bundle used for IAM logins), idempotently creates the IAM user, grants `rds_iam`,
+connect and schema privileges, and then runs migrations as the IAM user, which therefore owns the
+tables. The administrator must be allowed to create roles (the RDS master user is).
+
 ### Manage API tokens on a deployed stack
 
 Tokens are stored only as hashes, so plaintext cannot be recovered or listed. The operator

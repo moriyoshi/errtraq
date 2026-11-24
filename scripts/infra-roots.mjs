@@ -158,6 +158,51 @@ export const fixtures = {
       },
     },
   }),
+  // The optional deployed bootstrap role: its own function, store and KV access, the bootstrap
+  // secret, and (Postgres IAM) the administrator secret that no runtime role receives.
+  "bootstrap-dynamodb": variant(shared, {
+    recordMode: "direct",
+    platform: awsLambda({
+      roles: ["ingest", "api", "consumer", "cron", "bootstrap"],
+      bootstrapSecretName: "errtraq/bootstrap/example",
+    }),
+  }),
+  "bootstrap-postgres": variant(shared, {
+    recordMode: "direct",
+    store: postgres({
+      mode: "iam",
+      host: "db.example.rds.amazonaws.com",
+      database: "errtraq",
+      user: "app_user",
+      region: "us-east-1",
+      resourceId: "db-ABC123",
+      adminSecret: variable("ADMIN_SECRET_ARN"),
+    }),
+    platform: awsLambda({
+      roles: ["ingest", "api", "consumer", "cron", "bootstrap"],
+      bootstrapSecretName: "errtraq/bootstrap/example",
+      vpcSubnetIds: variable("SUBNETS"),
+      vpcSecurityGroupIds: variable("SECURITY_GROUPS"),
+    }),
+    variables: {
+      ADMIN_SECRET_ARN: {
+        type: "string",
+        sensitive: false,
+        default:
+          "arn:aws:secretsmanager:us-east-1:123456789012:secret:rds!db-ABC123-XYZ789",
+      },
+      SUBNETS: {
+        type: "string[]",
+        sensitive: false,
+        default: ["subnet-12345678"],
+      },
+      SECURITY_GROUPS: {
+        type: "string[]",
+        sensitive: false,
+        default: ["sg-12345678"],
+      },
+    },
+  }),
   existing: variant(shared, {
     recordMode: "direct",
     platform: awsLambda(),
@@ -301,6 +346,7 @@ output "test_cron_rules" { value = { for key, rule in aws_cloudwatch_event_rule.
 output "test_alarms" {
   value = { for id, alarm in aws_cloudwatch_metric_alarm.errors : id => { name = alarm.alarm_name, namespace = alarm.namespace, metric = alarm.metric_name, dimensions = alarm.dimensions, statistic = alarm.statistic, period = alarm.period, evaluation_periods = alarm.evaluation_periods, datapoints_to_alarm = alarm.datapoints_to_alarm, threshold = alarm.threshold, comparison = alarm.comparison_operator, missing = alarm.treat_missing_data, actions = tolist(alarm.alarm_actions), tags = alarm.tags } }
 }
+output "test_bootstrap_policies" { value = { for id, policy in aws_iam_role_policy.bootstrap_secret : id => jsondecode(policy.policy) if policy.role == aws_iam_role.function[id].id } }
 output "test_http" {
   value = { for role in ["ingest", "api"] : role => local.role_urls[role] if local.role_urls[role] != "" }
 }
@@ -315,6 +361,7 @@ const test = `mock_provider "aws" {
   mock_data "aws_iam_policy_document" { defaults = { json = "{}" } }
   mock_data "aws_caller_identity" { defaults = { account_id = "123456789012" } }
   mock_data "aws_partition" { defaults = { partition = "aws" } }
+  mock_data "aws_region" { defaults = { region = "us-east-1" } }
   mock_resource "aws_iam_role" { defaults = { arn = "arn:aws:iam::123456789012:role/test" } }
   mock_resource "aws_sqs_queue" { defaults = { arn = "arn:aws:sqs:us-east-1:123456789012:test" } }
   mock_resource "aws_cloudwatch_event_rule" { defaults = { arn = "arn:aws:events:us-east-1:123456789012:rule/test" } }
@@ -350,6 +397,10 @@ run "generated_root" {
     error_message = "Function alarms differ from the deployment view."
   }
   assert {
+    condition = jsonencode(module.platform.test_bootstrap_policies) == jsonencode(output.expected_bootstrap_policies)
+    error_message = "Bootstrap secret policies differ from the deployment view: only the bootstrap function may have one, scoped to the configured secret."
+  }
+  assert {
     condition = sort(keys(module.platform.test_http)) == sort(keys(output.expected_http))
     error_message = "HTTP roles differ from deployment view."
   }
@@ -359,6 +410,56 @@ run "generated_root" {
   }
 }
 `;
+
+/** Independent access matrix for the bootstrap role; the root test compares the module to it. */
+function assertBootstrapScope(name, stack, view) {
+  const ADMIN = "ERRTRAQ_POSTGRES_ADMIN_SECRET";
+  const withBootstrap = stack.platform.config.roles.includes("bootstrap");
+  const bootstrap = view.functions.filter((fn) =>
+    fn.roles.includes("bootstrap"),
+  );
+  if (bootstrap.length !== (withBootstrap ? 1 : 0))
+    throw new Error(`Unexpected bootstrap function count in ${name}`);
+  for (const fn of view.functions.filter(
+    (item) => !item.roles.includes("bootstrap"),
+  )) {
+    // Runtime roles never receive the administrator secret or the bootstrap secret name.
+    if (
+      [...fn.envBindings, ...fn.secretBindings].some(
+        (b) => b.binding.name === ADMIN,
+      ) ||
+      fn.secretReads.some((item) => item.bindingName === ADMIN)
+    )
+      throw new Error(
+        `Runtime function ${fn.id} receives the admin secret in ${name}`,
+      );
+  }
+  const fn = bootstrap[0];
+  if (!fn) return;
+  if (
+    JSON.stringify(fn.roles) !== JSON.stringify(["bootstrap"]) ||
+    fn.http.length ||
+    view.triggers.some((trigger) => trigger.functionId === fn.id)
+  )
+    throw new Error(
+      `Bootstrap function must be its own untriggered function in ${name}`,
+    );
+  const grants = fn.policies
+    .map((item) => `${item.selection}:${item.capability}`)
+    .sort();
+  if (
+    JSON.stringify(grants) !==
+    JSON.stringify(["kv:read", "kv:write", "store:read", "store:write"])
+  )
+    throw new Error(`Incorrect bootstrap grants in ${name}: ${grants}`);
+  const admin = fn.secretBindings.filter((b) => b.binding.name === ADMIN);
+  const wantAdmin = name === "bootstrap-postgres";
+  if (
+    admin.length !== (wantAdmin ? 1 : 0) ||
+    fn.secretReads.some((item) => item.bindingName === ADMIN) !== wantAdmin
+  )
+    throw new Error(`Incorrect administrator secret scope in ${name}`);
+}
 
 export function prepareRoot(parent, name, version) {
   const stack = fixtures[name];
@@ -430,6 +531,7 @@ export function prepareRoot(parent, name, version) {
         throw new Error(`Incorrect consumer store scope in ${name}`);
     }
   }
+  assertBootstrapScope(name, stack, view);
   const options = {
     outputDirectory: target,
     modulesDirectory: modules,
@@ -457,16 +559,46 @@ export function prepareRoot(parent, name, version) {
   writeFileSync(providerPath, `${JSON.stringify(provider, null, 2)}\n`);
   const render = (value, owner) =>
     renderInfraValue(value, owner, stack, options);
+  const bootstrapSecret = stack.platform.config.bootstrapSecretName;
   const env = Object.fromEntries(
     view.functions.map((fn) => [
       fn.id,
-      Object.fromEntries(
-        [...fn.envBindings, ...fn.secretBindings].map((b) => [
-          b.binding.name,
-          render(b.binding.value, b.selection),
-        ]),
-      ),
+      {
+        ...Object.fromEntries(
+          [...fn.envBindings, ...fn.secretBindings].map((b) => [
+            b.binding.name,
+            render(b.binding.value, b.selection),
+          ]),
+        ),
+        // The module, not an adapter binding, delivers the name of the one secret.
+        ...(fn.roles.includes("bootstrap")
+          ? { ERRTRAQ_BOOTSTRAP_SECRET_NAME: bootstrapSecret }
+          : {}),
+      },
     ]),
+  );
+  const bootstrap_policies = Object.fromEntries(
+    view.functions
+      .filter((fn) => fn.roles.includes("bootstrap"))
+      .map((fn) => [
+        fn.id,
+        {
+          Version: "2012-10-17",
+          Statement: [
+            {
+              Effect: "Allow",
+              Action: [
+                "secretsmanager:CreateSecret",
+                "secretsmanager:DescribeSecret",
+                "secretsmanager:GetSecretValue",
+              ],
+              Resource: [
+                `arn:aws:secretsmanager:us-east-1:123456789012:secret:${bootstrapSecret}-??????`,
+              ],
+            },
+          ],
+        },
+      ]),
   );
   const policies = Object.fromEntries(
     view.functions.map((fn) => [
@@ -573,6 +705,7 @@ export function prepareRoot(parent, name, version) {
       function_alarms,
       queue_alarms,
       env,
+      bootstrap_policies,
       policies,
       secret_reads,
       queues,
