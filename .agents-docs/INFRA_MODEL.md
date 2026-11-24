@@ -520,6 +520,21 @@ by a `DeploymentTrigger` queue variant, while a cron trigger uses the cron varia
 binding payloads, consumer handling, provider modules, CPU settings and policy semantics remain
 future platform / adapter work; this sketch does not establish that they are implemented.
 
+Known gaps for the M6 Cloudflare platform (recorded from the M2 review, not implemented):
+
+- Binding authorization is all-or-nothing per binding: a Workers binding grants everything the
+  bound resource allows, so capability-scoped grants (`read` vs `write`) cannot be enforced by the
+  platform and policy outputs have no Cloudflare equivalent. The access derivation still decides
+  which roles receive a binding, but not what they may do with it.
+- A literal queue name is rejected as a queue resource: queue resources must be output
+  references, while a Workers queue is addressed by a plain name in configuration.
+- Secrets are values, not identifiers: a Workers secret is delivered as the value itself, whereas
+  the `secret` binding kind assumes an identifier (an ARN-like reference) that the function
+  resolves at run time.
+- Queue trigger settings are a closed set (`batchSize`, `maxConcurrency`, `visibilityTimeoutSec`,
+  `dlq`), so a Cloudflare batch timeout is rejected; the platform or queue schema needs to own
+  extra trigger settings.
+
 ## M2b / M2c handoff
 
 `@errtraq/infra-gen` turns a resolved stack into deterministic Terraform JSON files without I/O.

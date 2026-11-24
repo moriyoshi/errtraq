@@ -29,6 +29,31 @@ export async function assertSafeStackImports(stackUrl: URL): Promise<void> {
       )
         throw new Error("Dynamic import in stack graph");
       if (
+        ts.isCallExpression(node) &&
+        ts.isIdentifier(node.expression) &&
+        node.expression.text === "require"
+      )
+        throw new Error("require() in stack graph");
+      if (
+        ts.isImportEqualsDeclaration(node) &&
+        ts.isExternalModuleReference(node.moduleReference)
+      )
+        throw new Error("import = require() in stack graph");
+      if (
+        (ts.isIdentifier(node) &&
+          node.text === "process" &&
+          !(
+            (ts.isPropertyAccessExpression(node.parent) ||
+              ts.isPropertyAssignment(node.parent)) &&
+            node.parent.name === node
+          )) ||
+        (ts.isPropertyAccessExpression(node) &&
+          ts.isIdentifier(node.expression) &&
+          node.expression.text === "globalThis" &&
+          node.name.text === "process")
+      )
+        throw new Error("Node global process in stack graph");
+      if (
         (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) &&
         node.moduleSpecifier &&
         ts.isStringLiteral(node.moduleSpecifier)

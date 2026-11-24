@@ -477,6 +477,7 @@ describe("AWS descriptor stacks", () => {
   it("carries Lambda settings, grouping, HTTP exposure, and queue options into the view", () => {
     const customized = {
       ...copyStack(shared),
+      outputs: { ingest_url: output("platform", "ingest_url") },
       platform: awsLambda({
         split: ["consumer", "cron"],
         http: ["ingest"],

@@ -544,6 +544,8 @@ export type ResolvedStack = StackConfig & { readonly [resolvedMarker]: true };
 
 // Clone only data objects; schemas are shared, executable objects owned by adapters.
 // Never freeze an input object supplied by the caller.
+const READ_ONLY_CAPABILITIES = new Set(["read", "key-read", "list"]);
+const WRITE_CAPABILITY_WORDS = new Set(["write", "delete", "produce"]);
 function frozenSnapshot<T>(value: T, seen = new WeakMap<object, object>()): T {
   if (value === null || typeof value !== "object") return value;
   const prototype = Object.getPrototypeOf(value);
@@ -612,6 +614,7 @@ export function physicalFunctions(input: unknown): PhysicalFunction[] {
   if (shared.length) groups.push({ id: "shared", roles: shared });
   return groups.map(({ id, roles: groupRoles }) => {
     const settings: FunctionSettings = {};
+    const owners = new Map<string, string>();
     for (const role of groupRoles) {
       for (const [key, value] of Object.entries(
         config.settings?.[role] ?? {},
@@ -621,13 +624,16 @@ export function physicalFunctions(input: unknown): PhysicalFunction[] {
           previous !== undefined &&
           JSON.stringify(previous) !== JSON.stringify(value)
         )
-          throw new Error(`Conflicting ${key} settings in function ${id}`);
+          throw new Error(
+            `Conflicting ${key} settings in function ${id} between roles ${owners.get(key)} and ${role}`,
+          );
         Object.defineProperty(settings, key, {
           value,
           enumerable: true,
           configurable: true,
           writable: true,
         });
+        if (!owners.has(key)) owners.set(key, role);
       }
     }
     return { id, roles: groupRoles, settings };
@@ -899,6 +905,21 @@ function inspect(input: unknown): {
     if (!functions.roles.includes(r))
       fail(path, `Platform does not deploy ${r}`);
   };
+  const walkedValues = new WeakMap<object, Set<string>>();
+  const missingExisting = new Set<string>();
+  const failMissingExisting = (
+    target: string,
+    name: string,
+    label: string,
+    needer: string,
+  ) => {
+    if (missingExisting.has(label)) return;
+    missingExisting.add(label);
+    fail(
+      `${target}.existing.${name}`,
+      `Missing existing output ${label} (first needed by ${needer})`,
+    );
+  };
   const checkValue = (
     value: unknown,
     owner: string,
@@ -922,7 +943,15 @@ function inspect(input: unknown): {
       fail(path, "Invalid infrastructure value");
       return;
     }
+    const walked = `${owner}|${allowRuntime}|${configMode}|${reachable}|${context}|${sensitiveInput}`;
+    const walkedBefore = walkedValues.get(value);
+    if (walkedBefore?.has(walked)) return;
     seen.add(value);
+    const leave = () => {
+      seen.delete(value);
+      if (walkedBefore) walkedBefore.add(walked);
+      else walkedValues.set(value, new Set([walked]));
+    };
     if (Array.isArray(value)) {
       value.forEach((item, i) => {
         checkValue(
@@ -938,7 +967,7 @@ function inspect(input: unknown): {
           sensitiveInput,
         );
       });
-      seen.delete(value);
+      leave();
       return;
     }
     if (
@@ -946,7 +975,7 @@ function inspect(input: unknown): {
       Object.getPrototypeOf(value) !== null
     ) {
       fail(path, "Expected a plain serializable object");
-      seen.delete(value);
+      leave();
       return;
     }
     if (REF in value) {
@@ -1037,13 +1066,13 @@ function inspect(input: unknown): {
           const label = [target, value.name, ...(value.path ?? [])].join(".");
           if (seenOutputs.has(label)) {
             fail(path, `Existing output cycle at ${label}`);
-            seen.delete(value);
+            leave();
             return;
           }
           seenOutputs.add(label);
           let replacement: unknown = ownValue(selected.existing, value.name);
           if (replacement === undefined)
-            fail(path, `Missing existing output ${label} needed by ${path}`);
+            failMissingExisting(target, value.name, label, path);
           else if (isOutputRef(replacement))
             checkValue(
               output(
@@ -1071,10 +1100,7 @@ function inspect(input: unknown): {
                 REF in replacement ||
                 !Object.hasOwn(replacement, key)
               ) {
-                fail(
-                  path,
-                  `Missing existing output key ${label} needed by ${path}`,
-                );
+                failMissingExisting(target, value.name, label, path);
                 replacement = undefined;
                 break;
               }
@@ -1180,7 +1206,7 @@ function inspect(input: unknown): {
         if (value.phase === "generate" && context !== "backend")
           fail(
             path,
-            "Generation environment references are only allowed in backend config or stack metadata",
+            "Generation environment references are only allowed in backend config",
           );
         if (value.phase === "runtime" && !allowRuntime)
           fail(
@@ -1206,7 +1232,7 @@ function inspect(input: unknown): {
         );
       }
     }
-    seen.delete(value);
+    leave();
   };
   for (const [name, declaration] of Object.entries(stack.variables ?? {})) {
     if (declaration.default === undefined) continue;
@@ -1384,7 +1410,10 @@ function inspect(input: unknown): {
   try {
     groups = physicalFunctions(functions);
   } catch (error) {
-    fail("platform.config.settings", String(error));
+    fail(
+      "platform.config.settings",
+      error instanceof Error ? error.message : String(error),
+    );
   }
   // Descriptors cannot alter the data that validation subsequently relies on.
   const deployment = frozenSnapshot(deploymentFor(stack, groups, functions));
@@ -1437,8 +1466,15 @@ function inspect(input: unknown): {
         );
     }
   }
-  for (const [name, ref] of Object.entries(stack.outputs ?? {}))
+  for (const [name, ref] of Object.entries(stack.outputs ?? {})) {
     checkValue(ref, "platform", `outputs.${name}`, false);
+    const urlRole = /^(ingest|api)_url$/.exec(name)?.[1];
+    if (urlRole && !(functions.http ?? []).includes(urlRole as FunctionRole))
+      fail(
+        `outputs.${name}`,
+        `Output ${name} requires the ${urlRole} role in platform.config.http`,
+      );
+  }
   for (const key of Object.keys(stack.queue.infra.topics?.settings ?? {}))
     if (
       !Object.values(stack.queue.infra.topics?.routes ?? {}).some(
@@ -1489,6 +1525,10 @@ function inspect(input: unknown): {
         `queue.infra.topics.settings.${trigger.physical}.dlq`,
         "Disabled DLQ cannot specify maxReceiveCount",
       );
+    // A rejected platform config leaves the timeout unknown; do not cascade.
+    const platformConfigRejected = issues.some((issue) =>
+      issue.path.startsWith("platform.config"),
+    );
     const timeout = deployment.functions.find(
       (fn) => fn.id === trigger.functionId,
     )?.settings.timeoutSec;
@@ -1502,13 +1542,18 @@ function inspect(input: unknown): {
     if (
       supportsVisibility &&
       timeout !== undefined &&
-      setting.visibilityTimeoutSec === undefined
+      setting.visibilityTimeoutSec === undefined &&
+      !platformConfigRejected
     )
       fail(
         `queue.infra.topics.settings.${trigger.physical}.visibilityTimeoutSec`,
         "Queue visibility is required when the consumer timeout is configured",
       );
-    if (supportsVisibility && setting.visibilityTimeoutSec !== undefined) {
+    if (
+      supportsVisibility &&
+      setting.visibilityTimeoutSec !== undefined &&
+      !platformConfigRejected
+    ) {
       if (timeout === undefined)
         fail(
           `queue.infra.topics.settings.${trigger.physical}.visibilityTimeoutSec`,
@@ -1602,7 +1647,10 @@ function inspect(input: unknown): {
         );
         const expected = ownValue(sel.infra.module.outputs, name);
         if (expected && !existingTypeCompatible(val, expected, path))
-          fail(`${path}.existing.${name}`, `Expected ${expected} output value`);
+          fail(
+            `${path}.existing.${name}`,
+            `Expected ${typeof expected === "string" ? expected : JSON.stringify(expected)} output value`,
+          );
       }
     }
     for (const [i, binding] of sel.infra.bindings.entries()) {
@@ -1707,6 +1755,16 @@ function inspect(input: unknown): {
               loc,
               "Capability requires a declared JSON policy document output from its own module",
             );
+          if (READ_ONLY_CAPABILITIES.has(capability)) {
+            const names = [policy.name, ...(policy.path ?? [])]
+              .flatMap((part) => part.split(/[^A-Za-z0-9]+/))
+              .filter((part) => WRITE_CAPABILITY_WORDS.has(part));
+            if (names.length)
+              fail(
+                loc,
+                `Read capability ${capability} must not use the ${names[0]} policy output`,
+              );
+          }
         }
       }
     }

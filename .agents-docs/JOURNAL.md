@@ -1515,3 +1515,20 @@ be re-parsed" (the resolved marker is a registered symbol, the order cache is pe
 checks `stackOrigin` first. The test for the `package.json` fallback of `projectRoot` uses the OS
 temporary directory, because every directory under this repository has a workspace file above it.
 
+## 2026-11-25 — M2 review follow-ups N9, N12-N15
+
+N9 reproduced (depth 25 shared object exceeded the time bound); `checkValue` now records finished
+walks per (value, owner, mode flags) in a WeakMap, so a shared sub-object is walked once per
+context and reported once (a duplicate error path for a shared object is no longer emitted). True
+cycles are still caught by the depth cap before the walk, so the test asserts "some issue" rather
+than one message. N12: the adapters' policy outputs are `policies.<capability>.<purpose>` but
+`key-read` uses `policies.read` and `metadata-delete` uses `policies.write`, so a strict
+"output name equals capability" rule would reject valid descriptors; the check instead rejects a
+read-only capability (`read`, `key-read`, `list`) whose policy output name or key path contains
+`write`, `delete` or `produce` (the escalation direction); the reverse swap is not detected. A
+`<role>_url` stack output requires that role in `platform.config.http`. N14: a missing existing
+key is now reported once at `<selection>.existing.<output>` (a path change); the
+conflicting-settings error names the roles. N15 bootstrap ownership: deployed bootstrap is the
+operator-run `errtraq bootstrap` (M3g), so nothing else owns it. N15 type and trigger-setting
+items need a descriptor design decision and were left open in TODO.md.
+

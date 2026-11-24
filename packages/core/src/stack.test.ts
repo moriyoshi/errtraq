@@ -846,7 +846,7 @@ describe("infrastructure model", () => {
     expect(
       validateStack(v).some(
         (issue) =>
-          issue.path === "outputs.ingest_url" &&
+          issue.path === "platform.existing.arn" &&
           issue.message.includes("Missing existing output"),
       ),
     ).toBe(true);
@@ -2227,5 +2227,141 @@ describe("infrastructure model", () => {
     });
     expect(validateStack(v).some((x) => x.path === "blob.config")).toBe(true);
     expect(validateStack({ ...stack(), typo: true }).length).toBeGreaterThan(0);
+  });
+  it("validates deeply shared sub-objects in bounded time and still detects cycles", () => {
+    const v = stack();
+    let shared: Record<string, unknown> = { leaf: "x" };
+    for (let i = 0; i < 25; i++) shared = { a: shared, b: shared };
+    v.platform.config = { roles: [...roles], split: [...roles], extra: shared };
+    const started = Date.now();
+    validateStack(v);
+    expect(Date.now() - started).toBeLessThan(1000);
+    const cyclic: Record<string, unknown> = {};
+    cyclic.self = cyclic;
+    const w = stack();
+    w.platform.config = { roles: [...roles], split: [...roles], extra: cyclic };
+    expect(validateStack(w).length).toBeGreaterThan(0);
+  });
+  it("rejects read grants that use write-class policy outputs", () => {
+    const v = stack();
+    v.store.infra.module.outputs = {
+      arn: "string",
+      policies: { map: { map: "json-document" } },
+    };
+    v.store.infra.capabilities = {
+      "key-read": { primary: out("policies", "read", "primary") },
+      read: { primary: out("policies", "write", "primary") },
+      write: { primary: out("policies", "write", "primary") },
+      delete: { primary: out("policies", "delete", "primary") },
+      "metadata-delete": { primary: out("policies", "write", "primary") },
+    };
+    const issues = validateStack(v);
+    expect(issues.map((x) => [x.path, x.message])).toEqual([
+      [
+        "store.infra.capabilities.read.primary",
+        "Read capability read must not use the write policy output",
+      ],
+    ]);
+  });
+  it("rejects url outputs for roles without an HTTP app", () => {
+    const v = stack();
+    v.platform.manifest.configSchema = z
+      .object({
+        roles: z.array(z.enum(roles)),
+        split: z.array(z.enum(roles)),
+        http: z.array(z.enum(["ingest", "api"])).optional(),
+      })
+      .passthrough();
+    v.platform.config = {
+      roles: [...roles],
+      split: [...roles],
+      http: ["ingest"],
+    };
+    v.outputs = {
+      ingest_url: output("platform", "arn"),
+      api_url: output("platform", "arn"),
+    };
+    expect(validateStack(v).map((x) => [x.path, x.message])).toEqual([
+      [
+        "outputs.api_url",
+        "Output api_url requires the api role in platform.config.http",
+      ],
+    ]);
+  });
+  it("reports a missing existing key once at the existing output", () => {
+    const v = stack();
+    v.store.infra.module.outputs = {
+      arn: "string",
+      policies: { map: { map: "json-document" } },
+    };
+    v.store.existing = { arn: "a", policies: { read: { primary: "{}" } } };
+    v.platform.infra.inputs = () => ({
+      a: output("store", "policies", "write", "primary"),
+      b: output("store", "policies", "write", "primary"),
+      c: { d: output("store", "policies", "write", "primary") },
+    });
+    expect(
+      validateStack(v)
+        .filter((x) => x.message.includes("Missing existing"))
+        .map((x) => [x.path, x.message]),
+    ).toEqual([
+      [
+        "store.existing.policies",
+        "Missing existing output store.policies.write.primary (first needed by platform.infra.inputs.a)",
+      ],
+    ]);
+  });
+  it("names the expected type for map outputs without [object Object]", () => {
+    const v = stack();
+    v.store.infra.module.outputs = {
+      arn: "string",
+      policies: { map: { map: "json-document" } },
+    };
+    v.store.existing = { arn: "a", policies: "x" };
+    expect(
+      validateStack(v).find((x) => x.path === "store.existing.policies")
+        ?.message,
+    ).toBe('Expected {"map":{"map":"json-document"}} output value');
+  });
+  it("describes conflicting per-role settings and generation env placement", () => {
+    const v = stack();
+    v.platform.config = {
+      roles: [...roles],
+      split: ["ingest"],
+      settings: { api: { timeoutSec: 10 }, consumer: { timeoutSec: 20 } },
+    };
+    const issue = validateStack(v).find(
+      (x) => x.path === "platform.config.settings",
+    );
+    expect(issue?.message).toBe(
+      "Conflicting timeoutSec settings in function shared between roles api and consumer",
+    );
+    const w = stack();
+    w.platform.infra.inputs = () => ({ a: generationEnv("X") });
+    expect(
+      validateStack(w).find((x) => x.path === "platform.infra.inputs.a")
+        ?.message,
+    ).toBe(
+      "Generation environment references are only allowed in backend config",
+    );
+  });
+  it("does not cascade a rejected per-function setting into a visibility error", () => {
+    const v = stack();
+    v.platform.config = {
+      roles: [...roles],
+      split: [...roles],
+      settings: { consumer: { timeoutSec: 1000 } },
+    };
+    v.platform.manifest.configSchema = z
+      .object({
+        roles: z.array(z.enum(roles)),
+        split: z.array(z.enum(roles)),
+        settings: z.any(),
+      })
+      .refine((c) => c.settings.consumer.timeoutSec <= 900, "too long");
+    topics(v).settings = { shared: { visibilityTimeoutSec: 180 } };
+    expect(validateStack(v).map((x) => [x.path, x.message])).toEqual([
+      ["platform.config", "too long"],
+    ]);
   });
 });

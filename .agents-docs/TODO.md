@@ -76,7 +76,9 @@ item should be resolved or removed once addressed. Milestone work itself is trac
 - [x] M3: add documented real-shaped EventBridge event fixtures and verify dispatch (packages/platforms/aws-lambda/src/aws-events.test.ts); the recovery job and generated Lambda wiring are implemented (8573aa2). — *source: M2b step 2*
 - [x] M3e: implement and test stage 1 of the DynamoDB layout, module and policies (43e1904, a5bf23b, fa089e4); subject erasure remains M4. — *source: M2b step 2; revised M3e step 1c*
 
-- [ ] M3 / M6: address second-review follow-ups N9 and N12-N15, including Cloudflare binding authorization and runtime limitations. — *source: `.agents-workspace/tmp/m2a2-review-fixes.md`*
+- [x] M3 / M6: second-review follow-ups N9 and N12-N14 (memoized value walk, read-grant policy name check, `<role>_url` outputs need the HTTP role, adapter-stack-check require/process cases, error messages); N15 bootstrap ownership is settled by the M3g operator-CLI `errtraq bootstrap`. — *source: `.agents-workspace/tmp/m2a2-review-fixes.md`*
+- [ ] M6: N15 remainder needs a design decision: (a) per-function platform extras are `unknown` (make `FunctionSettings` / `DeploymentView` generic over a platform settings type); (b) dynamically built `TopicMapping.routes` need a cast (required topic keys); (c) `QueueTriggerSettings` is a closed strict set, so a Cloudflare batch timeout is rejected (needs an owner schema for extra trigger settings). — *source: `.agents-workspace/tmp/m2a2-review-fixes.md`*
+- [ ] M6: Cloudflare fit gaps (see "Cloudflare fit" in `.agents-docs/INFRA_MODEL.md`): binding authorization is all-or-nothing per binding; a literal queue name is rejected as a queue resource; secrets are values, not identifiers. — *source: `.agents-workspace/tmp/m2a2-review-fixes.md`*
 
 - [ ] M3h / M4: verify the implemented sortable encodings, projections, sharding and transaction limits on AWS (43e1904, a5bf23b); document PITR retention of erased data for up to 35 days with M4 erasure. — *source: M2b HCL review section B; M3e step 1c*
 - [x] M3: require the full Secrets Manager ARN including its random suffix. — *source: M2b HCL review section B; M3g part 1*
