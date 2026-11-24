@@ -8,8 +8,16 @@ export function assertPartialBatchSupport(mapping) {
     "Lambda mapping must retain ReportBatchItemFailures",
   );
 }
-/** Reproduce issue #61: only one conditional update may succeed on each absent key. */
-export async function checkConditionalUpdateGap(c, rounds = 5, attempts = 200) {
+/**
+ * Reproduce issue #61: only one conditional update may succeed on each absent key. A round
+ * reproduced the race 7-30% of the time in 2026-11-25 measurements, so 150 rounds bound a false
+ * "no longer reproduces" below 1e-4 and stop at the first reproduction.
+ */
+export async function checkConditionalUpdateGap(
+  c,
+  rounds = 150,
+  attempts = 200,
+) {
   const TableName = unique();
   await c.dynamo("CreateTable", {
     TableName,
@@ -40,7 +48,7 @@ export async function checkConditionalUpdateGap(c, rounds = 5, attempts = 200) {
         return;
     }
     throw new Error(
-      "dynamodb-conditional-atomicity gap no longer reproduces; inspect and remove the exception",
+      `dynamodb-conditional-atomicity gap no longer reproduces in ${rounds} rounds; inspect and remove the exception`,
     );
   } finally {
     await c.dynamo("DeleteTable", { TableName });

@@ -143,4 +143,4 @@ item should be resolved or removed once addressed. Milestone work itself is trac
   and duplicate delivery. KV cost includes one increment per issue/window group and additional
   new-issue and dropped-counter increments; the DynamoDB adapter also reads on increment.
 
-- [ ] Test harness: make the `dynamodb-conditional-atomicity` winterbaume gap check in `scripts/aws-emulated/gap-checks.mjs` tolerant of runs where the probabilistic race does not occur (it flaked in 4 of 8 runs on 2026-11-24), e.g. retry the probe several times before declaring the gap gone. — *source: M3 queue items 7-8*
+- [x] Test harness: make the `dynamodb-conditional-atomicity` winterbaume gap check in `scripts/aws-emulated/gap-checks.mjs` tolerant of runs where the probabilistic race does not occur (it flaked in 4 of 8 runs on 2026-11-24), e.g. retry the probe several times before declaring the gap gone. Done 2026-11-25: a round reproduces 7-30% of the time, so the probe now runs up to 150 rounds (about 7 s when the gap is gone) and stops at the first reproduction. — *source: M3 queue items 7-8*
