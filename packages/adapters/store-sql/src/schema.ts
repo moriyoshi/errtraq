@@ -42,7 +42,7 @@ async function migrateLocked(
     .select("version")
     .orderBy("version", "desc")
     .executeTakeFirst();
-  if (Number(latest?.version ?? 0) > 4)
+  if (Number(latest?.version ?? 0) > 5)
     throw new UnsupportedSchemaVersionError(
       `Unsupported schema version ${String(latest?.version)}`,
     );
@@ -99,6 +99,27 @@ async function migrateLocked(
         ]);
       },
     },
+    {
+      version: 5,
+      // Token listing is per organization: backfill the (previously unused) scope column
+      // from each stored token, then index it. Tokens issued earlier stay listable.
+      run: async (db: SqlDatabase) => {
+        const rows = await db
+          .selectFrom("tokens")
+          .select(["pk", "data"])
+          .execute();
+        for (const row of rows) {
+          const token = JSON.parse(String(row.data)) as { orgId?: string };
+          if (typeof token.orgId === "string")
+            await db
+              .updateTable("tokens")
+              .set({ scope: token.orgId })
+              .where("pk", "=", row.pk)
+              .execute();
+        }
+        await dialect.createIndex(db, "tokens_org", "tokens", ["scope", "pk"]);
+      },
+    },
   ];
   for (const step of steps) {
     const run = async (trx: SqlDatabase) => {
@@ -108,7 +129,7 @@ async function migrateLocked(
         .orderBy("version", "desc")
         .executeTakeFirst();
       const version = Number(current?.version ?? 0);
-      if (version > 4)
+      if (version > 5)
         throw new UnsupportedSchemaVersionError(
           `Unsupported schema version ${version}`,
         );

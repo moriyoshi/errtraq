@@ -2,6 +2,7 @@ import {
   type ActiveStore,
   type ApiToken,
   type ApiTokenId,
+  type ApiTokenSummary,
   type ArchiveState,
   type ArchiveStore,
   BlobInvalidKeyError,
@@ -957,6 +958,101 @@ export function activeStoreContract(
       await expect(
         store.projects.createToken({ ...token, tokenHash: "other-hash" }),
       ).rejects.toBeInstanceOf(ConflictError);
+    });
+    it("lists tokens per organization without secrets and pages by token ID", async () => {
+      const store = await factory();
+      const org = "org-list" as OrgId;
+      const make = (id: string, orgId: OrgId = org): ApiToken => ({
+        id: id as ApiTokenId,
+        orgId,
+        tokenHash: `secret-hash-${id}`,
+        scopes: ["event:read"],
+        label: `label ${id}`,
+        createdAt: t(1),
+      });
+      for (const id of ["t3", "t1", "t2"])
+        await store.projects.putToken(make(id));
+      await store.projects.createToken(make("t4"));
+      await store.projects.putToken(make("other", "org-other" as OrgId));
+      await store.projects.putToken({ ...make("t2"), revokedAt: t(5) });
+      const seen: ApiTokenSummary[] = [];
+      let cursor: Cursor | undefined;
+      let pages = 0;
+      do {
+        const page = await store.projects.listTokens(org, cursor, 2);
+        expect(page.items.length).toBeLessThanOrEqual(2);
+        seen.push(...page.items);
+        cursor = page.nextCursor ?? undefined;
+        pages++;
+      } while (cursor && pages < 10);
+      expect(seen.map((item) => item.id)).toEqual(["t1", "t2", "t3", "t4"]);
+      expect(seen[1]?.revokedAt).toBe(t(5));
+      expect(seen[0]).toMatchObject({
+        orgId: org,
+        label: "label t1",
+        createdAt: t(1),
+        scopes: ["event:read"],
+      });
+      expect(JSON.stringify(seen)).not.toContain("secret-hash");
+      for (const item of seen) expect(item).not.toHaveProperty("tokenHash");
+      expect((await store.projects.listTokens("empty" as OrgId)).items).toEqual(
+        [],
+      );
+    });
+    it("revokes tokens idempotently, scoped to the organization, visible at once", async () => {
+      const store = await factory();
+      const org = "org-revoke" as OrgId;
+      const token: ApiToken = {
+        id: "rev" as ApiTokenId,
+        orgId: org,
+        tokenHash: "hash-rev",
+        scopes: ["event:write"],
+      };
+      await store.projects.putToken(token);
+      expect(
+        await store.projects.revokeToken("other" as OrgId, token.id, t(2)),
+      ).toBeNull();
+      expect(
+        await store.projects.revokeToken(org, "missing" as ApiTokenId, t(2)),
+      ).toBeNull();
+      expect(
+        (await store.projects.getTokenByHash(token.tokenHash))?.revokedAt,
+      ).toBeUndefined();
+      const first = await store.projects.revokeToken(org, token.id, t(3));
+      expect(first).toMatchObject({ id: token.id, revokedAt: t(3) });
+      expect(first).not.toHaveProperty("tokenHash");
+      expect(
+        (await store.projects.getTokenByHash(token.tokenHash))?.revokedAt,
+      ).toBe(t(3));
+      const again = await store.projects.revokeToken(org, token.id, t(9));
+      expect(again?.revokedAt).toBe(t(3));
+      const stored = await store.projects.getTokenByHash(token.tokenHash);
+      expect(stored).toMatchObject({
+        scopes: ["event:write"],
+        revokedAt: t(3),
+      });
+      expect((await store.projects.listTokens(org)).items[0]?.revokedAt).toBe(
+        t(3),
+      );
+    });
+    it("keeps one revokedAt when the same token is revoked concurrently", async () => {
+      const store = await factory();
+      const org = "org-race" as OrgId;
+      await store.projects.putToken({
+        id: "race" as ApiTokenId,
+        orgId: org,
+        tokenHash: "hash-race",
+        scopes: [],
+      });
+      const results = await Promise.all(
+        [t(4), t(5), t(6), t(7)].map((at) =>
+          store.projects.revokeToken(org, "race" as ApiTokenId, at),
+        ),
+      );
+      const winner = (await store.projects.getTokenByHash("hash-race"))
+        ?.revokedAt;
+      expect(winner).toBeDefined();
+      for (const result of results) expect(result?.revokedAt).toBe(winner);
     });
     it("looks up matching issue IDs across projects", async () => {
       const s = await factory();

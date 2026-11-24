@@ -75,7 +75,19 @@ export interface ApiToken {
   orgId: OrgId;
   tokenHash: string;
   scopes: string[];
+  /** Optional operator-facing label; never derived from the secret. */
+  label?: string;
+  /** Absent on tokens issued before M3 token management. */
+  createdAt?: Timestamp;
   revokedAt?: Timestamp;
+}
+
+/** What token listings expose: metadata only, never the hash or plaintext. */
+export type ApiTokenSummary = Omit<ApiToken, "tokenHash">;
+
+export function summarizeApiToken(token: ApiToken): ApiTokenSummary {
+  const { tokenHash: _hash, ...summary } = token;
+  return summary;
 }
 
 export type IssueStatus = "unresolved" | "resolved" | "ignored";

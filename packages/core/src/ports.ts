@@ -1,5 +1,7 @@
 import type {
   ApiToken,
+  ApiTokenId,
+  ApiTokenSummary,
   ArchiveState,
   ArtifactBundle,
   BundleManifest,
@@ -74,6 +76,23 @@ export interface ProjectRepo {
    * Never modify an existing token. A token ID owned by a different hash raises ConflictError. */
   createToken(token: ApiToken): Promise<boolean>;
   putToken(token: ApiToken): Promise<void>;
+  /** Indexed, paged token metadata for one organization, ascending by token ID. Never returns
+   * hashes. Tokens written before the index existed are listed once any putToken (or
+   * revokeToken) rewrites them; SQL adapters backfill in migration. Cursors advance over
+   * examined index keys, so a page may be short. */
+  listTokens(
+    orgId: OrgId,
+    cursor?: Cursor,
+    limit?: number,
+  ): Promise<Page<ApiTokenSummary>>;
+  /** Idempotent revocation scoped to the organization. Returns the resulting summary, or null
+   * when no such token exists in that organization. An already revoked token keeps its first
+   * revokedAt. The revoked state is visible to getTokenByHash immediately (read-after-write). */
+  revokeToken(
+    orgId: OrgId,
+    id: ApiTokenId,
+    at: Timestamp,
+  ): Promise<ApiTokenSummary | null>;
 }
 
 export interface IssueRepo {

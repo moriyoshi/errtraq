@@ -1,5 +1,6 @@
 import {
   type ActiveStore,
+  type ApiToken,
   type ArchiveState,
   type ArtifactBundle,
   bundleDebugIdsDigest,
@@ -20,6 +21,7 @@ import {
   type RecordInput,
   type RecordResult,
   type StoredEvent,
+  summarizeApiToken,
   UnsupportedQueryError,
   VersionConflictError,
   withIdentifierLimits,
@@ -407,6 +409,7 @@ export function createSqlStore({ db, dialect }: SqlStoreOptions): ActiveStore {
             .insertInto("tokens")
             .values({
               pk: token.id,
+              scope: token.orgId,
               lookup: token.tokenHash,
               data: JSON.stringify(token),
             })
@@ -427,9 +430,49 @@ export function createSqlStore({ db, dialect }: SqlStoreOptions): ActiveStore {
       putToken: async (token) =>
         put("tokens", {
           pk: token.id,
+          scope: token.orgId,
           lookup: token.tokenHash,
           data: JSON.stringify(token),
         }),
+      listTokens: async (orgId, cursor, limit) => {
+        const result = await list<ApiToken>("tokens", {
+          scope: orgId,
+          cursor,
+          limit,
+        });
+        return {
+          items: result.items.map(summarizeApiToken),
+          nextCursor: result.nextCursor,
+        };
+      },
+      revokeToken: async (orgId, id, at) => {
+        const row = await db
+          .selectFrom("tokens")
+          .select("data")
+          .where("pk", "=", id)
+          .where("scope", "=", orgId)
+          .executeTakeFirst();
+        if (!row) return null;
+        const token = decode<ApiToken>(row.data);
+        if (token.revokedAt) return summarizeApiToken(token);
+        // Conditional on the row still being unrevoked: a concurrent revoke wins and is re-read.
+        const revoked = { ...token, revokedAt: at };
+        const result = await retryBusy(() =>
+          db
+            .updateTable("tokens")
+            .set({ data: JSON.stringify(revoked) })
+            .where("pk", "=", id)
+            .where("scope", "=", orgId)
+            .where("data", "=", String(row.data))
+            .executeTakeFirst(),
+        );
+        if (dialect.didUpdate(result.numUpdatedRows))
+          return summarizeApiToken(revoked);
+        const current = await byKey<ApiToken>("tokens", id);
+        return current && current.orgId === orgId
+          ? summarizeApiToken(current)
+          : null;
+      },
     },
     issues: {
       getById: async (id) => {

@@ -14,6 +14,7 @@ import {
   type ProjectKey,
   type Release,
   type StoredEvent,
+  summarizeApiToken,
   UnsupportedQueryError,
   VersionConflictError,
   withIdentifierLimits,
@@ -138,6 +139,25 @@ export class MemoryActiveStore implements ActiveStore {
         if (row.id === token.id && value !== token.tokenHash)
           this.tokens.delete(value);
       this.tokens.set(token.tokenHash, copy(token));
+    },
+    listTokens: async (orgId, cursor, limit) =>
+      page(
+        [...this.tokens.values()]
+          .filter((token) => token.orgId === orgId)
+          .sort((a, b) => compareKeys([a.id], [b.id]))
+          .map(summarizeApiToken),
+        cursor,
+        limit,
+        (token) => [token.id],
+        JSON.stringify(["tokens", orgId]),
+      ),
+    revokeToken: async (orgId, id, at) => {
+      for (const [hash, row] of this.tokens)
+        if (row.id === id && row.orgId === orgId) {
+          if (!row.revokedAt) this.tokens.set(hash, { ...row, revokedAt: at });
+          return summarizeApiToken(copy(this.tokens.get(hash) as ApiToken));
+        }
+      return null;
     },
   };
   private recordOne: (

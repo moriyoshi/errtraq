@@ -132,6 +132,55 @@ describe.skipIf(!endpoint)("DynamoDB store emulator", () => {
     expect(result.Item.GSI7PK.S).toContain("ENTITY|");
     expect(result.Item.GSI3SK.S).toMatch(/^2025-01-01/);
   });
+  it("revokes a token created before the org index and backfills it on rewrite", async () => {
+    const store = await makeStore();
+    const token = {
+      id: "legacy-token",
+      orgId: "org-legacy",
+      tokenHash: "legacy-hash",
+      scopes: ["event:read"],
+    };
+    const PK = partition("TOKEN", token.tokenHash);
+    await api("TransactWriteItems", {
+      TransactItems: [
+        {
+          Put: {
+            TableName: store.table,
+            Item: {
+              PK: { S: PK },
+              SK: { S: "DATA" },
+              data: { S: JSON.stringify(token) },
+              revision: { S: "legacy" },
+            },
+          },
+        },
+        {
+          Put: {
+            TableName: store.table,
+            Item: {
+              PK: { S: partition("KEYID", "token", token.id) },
+              SK: { S: "DATA" },
+              owner: { S: PK },
+              revision: { S: "legacy" },
+            },
+          },
+        },
+      ],
+    });
+    const org = token.orgId as import("@errtraq/core").OrgId;
+    expect((await store.projects.listTokens(org)).items).toEqual([]);
+    const revoked = await store.projects.revokeToken(
+      org,
+      token.id as import("@errtraq/core").ApiTokenId,
+      "2025-01-01T00:00:00.000Z" as import("@errtraq/core").Timestamp,
+    );
+    expect(revoked?.revokedAt).toBe("2025-01-01T00:00:00.000Z");
+    expect(
+      (await store.projects.getTokenByHash(token.tokenHash))?.revokedAt,
+    ).toBe("2025-01-01T00:00:00.000Z");
+    // The conditional rewrite added the index attributes (lazy backfill).
+    expect((await store.projects.listTokens(org)).items).toHaveLength(1);
+  });
   it("measures grouped queue contention end to end on DynamoDB Local", async () => {
     for (const total of [200, 500]) {
       const store = await makeStore();

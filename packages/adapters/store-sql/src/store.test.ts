@@ -1,6 +1,12 @@
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { bootstrapProject, WebCryptoIdGen } from "@errtraq/core";
+import {
+  type ApiTokenId,
+  bootstrapProject,
+  type OrgId,
+  type Timestamp,
+  WebCryptoIdGen,
+} from "@errtraq/core";
 import { activeStoreContract, FakeClock, MemoryKV } from "@errtraq/testing";
 import { Kysely, sql } from "kysely";
 import { afterAll, afterEach, describe, expect, it } from "vitest";
@@ -116,7 +122,7 @@ describe("SQLite migrations and indexes", () => {
     await migrate(db, sqliteStoreDialect);
     await migrate(db, sqliteStoreDialect);
     const rows = await db.selectFrom("schema_version").selectAll().execute();
-    expect(rows.map((r) => r.version)).toEqual([1, 2, 3, 4]);
+    expect(rows.map((r) => r.version)).toEqual([1, 2, 3, 4, 5]);
   });
   it("upgrades version one and rejects newer schemas", async () => {
     const db = database(":memory:");
@@ -135,11 +141,49 @@ describe("SQLite migrations and indexes", () => {
           .orderBy("version")
           .execute()
       ).map((r) => r.version),
-    ).toEqual([1, 2, 3, 4]);
+    ).toEqual([1, 2, 3, 4, 5]);
     await db.insertInto("schema_version").values({ version: 7 }).execute();
     await expect(migrate(db, sqliteStoreDialect)).rejects.toMatchObject({
       name: "UnsupportedSchemaVersionError",
     });
+  });
+  it("backfills the organization scope so pre-index tokens stay listable and revocable", async () => {
+    const db = database(":memory:");
+    await db.schema
+      .createTable("schema_version")
+      .addColumn("version", "integer", (c) => c.primaryKey())
+      .execute();
+    await createInitialSchema(db, sqliteStoreDialect);
+    await db.insertInto("schema_version").values({ version: 1 }).execute();
+    const legacy = {
+      id: "old-token",
+      orgId: "org-1",
+      tokenHash: "legacy-hash",
+      scopes: ["event:read"],
+    };
+    await db
+      .insertInto("tokens")
+      .values({
+        pk: legacy.id,
+        lookup: legacy.tokenHash,
+        data: JSON.stringify(legacy),
+      })
+      .execute();
+    await migrate(db, sqliteStoreDialect);
+    const store = createSqlStore({ db, dialect: sqliteStoreDialect });
+    const listed = await store.projects.listTokens("org-1" as OrgId);
+    expect(listed.items).toEqual([
+      { id: "old-token", orgId: "org-1", scopes: ["event:read"] },
+    ]);
+    const revoked = await store.projects.revokeToken(
+      "org-1" as OrgId,
+      "old-token" as ApiTokenId,
+      "2024-01-01T00:00:00.000Z" as Timestamp,
+    );
+    expect(revoked?.revokedAt).toBe("2024-01-01T00:00:00.000Z");
+    expect(
+      (await store.projects.getTokenByHash("legacy-hash"))?.revokedAt,
+    ).toBe("2024-01-01T00:00:00.000Z");
   });
   it("migrates legacy bundles and retains active debug-id lookups", async () => {
     const db = database(":memory:");

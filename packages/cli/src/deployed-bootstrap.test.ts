@@ -33,6 +33,27 @@ function fixture() {
   return { store, options, getSecret: () => value };
 }
 describe("deployed bootstrap", () => {
+  it("records bootstrap token metadata and backfills a pre-index token on rerun", async () => {
+    const f = fixture();
+    await bootstrapDeployed(f.options);
+    const org = (await f.store.projects.getOrgBySlug("org"))?.id;
+    if (!org) throw new Error("missing org");
+    const listed = (await f.store.projects.listTokens(org)).items;
+    expect(listed).toHaveLength(1);
+    expect(listed[0]).toMatchObject({ label: "bootstrap" });
+    expect(listed[0]?.createdAt).toBeDefined();
+    const hash = await hashApiToken(
+      (JSON.parse(f.getSecret() ?? "{}") as { token: string }).token,
+    );
+    const stored = await f.store.projects.getTokenByHash(hash);
+    if (!stored) throw new Error("missing token");
+    const { createdAt: _c, label: _l, ...legacy } = stored;
+    await f.store.projects.putToken(legacy);
+    await bootstrapDeployed(f.options);
+    const again = await f.store.projects.getTokenByHash(hash);
+    expect(again?.createdAt).toBeDefined();
+    expect(again?.label).toBe("bootstrap");
+  });
   it("constructs only the deployed store and KV with delivered bindings", async () => {
     const f = fixture();
     const seen: string[] = [];

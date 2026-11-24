@@ -81,6 +81,29 @@ who can read it. If interrupted, rerun with the same arguments; an existing secr
 the deployment, and its token is registered if the earlier attempt stopped before that step.
 
 
+### Manage API tokens on a deployed stack
+
+Tokens are stored only as hashes, so plaintext cannot be recovered or listed. The operator
+commands use the same environment and credentials as `errtraq bootstrap` and talk to the store
+directly (no HTTP endpoint exposes token administration; API tokens carry only `event:*` scopes):
+
+```sh
+pnpm exec errtraq token list --stack stacks/aws-dynamodb.ts --org my-org
+pnpm exec errtraq token revoke --stack stacks/aws-dynamodb.ts --org my-org --id <token-id> [--force]
+```
+
+`list` prints id, state, label, scopes and creation time; never hashes. `revoke` is idempotent
+and takes effect on the next request (token lookups are strongly consistent). It refuses to
+revoke the **last active** token of the organization unless `--force` is given, because every
+API client would be locked out. Revoking the bootstrap token also makes a later
+`errtraq bootstrap` rerun fail with a "revoked" conflict. The operator needs, for DynamoDB,
+`GetItem`, `PutItem` / `TransactWriteItems`, `BatchGetItem` and `Query` on the `entity-list`
+index of the store table; for Postgres, ordinary read and write on the `tokens` table.
+Tokens registered before this feature (DynamoDB) are revocable by id immediately and appear in
+`list` after `errtraq bootstrap` is rerun or they are revoked; SQL stores backfill during
+migration.
+
+
 ### Bring-your-own RDS PostgreSQL
 
 The Postgres stack helper supports RDS IAM authentication with

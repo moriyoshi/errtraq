@@ -7,6 +7,12 @@ import { buildSummary, dsnHost, dsnOrigin } from "./address.js";
 import { buildStack } from "./build.js";
 import { constructStack } from "./construction.js";
 import { bootstrapAwsStack } from "./deployed-bootstrap.js";
+import {
+  formatTokens,
+  listTokens,
+  revokeToken,
+  withDeployedStore,
+} from "./deployed-token.js";
 import { generateInfra, repositoryRoot, safeDirectory } from "./infra.js";
 import { assertNodeVersion } from "./node-version.js";
 import { devToken } from "./token.js";
@@ -39,19 +45,28 @@ export async function main(args: string[]): Promise<void> {
   const [command, ...initial] = args;
   const rotate = command === "token" && initial[0] === "rotate";
   const infra = command === "infra" && initial[0] === "generate";
-  const rest = rotate || infra ? initial.slice(1) : initial;
+  const tokenAdmin =
+    command === "token" && (initial[0] === "list" || initial[0] === "revoke")
+      ? initial[0]
+      : undefined;
+  const rest = rotate || infra || tokenAdmin ? initial.slice(1) : initial;
   if (
     !rotate &&
     !infra &&
+    !tokenAdmin &&
     !["dev", "validate", "build", "bootstrap"].includes(command ?? "")
   )
     throw new Error(
-      "Usage: errtraq <dev|validate|build|bootstrap|infra generate|token rotate> --stack <file> [--out dir]",
+      "Usage: errtraq <dev|validate|build|bootstrap|infra generate|token rotate|token list|token revoke> --stack <file> [--out dir]",
     );
   const options: Record<string, string> = {};
   let allowMissing = false;
   for (let i = 0; i < rest.length; i++) {
     const flag = rest[i];
+    if (flag === "--force" && tokenAdmin === "revoke") {
+      options[flag] = "true";
+      continue;
+    }
     if (flag === "--allow-missing-artifacts" && infra) {
       allowMissing = true;
       continue;
@@ -64,7 +79,9 @@ export async function main(args: string[]): Promise<void> {
         "--build-dir",
         ...(command === "bootstrap"
           ? ["--secret-name", "--ingest-url", "--org", "--project"]
-          : []),
+          : tokenAdmin
+            ? ["--org", ...(tokenAdmin === "revoke" ? ["--id"] : [])]
+            : []),
       ].includes(flag) ||
       !rest[i + 1] ||
       options[flag]
@@ -83,6 +100,28 @@ export async function main(args: string[]): Promise<void> {
   if (!imported || typeof imported !== "object" || !("default" in imported))
     throw new Error("Stack must export a default configuration");
   const stack = resolveStack(imported.default);
+  if (tokenAdmin) {
+    const orgSlug = options["--org"];
+    if (!orgSlug || (tokenAdmin === "revoke" && !options["--id"]))
+      throw new Error(
+        tokenAdmin === "list"
+          ? "token list requires --org"
+          : "token revoke requires --org and --id",
+      );
+    await withDeployedStore(stack, process.env, async (store) => {
+      if (tokenAdmin === "list")
+        console.log(formatTokens(await listTokens(store, orgSlug)));
+      else {
+        const revoked = await revokeToken(store, {
+          orgSlug,
+          id: options["--id"] ?? "",
+          force: options["--force"] === "true",
+        });
+        console.log(`Revoked token ${revoked.id} at ${revoked.revokedAt}`);
+      }
+    });
+    return;
+  }
   if (command === "bootstrap") {
     if (
       !options["--secret-name"] ||

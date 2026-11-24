@@ -6,6 +6,7 @@ export {
   eventCursorScope,
   pageLimit,
 } from "./cursor.js";
+export { summarizeApiToken } from "./domain.js";
 export {
   ConflictError,
   InvalidCursorError,

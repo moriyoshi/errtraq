@@ -113,24 +113,22 @@ export function awsBootstrapVault(
     },
   };
 }
-export async function bootstrapAwsStack(
+export interface DeployedDependencies {
+  loadModule: DeployedModuleLoader;
+  secretSource: SecretSource;
+  vault: BootstrapVault;
+}
+/** Construct only the deployed store and KV with the operator's environment and credentials. */
+export async function openDeployedStack(
   stack: StackConfig,
   environment: Readonly<Record<string, string | undefined>>,
-  options: {
-    secretName: string;
-    ingestUrl: string;
-    orgSlug: string;
-    projectSlug: string;
-  },
-  dependencies?: {
-    loadModule: DeployedModuleLoader;
-    secretSource: SecretSource;
-    vault: BootstrapVault;
-  },
-): Promise<string> {
+  dependencies?: Partial<
+    Pick<DeployedDependencies, "loadModule" | "secretSource">
+  >,
+): Promise<{ store: ActiveStore; kv: KV; close(): Promise<void> }> {
   if (stack.platform.manifest.id !== "aws-lambda")
     throw new Error(
-      "Deployed bootstrap currently requires an AWS Lambda stack",
+      "Deployed operator commands currently require an AWS Lambda stack",
     );
   const fn = deriveDeployment(stack).functions.find((item) =>
     item.roles.includes("ingest"),
@@ -166,15 +164,33 @@ export async function bootstrapAwsStack(
     undefined,
     secretSource,
   );
+  return {
+    store: built.instances.get(storePath) as ActiveStore,
+    kv: built.instances.get(kvPath) as KV,
+    close: () => built.close(),
+  };
+}
+export async function bootstrapAwsStack(
+  stack: StackConfig,
+  environment: Readonly<Record<string, string | undefined>>,
+  options: {
+    secretName: string;
+    ingestUrl: string;
+    orgSlug: string;
+    projectSlug: string;
+  },
+  dependencies?: DeployedDependencies,
+): Promise<string> {
+  const opened = await openDeployedStack(stack, environment, dependencies);
   try {
     return await bootstrapDeployed({
       stackName: stack.name,
-      store: built.instances.get(storePath) as ActiveStore,
-      kv: built.instances.get(kvPath) as KV,
+      store: opened.store,
+      kv: opened.kv,
       vault: dependencies?.vault ?? awsBootstrapVault(environment),
       ...options,
     });
   } finally {
-    await built.close();
+    await opened.close();
   }
 }

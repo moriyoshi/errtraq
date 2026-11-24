@@ -1400,3 +1400,25 @@ envelope `groupKey` fails together with every later record of the invocation. Th
 scheduled-event example text could not be fetched verbatim from the docs, so its field values
 are the commonly documented ones: M3h real captures should replace it. The aws-lambda package
 gained a test-only `@errtraq/queue-sqs` devDependency (pnpm-lock.yaml updated).
+
+## 2026-11-24 — Deployed API token list and revoke
+
+Port: `ProjectRepo.listTokens(orgId, cursor?, limit?)` returns `ApiTokenSummary` (no hash) ordered by
+token ID; `revokeToken(orgId, id, at)` is idempotent, keeps the first `revokedAt`, returns null for
+an unknown or other-organization token. `ApiToken` gained optional `label` and `createdAt`; no
+`lastUsedAt` (recording it would put a write on the auth path). Operator path is CLI only
+(`errtraq token list|revoke --stack --org [--id] [--force]`) through the same store construction as
+`errtraq bootstrap` (`openDeployedStack`); no HTTP endpoint, so no new scope and no new Terraform
+IAM (operator credentials are outside generated roots). Findings: SQL tokens reuse the unused
+`scope` column as the organization key (migration 5 backfills it from the stored JSON and indexes
+`(scope, pk)`); DynamoDB tokens are indexed on `GSI7` (`ENTITY|tokens|org`, sort by id) and
+`revokeToken` finds the item through the existing `KEYID|token|id` marker, so pre-index tokens are
+revocable without an index. DynamoDB cannot enumerate unindexed items without a scan, so legacy
+tokens are backfilled lazily: any `putToken` or revocation rewrites them with the index, and
+`bootstrapDeployed` rewrites a token lacking `createdAt` on rerun (re-reading first to avoid
+overwriting a concurrent revocation; a narrow window remains because `putToken` replaces the whole
+item). Revoking the last active token needs `--force`; "token in use" has no meaning for an
+offline operator command. `summarizeApiToken` is exported from `@errtraq/core/store` because
+importing it from the root pulled zod into the DynamoDB runtime bundle (caught by
+`runtime-bundles.test.ts`). Gate: typecheck, lint, test, test:postgres, e2e green.
+

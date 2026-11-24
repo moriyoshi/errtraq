@@ -137,6 +137,7 @@ export function withIdentifierLimits<T extends ActiveStore>(store: T): T {
     getOrCreateActiveKey: checkKey,
     createToken: checkToken,
     putToken: checkToken,
+    revokeToken: (orgId: string, id: string) => ids("token.", { id, orgId }),
   } as never);
   const issues = guarded(store.issues, {
     update: (projectId: string, issueId: string) =>
@@ -218,7 +219,14 @@ function checkKey(key: { id: string; projectId: string; publicKey: string }) {
   ids("key.", { id: key.id, projectId: key.projectId });
   assertIndexedText("key.publicKey", key.publicKey);
 }
-function checkToken(token: { id: string; orgId: string; tokenHash: string }) {
+function checkToken(token: {
+  id: string;
+  orgId: string;
+  tokenHash: string;
+  label?: string;
+}) {
   ids("token.", { id: token.id, orgId: token.orgId });
+  if (token.label !== undefined && token.label.length > 200)
+    throw new InvalidIdentifierError("token.label exceeds 200 characters");
   assertIndexedText("token.tokenHash", token.tokenHash);
 }

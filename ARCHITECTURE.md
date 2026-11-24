@@ -83,6 +83,8 @@ interface ActiveStore {
   migrate(): Promise<void>;
 }
 // ProjectRepo.createToken inserts only when the token hash is absent; it never revives a token.
+// ProjectRepo.listTokens (per organization, paged, metadata only) and revokeToken (idempotent,
+// organization-scoped, read-after-write) back the operator `errtraq token list|revoke` commands.
 interface IssueRepo {
   get(projectId, issueId): Promise<Issue | null>;
   list(q: IssueQuery): Promise<Page<Issue>>;   // project, status, [from, to) on lastSeen, sort ∈ {lastSeen, firstSeen, count} descending, cursor

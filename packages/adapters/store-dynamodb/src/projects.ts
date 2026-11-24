@@ -6,7 +6,7 @@ import type {
   ProjectKey,
   ProjectRepo,
 } from "@errtraq/core";
-import { ConflictError } from "@errtraq/core/store";
+import { ConflictError, summarizeApiToken } from "@errtraq/core/store";
 import { DynamoStoreError } from "./errors.js";
 import { partition, sortKey } from "./keys.js";
 import {
@@ -160,6 +160,10 @@ export function projectRepository(driver: Driver): ProjectRepo {
     partition("PROJECTSLUG", orgId, slug);
   const keyPk = (publicKey: string) => partition("KEY", publicKey);
   const tokenPk = (hash: string) => partition("TOKEN", hash);
+  const tokenIndex = (token: ApiToken) => ({
+    partition: indexPartition("tokens", token.orgId),
+    sort: sortKey(token.id),
+  });
   return {
     getOrg: async (id) => itemData<Org>(await get(driver, orgPk(id))),
     getOrgBySlug: (slug) => markerLookup<Org>(driver, orgSlug(slug)),
@@ -288,7 +292,7 @@ export function projectRepository(driver: Driver): ProjectRepo {
               {
                 Put: {
                   TableName: driver.table,
-                  Item: dataItem(PK, token),
+                  Item: dataItem(PK, token, tokenIndex(token)),
                   ConditionExpression: "attribute_not_exists(PK)",
                 },
               },
@@ -319,8 +323,67 @@ export function projectRepository(driver: Driver): ProjectRepo {
         true,
       );
     },
+    // putToken always writes the org index attributes, so rewriting a token created before
+    // the index existed backfills it.
     putToken: (token) =>
-      writeDirectUnique(driver, "token", token.id, token.tokenHash, token),
+      writeDirectUnique(
+        driver,
+        "token",
+        token.id,
+        token.tokenHash,
+        token,
+        tokenIndex(token),
+      ),
+    listTokens: async (orgId, cursor, limit) => {
+      const result = await pageIndex<ApiToken>(
+        driver,
+        "entity-list",
+        "GSI7PK",
+        "GSI7SK",
+        indexPartition("tokens", orgId),
+        `tokens:${orgId}`,
+        cursor,
+        limit,
+      );
+      return {
+        items: result.items.map(summarizeApiToken),
+        nextCursor: result.nextCursor,
+      };
+    },
+    revokeToken: async (orgId, id, at) => {
+      for (let attempt = 0; attempt < 12; attempt++) {
+        const owner = (await get(driver, ownerKey("token", id)))?.owner?.S;
+        const previous = owner ? await get(driver, owner) : undefined;
+        const token = itemData<ApiToken>(previous);
+        if (!owner || !previous || !token || token.orgId !== orgId) return null;
+        if (token.revokedAt) return summarizeApiToken(token);
+        const revoked = { ...token, revokedAt: at };
+        try {
+          // Conditional on the revision we read; the rewrite also adds the org index
+          // attributes when a pre-index token lacks them (lazy backfill).
+          await driver.request("TransactWriteItems", {
+            TransactItems: [
+              {
+                Put: {
+                  TableName: driver.table,
+                  Item: dataItem(owner, revoked, tokenIndex(revoked)),
+                  ...conditionFor(previous),
+                },
+              },
+            ],
+          });
+          return summarizeApiToken(revoked);
+        } catch (error) {
+          if (!cancelled(error)) throw error;
+          await contentionDelay(attempt);
+        }
+      }
+      throw new DynamoStoreError(
+        "DynamoDB token revocation contention limit reached",
+        undefined,
+        true,
+      );
+    },
   };
 }
 export { indexPartition, markerLookup, writeUnique };

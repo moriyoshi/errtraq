@@ -1,5 +1,5 @@
 import { bootstrapProject } from "./bootstrap.js";
-import type { ApiTokenId } from "./domain.js";
+import { type ApiTokenId, toTimestamp } from "./domain.js";
 import { ConflictError } from "./errors.js";
 import { generateApiToken, hashApiToken, WebCryptoIdGen } from "./ids.js";
 import type { ActiveStore, KV } from "./ports.js";
@@ -80,6 +80,8 @@ export async function bootstrapDeployed(
     orgId: created.org.id,
     tokenHash: hash,
     scopes: ["event:read", "event:write"],
+    label: "bootstrap",
+    createdAt: toTimestamp(new Date()),
   };
   const existing = await options.store.projects.getTokenByHash(hash);
   const matches = (value: typeof existing) =>
@@ -92,6 +94,18 @@ export async function bootstrapDeployed(
   if (existing) {
     if (!matches(existing))
       throw new ConflictError("Bootstrap token is revoked or has changed");
+    // A token registered before token management has no createdAt and no org index
+    // entry; rewriting it here is the idempotent backfill that makes it listable.
+    // Re-read first so a revocation that just landed is never overwritten.
+    if (!existing.createdAt) {
+      const fresh = await options.store.projects.getTokenByHash(hash);
+      if (matches(fresh) && fresh && !fresh.createdAt)
+        await options.store.projects.putToken({
+          ...fresh,
+          label: fresh.label ?? record.label,
+          createdAt: record.createdAt,
+        });
+    }
     return result.identifier;
   }
   if (!(await options.store.projects.createToken(record))) {
