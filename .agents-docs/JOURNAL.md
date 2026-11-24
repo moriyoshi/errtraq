@@ -1439,3 +1439,49 @@ Implemented the owner's decisions (see `M3_BLOB_CLEANUP_DESIGN.md`). Findings wo
 - "Longest project retention" is runtime data, so the stack carries `maxEventRetentionDays` and
   `bootstrapProject` enforces it (deployed bootstrap creates `min(30, max)`).
 - Standalone gets no claim sweep: `queue-memory` has no redrive horizon and `blob-fs` has no mtimes.
+
+## 2026-11-24 — M3h second real AWS deployment (Claude)
+
+Disposable per-topic copy of `stacks/aws-dynamodb.ts` in the sandbox account, ap-northeast-1,
+with `rateRejection` (20 events / 60 s per issue, 5 new issues / 60 s), an operator-owned
+artifact bucket for S3-backed ZIPs, and an operator-owned SNS topic for every alarm, subscribed
+by a probe queue. Stack file and scripts stayed in the ignored workspace. Torn down completely
+(89 resources, plus the secret, topic, probe queue and bucket).
+
+- **Apply / repeat plan:** 89 resources, repeat plan empty. Only the two function URLs are
+  public. All five functions deploy from hash-named S3 keys. A stack change that alters the
+  embedded plan replaced the five objects and updated the functions in place (5 added, 5
+  changed, 5 destroyed); the old objects were deleted and the repeat plan was empty again.
+- **Rate rejection:** hot issues of 200 and 500 events each recorded exactly 20; the per-issue
+  counter counts every attempt (75 seen, 55 dropped for the 500 burst, the rest cut at ingest by
+  the 600 / min key limit). Ten new fingerprints in one window created exactly five issues; three
+  in the next window were all admitted. `approximateDropped` only reports the current window, so
+  it reads 0 once the window has passed. The SDK e2e script waits for hot counts that the limit
+  never allows, so it cannot be reused unchanged on a stack with `rateRejection`.
+- **CORS:** preflight, success and 403 responses each carry one set of `access-control-*`
+  headers. The API URL sends none.
+- **Missing-claim poison (FIFO record queue):** logged on each of five receives exactly one
+  visibility timeout (180 s) apart, then moved to the DLQ. Redriven with a move task, it failed
+  five more times and returned to the DLQ. It holds its message group for
+  `maxReceiveCount × visibility` (15 min) each time; only that issue's group is affected.
+- **Alarms:** all nine start in OK with `TreatMissingData=notBreaching` read back (winterbaume
+  #68 is emulator-only). Function errors: ALARM about 40 s after a forced failure. DLQ depth:
+  ALARM about 3 min after arrival, even though the message stayed only about 80 s, because the
+  5-minute Maximum still sees it. Queue age: needs three 5-minute periods above 900 s, so it fired
+  about 28 min after the stuck message was sent. Every transition reached the SNS probe queue.
+- **Pausing a consumer:** disabling the ingest event source mapping is not immediate. One event
+  sent seconds after the mapping reported `Disabled` was still consumed. While the consumer was
+  paused, staged-envelope recovery re-queued the waiting envelope, so two copies were in the queue.
+  Both were later processed with the count still 1 for that event.
+- **Redrive of manually moved messages:** a move task fails with `CouldNotDetermineMessageSource`
+  for messages that were sent to the DLQ by hand rather than by the redrive policy;
+  `--destination-arn` is required. With it, both copies were consumed and counted once.
+- **Tokens:** `token list` shows the bootstrap token without plaintext. `token revoke` refuses the
+  last active token without `--force`. With it, the API returned 401 on the next request, and a
+  repeated revoke kept the original `revokedAt`.
+- **Lifecycle:** real S3 accepted all 14 rules (claims 30 days, overflow prefixes 37 days, envelopes
+  14, staging 7, multipart abort 7). Expiry itself is not observable in a single run.
+- **Tooling:** `pnpm build` (`tsc -b`) left `dist/` older than changed sources and reported
+  nothing, so the CLI would have run stale code; `tsc -b --force` rebuilt it. Not investigated.
+- **Not covered:** RDS / Aurora IAM (no RDS module; needs an operator-built VPC and database),
+  visibility-expiry races, mode-switch drain, throttling retries, FIFO high-throughput attributes.
