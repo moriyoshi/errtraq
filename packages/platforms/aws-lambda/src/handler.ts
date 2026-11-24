@@ -13,6 +13,7 @@ import {
   IngestService,
   type KV,
   type Logger,
+  projectReader,
   type Queue,
   type RateRejectionConfig,
   RecordHandler,
@@ -106,12 +107,30 @@ export function createHandler(
     );
   }
   const http = handle(app);
+  const grouped = options.recordMode === "grouped";
+  // The grouped consumer gets project reads only, and only when a per-issue limit needs them.
+  if (
+    grouped &&
+    roles.includes("consumer") &&
+    options.rateRejection?.issueRateLimit &&
+    !adapters.store
+  )
+    throw new Error(
+      "Grouped consumer adapters are missing project read access",
+    );
   const consumer =
     roles.includes("consumer") &&
     adapters.blob &&
-    (options.recordMode === "grouped" ? adapters.queue : adapters.store)
+    (grouped ? adapters.queue : adapters.store)
       ? new ConsumerService({
-          store: adapters.store,
+          ...(grouped
+            ? {
+                projects:
+                  options.rateRejection?.issueRateLimit && adapters.store
+                    ? projectReader(adapters.store)
+                    : undefined,
+              }
+            : { store: adapters.store }),
           blobs: adapters.blob,
           recordMode: options.recordMode,
           rateRejection: options.rateRejection,

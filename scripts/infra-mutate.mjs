@@ -202,6 +202,27 @@ try {
         policies.splice(index, 1);
         break;
       }
+      case "rate-drop-project-read-policy": {
+        const policies = platform.functions.consumer.policies;
+        const index = policies.findIndex((p) => p.includes("module.store"));
+        if (index < 0) throw new Error("Store policy mutation target missing");
+        policies.splice(index, 1);
+        break;
+      }
+      case "rate-drop-store-binding":
+        delete platform.functions.consumer.environment.ERRTRAQ_STORE_TABLE;
+        break;
+      case "rate-add-store-to-consumer":
+        platform.functions.consumer.environment.ERRTRAQ_STORE_TABLE =
+          platform.functions.record.environment.ERRTRAQ_STORE_TABLE;
+        break;
+      case "rate-add-record-store-policy-to-consumer":
+        platform.functions.consumer.policies.push(
+          ...platform.functions.record.policies.filter((p) =>
+            p.includes("module.store"),
+          ),
+        );
+        break;
       case "rate-drop-kv-binding":
         delete platform.functions.consumer.environment.ERRTRAQ_KV_TABLE;
         break;

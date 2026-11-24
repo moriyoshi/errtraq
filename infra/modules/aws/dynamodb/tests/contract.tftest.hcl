@@ -32,6 +32,10 @@ run "store_indexes_and_permissions" {
     error_message = "Ingest reads only project keys from the table."
   }
   assert {
+    condition     = jsonencode(jsondecode(output.policies["project-read"].primary)) == jsonencode({ Version = "2012-10-17", Statement = [{ Effect = "Allow", Action = ["dynamodb:GetItem"], Resource = [aws_dynamodb_table.this.arn], Condition = { "ForAllValues:StringLike" = { "dynamodb:LeadingKeys" = ["PROJECT|*"] }, "Null" = { "dynamodb:LeadingKeys" = "false" } } }] })
+    error_message = "The grouped consumer reads only project records from the table."
+  }
+  assert {
     condition     = jsonencode(jsondecode(output.policies["metadata-delete"].primary)) == jsonencode({ Version = "2012-10-17", Statement = [{ Effect = "Allow", Action = ["dynamodb:DeleteItem"], Resource = [aws_dynamodb_table.this.arn], Condition = { "ForAllValues:StringLike" = { "dynamodb:LeadingKeys" = ["ORGSLUG|*", "PROJECTSLUG|*", "TOKEN|*", "RELEASE|*", "KEY|*", "KEYID|*", "DEBUG|*", "BUNDLE|*"] }, "Null" = { "dynamodb:LeadingKeys" = "false" } } }] })
     error_message = "Metadata deletion must be confined to the approved leading-key namespaces."
   }

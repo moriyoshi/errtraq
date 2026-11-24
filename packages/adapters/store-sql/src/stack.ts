@@ -36,6 +36,7 @@ export const infra: InfraDescriptor<SqliteStackConfig> = {
   bindings: [],
   capabilities: {
     "key-read": { primary: null },
+    "project-read": { primary: null },
     read: { primary: null },
     write: { primary: null },
     delete: { primary: null },

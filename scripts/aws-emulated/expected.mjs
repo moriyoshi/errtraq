@@ -24,6 +24,7 @@ export function capabilityPolicy(grant, resources) {
     const arn = resources[selection];
     const actions = {
       "key-read": ["dynamodb:GetItem"],
+      "project-read": ["dynamodb:GetItem"],
       read: ["dynamodb:GetItem", "dynamodb:BatchGetItem", "dynamodb:Query"],
       write: ["dynamodb:PutItem", "dynamodb:UpdateItem", "dynamodb:GetItem"],
       "metadata-delete": ["dynamodb:DeleteItem"],
@@ -49,34 +50,43 @@ export function capabilityPolicy(grant, resources) {
                 Null: { "dynamodb:LeadingKeys": "false" },
               },
             }
-          : capability === "metadata-delete" && selection === "store"
+          : capability === "project-read" && selection === "store"
             ? {
                 Condition: {
                   "ForAllValues:StringLike": {
-                    "dynamodb:LeadingKeys": [
-                      "ORGSLUG|*",
-                      "PROJECTSLUG|*",
-                      "TOKEN|*",
-                      "RELEASE|*",
-                      "KEY|*",
-                      "KEYID|*",
-                      "DEBUG|*",
-                      "BUNDLE|*",
-                    ],
+                    "dynamodb:LeadingKeys": ["PROJECT|*"],
                   },
                   Null: { "dynamodb:LeadingKeys": "false" },
                 },
               }
-            : capability === "delete" && selection === "store"
+            : capability === "metadata-delete" && selection === "store"
               ? {
                   Condition: {
                     "ForAllValues:StringLike": {
-                      "dynamodb:LeadingKeys": ["EV|*"],
+                      "dynamodb:LeadingKeys": [
+                        "ORGSLUG|*",
+                        "PROJECTSLUG|*",
+                        "TOKEN|*",
+                        "RELEASE|*",
+                        "KEY|*",
+                        "KEYID|*",
+                        "DEBUG|*",
+                        "BUNDLE|*",
+                      ],
                     },
                     Null: { "dynamodb:LeadingKeys": "false" },
                   },
                 }
-              : {},
+              : capability === "delete" && selection === "store"
+                ? {
+                    Condition: {
+                      "ForAllValues:StringLike": {
+                        "dynamodb:LeadingKeys": ["EV|*"],
+                      },
+                      Null: { "dynamodb:LeadingKeys": "false" },
+                    },
+                  }
+                : {},
       ),
     ];
   } else if (selection === "queue") {

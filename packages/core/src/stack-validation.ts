@@ -108,7 +108,8 @@ function featureEnabled(
     | "grouped"
     | "rate-api"
     | "rate-consumer"
-    | "rate-record",
+    | "rate-record"
+    | "rate-project",
   milestone?: "M3" | "M4",
 ): boolean {
   return (
@@ -122,14 +123,17 @@ function featureEnabled(
             !!stack.rateRejection?.newIssueCap)
         : feature === "rate-record"
           ? stack.recordMode === "grouped" && !!stack.rateRejection?.newIssueCap
-          : feature === "archive"
-            ? !!stack.archive
-            : feature === "direct"
-              ? (stack.recordMode ?? "direct") === "direct"
-              : feature === "grouped"
-                ? stack.recordMode === "grouped"
-                : feature === "notifications" &&
-                  stack.features?.notifications === true)
+          : feature === "rate-project"
+            ? stack.recordMode === "grouped" &&
+              !!stack.rateRejection?.issueRateLimit
+            : feature === "archive"
+              ? !!stack.archive
+              : feature === "direct"
+                ? (stack.recordMode ?? "direct") === "direct"
+                : feature === "grouped"
+                  ? stack.recordMode === "grouped"
+                  : feature === "notifications" &&
+                    stack.features?.notifications === true)
   );
 }
 interface AccessRequirement {
@@ -544,7 +548,12 @@ export type ResolvedStack = StackConfig & { readonly [resolvedMarker]: true };
 
 // Clone only data objects; schemas are shared, executable objects owned by adapters.
 // Never freeze an input object supplied by the caller.
-const READ_ONLY_CAPABILITIES = new Set(["read", "key-read", "list"]);
+const READ_ONLY_CAPABILITIES = new Set([
+  "read",
+  "key-read",
+  "project-read",
+  "list",
+]);
 const WRITE_CAPABILITY_WORDS = new Set(["write", "delete", "produce"]);
 function frozenSnapshot<T>(value: T, seen = new WeakMap<object, object>()): T {
   if (value === null || typeof value !== "object") return value;

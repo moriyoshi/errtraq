@@ -52,6 +52,13 @@ it("validates IAM configuration and requires AWS credentials from the platform",
   expect(formatValidation(resolveStack(stack))).toContain(
     "IAM grants connection to one PostgreSQL user; PostgreSQL privileges enforce read, write and delete.",
   );
+  // PostgreSQL roles are not per function: project-read is the same connect grant as read.
+  expect(iam.infra.capabilities["project-read"]).toEqual(
+    iam.infra.capabilities.read,
+  );
+  expect(
+    postgres(variable("secret")).infra.capabilities["project-read"],
+  ).toEqual({ primary: null });
   const view = deriveDeployment(resolveStack(stack));
   for (const fn of view.functions.filter((item) =>
     item.roles.some((role) => ["ingest", "api", "record"].includes(role)),

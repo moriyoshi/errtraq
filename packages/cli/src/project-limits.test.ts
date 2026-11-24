@@ -107,7 +107,7 @@ describe("project rate limit command", () => {
       issueEvents: "none",
     });
   });
-  it("rejects a per-issue override under grouped recording", () => {
+  it("accepts a per-issue override under grouped recording", () => {
     const grouped = stackWith(
       {
         issueRateLimit: { events: 10, windowSec: 60 },
@@ -116,11 +116,12 @@ describe("project rate limit command", () => {
       "grouped",
     );
     expect(() =>
-      assertProjectLimitsAllowed(grouped, { issueEvents: 1 }),
-    ).toThrow(/grouped recording/);
-    expect(() =>
-      assertProjectLimitsAllowed(grouped, { newIssues: 1 }),
+      assertProjectLimitsAllowed(grouped, { issueEvents: 1, newIssues: 1 }),
     ).not.toThrow();
+    // The stack's own bounds still apply.
+    expect(() =>
+      assertProjectLimitsAllowed(grouped, { issueEvents: 11 }),
+    ).toThrow(/exceeds/);
   });
   it("reports a missing organization or project", async () => {
     const f = await fixture();

@@ -602,7 +602,11 @@ are carried in deployed plans, generated Lambda entries and local platform const
 Lambda plan is embedded at build time, so changing these settings requires rebuilding function
 artifacts. The consumer receives KV read/write grants and bindings when the per-issue limit
 is enabled or the direct-mode new-issue cap is enabled. The record role receives them when the
-grouped-mode new-issue cap is enabled. The consumer batches per-issue checks across delivered envelopes and checks the new-issue cap
+grouped-mode new-issue cap is enabled. In grouped mode the consumer also receives the store
+`project-read` capability (and the store table binding) when the per-issue limit is enabled, so it can
+resolve per-project overrides; it never receives store `read` or `write`. The DynamoDB module scopes
+`project-read` to `dynamodb:GetItem` on the table only (no indexes), conditioned on `LeadingKeys`
+matching `PROJECT|*`; the Postgres adapters map it to their single connect grant. The consumer batches per-issue checks across delivered envelopes and checks the new-issue cap
 in direct mode; in grouped mode the record handler checks that cap. Platform code passes KV
 and the stack settings to each handler. Rejected events are not stored or forwarded. The API role receives only KV read access when either limit is enabled; issue responses expose
 an approximate current-window dropped count and omit it on KV read failure.

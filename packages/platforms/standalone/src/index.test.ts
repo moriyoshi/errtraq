@@ -180,3 +180,68 @@ it("enforces an issue limit through the standalone HTTP and queue pipeline", asy
     await platform.close();
   }
 });
+
+it("enforces a project's tighter issue limit in grouped mode, where the consumer only reads projects", async () => {
+  const store = new MemoryActiveStore();
+  const clock = new FakeClock();
+  const kv = new MemoryKV(clock);
+  const queue = Object.assign(new MemoryQueue(clock), {
+    idle: async () => true,
+  });
+  const project = await bootstrapProject({
+    store,
+    kv,
+    ids: new DeterministicIdGen(),
+    orgSlug: "org",
+    projectSlug: "project",
+  });
+  await store.projects.put({
+    ...project.project,
+    rateLimits: { issueEvents: 1 },
+  });
+  const rateRejection = { issueRateLimit: { events: 5, windowSec: 60 } };
+  const platform = createAdapter({
+    config: { port: 0 },
+    dependencies: { store, kv, queue, blob: new MemoryBlobStore(), clock },
+    bindings: {},
+    topics: {},
+    recordMode: "grouped",
+    rateRejection,
+  });
+  const server = await platform.start();
+  try {
+    for (const n of [1, 2, 3]) {
+      const eventId = n.toString(16).padStart(32, "0");
+      const body = `${JSON.stringify({ event_id: eventId })}\n${JSON.stringify({ type: "event" })}\n${JSON.stringify({ event_id: eventId, message: "same issue" })}\n`;
+      const response = await fetch(
+        `http://127.0.0.1:${server.port}/api/${project.project.id}/envelope/?sentry_key=${project.key.publicKey}`,
+        {
+          method: "POST",
+          body,
+          headers: { "Content-Type": "application/x-sentry-envelope" },
+        },
+      );
+      expect(response.status).toBe(200);
+    }
+    await vi.waitFor(async () => {
+      const page = await store.issues.list({
+        projectId: project.project.id,
+        sort: "lastSeen",
+      });
+      const issue = page.items[0];
+      if (!issue) throw new Error("Issue not recorded yet");
+      expect(issue.count).toBe(1);
+      expect(
+        await readDropped(
+          kv,
+          rateRejection,
+          project.project.id,
+          issue.id,
+          clock.now(),
+        ),
+      ).toEqual({ count: 2, windowSec: 60 });
+    });
+  } finally {
+    await platform.close();
+  }
+});

@@ -11,6 +11,7 @@ import {
   IngestService,
   type KV,
   type Logger,
+  projectReader,
   type Queue,
   RecordHandler,
   recoverStagedEnvelopes,
@@ -164,7 +165,13 @@ export function create({
         rateWindowSec: cfg.rateWindowSec,
       });
       const consumer = new ConsumerService({
-        store: bindings.store,
+        ...(recordMode === "grouped"
+          ? {
+              projects: rateRejection?.issueRateLimit
+                ? projectReader(bindings.store)
+                : undefined,
+            }
+          : { store: bindings.store }),
         blobs: bindings.blob,
         kv: bindings.kv,
         queue: bindings.queue,

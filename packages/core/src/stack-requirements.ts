@@ -17,7 +17,8 @@ export interface PortRequirement {
     | "grouped"
     | "rate-api"
     | "rate-consumer"
-    | "rate-record";
+    | "rate-record"
+    | "rate-project";
   milestone?: "M3" | "M4";
 }
 /** M1 calls are unconditional; M4 rows model the archive and erasure design. */
@@ -117,6 +118,14 @@ export const PORT_REQUIREMENTS: readonly PortRequirement[] = [
           : ("rate-record" as const),
     })),
   ),
+  // The grouped consumer resolves per-project issue limits; direct mode already has store read.
+  {
+    kind: "store",
+    role: "consumer",
+    capability: "project-read",
+    purpose: "primary",
+    feature: "rate-project",
+  },
   // TODO(M4): archive workers, erasure suppression, and archive-aware queries.
   ...(["consumer", "cron"] as const).flatMap((role) => [
     ...(["read", "write", "delete"] as const).map((capability) => ({

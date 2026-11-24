@@ -8,6 +8,7 @@ import {
   normalizeEvent,
   type ProjectId,
   type ProjectRateLimits,
+  projectReader,
   type Queue,
   type RateRejectionConfig,
   RecordHandler,
@@ -65,8 +66,12 @@ async function pipeline(
       },
     },
   } as unknown as Queue;
+  // Mirror the platforms: the grouped consumer is granted project reads only (and only when a
+  // per-issue limit needs them), never the store; direct mode keeps the store.
   const consumer = new ConsumerService({
-    store,
+    ...(mode === "grouped"
+      ? { projects: rate.issueRateLimit ? projectReader(store) : undefined }
+      : { store }),
     blobs,
     kv,
     logger,

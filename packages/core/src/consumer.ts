@@ -15,12 +15,24 @@ import type {
   BlobStore,
   KV,
   Logger,
+  ProjectRepo,
   Queue,
 } from "./ports.js";
 import { type RateRejectionConfig, RateRejector } from "./rate-rejection.js";
 
+/** Narrow a project repository to the single read the grouped consumer is granted. */
+export function projectReader(
+  store: Pick<ActiveStore, "projects">,
+): Pick<ProjectRepo, "get"> {
+  return { get: (id) => store.projects.get(id) };
+}
 export interface ConsumerOptions {
   store?: ActiveStore;
+  /**
+   * Read-only project lookup for per-project issue limits. The grouped consumer receives only
+   * this (never the store); direct mode falls back to `store.projects`.
+   */
+  projects?: Pick<ProjectRepo, "get">;
   recordMode?: "direct" | "grouped";
   queue?: Queue;
   blobs: BlobStore;
@@ -104,9 +116,7 @@ export class ConsumerService {
         kv: options.kv,
         config: rate,
         logger: options.logger,
-        // TODO(M3): the grouped consumer has no store, so per-project issue limits cannot be
-        // resolved there (the CLI rejects them for grouped stacks); grant it a store read to lift.
-        projects: options.store?.projects,
+        projects: options.projects ?? options.store?.projects,
       });
     }
     this.overflowBytes = options.overflowBytes ?? 200000;

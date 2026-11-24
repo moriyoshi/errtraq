@@ -161,6 +161,42 @@ describe("AWS descriptor stacks", () => {
       validateStack({ ...copyStack(shared), queue: sqsQueue({ dlq: false }) }),
     ).toEqual([]);
   });
+  it("grants the grouped consumer project reads only for a per-issue limit", () => {
+    for (const stack of [groupedShared, groupedPerTopic]) {
+      for (const [limit, granted] of [
+        [{}, false],
+        [{ newIssueCap: { issues: 5, windowSec: 60 } }, false],
+        [{ issueRateLimit: { events: 5, windowSec: 60 } }, true],
+      ] as const) {
+        const view = deriveDeployment(
+          resolveStack({ ...copyStack(stack), rateRejection: limit }),
+        );
+        const consumer = view.functions.find((fn) => fn.id === "consumer");
+        expect(
+          consumer?.policies
+            .filter((p) => p.selection === "store")
+            .map((p) => `${p.capability}:${p.purpose}`),
+        ).toEqual(granted ? ["project-read:primary"] : []);
+        expect(
+          consumer?.policies.find((p) => p.selection === "store")?.policyOutput,
+        ).toEqual(
+          granted
+            ? output("store", "policies", "project-read", "primary")
+            : undefined,
+        );
+        expect(
+          names(
+            consumer?.envBindings.filter((b) => b.selection === "store") ?? [],
+          ),
+        ).toEqual(granted ? ["ERRTRAQ_STORE_TABLE"] : []);
+        // The record role and every other role keep their grants.
+        for (const fn of view.functions.filter((f) => f.id !== "consumer"))
+          expect(fn.policies.some((p) => p.capability === "project-read")).toBe(
+            false,
+          );
+      }
+    }
+  });
   it("checks the platform-declared stack name limit before generation", () => {
     expect(
       validateStack({ ...copyStack(shared), name: "a".repeat(40) }),

@@ -56,6 +56,24 @@ describe("derived capability policy expectations", () => {
       },
     ]);
   });
+  it("limits the grouped consumer to project records", () => {
+    expect(
+      capabilityPolicy(
+        { selection: "store", capability: "project-read", purpose: "primary" },
+        resources,
+      ).Statement,
+    ).toEqual([
+      {
+        Effect: "Allow",
+        Action: ["dynamodb:GetItem"],
+        Resource: ["table"],
+        Condition: {
+          "ForAllValues:StringLike": { "dynamodb:LeadingKeys": ["PROJECT|*"] },
+          Null: { "dynamodb:LeadingKeys": "false" },
+        },
+      },
+    ]);
+  });
   it("limits event batch writes to event keys", () => {
     const policy = capabilityPolicy(
       { selection: "store", capability: "delete", purpose: "primary" },

@@ -10,6 +10,9 @@
       "metadata-delete": {
         "primary": "json-document"
       },
+      "project-read": {
+        "primary": "json-document"
+      },
       "read": {
         "primary": "json-document"
       },

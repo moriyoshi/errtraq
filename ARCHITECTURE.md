@@ -229,7 +229,12 @@ active when configured. The consumer checks per-issue limits after suppression i
 and checks the new-issue cap in direct mode; the grouped record handler checks the cap. Rejected
 events are acknowledged without recording or forwarding. `onKvFailure` defaults to `allow`.
 The consumer receives KV read and write access when its checks need it; the grouped record
-role receives it for the new-issue cap. Issue list and detail responses include `approximateDropped` for the current fixed window when
+role receives it for the new-issue cap. In grouped mode the consumer has no store grants except a
+read-only `project-read` capability, derived only when `issueRateLimit` is enabled, so it can
+resolve per-project overrides: on DynamoDB it is `GetItem` on the table alone, conditioned on
+`dynamodb:LeadingKeys` matching `PROJECT|*` (project records only, no indexes, no writes); SQL
+stores have one database role for every function, so there it equals the single connect grant and
+the restriction is in code, where the platform hands the consumer only a `projects.get` reader. Issue list and detail responses include `approximateDropped` for the current fixed window when
 limits are enabled; its bounds and `receivedAt` basis make delayed-event attribution explicit.
 A KV read failure omits the field without failing the request.
 
@@ -239,9 +244,9 @@ project's value for a limit the stack enables; a project value for a disabled li
 write and ignored on read, and an invalid or higher stored value is clamped to the stack's. The
 operator sets them with `errtraq project rate-limits` and the `errtraq bootstrap` options. The
 consumer and record handler read each project at most once per delivery batch, and not at all when
-`rateRejection` is disabled. The grouped consumer has no store access, so a per-issue override is
-rejected for grouped recording (needs a store read grant for that role to lift); the new-issue cap
-override is enforced by the record handler in both modes.
+`rateRejection` is disabled. The grouped consumer reads projects through the `project-read` grant above, so the
+per-issue override works in both modes; the new-issue cap override is enforced by the record
+handler in both modes.
 
 Cost and accuracy: charging is exact under retries and redelivery. The KV has no put-if-absent, so
 an `increment` that returns 1 on a marker key (`rate:charged:<kind>:...`, per event for the issue

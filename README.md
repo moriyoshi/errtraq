@@ -129,9 +129,10 @@ pnpm exec errtraq project rate-limits --stack stacks/aws-dynamodb.ts --org my-or
 Without flags it prints the current limits; omitted flags keep their value and `none` clears an
 override. `errtraq bootstrap` accepts `--issue-events` and `--new-issues` for a new project (a
 rerun against a project with different limits fails; use this command to change them). The
-per-issue override is rejected for stacks with grouped recording (the Lambda plus SQS default),
-because the grouped consumer has no store access to read it; the new-issue cap override is
-enforced by the record handler and works in both modes.
+per-issue override works in both record modes: with grouped recording (the Lambda plus SQS
+default) the consumer is granted read-only access to project records (on DynamoDB, `GetItem` on
+`PROJECT|*` keys) whenever the stack enables the per-issue limit, and the record handler enforces
+the new-issue cap override.
 
 
 ### Bring-your-own RDS PostgreSQL

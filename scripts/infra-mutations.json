@@ -648,6 +648,33 @@
     "operation": "rate-drop-record-kv-policy"
   },
   {
+    "id": "root-rate-drop-project-read-policy",
+    "root": "rate-grouped-issue",
+    "operation": "rate-drop-project-read-policy"
+  },
+  {
+    "id": "root-rate-drop-store-binding",
+    "root": "rate-grouped-issue",
+    "operation": "rate-drop-store-binding"
+  },
+  {
+    "id": "root-rate-extra-store-binding",
+    "root": "rate-grouped-new",
+    "operation": "rate-add-store-to-consumer"
+  },
+  {
+    "id": "root-rate-extra-store-policy",
+    "root": "rate-grouped-new",
+    "operation": "rate-add-record-store-policy-to-consumer"
+  },
+  {
+    "id": "ddb-project-read-unscoped",
+    "module": "dynamodb",
+    "file": "main.tf",
+    "find": "\"dynamodb:LeadingKeys\" = [\"PROJECT|*\"]",
+    "replace": "\"dynamodb:LeadingKeys\" = [\"*\"]"
+  },
+  {
     "id": "root-rate-record-drop-kv-binding",
     "root": "rate-grouped-new",
     "operation": "rate-drop-record-kv-binding"

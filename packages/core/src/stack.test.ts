@@ -93,6 +93,7 @@ const selection = (kind: PortKind): AdapterSelection => ({
         : kind === "store"
           ? {
               "key-read": { primary: out("policy") },
+              "project-read": { primary: out("policy") },
               read: { primary: out("policy") },
               write: { primary: out("policy") },
               delete: { primary: out("policy") },
@@ -346,6 +347,12 @@ describe("conditional rate rejection access", () => {
             grouping: "per-key-serial",
           };
         }
+        v.store.infra.bindings.push({
+          name: "STORE_TABLE",
+          kind: "env",
+          purpose: "primary",
+          value: out("arn"),
+        });
         v.kv.infra.bindings.push({
           name: "KV_TABLE",
           kind: "env",
@@ -400,12 +407,33 @@ describe("conditional rate rejection access", () => {
               b.binding.name === "KV_TABLE",
           ),
         ).toBe(apiEnabled);
-        if (mode === "grouped")
-          expect(
-            access.grants.some(
-              (g) => g.functionId === "consumer" && g.selection === "store",
-            ),
-          ).toBe(false);
+        // Grouped consumers read project records, and only for the per-issue limit; they never
+        // hold store read or write grants. Direct consumers keep the full store grants.
+        const storeCaps = access.grants
+          .filter((g) => g.functionId === "consumer" && g.selection === "store")
+          .map((g) => g.capability)
+          .sort();
+        const wantsProjectRead =
+          mode === "grouped" && (limits === "issue" || limits === "both");
+        expect(storeCaps).toEqual(
+          mode === "direct"
+            ? ["read", "write"]
+            : wantsProjectRead
+              ? ["project-read"]
+              : [],
+        );
+        expect(
+          access.bindings.some(
+            (b) =>
+              b.functionId === "consumer" &&
+              b.selection === "store" &&
+              b.binding.name === "STORE_TABLE",
+          ),
+        ).toBe(mode === "direct" || wantsProjectRead);
+        // No other role gains project-read.
+        expect(
+          access.grants.filter((g) => g.capability === "project-read").length,
+        ).toBe(wantsProjectRead ? 1 : 0);
       }
     }
   });
@@ -2250,6 +2278,7 @@ describe("infrastructure model", () => {
     };
     v.store.infra.capabilities = {
       "key-read": { primary: out("policies", "read", "primary") },
+      "project-read": { primary: out("policies", "write", "primary") },
       read: { primary: out("policies", "write", "primary") },
       write: { primary: out("policies", "write", "primary") },
       delete: { primary: out("policies", "delete", "primary") },
@@ -2257,6 +2286,10 @@ describe("infrastructure model", () => {
     };
     const issues = validateStack(v);
     expect(issues.map((x) => [x.path, x.message])).toEqual([
+      [
+        "store.infra.capabilities.project-read.primary",
+        "Read capability project-read must not use the write policy output",
+      ],
       [
         "store.infra.capabilities.read.primary",
         "Read capability read must not use the write policy output",

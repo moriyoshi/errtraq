@@ -46,6 +46,7 @@ export const infra: InfraDescriptor<Config> = {
   resources: { primary: out("table_arn") },
   capabilities: {
     "key-read": { primary: out("policies", "key-read", "primary") },
+    "project-read": { primary: out("policies", "project-read", "primary") },
     read: { primary: out("policies", "read", "primary") },
     write: { primary: out("policies", "write", "primary") },
     delete: { primary: out("policies", "delete", "primary") },

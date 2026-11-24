@@ -1,3 +1,4 @@
+import { out } from "@errtraq/core";
 import { describe, expect, it } from "vitest";
 import { configSchema, infra, manifest } from "./stack.js";
 
@@ -13,5 +14,14 @@ describe("DynamoDB store deployment configuration", () => {
     expect(infra.capabilities["metadata-delete"]?.primary).not.toEqual(
       infra.capabilities.delete?.primary,
     );
+  });
+  it("scopes grouped-consumer project reads to a distinct policy output", () => {
+    expect(infra.capabilities["project-read"]?.primary).toEqual(
+      out("policies", "project-read", "primary"),
+    );
+    for (const other of ["read", "write", "key-read"])
+      expect(infra.capabilities["project-read"]?.primary).not.toEqual(
+        infra.capabilities[other]?.primary,
+      );
   });
 });

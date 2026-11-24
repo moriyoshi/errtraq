@@ -21,19 +21,15 @@ export function parseLimit(flag: string, text: string | undefined): LimitInput {
   return Number(text);
 }
 /**
- * Reject limits that the stack cannot honour: a value above the stack's, a limit the stack
- * leaves disabled, or a per-issue limit under grouped recording (the grouped consumer has no
- * store access, so it cannot resolve a project's override and would silently ignore it).
+ * Reject limits that the stack cannot honour: a value above the stack's or a limit the stack
+ * leaves disabled. Both record modes can resolve per-issue overrides: the grouped consumer is
+ * granted project reads when a per-issue limit is enabled.
  */
 export function assertProjectLimitsAllowed(
   stack: StackConfig,
   limits: ProjectRateLimits,
 ): void {
   validateProjectRateLimits(stack.rateRejection, limits);
-  if (limits.issueEvents !== undefined && stack.recordMode === "grouped")
-    throw new RangeError(
-      "A per-project issue event limit is not supported with grouped recording: the consumer cannot read project settings",
-    );
 }
 /** Split flag input into the values to set (validated by the caller) and the fields to clear. */
 export function limitsFromInput(change: ProjectLimitChange): {

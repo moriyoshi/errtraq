@@ -1,4 +1,7 @@
+import { bootstrapProject, type Message } from "@errtraq/core";
 import {
+  DeterministicIdGen,
+  FakeClock,
   MemoryActiveStore,
   MemoryBlobStore,
   MemoryKV,
@@ -350,4 +353,111 @@ it("wires KV and rate rejection to the API role only when configured", () => {
   expect(() =>
     createHandler({ ...options, rateRejection: undefined }),
   ).not.toThrow();
+});
+
+/** Run one ingest claim of three events through a grouped consumer-only handler. */
+async function groupedConsumerRun(
+  rateRejection: import("@errtraq/core").RateRejectionConfig,
+  options: { withStore: boolean; issueEvents?: number },
+) {
+  const clock = new FakeClock();
+  const store = new MemoryActiveStore();
+  const kv = new MemoryKV(clock);
+  const blobs = new MemoryBlobStore();
+  const { project } = await bootstrapProject({
+    store,
+    kv,
+    ids: new DeterministicIdGen(),
+    orgSlug: "org",
+    projectSlug: "web",
+  });
+  if (options.issueEvents)
+    await store.projects.put({
+      ...project,
+      rateLimits: { issueEvents: options.issueEvents },
+    });
+  const read = vi.spyOn(store.projects, "get");
+  const write = vi.spyOn(store, "recordEvent");
+  const sent: Message[] = [];
+  const memory = new MemoryQueue();
+  const text = `{}\n${[1, 2, 3]
+    .map(
+      (n) =>
+        `{"type":"event"}\n${JSON.stringify({ event_id: n.toString(16).padStart(32, "0"), message: "x" })}\n`,
+    )
+    .join("")}`;
+  const bytes = new TextEncoder().encode(text);
+  await blobs.put("envelopes/one", bytes, { size: bytes.length });
+  const queue = {
+    ...memory,
+    capabilities: memory.capabilities,
+    producer: {
+      send: async (_topic: string, messages: Message[]) => {
+        sent.push(...messages);
+      },
+    },
+    push: {
+      handle: async (
+        _event: unknown,
+        handler: import("@errtraq/core").BatchHandler,
+      ) => {
+        await handler([
+          {
+            id: "d1",
+            topic: "ingest",
+            attempt: 1,
+            message: {
+              key: "1".padStart(32, "0"),
+              body: {
+                projectId: project.id,
+                blobKey: "envelopes/one",
+                receivedAt: clock.now(),
+              },
+            },
+          },
+        ]);
+        return {};
+      },
+    },
+  } as unknown as import("@errtraq/core").Queue;
+  const handler = createHandler({
+    roles: ["consumer"],
+    recordMode: "grouped",
+    http: [],
+    rateRejection,
+    adapters: {
+      ...(options.withStore ? { store } : {}),
+      blob: blobs,
+      queue,
+      kv,
+    },
+    logger: { debug() {}, info() {}, warn() {}, error() {} },
+  });
+  await handler({ Records: [] });
+  return { sent, read, write };
+}
+
+it("gives the grouped consumer project reads only, and only for a per-issue limit", async () => {
+  const issue = { issueRateLimit: { events: 3, windowSec: 60 } };
+  // A project override tightens the per-issue limit; the consumer never writes the store.
+  const tight = await groupedConsumerRun(issue, {
+    withStore: true,
+    issueEvents: 1,
+  });
+  expect(tight.sent).toHaveLength(1);
+  expect(tight.read).toHaveBeenCalledTimes(1);
+  expect(tight.write).not.toHaveBeenCalled();
+  const loose = await groupedConsumerRun(issue, { withStore: true });
+  expect(loose.sent).toHaveLength(3);
+  // Without the per-issue limit the consumer receives no store access and reads no project.
+  const capOnly = await groupedConsumerRun(
+    { newIssueCap: { issues: 5, windowSec: 60 } },
+    { withStore: true, issueEvents: 1 },
+  );
+  expect(capOnly.sent).toHaveLength(3);
+  expect(capOnly.read).not.toHaveBeenCalled();
+  // A missing grant must not silently ignore project overrides.
+  await expect(groupedConsumerRun(issue, { withStore: false })).rejects.toThrow(
+    "project read access",
+  );
 });

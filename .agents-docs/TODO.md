@@ -142,10 +142,10 @@ item should be resolved or removed once addressed. Milestone work itself is trac
   tighter overrides (`Project.rateLimits`, `errtraq project rate-limits`, bootstrap options),
   privacy-safe retry logging and integration coverage of retries, project isolation, issue
   rotation, resolved issues and duplicate delivery. Done 2026-11-25.
-- [ ] M3 stage 3 grouped per-issue overrides: the grouped consumer role has no store access, so a
-  per-project `issueEvents` override is rejected for grouped recording. Lifting it needs a store
-  read grant (and store construction) for the consumer role in grouped mode, or carrying the limit
-  elsewhere; decide before implementing. The received-at bucket still excludes delayed events from
-  the current-window dropped count by design.
+- [x] M3 stage 3 grouped per-issue overrides: the grouped consumer now has a narrow read-only
+  `project-read` store grant, present only when `rateRejection.issueRateLimit` is enabled, and the
+  CLI no longer rejects `issueEvents` for grouped stacks. Done 2026-11-25 (owner decision).
+- [ ] M3 stage 3: the received-at bucket still excludes delayed events from the current-window
+  dropped count by design; revisit only if operators ask for exact delayed-event attribution.
 
 - [x] Test harness: make the `dynamodb-conditional-atomicity` winterbaume gap check in `scripts/aws-emulated/gap-checks.mjs` tolerant of runs where the probabilistic race does not occur (it flaked in 4 of 8 runs on 2026-11-24), e.g. retry the probe several times before declaring the gap gone. Done 2026-11-25: a round reproduces 7-30% of the time, so the probe now runs up to 150 rounds (about 7 s when the gap is gone) and stops at the first reproduction. — *source: M3 queue items 7-8*

@@ -55,6 +55,7 @@ export const infra: InfraDescriptor<Config> = {
   resources: { primary: "external" },
   capabilities: {
     "key-read": { primary: null },
+    "project-read": { primary: null },
     read: { primary: null },
     write: { primary: null },
     delete: { primary: null },
@@ -125,6 +126,7 @@ export function postgres(
     resources: { primary: "external" },
     capabilities: {
       "key-read": { primary: out("policies", "read", "primary") },
+      "project-read": { primary: out("policies", "read", "primary") },
       read: { primary: out("policies", "read", "primary") },
       write: { primary: out("policies", "write", "primary") },
       delete: { primary: out("policies", "delete", "primary") },
