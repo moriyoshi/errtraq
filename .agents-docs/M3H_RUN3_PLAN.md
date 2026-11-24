@@ -1,7 +1,9 @@
 # M3h third real AWS run: plan
 
-Status: proposed (2026-11-25), awaiting owner approval. Owner decisions so far: include RDS, and let
-the operator bring an existing VPC instead of the test network the run would create.
+Status: decisions taken (2026-11-25); the pre-run build awaits a go-ahead. Owner decisions: include
+RDS; the fixture lets the operator choose between a created network and an existing VPC at run time;
+operator access to a private database is a product feature (a bootstrap Lambda, below); the 48-hour
+lifecycle expiry check is skipped (run 2's accepted-rules check stands).
 
 The run closes the real-AWS items left open in TODO.md after the second run (JOURNAL 2026-11-24).
 Account, profile, region, VPC and resource identifiers stay out of the repository, as before: the
@@ -58,16 +60,14 @@ run's stack files, environment and logs live in `.agents-workspace/tmp/m3h3/` (g
 | S3 edge cases | unsigned payload, spaces and `+` in listed keys, 403 versus missing under the scoped read policy, multipart-abort permission | matches the adapter's assumptions |
 | Exact rate counting and project overrides (new since run 2) | redelivery after a forced failure; a project with a tighter limit in grouped mode | no double charge; tighter limit applied |
 | Event fixtures | capture SQS, function URL and EventBridge events, scrub, commit as test fixtures | fixtures contain no account data |
-| Lifecycle expiry | objects under each expiring prefix with a 1-day rule | gone within 48 hours |
 
 ## Order, duration and teardown
 
 1. Plan and apply the fixture (created network) and the `aws-postgres` stack; run A. About 3 hours.
-2. If you supply a VPC: destroy the stack, apply the fixture in bring-your-own mode, rerun the
-   reachability, bootstrap and e2e rows of A. About 1 hour.
+2. Bring-your-own network, if chosen at run time: destroy the stack, apply the fixture with your
+   VPC and subnets, rerun the reachability, bootstrap and e2e rows of A. About 1 hour.
 3. Destroy A. Apply `aws-dynamodb`; run B. About 3 hours.
-4. Destroy everything except one bucket holding the lifecycle probe objects; check expiry after
-   48 hours, then destroy it.
+4. Destroy everything.
 
 Every apply shows you the plan first. Teardown is checked by listing tagged resources afterwards.
 
@@ -75,17 +75,29 @@ Every apply shows you the plan first. Teardown is checked by listing tagged reso
 
 RDS `db.t4g.micro` about $0.02/h, RDS Proxy (2-vCPU minimum) about $0.03/h, two interface endpoints
 in two AZs about $0.04/h, plus Lambda, SQS, DynamoDB on-demand and S3 requests. Under $5 for the
-whole run including the 500-writer contention tests; the lifecycle bucket costs cents.
+whole run including the 500-writer contention tests.
+
+## Bootstrap Lambda (product feature, built before the run)
+
+A private database cannot be reached from the operator's machine, so `errtraq bootstrap` gains a
+deployed mode that runs inside the stack's network. Sketch, to be confirmed in ARCHITECTURE.md when
+implemented:
+
+- A new optional function role `bootstrap`: no HTTP URL, no queue trigger, no schedule; invoked
+  only by the operator (`lambda:InvokeFunction` on the operator's own credentials). It shares the
+  platform's VPC placement and receives the store's read, write and migration access.
+- `errtraq bootstrap --remote` (name to settle) builds the same options as today and invokes the
+  function synchronously. The payload carries only non-secret options (org and project slugs,
+  retention, rate limits); the response carries only a non-secret summary.
+- The function runs migrations and the existing bootstrap, writes the DSN and API token to the
+  bootstrap secret itself (it gets `secretsmanager:PutSecretValue` on that one secret), and is
+  idempotent and resumable like the local path.
+- Postgres IAM needs a database user with `rds_iam` before IAM logins work. The Postgres selection
+  gets an optional administrative secret (`adminSecret`) used only by the bootstrap role to create
+  that user and grant schema privileges; runtime roles never receive it.
+- Platforms without a deployable bootstrap role keep the direct path.
 
 ## Open questions for the owner
 
-1. **Operator access to a private database.** `errtraq bootstrap` (migrations, IAM user creation)
-   connects directly, but the database sits in private subnets. Options: (a) for this run, make the
-   instance publicly reachable with its security group limited to your IP, TLS and IAM required;
-   (b) SSM port forwarding through a small EC2 instance in the VPC; (c) run bootstrap from a
-   one-off Lambda inside the VPC, which is also a product feature for private databases. This is
-   a real product gap; (c) is the one users would need.
-2. **Bring-your-own VPC in this run.** Will you supply a VPC (subnets in two AZs, egress via NAT or
-   endpoints) for step 2, or should the run test only the created network and keep the
-   bring-your-own path covered by `terraform validate` and tests?
-3. **Lifecycle wait.** Is keeping one bucket for 48 hours after the run acceptable?
+None beyond the go-ahead for the pre-run build (fixture, bootstrap Lambda, run stacks and probes).
+The run itself starts only after a separate go-ahead, with each plan shown before apply.
