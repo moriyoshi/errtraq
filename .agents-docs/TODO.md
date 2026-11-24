@@ -104,7 +104,7 @@ item should be resolved or removed once addressed. Milestone work itself is trac
 - [x] M3h (second run, 2026-11-24): verified. Original item: verify Lambda function URL CORS produces one set of headers for ingest preflight,
   successful responses and errors; verify S3-backed ZIP deployment, update and teardown with an
   operator-owned same-region bucket and its IAM / encryption policy. — *source: M3 item 5*
-- [ ] Tooling: `pnpm build` (`tsc -b`) left `dist/` older than changed sources without error during the second M3h run; find why the build info considered it current, since `errtraq` runs from `dist/`. — *source: M3h second real deployment*
+- [x] Tooling: `pnpm build` (`tsc -b`) left `dist/` older than changed sources without error during the second M3h run. `tsc -b` trusts `.tsbuildinfo` and never checks outputs; `scripts/build.mjs` now verifies every output against its source and force-rebuilds stale projects. — *source: M3h second real deployment*
 - [ ] M3h: remaining real-AWS checks: visibility expiry races, mode-switch drain, RDS / Aurora IAM with VPC (needs an operator-built VPC and database; no RDS module exists), provider retries under throttling, FIFO high-throughput attribute readback, and actual lifecycle expiry. Per-topic mode, FIFO poison to DLQ and redrive, token list / revoke, rate rejection, CloudWatch alarm evaluation, missing-data behaviour and SNS delivery were verified in the second run (2026-11-24, JOURNAL). — *source: M3h first and second real deployments*
 
 

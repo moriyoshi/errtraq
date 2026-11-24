@@ -1485,3 +1485,16 @@ by a probe queue. Stack file and scripts stayed in the ignored workspace. Torn d
   nothing, so the CLI would have run stale code; `tsc -b --force` rebuilt it. Not investigated.
 - **Not covered:** RDS / Aurora IAM (no RDS module; needs an operator-built VPC and database),
   visibility-expiry races, mode-switch drain, throttling retries, FIFO high-throughput attributes.
+
+## 2026-11-24 — `tsc -b` does not notice stale or missing outputs (Claude)
+
+TypeScript 5.6+ decides "up to date" from each project's `.tsbuildinfo` alone: deleting
+`packages/core/dist/cursor.js` and running `tsc -b` did not recreate it, and a real source edit is
+only picked up because the build info hashes change. So a `dist/` that is deleted or replaced by
+older files outside tsc stays wrong, and `errtraq` (which runs from `dist/`) runs old code; this is
+what the second M3h run hit. How that `dist/` went stale was not established. `pnpm build` now runs
+`scripts/build.mjs`: `tsc -b`, then a check that every non-test `src/**/*.ts` of each referenced
+project has a `dist/**/*.js` at least as new, then `tsc -b --force` on the stale projects only, and
+a failure if anything is still stale. A source that was only touched costs one forced rebuild of its
+project; the next build is a no-op. Putting `tsBuildInfoFile` under `dist/` would only cover
+deletion, not old files restored over current ones.

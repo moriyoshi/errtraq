@@ -10,7 +10,7 @@
     "typecheck": "tsc -p tsconfig.tests.json --noEmit && tsc -p tsconfig.node-tests.json --noEmit",
     "lint": "biome check . && node scripts/check-layering.mjs && node scripts/check-exports.mjs",
     "test": "vitest run",
-    "build": "tsc -b",
+    "build": "node scripts/build.mjs",
     "e2e": "pnpm build && node scripts/e2e.mjs",
     "infra:validate": "node scripts/infra-validate.mjs",
     "infra:mutate": "node scripts/infra-mutate.mjs",
