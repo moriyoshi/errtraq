@@ -94,6 +94,8 @@ export function lambdaDockerfile(options: {
   const platform =
     options.architecture === "arm64" ? "linux/arm64" : "linux/amd64";
   return [
+    // The image is built for one architecture on purpose, whatever the build host is.
+    "# check=skip=FromPlatformFlagConstDisallowed",
     `FROM --platform=${platform} public.ecr.aws/lambda/nodejs:${lambdaImageTag(options.runtime)}`,
     "# DuckDB native binding (glibc Linux build) for the archive engine; external to every bundle.",
     `RUN npm install --prefix \${LAMBDA_TASK_ROOT} --omit=dev --no-audit --no-fund --no-package-lock @duckdb/node-api@${DUCKDB_NODE_API_VERSION}`,

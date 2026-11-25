@@ -916,5 +916,119 @@
     "file": "outputs.tf",
     "find": "https://s3tables.${data.aws_region.current.region}",
     "replace": "https://s3.${data.aws_region.current.region}"
+  },
+  {
+    "id": "lambda-ecr-principal-wildcard",
+    "module": "lambda-app",
+    "file": "main.tf",
+    "find": "Principal = { Service = \"lambda.amazonaws.com\" }",
+    "replace": "Principal = \"*\""
+  },
+  {
+    "id": "lambda-ecr-actions-wildcard",
+    "module": "lambda-app",
+    "file": "main.tf",
+    "find": "Action    = [\"ecr:BatchGetImage\", \"ecr:GetDownloadUrlForLayer\"]",
+    "replace": "Action    = [\"ecr:*\"]"
+  },
+  {
+    "id": "lambda-ecr-source-condition-removed",
+    "module": "lambda-app",
+    "file": "main.tf",
+    "find": "Condition = { StringLike = { \"aws:sourceArn\" = \"arn:${data.aws_partition.current[0].partition}:lambda:${data.aws_region.current[0].region}:${data.aws_caller_identity.current[0].account_id}:function:${var.name}-*\" } }",
+    "replace": "Condition = { StringLike = { \"aws:sourceArn\" = \"*\" } }"
+  },
+  {
+    "id": "lambda-ecr-tags-mutable",
+    "module": "lambda-app",
+    "file": "main.tf",
+    "find": "image_tag_mutability = \"IMMUTABLE\"",
+    "replace": "image_tag_mutability = \"MUTABLE\""
+  },
+  {
+    "id": "lambda-ecr-scan-off",
+    "module": "lambda-app",
+    "file": "main.tf",
+    "find": "image_scanning_configuration { scan_on_push = true }",
+    "replace": "image_scanning_configuration { scan_on_push = false }"
+  },
+  {
+    "id": "lambda-image-command-wrong",
+    "module": "lambda-app",
+    "file": "main.tf",
+    "find": "command = [\"${each.key}/${var.handler}\"]",
+    "replace": "command = [var.handler]"
+  },
+  {
+    "id": "lambda-image-ephemeral-ignored",
+    "module": "lambda-app",
+    "file": "main.tf",
+    "find": "size = each.value.ephemeral_storage_mb",
+    "replace": "size = 512"
+  },
+  {
+    "id": "lambda-image-uri-wrong-package",
+    "module": "lambda-app",
+    "file": "main.tf",
+    "find": "image_uri                      = each.value.package_type == \"Image\" ? var.image_uri : null",
+    "replace": "image_uri                      = var.image_uri"
+  },
+  {
+    "id": "lambda-archive-role-exposed",
+    "module": "lambda-app",
+    "file": "variables.tf",
+    "find": "(!contains(fn.roles, \"archive\") || (length(fn.roles) == 1 && fn.package_type == \"Image\" && length(fn.http) == 0))",
+    "replace": "true"
+  },
+  {
+    "id": "lambda-image-uri-optional",
+    "module": "lambda-app",
+    "file": "variables.tf",
+    "find": "condition     = (var.image_uri != null) == anytrue([for fn in values(var.functions) : fn.package_type == \"Image\"])",
+    "replace": "condition     = true"
+  },
+  {
+    "id": "s3-overflow-prefix-removed",
+    "module": "s3",
+    "file": "main.tf",
+    "find": "prefixes = { primary = [\"envelopes/\", \"payloads/\", \"artifacts/\", \"archive-overflow/\"] }",
+    "replace": "prefixes = { primary = [\"envelopes/\", \"payloads/\", \"artifacts/\"] }"
+  },
+  {
+    "id": "s3-staging-prefix-returns",
+    "module": "s3",
+    "file": "main.tf",
+    "find": "prefixes = { primary = [\"envelopes/\", \"payloads/\", \"artifacts/\", \"archive-overflow/\"] }",
+    "replace": "prefixes = { primary = [\"envelopes/\", \"payloads/\", \"artifacts/\", \"archive-overflow/\", \"archive-staging/\"] }"
+  },
+  {
+    "id": "root-archive-grant-to-consumer",
+    "root": "dynamodb-archive",
+    "operation": "archive-grant-to-consumer"
+  },
+  {
+    "id": "root-archive-drop-archive-policy",
+    "root": "dynamodb-archive",
+    "operation": "archive-drop-archive-policy"
+  },
+  {
+    "id": "root-archive-queue-to-consumer",
+    "root": "dynamodb-archive",
+    "operation": "archive-queue-to-consumer"
+  },
+  {
+    "id": "root-archive-retention-to-cron",
+    "root": "dynamodb-archive",
+    "operation": "archive-retention-to-cron"
+  },
+  {
+    "id": "root-archive-drop-image-uri",
+    "root": "dynamodb-archive",
+    "operation": "archive-drop-image-uri"
+  },
+  {
+    "id": "root-archive-binding-to-ingest",
+    "root": "dynamodb-archive",
+    "operation": "archive-binding-to-ingest"
   }
 ]
