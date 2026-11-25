@@ -434,6 +434,9 @@ importers:
       '@aws-sdk/credential-providers':
         specifier: ^3.1176.0
         version: 3.1176.0
+      '@moriyoshi/errtraq-archive-iceberg':
+        specifier: workspace:*
+        version: link:../adapters/archive-iceberg
       '@moriyoshi/errtraq-aws-signing':
         specifier: workspace:*
         version: link:../aws-signing

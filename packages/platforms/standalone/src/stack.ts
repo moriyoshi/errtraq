@@ -39,6 +39,16 @@ const baseConfigSchema = z.strictObject({
     .max(0)
     .default([]),
   http: z.array(z.enum(["ingest", "api"])).default(["ingest", "api"]),
+  /**
+   * Run a cron job every N seconds instead of on its UTC schedule (the schedules are hourly, which
+   * is too slow for local archive runs and tests). Only the archive jobs are overridable.
+   */
+  cronIntervalSec: z
+    .partialRecord(
+      z.enum(["archive-planner", "retention"]),
+      z.number().int().positive(),
+    )
+    .optional(),
   settings: z
     .partialRecord(
       z.enum(["ingest", "api", "consumer", "record", "cron"]),

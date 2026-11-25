@@ -23,12 +23,18 @@ export async function constructStack(
   roles: readonly FunctionRole[],
   environment: Record<string, string | undefined>,
   loadModule: ModuleLoader = (specifier) => import(specifier),
+  /** Extra runtime bindings for a selection (for example an engine only a Node host may import). */
+  extraBindings?: (
+    selection: AdapterSelection,
+  ) => Record<string, unknown> | Promise<Record<string, unknown>>,
 ): Promise<ConstructedStack> {
   const selected = selections(stack);
   assertImplementedConsumerTopics(
     deriveTriggers(stack)
       .filter((trigger) => trigger.kind === "queue")
       .flatMap((trigger) => trigger.topics),
+    // The one process runs the archive worker too (D6).
+    ["ingest", "record", "archive.project"],
   );
   const instances = new Map<string, unknown>();
   const closers: ConstructedAdapter[] = [];
@@ -114,7 +120,10 @@ export async function constructStack(
             }
           : {}),
         config: resolveRuntimeValue(selection.config, path, stack, environment),
-        bindings: resolveRoleBindings(stack, roles, path, environment),
+        bindings: {
+          ...resolveRoleBindings(stack, roles, path, environment),
+          ...(await extraBindings?.(selection)),
+        },
         dependencies,
         environment,
         secretSource: {

@@ -1,4 +1,8 @@
-import type { AdapterManifest, InfraDescriptor } from "@moriyoshi/errtraq-core";
+import type {
+  AdapterManifest,
+  AdapterSelection,
+  InfraDescriptor,
+} from "@moriyoshi/errtraq-core";
 import { z } from "zod";
 
 /**
@@ -141,4 +145,14 @@ export function rowDeleteModeFor(
   config: Pick<ParsedConfig["engine"], "formatVersion">,
 ): "deletion-vector" | "position-delete" {
   return config.formatVersion === 3 ? "deletion-vector" : "position-delete";
+}
+
+/** The stack selection: `archive: icebergArchive({ catalog: { uri, warehouse }, ... })`. */
+export function icebergArchive(config: Config): AdapterSelection<Config> {
+  return {
+    manifest,
+    infra,
+    config,
+    runtimeModule: "@moriyoshi/errtraq-archive-iceberg",
+  };
 }

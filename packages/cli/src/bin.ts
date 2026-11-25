@@ -10,6 +10,7 @@ import {
   stackOrigin,
 } from "@moriyoshi/errtraq-core";
 import { buildSummary, dsnHost, dsnOrigin } from "./address.js";
+import { archiveBindings, hasEnsureTable } from "./archive-engine.js";
 import { resolveOperatorAwsEnvironment } from "./aws-credentials.js";
 import { buildStack } from "./build.js";
 import { constructStack } from "./construction.js";
@@ -75,10 +76,12 @@ export async function main(args: string[]): Promise<void> {
     !infra &&
     !tokenAdmin &&
     !projectLimits &&
-    !["dev", "validate", "build", "bootstrap"].includes(command ?? "")
+    !["dev", "validate", "build", "bootstrap", "migrate"].includes(
+      command ?? "",
+    )
   )
     throw new Error(
-      "Usage: errtraq <dev|validate|build|bootstrap [--remote]|infra generate|token rotate|token list|token revoke|project rate-limits> --stack <file> [--out dir]",
+      "Usage: errtraq <dev|validate|build|migrate|bootstrap [--remote]|infra generate|token rotate|token list|token revoke|project rate-limits> --stack <file> [--out dir]",
     );
   const options: Record<string, string> = {};
   let allowMissing = false;
@@ -311,7 +314,44 @@ export async function main(args: string[]): Promise<void> {
     stack,
     functions[0]?.roles ?? [],
     process.env,
+    undefined,
+    archiveBindings,
   );
+  if (command === "migrate") {
+    try {
+      if (platformSelection.manifest.id !== "standalone")
+        throw new Error("migrate supports standalone stacks only");
+      const instance = (kind: string) =>
+        [...selections(stack)]
+          .filter(([path]) => !path.includes("."))
+          .map(([path, selection]) => [path, selection] as const)
+          .find(([, selection]) => selection.manifest.kind === kind)?.[0];
+      const storePath = instance("store");
+      const store = storePath ? created.instances.get(storePath) : undefined;
+      if (
+        !store ||
+        typeof store !== "object" ||
+        !("migrate" in store) ||
+        typeof store.migrate !== "function"
+      )
+        throw new Error("The store adapter has no migrate");
+      await store.migrate();
+      console.log("Active store migrated");
+      const archivePath = instance("archive");
+      if (archivePath) {
+        const archive = created.instances.get(archivePath);
+        if (!hasEnsureTable(archive))
+          throw new Error("The archive adapter cannot create its table");
+        const { created: made } = await archive.ensureTable();
+        console.log(
+          made ? "Archive table created" : "Archive table already exists",
+        );
+      }
+    } finally {
+      await created.close();
+    }
+    return;
+  }
   let failed = false;
   try {
     if (!isDevPlatform(created.platform))

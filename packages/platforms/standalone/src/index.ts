@@ -12,6 +12,7 @@ import {
   CRON_JOBS,
   type CreateContext,
   type CronHandler,
+  createCronHandler,
   IngestService,
   type KV,
   type Logger,
@@ -124,6 +125,11 @@ export function create({
     },
     async prepare(rotate: boolean, devToken: DevTokenManager) {
       await bindings.store.migrate();
+      // The single process owns the archive table too (`errtraq migrate` does the same offline).
+      const archive = bindings.archive as
+        | (ArchiveStore & { ensureTable?: () => Promise<unknown> })
+        | undefined;
+      await archive?.ensureTable?.();
       const ids = new WebCryptoIdGen();
       const project = await bootstrapProject({
         store: bindings.store,
@@ -153,8 +159,6 @@ export function create({
           throw new Error(`Unknown cron job ${name}`);
       const jobs = CRON_JOBS.filter((job) => cronJobs.includes(job.name));
       for (const job of jobs) cronMatches(job.schedule, new Date());
-      if (jobs.length && !bindings.cronHandler)
-        throw new Error("Cron handler required");
       if (!bindings.queue.idle)
         throw new Error(
           "Standalone requires queue idle observation for graceful shutdown",
@@ -207,6 +211,7 @@ export function create({
             kv: bindings.kv,
             rateRejection,
             logger,
+            archive: bindings.archive,
           }),
         );
       const server = serve({
@@ -288,25 +293,72 @@ export function create({
       void cleanupJob();
       const cleanupTimer = setInterval(() => void cleanupJob(), 15 * 60 * 1000);
       cleanupTimer.unref();
+      // The single process hosts the cron jobs too. An embedder may supply its own handler;
+      // otherwise the core registry runs the archive planner and the retention job.
+      // TODO(M4j): erasure-worker is not scheduled until its handler exists.
+      const cronHandler =
+        bindings.cronHandler ??
+        createCronHandler(
+          logger,
+          undefined,
+          undefined,
+          bindings.archive
+            ? {
+                projects: bindings.store.projects,
+                queue: bindings.queue.producer,
+              }
+            : undefined,
+          {
+            store: bindings.store,
+            blobs: bindings.blob,
+            archived: !!bindings.archive,
+          },
+        );
+      const scheduled = jobs.filter(
+        (job) => bindings.cronHandler || job.name !== "erasure-worker",
+      );
+      const running_ = new Set<string>();
+      const runJob = (name: string, at: Date) => {
+        // A job still running from the previous tick is skipped (the worker is lease-fenced anyway).
+        if (running_.has(name)) return;
+        running_.add(name);
+        void Promise.resolve()
+          .then(() => cronHandler(name, toTimestamp(at)))
+          .catch((error) =>
+            logger.error("Cron failed", { job: name, error: String(error) }),
+          )
+          .finally(() => running_.delete(name));
+      };
+      const intervals = scheduled.flatMap((job) => {
+        const seconds = (
+          cfg.cronIntervalSec as Record<string, number> | undefined
+        )?.[job.name];
+        return seconds
+          ? [setInterval(() => runJob(job.name, new Date()), seconds * 1000)]
+          : [];
+      });
+      for (const interval of intervals) interval.unref();
+      const scheduleJobs = scheduled.filter(
+        (job) =>
+          !(cfg.cronIntervalSec as Record<string, number> | undefined)?.[
+            job.name
+          ],
+      );
       let minute = -1;
       const timer = setInterval(() => {
         const now = new Date();
         const current = Math.floor(now.valueOf() / 60000);
         if (current === minute) return;
         minute = current;
-        for (const job of jobs)
-          if (cronMatches(job.schedule, now))
-            void Promise.resolve()
-              .then(() => bindings.cronHandler?.(job.name, toTimestamp(now)))
-              .catch((error) =>
-                logger.error("Cron failed", { error: String(error) }),
-              );
+        for (const job of scheduleJobs)
+          if (cronMatches(job.schedule, now)) runJob(job.name, now);
       }, 1000);
       let closePromise: Promise<void> | undefined;
       const stop = () => {
         if (!closePromise)
           closePromise = (async () => {
             clearInterval(timer);
+            for (const interval of intervals) clearInterval(interval);
             clearInterval(cleanupTimer);
             const deadline = Date.now() + 5000;
             const force = setTimeout(() => {

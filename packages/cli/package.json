@@ -41,6 +41,7 @@
   },
   "dependencies": {
     "@aws-sdk/credential-providers": "^3.1176.0",
+    "@moriyoshi/errtraq-archive-iceberg": "workspace:*",
     "@moriyoshi/errtraq-aws-signing": "workspace:*",
     "@moriyoshi/errtraq-blob-fs": "workspace:*",
     "@moriyoshi/errtraq-infra-gen": "workspace:*",

@@ -45,6 +45,8 @@ function sourceValue(value: unknown): string {
       .join(",")}}`;
   return JSON.stringify(value);
 }
+/** Keep in step with the dependency of packages/adapters/archive-iceberg (checked by a test). */
+export const DUCKDB_NODE_API_VERSION = "2.0.1-r.1";
 export interface BuildManifest {
   stack: string;
   platform: string;
@@ -189,7 +191,10 @@ const getHandler=retryableInitialization(async()=>{ const built=await constructD
       const modules = specs
         .map((spec, index) => `${JSON.stringify(spec)}:m${index}`)
         .join(",");
-      entry = `${imports}\nimport stack from ${JSON.stringify(localImport(stackFile))};\nimport {constructStack,devToken,dsnOrigin} from "@moriyoshi/errtraq-cli/standalone-entry";\nconst modules={${modules}};\nconst built=await constructStack(stack,${JSON.stringify(fn.roles)},process.env,async(name)=>{if(!Object.hasOwn(modules,name)) throw new Error("Unknown module "+name); return modules[name];});\nconst project=await built.platform.prepare(false,devToken); const server=await built.platform.start();\nconst destination=dsnOrigin(server.host,server.port,server.publicUrl); if(destination.fallback) console.log("Note: DSN uses localhost; use your public host for remote clients."); const dsn=new URL(destination.origin); dsn.username=project.publicKey; dsn.pathname="/"+project.projectId; console.log("DSN: "+dsn.toString()); console.log("API token: "+project.token); console.log("Listening: http://"+server.host+":"+server.port);\nlet stopping=false;
+      // The DuckDB engine is imported statically, and only for an archive-iceberg stack; its
+      // native binding stays external to the bundle and is installed in the image (D6).
+      const duckdb = stack.archive?.manifest.id === "archive-iceberg";
+      entry = `${imports}${duckdb ? '\nimport * as duckdbEngine from "@moriyoshi/errtraq-archive-iceberg/duckdb";' : ""}\nimport stack from ${JSON.stringify(localImport(stackFile))};\nimport {constructStack,devToken,dsnOrigin} from "@moriyoshi/errtraq-cli/standalone-entry";\nconst modules={${modules}};\nconst built=await constructStack(stack,${JSON.stringify(fn.roles)},process.env,async(name)=>{if(!Object.hasOwn(modules,name)) throw new Error("Unknown module "+name); return modules[name];}${duckdb ? ',(selection)=>selection.manifest.id==="archive-iceberg"?{createEngine:duckdbEngine.create}:{}' : ""});\nconst project=await built.platform.prepare(false,devToken); const server=await built.platform.start();\nconst destination=dsnOrigin(server.host,server.port,server.publicUrl); if(destination.fallback) console.log("Note: DSN uses localhost; use your public host for remote clients."); const dsn=new URL(destination.origin); dsn.username=project.publicKey; dsn.pathname="/"+project.projectId; console.log("DSN: "+dsn.toString()); console.log("API token: "+project.token); console.log("Listening: http://"+server.host+":"+server.port);\nlet stopping=false;
 for(const signal of ["SIGTERM","SIGINT"]) process.on(signal,()=>{if(stopping){if(process.pid===1) process.exit(signal==="SIGTERM"?143:130); process.removeAllListeners(signal); process.kill(process.pid,signal); return;} stopping=true; void server.close().then(()=>built.close()).catch((error)=>{console.error(error);process.exitCode=1;});});`;
     } else
       throw new Error(
@@ -210,6 +215,8 @@ for(const signal of ["SIGTERM","SIGINT"]) process.on(signal,()=>{if(stopping){if
         loader: "ts",
       },
       bundle: true,
+      external:
+        stack.archive?.manifest.id === "archive-iceberg" ? ["@duckdb/*"] : [],
       platform: "node",
       format: "esm",
       // CommonJS dependencies (pg) call require() for Node builtins; an ESM bundle has no
@@ -277,7 +284,15 @@ for(const signal of ["SIGTERM","SIGINT"]) process.on(signal,()=>{if(stopping){if
     const id = view.functions[0]?.id;
     if (!id || view.functions.length !== 1)
       throw new Error("Standalone requires one function");
-    const dockerfile = `FROM node:22.23-bookworm-slim\nWORKDIR /app\nRUN mkdir -p /data && chown node:node /data\nCOPY --chown=node:node ${id}/index.mjs /app/index.mjs\n# Explicitly opt in to listening on the container network.\nENV ERRTRAQ_HOST=0.0.0.0 ERRTRAQ_DATA_DIR=/data\nUSER node\nVOLUME ["/data"]\nEXPOSE 8787\nHEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 CMD node -e "fetch('http://127.0.0.1:'+(process.env.ERRTRAQ_PORT||'8787')+'/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"\nENTRYPOINT ["node", "/app/index.mjs"]\n`;
+    // D6: an archive-iceberg stack runs the whole pipeline in this one process, so the image
+    // carries the DuckDB native binding (external to the bundle). The `iceberg` and `httpfs`
+    // extensions are installed by DuckDB at first start (engine.extensionMode runtime-install,
+    // needs egress); baking them is the AWS image recipe (TODO(M4i)).
+    const duckdbLayer =
+      stack.archive?.manifest.id === "archive-iceberg"
+        ? `# DuckDB native binding for the archive engine (external to the bundle).\nRUN npm install --prefix /app --omit=dev --no-audit --no-fund --no-package-lock @duckdb/node-api@${DUCKDB_NODE_API_VERSION} && chown -R node:node /app\n`
+        : "";
+    const dockerfile = `FROM node:22.23-bookworm-slim\nWORKDIR /app\nRUN mkdir -p /data && chown node:node /data\n${duckdbLayer}COPY --chown=node:node ${id}/index.mjs /app/index.mjs\n# Explicitly opt in to listening on the container network.\nENV ERRTRAQ_HOST=0.0.0.0 ERRTRAQ_DATA_DIR=/data\nUSER node\nVOLUME ["/data"]\nEXPOSE 8787\nHEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 CMD node -e "fetch('http://127.0.0.1:'+(process.env.ERRTRAQ_PORT||'8787')+'/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"\nENTRYPOINT ["node", "/app/index.mjs"]\n`;
     await writeFile(join(output, "Dockerfile"), dockerfile);
     manifest.dockerfile = "Dockerfile";
   }

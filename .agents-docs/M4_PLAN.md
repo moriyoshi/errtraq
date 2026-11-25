@@ -119,6 +119,7 @@ M4d -> M4e -> M4f -----/
 
 ### M4g. Standalone wiring and the archive end-to-end
 
+- Status: implemented (2026-11-25). `cronIntervalSec` timers and the default cron handler in the standalone platform, `stacks/local-archive.ts`, `errtraq migrate`, image with the DuckDB binding (D6), opt-in `pnpm e2e:archive` and `duckdb/fault-matrix.opt-in.test.ts` (both passed against Lakekeeper + winterbaume). See the JOURNAL entry for deviations.
 - Goal: archival, federation and the engine working together locally.
 - Scope: `packages/platforms/standalone` (in-process timers for `archive-planner` and `retention`, queue consumer registration for `archive.project`), `stacks/local-archive.ts` (new example stack, local store + Lakekeeper + winterbaume), CLI (`errtraq migrate` creates the archive table), `scripts/e2e` addition, standalone container image gains the DuckDB native binding (or documents that it does not, D6).
 - Tests: default suite uses the in-memory archive and the standalone planner timers; opt-in e2e: seed events, run archival with a short cutoff, assert rows in Iceberg via a separate DuckDB session against Lakekeeper, and a cross-watermark page sequence through the HTTP API; run the M4b fault matrix once more against the real engine for the COMMIT and MARK boundaries.

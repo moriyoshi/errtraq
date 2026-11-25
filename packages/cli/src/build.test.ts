@@ -28,7 +28,8 @@ import shared from "../../../stacks/aws-dynamodb.js";
 import bootstrapStack from "../../../stacks/aws-dynamodb-bootstrap.js";
 import perTopic from "../../../stacks/aws-dynamodb-per-topic.js";
 import local from "../../../stacks/local.js";
-import { buildStack } from "./build.js";
+import localArchive from "../../../stacks/local-archive.js";
+import { buildStack, DUCKDB_NODE_API_VERSION } from "./build.js";
 import { generateInfra, validateLambdaArtifactSize } from "./infra.js";
 import { resolveRuntimeValue } from "./runtime.js";
 import { formatValidation } from "./validation.js";
@@ -624,6 +625,49 @@ describe("built stacks", () => {
     },
     30000,
   );
+  it("adds the DuckDB native binding only to an archive stack's image (D6)", async () => {
+    const archiveOutput = join(temp, "local-archive");
+    await buildStack(
+      localArchive,
+      repo,
+      archiveOutput,
+      resolve(repo, "stacks/local-archive.ts"),
+    );
+    await assertNoLocalPaths(archiveOutput);
+    const dockerfile = await readFile(
+      join(archiveOutput, "Dockerfile"),
+      "utf8",
+    );
+    expect(dockerfile).toContain(`@duckdb/node-api@${DUCKDB_NODE_API_VERSION}`);
+    const bundle = await readFile(
+      join(archiveOutput, "shared/index.mjs"),
+      "utf8",
+    );
+    // external to the bundle, imported statically from the engine subpath
+    expect(bundle).toContain('from "@duckdb/node-api"');
+    const manifest = JSON.parse(
+      await readFile(
+        resolve(repo, "packages/adapters/archive-iceberg/package.json"),
+        "utf8",
+      ),
+    ) as { dependencies: Record<string, string> };
+    expect(manifest.dependencies["@duckdb/node-api"]).toBe(
+      DUCKDB_NODE_API_VERSION,
+    );
+    const plainOutput = join(temp, "local-no-archive");
+    await buildStack(
+      local,
+      repo,
+      plainOutput,
+      resolve(repo, "stacks/local.ts"),
+    );
+    expect(
+      await readFile(join(plainOutput, "Dockerfile"), "utf8"),
+    ).not.toContain("duckdb");
+    expect(
+      await readFile(join(plainOutput, "shared/index.mjs"), "utf8"),
+    ).not.toContain("@duckdb");
+  }, 60000);
   it("builds a standalone Node bundle without AWS adapters", async () => {
     const output = join(temp, "local");
     await buildStack(local, repo, output, resolve(repo, "stacks/local.ts"));

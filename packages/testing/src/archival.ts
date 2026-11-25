@@ -72,7 +72,7 @@ async function seed(store: ActiveStore, event: StoredEvent) {
 export interface Scenario {
   store: ActiveStore;
   blobs: MemoryBlobStore;
-  archive: MemoryArchiveStore;
+  archive: ArchiveStore;
   clock: FakeClock;
   sent: { topic: string; messages: Message[] }[];
   fixture: ArchivalFixture;
@@ -91,12 +91,18 @@ export interface Scenario {
 
 export async function scenario(
   factory: () => Promise<ActiveStore>,
-  options: { old?: number; overflowIndex?: number; maxRows?: number } = {},
+  options: {
+    old?: number;
+    overflowIndex?: number;
+    maxRows?: number;
+    /** An external ArchiveStore (for example the real engine) instead of the in-memory one. */
+    archive?: ArchiveStore;
+  } = {},
 ): Promise<Scenario> {
   const store = await factory();
   const clock = new FakeClock(NOW);
   const blobs = new MemoryBlobStore();
-  const archive = new MemoryArchiveStore();
+  const archive = options.archive ?? new MemoryArchiveStore();
   const sent: Scenario["sent"] = [];
   const queue: QueueProducer = {
     send: async (topic, messages) => {
@@ -213,7 +219,7 @@ export async function expectArchivedExactlyOnce(s: Scenario, ids: EventId[]) {
 }
 
 /** Run fresh workers (the previous lease expired) until one finishes; faults are disarmed. */
-async function recover(s: Scenario, faults?: FaultInjector) {
+export async function recover(s: Scenario, faults?: FaultInjector) {
   for (let attempt = 0; attempt < 12; attempt++) {
     s.clock.advance(2 * TIMEOUT_MS + 1);
     try {

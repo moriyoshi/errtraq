@@ -20,7 +20,7 @@ export class ArchiveEngineNotWiredError extends Error {
   override name = "ArchiveEngineNotWiredError";
   constructor(operation: string) {
     super(
-      `archive-iceberg: ${operation} needs a query engine: bind "createEngine" from "@moriyoshi/errtraq-archive-iceberg/duckdb" (TODO(M4g): standalone wiring)`,
+      `archive-iceberg: ${operation} needs a query engine: bind "createEngine" from "@moriyoshi/errtraq-archive-iceberg/duckdb"`,
     );
   }
 }

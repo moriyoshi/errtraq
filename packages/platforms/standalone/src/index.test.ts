@@ -1,8 +1,15 @@
-import { bootstrapProject, readDropped } from "@moriyoshi/errtraq-core";
+import {
+  bootstrapProject,
+  type EventId,
+  type IssueId,
+  readDropped,
+  type Timestamp,
+} from "@moriyoshi/errtraq-core";
 import {
   DeterministicIdGen,
   FakeClock,
   MemoryActiveStore,
+  MemoryArchiveStore,
   MemoryBlobStore,
   MemoryKV,
   MemoryQueue,
@@ -246,4 +253,125 @@ it("enforces a project's tighter issue limit in grouped mode, where the consumer
   } finally {
     await platform.close();
   }
+});
+
+describe("standalone archive tier", () => {
+  const seed = async (store: MemoryActiveStore) => {
+    const boot = await bootstrapProject({
+      store,
+      kv: new MemoryKV(),
+      ids: new DeterministicIdGen(),
+      orgSlug: "default",
+      projectSlug: "default",
+    });
+    const projectId = boot.project.id;
+    const day = 24 * 3600 * 1000;
+    const receivedAt = (ageDays: number, n: number) =>
+      new Date(
+        Date.now() - ageDays * day + n * 1000,
+      ).toISOString() as Timestamp;
+    const ids: string[] = [];
+    for (const [n, age] of [
+      [1, 400],
+      [2, 399],
+      [3, 0],
+    ] as const) {
+      const eventId = `e${n}` as EventId;
+      ids.push(eventId);
+      const at = receivedAt(age, n);
+      await store.recordEvent(
+        {
+          projectId,
+          issueId: "i1" as IssueId,
+          eventId,
+          receivedAt: at,
+          timestamp: at,
+          fingerprint: "fp",
+          title: "t",
+          culprit: "c",
+          type: "Error",
+          metadata: {},
+          level: "error",
+        },
+        {
+          projectId,
+          issueId: "i1" as IssueId,
+          eventId,
+          receivedAt: at,
+          timestamp: at,
+          level: "error",
+          tags: {},
+          payload: { message: `event ${n}` },
+        },
+      );
+    }
+    return { projectId };
+  };
+  const dependencies = (
+    store: MemoryActiveStore,
+    archive: MemoryArchiveStore,
+  ) => ({
+    store,
+    blob: new MemoryBlobStore(),
+    kv: new MemoryKV(),
+    queue: Object.assign(new MemoryQueue(), { idle: async () => true }),
+    archive,
+  });
+  it("runs the planner timer and the archive.project consumer in process", async () => {
+    const store = new MemoryActiveStore();
+    const archive = new MemoryArchiveStore();
+    const { projectId } = await seed(store);
+    const platform = create(
+      { port: 0, cronIntervalSec: { "archive-planner": 1, retention: 1 } },
+      dependencies(store, archive),
+      ["archive-planner", "retention", "erasure-worker"],
+    );
+    const server = await platform.start();
+    try {
+      const deadline = Date.now() + 15000;
+      const archived = async () =>
+        (await archive.getEvent(projectId, "e1" as EventId)) !== null &&
+        (await archive.getEvent(projectId, "e2" as EventId)) !== null;
+      while (!(await archived()) && Date.now() < deadline)
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      expect(await archived()).toBe(true);
+      // delete follows the commit; wait for the hot tier to drop the archived rows
+      while (
+        (await store.events.get(projectId, "e1" as EventId)) &&
+        Date.now() < deadline
+      )
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      expect(await store.events.get(projectId, "e1" as EventId)).toBeNull();
+      expect(await store.events.get(projectId, "e2" as EventId)).toBeNull();
+      expect(await store.events.get(projectId, "e3" as EventId)).not.toBeNull();
+      expect(await archive.getEvent(projectId, "e3" as EventId)).toBeNull();
+      expect(server.port).toBeGreaterThan(0);
+    } finally {
+      await platform.close();
+    }
+  });
+  it("does not schedule archive jobs without an archive and accepts cron overrides only for archive jobs", async () => {
+    expect(
+      configSchema.safeParse({ cronIntervalSec: { "bundle-cleanup": 1 } })
+        .success,
+    ).toBe(false);
+    expect(
+      configSchema.safeParse({ cronIntervalSec: { retention: 0 } }).success,
+    ).toBe(false);
+    const store = new MemoryActiveStore();
+    const { projectId } = await seed(store);
+    const platform = create(
+      { port: 0, cronIntervalSec: { "archive-planner": 1, retention: 1 } },
+      { ...dependencies(store, new MemoryArchiveStore()), archive: undefined },
+      ["archive-planner", "retention"],
+    );
+    await platform.start();
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 2500));
+      // retention without an archive deletes expired events directly
+      expect(await store.events.get(projectId, "e1" as EventId)).toBeNull();
+    } finally {
+      await platform.close();
+    }
+  });
 });

@@ -24,6 +24,9 @@
       "path": "../platforms/aws-lambda"
     },
     {
+      "path": "../adapters/archive-iceberg"
+    },
+    {
       "path": "../adapters/store-dynamodb"
     },
     {

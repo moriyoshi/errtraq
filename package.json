@@ -17,6 +17,7 @@
     "container:check": "node scripts/container-check.mjs",
     "aws-emulator:install": "node scripts/aws-emulated/install.mjs",
     "archive:smoke": "node scripts/archive-local/smoke.mjs",
+    "e2e:archive": "pnpm build && node scripts/e2e-archive.mjs",
     "test:aws-emulated": "node scripts/aws-emulated/run.mjs",
     "infra:probe-emulated": "node scripts/aws-emulated/probe-terraform.mjs",
     "infra:apply-emulated": "node scripts/aws-emulated/apply-emulated.mjs",
