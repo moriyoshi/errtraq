@@ -1853,3 +1853,9 @@ choice; no quota increase). Findings:
   See the status table in `WINTERBAUME_GAPS.md`.
 - **Harness note:** the repeat-plan "gap no longer reproduces" checks in `apply-emulated.mjs` now collect every vanished
   gap before failing, so one run lists all removable exceptions instead of one per five-minute run.
+- **Final sweep after teardown:** every region was swept by tag, IAM and S3 globally, and the run's
+  region by name for every service used. Only two leftovers existed, and the run's teardown check did
+  not look for them: `/aws/rds/proxy/<proxy-name>` log groups (empty), which RDS Proxy creates itself
+  outside Terraform and which survive `terraform destroy` of the proxy. They were deleted by hand. A
+  fixture or product module that creates an RDS Proxy should either manage that log group in Terraform
+  or document its removal.
