@@ -52,9 +52,10 @@ output "test_bindings" {
   ) }
 }
 output "test_secret_reads" { value = { for id in keys(var.functions) : id => [for key, member in google_secret_manager_secret_iam_member.read : "projects/\${member.project}/secrets/\${member.secret_id}" if startswith(key, "\${id}|")] } }
-output "test_subscriptions" { value = { for key, subscription in google_pubsub_subscription.push : key => { name = subscription.name, topic = subscription.topic, path = trimprefix(subscription.push_config[0].push_endpoint, google_cloud_run_v2_service.function[var.queue_triggers[key].function_id].uri), ordered = subscription.enable_message_ordering, dlq = try(subscription.dead_letter_policy[0].dead_letter_topic, "") } } }
+output "test_subscriptions" { value = { for key, subscription in google_pubsub_subscription.push : key => { name = subscription.name, topic = subscription.topic, path = trimprefix(subscription.push_config[0].push_endpoint, google_cloud_run_v2_service.function[var.queue_triggers[key].function_id].uri), ordered = subscription.enable_message_ordering, dlq = try(subscription.dead_letter_policy[0].dead_letter_topic, ""), function = var.queue_triggers[key].function_id, audience = subscription.push_config[0].oidc_token[0].audience } } }
 output "test_invokers" { value = { push = sort(keys(google_cloud_run_v2_service_iam_member.push)), scheduler = sort(keys(google_cloud_run_v2_service_iam_member.scheduler)), public = sort(keys(google_cloud_run_v2_service_iam_member.public)) } }
-output "test_crons" { value = { for key, job in google_cloud_scheduler_job.cron : key => { schedule = job.schedule, time_zone = job.time_zone, path = trimprefix(job.http_target[0].uri, google_cloud_run_v2_service.function[var.cron_triggers[key].function_id].uri) } } }
+output "test_crons" { value = { for key, job in google_cloud_scheduler_job.cron : key => { schedule = job.schedule, time_zone = job.time_zone, function = var.cron_triggers[key].function_id, audience = job.http_target[0].oidc_token[0].audience, path = trimprefix(job.http_target[0].uri, google_cloud_run_v2_service.function[var.cron_triggers[key].function_id].uri) } } }
+output "test_service_audiences" { value = { for id, service in google_cloud_run_v2_service.function : id => sort(tolist(service.custom_audiences)) } }
 output "test_sql_users" { value = sort([for key, user in google_sql_user.iam : "\${user.instance}|\${split("|", key)[0]}"]) }
 `;
 const delivered = [
@@ -96,12 +97,16 @@ run "generated_root" {
     error_message = "Secret accessor grants differ from the deployment view."
   }
   assert {
-    condition = alltrue([for key, expected in output.expected_queues : module.platform.test_subscriptions[key].name == element(split("/", expected.subscription), 3) && module.platform.test_subscriptions[key].path == expected.path && module.platform.test_subscriptions[key].ordered == expected.ordered && module.platform.test_subscriptions[key].dlq == expected.dlq]) && toset(keys(module.platform.test_subscriptions)) == toset(keys(output.expected_queues))
+    condition = alltrue([for key, expected in output.expected_queues : module.platform.test_subscriptions[key].name == element(split("/", expected.subscription), 3) && module.platform.test_subscriptions[key].path == expected.path && module.platform.test_subscriptions[key].ordered == expected.ordered && module.platform.test_subscriptions[key].dlq == expected.dlq && module.platform.test_subscriptions[key].function == expected.function && module.platform.test_subscriptions[key].audience == output.expected_audience]) && toset(keys(module.platform.test_subscriptions)) == toset(keys(output.expected_queues))
     error_message = "Push subscriptions differ from the deployment view."
   }
   assert {
     condition = toset(module.platform.test_invokers.push) == toset(output.expected_push_invokers) && toset(module.platform.test_invokers.scheduler) == toset(output.expected_scheduler_invokers) && toset(module.platform.test_invokers.public) == toset(output.expected_public)
     error_message = "run.invoker bindings differ from the deployment view: allUsers only on HTTP ingest and API, the invoker identities only on the services they trigger."
+  }
+  assert {
+    condition = alltrue([for id, audiences in module.platform.test_service_audiences : audiences == tolist([output.expected_audience])]) && alltrue([for key, job in module.platform.test_crons : job.audience == output.expected_audience])
+    error_message = "Services must accept, and Pub/Sub and Scheduler must send, the configured OIDC audience."
   }
   assert {
     condition = jsonencode(module.platform.test_crons) == jsonencode(output.expected_crons)
@@ -178,6 +183,7 @@ export function prepareGcpRoot(parent, name, version) {
           {
             subscription,
             path: `/_errtraq/push/${t.physical}`,
+            function: t.functionId,
             ordered: t.topics.includes("record"),
             // The dead-letter topic is the topic name plus -dlq, derived from the subscription name.
             dlq: t.settings.dlq?.enabled
@@ -205,6 +211,8 @@ export function prepareGcpRoot(parent, name, version) {
         {
           schedule: t.schedule,
           time_zone: "UTC",
+          function: t.functionId,
+          audience: stack.platform.config.oidcAudience,
           path: `/_errtraq/cron/${t.name}`,
         },
       ]),
@@ -231,6 +239,7 @@ export function prepareGcpRoot(parent, name, version) {
       .map((fn) => fn.id),
     expected_crons: crons,
     expected_sql_users: sqlUsers,
+    expected_audience: stack.platform.config.oidcAudience,
   };
   writeFileSync(
     resolve(target, "expectations.tf.json"),

@@ -8,6 +8,55 @@ mock_provider "google" {
   }
   mock_resource "google_cloud_run_v2_service" { defaults = { uri = "https://mock-service-abc123-ew.a.run.app" } }
 }
+override_resource {
+  target = google_service_account.push
+  values = {
+    email = "push-sa@example-project.iam.gserviceaccount.com"
+    name  = "projects/example-project/serviceAccounts/push-sa@example-project.iam.gserviceaccount.com"
+  }
+}
+override_resource {
+  target = google_service_account.scheduler
+  values = {
+    email = "scheduler-sa@example-project.iam.gserviceaccount.com"
+    name  = "projects/example-project/serviceAccounts/scheduler-sa@example-project.iam.gserviceaccount.com"
+  }
+}
+override_resource {
+  target = google_service_account.function["ingest"]
+  values = {
+    email = "ingest-sa@example-project.iam.gserviceaccount.com"
+    name  = "projects/example-project/serviceAccounts/ingest-sa@example-project.iam.gserviceaccount.com"
+  }
+}
+override_resource {
+  target = google_service_account.function["api"]
+  values = {
+    email = "api-sa@example-project.iam.gserviceaccount.com"
+    name  = "projects/example-project/serviceAccounts/api-sa@example-project.iam.gserviceaccount.com"
+  }
+}
+override_resource {
+  target = google_service_account.function["consumer"]
+  values = {
+    email = "consumer-sa@example-project.iam.gserviceaccount.com"
+    name  = "projects/example-project/serviceAccounts/consumer-sa@example-project.iam.gserviceaccount.com"
+  }
+}
+override_resource {
+  target = google_service_account.function["cron"]
+  values = {
+    email = "cron-sa@example-project.iam.gserviceaccount.com"
+    name  = "projects/example-project/serviceAccounts/cron-sa@example-project.iam.gserviceaccount.com"
+  }
+}
+override_resource {
+  target = google_service_account.function["bootstrap"]
+  values = {
+    email = "bootstrap-sa@example-project.iam.gserviceaccount.com"
+    name  = "projects/example-project/serviceAccounts/bootstrap-sa@example-project.iam.gserviceaccount.com"
+  }
+}
 variables {
   name                         = "example"
   project_id                   = "example-project"
@@ -168,7 +217,7 @@ run "functions_triggers_and_urls" {
       google_cloud_run_v2_service.function["consumer"].template[0].containers[0].resources[0].limits["cpu"] == "2000m",
       google_cloud_run_v2_service.function["consumer"].template[0].containers[0].resources[0].limits["memory"] == "1024Mi",
       google_cloud_run_v2_service.function["bootstrap"].template[0].timeout == "120s",
-      join(" ", google_cloud_run_v2_service.function["ingest"].template[0].containers[0].command) == "node /app/ingest/index.mjs",
+      alltrue([for id, service in google_cloud_run_v2_service.function : join(" ", service.template[0].containers[0].command) == "node /app/${id}/index.mjs"]),
     ])
     error_message = "Ingress, concurrency, scaling, resources, timeout and command come from the function settings."
   }
@@ -224,6 +273,7 @@ run "functions_triggers_and_urls" {
       length(google_pubsub_subscription.push["record"].dead_letter_policy) == 0,
       length(google_pubsub_subscription.push["record"].retry_policy) == 0,
       google_pubsub_subscription.push["shared"].expiration_policy[0].ttl == "",
+      google_pubsub_subscription.push["shared"].message_retention_duration == "604800s",
     ])
     error_message = "Push subscriptions use the reserved names with OIDC, ack deadline, ordering, retry and dead-letter settings."
   }
@@ -265,7 +315,8 @@ run "functions_triggers_and_urls" {
     condition = alltrue([
       toset(keys(google_project_iam_member.bootstrap_secret)) == toset(["bootstrap"]),
       toset(google_project_iam_custom_role.bootstrap_secret[0].permissions) == toset(["secretmanager.secrets.create", "secretmanager.secrets.get", "secretmanager.versions.add", "secretmanager.versions.access"]),
-      strcontains(google_project_iam_member.bootstrap_secret["bootstrap"].condition[0].expression, "projects/123456789012/secrets/errtraq-bootstrap"),
+      google_project_iam_member.bootstrap_secret["bootstrap"].condition[0].expression == "resource.name == \"projects/123456789012/secrets/errtraq-bootstrap\" || resource.name.startsWith(\"projects/123456789012/secrets/errtraq-bootstrap/\")",
+      google_project_iam_member.bootstrap_secret["bootstrap"].member == "serviceAccount:${google_service_account.function["bootstrap"].email}",
     ])
     error_message = "The bootstrap function may create and use only its named secret."
   }
@@ -289,7 +340,7 @@ run "functions_triggers_and_urls" {
     condition = alltrue([
       toset(keys(google_sql_user.iam)) == toset(["api|example-project|example-sql"]),
       one(values(google_sql_user.iam)).type == "CLOUD_IAM_SERVICE_ACCOUNT",
-      one(values(google_sql_user.iam)).name == "mock-account@example-project.iam",
+      one(values(google_sql_user.iam)).name == "api-sa@example-project.iam",
       one(values(google_sql_user.iam)).instance == "example-sql",
     ])
     error_message = "One IAM database user per function service account that holds the Cloud SQL login."
@@ -385,4 +436,51 @@ run "reject_bootstrap_trigger" {
     }
   }
   expect_failures = [var.queue_triggers]
+}
+run "public_service_with_a_trigger_keeps_allusers_only" {
+  command = plan
+  variables {
+    queue_triggers = {
+      shared = {
+        function_id      = "ingest"
+        subscription     = "projects/example-project/subscriptions/example-shared"
+        topics           = ["ingest"]
+        push_path        = "/_errtraq/push/shared"
+        ack_deadline_sec = 180
+      }
+    }
+    cron_triggers = {}
+  }
+  assert {
+    condition     = !contains(keys(google_cloud_run_v2_service_iam_member.push), "ingest") && length(google_cloud_run_v2_service_iam_member.push) == 0 && length(google_cloud_run_v2_service_iam_member.scheduler) == 0
+    error_message = "A public service needs no invoker grant for the trigger identities, and a service without triggers gets none."
+  }
+}
+run "reject_bootstrap_sharing_a_function" {
+  command = plan
+  variables {
+    functions = {
+      bootstrap = {
+        roles         = ["bootstrap", "consumer"]
+        http          = []
+        public        = false
+        command       = ["node", "x"]
+        memory_mb     = 512
+        cpu           = 1
+        timeout_sec   = 30
+        concurrency   = 1
+        min_instances = 0
+        max_instances = 1
+        ingress       = "all"
+        vpc_egress    = "private-ranges-only"
+        environment   = {}
+        secrets       = {}
+        policies      = []
+        secret_reads  = []
+      }
+    }
+    queue_triggers = {}
+    cron_triggers  = {}
+  }
+  expect_failures = [var.functions]
 }

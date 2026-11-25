@@ -35,6 +35,8 @@ const temp = mkdtempSync(resolve(scratch, "terraform-mutations-"));
 const platform = `${process.platform === "win32" ? "windows" : process.platform}_${process.arch === "x64" ? "amd64" : process.arch}`;
 for (const [name, family] of Object.entries(families))
   if (
+    (!process.env.INFRA_MUTATE_PROVIDER ||
+      process.env.INFRA_MUTATE_PROVIDER === name) &&
     !existsSync(
       resolve(
         cache,
@@ -51,8 +53,14 @@ const mutations = JSON.parse(
   readFileSync(resolve("scripts/infra-mutations.json"), "utf8"),
 );
 const providerOf = (item) => item.provider ?? "aws";
-const moduleMutations = mutations.filter((item) => item.module);
-const rootMutations = mutations.filter((item) => item.root);
+// INFRA_MUTATE_PROVIDER=google (or aws) restricts the run to one provider family while iterating.
+const selected = (item) =>
+  !process.env.INFRA_MUTATE_PROVIDER ||
+  process.env.INFRA_MUTATE_PROVIDER === providerOf(item);
+const moduleMutations = mutations.filter(
+  (item) => item.module && selected(item),
+);
+const rootMutations = mutations.filter((item) => item.root && selected(item));
 function terraform(args, cwd) {
   const env = {
     ...process.env,

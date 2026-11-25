@@ -73,3 +73,13 @@ run "reject_unordered_backoff" {
   }
   expect_failures = [var.physical_queues]
 }
+run "reject_ack_deadline_over_600" {
+  command = plan
+  variables {
+    name            = "example"
+    project_id      = "example-project"
+    region          = "europe-west1"
+    physical_queues = { shared = { ack_deadline_sec = 601, dlq_enabled = false } }
+  }
+  expect_failures = [var.physical_queues]
+}
