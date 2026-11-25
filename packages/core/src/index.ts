@@ -1,3 +1,4 @@
+export * from "./archive-staging.js";
 export * from "./artifact-bundles.js";
 export * from "./blob-key.js";
 export * from "./bootstrap.js";

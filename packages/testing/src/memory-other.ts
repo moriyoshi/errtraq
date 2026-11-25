@@ -11,6 +11,8 @@ import type {
   StoredEvent,
 } from "@moriyoshi/errtraq-core";
 import {
+  dayOf,
+  decodeStagedBatch,
   InvalidCounterError,
   validateBlobKey,
   validateQueueBody,
@@ -290,7 +292,7 @@ export class MemoryQueue implements Queue {
   };
 }
 
-/** The fake stages JSON arrays through a blob store; production archive adapters choose their own format. */
+/** The fake reads staged batches through the shared Parquet codec, like the real engines do. */
 export class MemoryArchiveStore implements ArchiveStore {
   readonly capabilities = { rowDelete: "deletion-vector" as const };
   private batches = new Map<
@@ -328,9 +330,7 @@ export class MemoryArchiveStore implements ArchiveStore {
     const write = (async () => {
       const body = await this.blobs.get(batch.stagedKey);
       if (!body) throw new Error("Missing staged batch");
-      const rows = JSON.parse(
-        new TextDecoder().decode(await bytes(body)),
-      ) as StoredEvent[];
+      const { rows } = await decodeStagedBatch(await bytes(body));
       const snapshotId = `snapshot-${++this.snapshots}`;
       this.batches.set(batch.batchId, {
         snapshotId,
@@ -347,11 +347,19 @@ export class MemoryArchiveStore implements ArchiveStore {
       this.pending.delete(batch.batchId);
     }
   }
+  /** True when a row of the batch falls in the inclusive day range, like the partition-pruned probe. */
   async hasBatch(
     batchId: string,
-    _range: Parameters<ArchiveStore["hasBatch"]>[1],
+    range: Parameters<ArchiveStore["hasBatch"]>[1],
   ) {
-    return this.batches.has(batchId);
+    const batch = this.batches.get(batchId);
+    return (
+      !!batch &&
+      batch.rows.some((row) => {
+        const rowDay = dayOf(row.receivedAt);
+        return rowDay >= range[0] && rowDay <= range[1];
+      })
+    );
   }
   async query(query: Parameters<ArchiveStore["query"]>[0]) {
     return eventPage(

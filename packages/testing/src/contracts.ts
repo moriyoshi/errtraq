@@ -889,6 +889,48 @@ export function activeStoreContract(
       });
       expect(second.items.map((e) => e.eventId)).toEqual(["e3", "e4"]);
     });
+    it("serves the archival worker: exclusive cutoff, restart without a cursor, idempotent deletes, overflow keys", async () => {
+      const store = await factory();
+      for (let i = 1; i <= 5; i++)
+        await seed(
+          store,
+          event(`w${i}`, i, i === 2 ? { payloadBlobKey: "overflow/w2" } : {}),
+        );
+      expect(
+        (
+          await store.events.scanOlderThan(project, t(3), { limit: 10 })
+        ).items.map((e) => e.eventId),
+      ).toEqual(["w1", "w2"]);
+      expect(
+        (await store.events.scanOlderThan(project, t(1), { limit: 10 })).items,
+      ).toEqual([]);
+      const scanned = await store.events.scanOlderThan(project, t(9), {
+        limit: 10,
+      });
+      expect(scanned.items[1]?.payloadBlobKey).toBe("overflow/w2");
+      // a partially applied delete: a fresh scan without a cursor starts at the oldest remaining row
+      await store.events.deleteBatch(project, [
+        "w1" as EventId,
+        "w3" as EventId,
+      ]);
+      expect(
+        (
+          await store.events.scanOlderThan(project, t(9), { limit: 2 })
+        ).items.map((e) => e.eventId),
+      ).toEqual(["w2", "w4"]);
+      // repeating the same delete is a no-op and other projects are untouched
+      await store.events.deleteBatch(project, [
+        "w1" as EventId,
+        "w3" as EventId,
+      ]);
+      await store.events.deleteBatch(otherProject, ["w2" as EventId]);
+      expect(
+        (
+          await store.events.scanOlderThan(project, t(9), { limit: 10 })
+        ).items.map((e) => e.eventId),
+      ).toEqual(["w2", "w4", "w5"]);
+      await store.events.deleteBatch(project, []);
+    });
     it("pages unfiltered event listings and archival scans across multiple shards", async () => {
       const store = await factory();
       for (let i = 0; i < 40; i++)
@@ -2275,11 +2317,17 @@ export function kvContract(
 }
 
 export interface ArchiveContractOptions extends ContractOptions {
+  /** Writes a staged batch in the codec format (encodeStagedBatch) that the store's append reads. */
   stage: (
     store: ArchiveStore,
     key: string,
     events: StoredEvent[],
+    batchId: string,
   ) => Promise<void>;
+  /** Writes an object at key that the store cannot read as a staged batch. */
+  stageUnreadable: (store: ArchiveStore, key: string) => Promise<void>;
+  /** The deletion mode the implementation declares and exercises. */
+  rowDelete: ArchiveStore["capabilities"]["rowDelete"];
 }
 
 export function archiveStoreContract(
@@ -2300,7 +2348,7 @@ export function archiveStoreContract(
         event("c", 3, { issueId: "other-issue" as IssueId }),
         event("d", 4),
       ];
-      await options.stage(store, batch.stagedKey, data);
+      await options.stage(store, batch.stagedKey, data, batch.batchId);
       return store;
     }
     it("probes and safely repeats the same append", async () => {
@@ -2338,9 +2386,12 @@ export function archiveStoreContract(
         stagedKey: "other-stage",
         dayRange: [day, day] as [Day, Day],
       };
-      await options.stage(a, otherBatch.stagedKey, [
-        event("foreign", 2, { projectId: otherProject }),
-      ]);
+      await options.stage(
+        a,
+        otherBatch.stagedKey,
+        [event("foreign", 2, { projectId: otherProject })],
+        otherBatch.batchId,
+      );
       await a.append(otherBatch);
       const rows = await collectEvents((after) =>
         a.query({
@@ -2364,6 +2415,219 @@ export function archiveStoreContract(
       expect(await a.getEvent(project, "b" as EventId, t(2))).toMatchObject({
         eventId: "b",
       });
+    });
+
+    const at = (iso: string): Timestamp => iso as Timestamp;
+    const days = (a: string, b: string): [Day, Day] => [a as Day, b as Day];
+    it("rejects an unknown or unreadable staged object and appends nothing", async () => {
+      const a = await setup();
+      const missing = { ...batch, batchId: "missing", stagedKey: "nope" };
+      await expect(a.append(missing)).rejects.toThrow();
+      await options.stageUnreadable(a, "garbage");
+      const garbage = { ...batch, batchId: "garbage", stagedKey: "garbage" };
+      await expect(a.append(garbage)).rejects.toThrow();
+      for (const id of ["missing", "garbage"])
+        expect(await a.hasBatch(id, batch.dayRange)).toBe(false);
+      expect(await a.query({ projectId: project })).toEqual({
+        items: [],
+        hasMore: false,
+        nextCursor: null,
+      });
+      // the failed attempts leave the store usable and the real batch appendable
+      expect((await a.append(batch)).rowCount).toBe(4);
+    });
+    it("scopes the batch probe by day range", async () => {
+      const a = await factory();
+      const rows = [
+        event("d1", 1, { receivedAt: at("2024-03-01T10:00:00.000Z") }),
+        event("d2", 1, { receivedAt: at("2024-03-02T10:00:00.000Z") }),
+        event("d4", 1, { receivedAt: at("2024-03-04T23:59:59.999Z") }),
+      ];
+      const multi = {
+        batchId: "multi",
+        stagedKey: "multi-stage",
+        dayRange: days("2024-03-01", "2024-03-04"),
+      };
+      await options.stage(a, multi.stagedKey, rows, multi.batchId);
+      expect((await a.append(multi)).rowCount).toBe(3);
+      expect(await a.hasBatch("multi", multi.dayRange)).toBe(true);
+      expect(await a.hasBatch("multi", days("2024-03-04", "2024-03-04"))).toBe(
+        true,
+      );
+      expect(await a.hasBatch("multi", days("2024-03-02", "2024-03-03"))).toBe(
+        true,
+      );
+      expect(await a.hasBatch("multi", days("2024-03-05", "2024-03-09"))).toBe(
+        false,
+      );
+      expect(await a.hasBatch("multi", days("2024-02-01", "2024-02-29"))).toBe(
+        false,
+      );
+      expect(await a.hasBatch("other-batch", multi.dayRange)).toBe(false);
+      const spanning = await collectEvents((after) =>
+        a.query({ projectId: project, after, limit: 1, order: "asc" }),
+      );
+      expect(spanning.map((e) => e.eventId)).toEqual(["d1", "d2", "d4"]);
+      expect(
+        await a.query({
+          projectId: project,
+          from: at("2024-03-02T00:00:00.000Z"),
+          to: at("2024-03-03T00:00:00.000Z"),
+        }),
+      ).toMatchObject({ items: [{ eventId: "d2" }], hasMore: false });
+    });
+    it("treats a repeated append after later batches as a no-op", async () => {
+      const a = await setup();
+      const first = await a.append(batch);
+      const later = {
+        batchId: "later",
+        stagedKey: "later-stage",
+        dayRange: [day, day] as [Day, Day],
+      };
+      await options.stage(
+        a,
+        later.stagedKey,
+        [event("e", 9), event("f", 10)],
+        later.batchId,
+      );
+      const second = await a.append(later);
+      expect(second.snapshotId).not.toBe(first.snapshotId);
+      expect(await a.append(batch)).toEqual(first);
+      expect(await a.append(later)).toEqual(second);
+      expect(
+        (
+          await collectEvents((after) =>
+            a.query({ projectId: project, after, limit: 3, order: "asc" }),
+          )
+        ).map((e) => e.eventId),
+      ).toEqual(["a", "b", "c", "d", "e", "f"]);
+    });
+    it("finds an event without a hint, and ignores the hint when it is right", async () => {
+      const a = await setup();
+      await a.append(batch);
+      expect(await a.getEvent(project, "c" as EventId)).toMatchObject({
+        eventId: "c",
+        issueId: "other-issue",
+        payload: { id: "c" },
+      });
+      expect(await a.getEvent(project, "c" as EventId, t(3))).toMatchObject({
+        eventId: "c",
+      });
+      expect(await a.getEvent(project, "absent" as EventId)).toBeNull();
+    });
+    it("returns an empty final page with hasMore false", async () => {
+      const a = await factory();
+      for (const order of ["asc", "desc"] as const)
+        expect(await a.query({ projectId: project, order, limit: 5 })).toEqual({
+          items: [],
+          hasMore: false,
+          nextCursor: null,
+        });
+      const b = await setup();
+      await b.append(batch);
+      const none = await b.query({
+        projectId: project,
+        issueId: "no-such-issue" as IssueId,
+        limit: 2,
+      });
+      expect(none.items).toEqual([]);
+      expect(none.hasMore).toBe(false);
+      const past = await b.query({
+        projectId: project,
+        after: { receivedAt: t(59), eventId: "zzz" as EventId },
+        order: "asc",
+        limit: 2,
+      });
+      expect(past.items).toEqual([]);
+      expect(past.hasMore).toBe(false);
+      const exact = await b.query({
+        projectId: project,
+        order: "asc",
+        limit: 4,
+      });
+      expect(exact.items).toHaveLength(4);
+      expect(exact.hasMore).toBe(false);
+    });
+    it("orders equal receivedAt by eventId in both directions", async () => {
+      const a = await factory();
+      const ids = ["m", "b", "z", "a", "Z", "é"];
+      const tied = {
+        batchId: "tied",
+        stagedKey: "tied-stage",
+        dayRange: [day, day] as [Day, Day],
+      };
+      await options.stage(
+        a,
+        tied.stagedKey,
+        ids.map((id) => event(id, 5)),
+        tied.batchId,
+      );
+      await a.append(tied);
+      const asc = [...ids].sort((x, y) => (x < y ? -1 : x > y ? 1 : 0));
+      for (const limit of [1, 2, 6]) {
+        expect(
+          (
+            await collectEvents((after) =>
+              a.query({ projectId: project, after, limit, order: "asc" }),
+            )
+          ).map((e) => e.eventId),
+        ).toEqual(asc);
+        expect(
+          (
+            await collectEvents((after) =>
+              a.query({ projectId: project, after, limit }),
+            )
+          ).map((e) => e.eventId),
+        ).toEqual([...asc].reverse());
+      }
+    });
+    it("keeps deleteWhere inside its project and exercises the declared delete mode", async () => {
+      const a = await setup();
+      expect(a.capabilities.rowDelete).toBe(options.rowDelete);
+      await a.append(batch);
+      const foreign = {
+        batchId: "foreign",
+        stagedKey: "foreign-stage",
+        dayRange: [day, day] as [Day, Day],
+      };
+      await options.stage(
+        a,
+        foreign.stagedKey,
+        [
+          event("f1", 2, {
+            projectId: otherProject,
+            user: { email: "subject@example.org" },
+          }),
+        ],
+        foreign.batchId,
+      );
+      await a.append(foreign);
+      const deleted = await a.deleteWhere({
+        erasureId: "isolated" as ErasureId,
+        projectId: project,
+        selector: { kind: "email", value: "subject@example.org" },
+      });
+      expect(deleted.rowsDeleted).toBe(2);
+      expect(
+        (await a.query({ projectId: otherProject })).items.map(
+          (e) => e.eventId,
+        ),
+      ).toEqual(["f1"]);
+      expect(await a.getEvent(otherProject, "f1" as EventId)).not.toBeNull();
+      const none = await a.deleteWhere({
+        erasureId: "nothing" as ErasureId,
+        projectId: project,
+        selector: { kind: "email", value: "nobody@example.org" },
+      });
+      expect(none).toMatchObject({ rowsDeleted: 0, snapshotId: null });
+      // repeating an erasure id does not delete or report differently
+      expect(
+        await a.deleteWhere({
+          erasureId: "isolated" as ErasureId,
+          projectId: project,
+          selector: { kind: "email", value: "subject@example.org" },
+        }),
+      ).toMatchObject({ rowsDeleted: 2 });
     });
     for (const selector of [
       { kind: "email", value: "subject@example.org" },

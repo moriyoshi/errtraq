@@ -1859,3 +1859,26 @@ choice; no quota increase). Findings:
   outside Terraform and which survive `terraform destroy` of the proxy. They were deleted by hand. A
   fixture or product module that creates an RDS Proxy should either manage that log group in Terraform
   or document its removal.
+
+## 2026-11-25 — M4a: archive contracts, Parquet staging codec, fault wrappers
+
+- Parquet library choice: `hyparquet` 1.32.0 (reader) and `hyparquet-writer` 0.18.0 (writer), both MIT, zero other
+  dependencies, pure JS (SNAPPY built in). The writer pins `hyparquet` 1.32.0 exactly, so both are pinned to match
+  and install a single copy. Non-obvious: the package roots of both resolve, under the default export condition, to
+  a `node.js` entry that imports `fs`; only the `browser` condition reaches the node-free `index.js`. Core therefore
+  imports the explicit `hyparquet/src/index.js` and `hyparquet-writer/src/index.js` subpaths (exported by both
+  packages), which resolve identically under every condition and keep the Workers bundle free of `node:*`.
+  `scripts/layering.mjs` allowlists exactly those two specifiers; `scripts/layering.test.js` bundles `packages/core`
+  with esbuild (neutral platform, workerd/worker/browser conditions) and asserts no `node:` inputs.
+- Timestamps are written as INT64 MICROS with the UTC TIMESTAMP logical type by passing an explicit schema (the
+  writer's auto schema only emits MILLIS). `tags` is a real MAP and round trips through `hyparquet`.
+  On decode the `event` JSON is authoritative; the promoted project/event/issue/received_at columns are
+  cross-checked and a mismatch is reported as a corrupt batch.
+- Staging key parts are escaped with a stricter set than `encodeURIComponent` (also `-`, `.`, and the other
+  unreserved punctuation) so `-` is an unambiguous separator and `/` in the batch id (`<projectId>/<seq>`) does not
+  create sub-prefixes.
+- `MemoryArchiveStore.hasBatch` is now day-range-scoped like the partition-pruned probe: it answers true when a row of
+  the batch falls inside the inclusive range. It ignores masked rows (the real probe has the same blind spot, see
+  M4_PLAN risk 5). The contract `stage` option now takes the batch id and there is a `stageUnreadable` option.
+- Fault wrappers are functions (`faultyArchiveStore`, `faultyActiveStore`, `faultyMeta`, `faultyBlobStore`) over a
+  shared `FaultInjector`; plans fire once on the Nth call of `<scope>.<method>` before or after the effect.

@@ -183,7 +183,8 @@ interface ArchiveStore {
   project (see archival job), so manifest column bounds on `project_id` prune per project
   without a projects×days partition explosion. Sorted by `issue_id, received_at`. Full event
   JSON in one column plus promoted columns (issue_id, level, release, environment, tags map,
-  `archive_batch`).
+  the user fields used by erasure, `archive_batch`). The staged Parquet object written by the archival
+  worker has exactly these columns (see "Staged batch format" below).
 - Catalog access is always the **Iceberg REST spec** (`IcebergRestCatalog` client: config,
   load table, commit, vended credentials) → Lakekeeper locally and self-hosted; S3 Tables /
   Glue REST on AWS; R2 Data Catalog on Cloudflare.
@@ -515,11 +516,23 @@ interface ArchiveState {
 | Step | Action | If we crash right after |
 |---|---|---|
 | 1 SCAN | `events.scanOlderThan(project, cutoff, limit)` ordered by (receivedAt, eventId); because finished batches are deleted, the scan always starts at the oldest remaining row — no cursor to persist. Overflow payloads are re-inlined from BlobStore. | Nothing written; retry rescans. |
-| 2 STAGE | Write the rows to `BlobStore` at `archive-staging/<batchId>-<nonce>.parquet` (the nonce stops a stale lease holder overwriting a newer owner's staged object), then CAS `batch = {state:'staged', …}`. The staged object is the write-ahead record: it is both the exact content to append and the exact id list to delete. | Orphan staged object without state → overwritten by the retry (same key). |
+| 2 STAGE | Write the rows to `BlobStore` at `archive-staging/<batchId>-<nonce>.parquet` (the nonce stops a stale lease holder overwriting a newer owner's staged object), then CAS `batch = {state:'staged', …}`. The staged object is the write-ahead record: it is both the exact content to append and the exact id list to delete. | Orphan staged object without state → the retry writes its own nonce-keyed object (a different owner or attempt never shares a key); the orphan is removed by the lifecycle rule. |
 | 3 COMMIT | `archive.append({batchId, stagedKey, dayRange})` — one Iceberg snapshot, rows tagged `archive_batch = batchId`, split by day partition. Catalog 409s (concurrent commits from other projects) are retried inside the adapter. | State still `staged`: retry first calls `archive.hasBatch(batchId, dayRange)`; if true skip to step 4, else append again from the same staged object. This is what makes the commit exactly-once. |
 | 4 MARK | CAS `batch.state = 'committed'`, `archivedThrough = max(old, maxReceivedAt)`. | Covered by the `hasBatch` probe above. |
 | 5 DELETE | Read ids from the staged object; `events.deleteBatch` in store-sized chunks (DynamoDB 25, D1 ≤100 bound params, pg/mysql ~1000); delete overflow blobs. Idempotent. | State `committed`: retry redoes the deletes. Readers see duplicates meanwhile, removed by eventId dedupe. |
 | 6 CLEAR | CAS `batch = undefined`, `seq += 1`; delete the staged object. Next batch. | Staged object leaks → bucket lifecycle rule on `archive-staging/` (7 days). |
+
+**Staged batch format** (core `archive-staging.ts`, the one codec for the worker, the engines and the fakes).
+Parquet (SNAPPY, pure JS via `hyparquet` and `hyparquet-writer`, imported by their node-free `src/index.js`
+entry points). Columns, in order: `project_id`, `event_id`, `issue_id` (strings), `timestamp`, `received_at`
+(INT64 microseconds, TIMESTAMP logical type, UTC, so an Iceberg `timestamptz` column and DuckDB
+`read_parquet` take them as is), `level`, `release`, `environment`, `tags` (`MAP<string,string>`),
+`user_id`, `user_email`, `user_name`, `user_ip`, `event` (the full StoredEvent JSON, the source of truth
+on decode) and `archive_batch` (the batch id). Overflow payloads are already re-inlined. A batch is at most
+50k rows and about 128 MB of uncompressed event JSON by default. The key is
+`archive-staging/<batchId>-<owner>-<attempt>.parquet`, each part percent-escaped (so the key is flat and
+parseable); owner and attempt are the lease owner and its retry counter, so two lease holders never share an
+object.
 
 On entry the worker resumes from whatever `batch.state` it finds, so a timed-out invocation,
 a redelivered message, or a lease takeover all converge on the same path.

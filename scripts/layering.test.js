@@ -1,4 +1,5 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { join, resolve } from "node:path";
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
@@ -137,6 +138,36 @@ describe("Workers-only type environment", () => {
 });
 
 describe("declared Workers runtime graph", () => {
+  it("bundles packages/core, including the Parquet codec, for Workers without Node inputs", async () => {
+    const { build } = createRequire(
+      new URL("../packages/cli/package.json", import.meta.url),
+    )("esbuild");
+    const entry = "packages/core/src/index.ts";
+    expect(await checkWorkerBundle(entry)).toEqual([]);
+    for (const conditions of [
+      ["development", "workerd", "worker", "browser"],
+      ["development", "browser"],
+    ]) {
+      const result = await build({
+        entryPoints: [entry],
+        bundle: true,
+        platform: "neutral",
+        format: "esm",
+        conditions,
+        mainFields: ["module", "main"],
+        write: false,
+        metafile: true,
+        logLevel: "silent",
+      });
+      const inputs = Object.keys(result.metafile.inputs);
+      expect(inputs.filter((i) => i.startsWith("node:"))).toEqual([]);
+      expect(inputs.some((i) => i.includes("hyparquet-writer/src/write"))).toBe(
+        true,
+      );
+      expect(inputs.filter((i) => /\/node\.js$/.test(i))).toEqual([]);
+      expect(result.outputFiles[0].text).not.toMatch(/node:|from "fs"/);
+    }
+  });
   it("rejects Node imports in bundled dependencies", async () => {
     mkdirSync(".agents-workspace/tmp", { recursive: true });
     const dir = mkdtempSync(".agents-workspace/tmp/worker-dep-");

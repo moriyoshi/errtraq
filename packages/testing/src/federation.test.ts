@@ -6,6 +6,7 @@ import type {
   StoredEvent,
   Timestamp,
 } from "@moriyoshi/errtraq-core";
+import { encodeStagedBatch } from "@moriyoshi/errtraq-core";
 import { expect, it } from "vitest";
 import { MemoryActiveStore } from "./memory-active.js";
 import { MemoryArchiveStore } from "./memory-other.js";
@@ -44,9 +45,10 @@ it("merges keyset pages without dropping tails or duplicating overlapping events
     );
   await archive.blobs.put(
     "stage",
-    new TextEncoder().encode(
-      JSON.stringify(rows.filter((_, i) => [1, 2, 4, 5].includes(i))),
-    ),
+    encodeStagedBatch(
+      "b",
+      rows.filter((_, i) => [1, 2, 4, 5].includes(i)),
+    ).bytes,
   );
   await archive.append({
     batchId: "b",
