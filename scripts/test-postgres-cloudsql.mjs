@@ -79,9 +79,6 @@ try {
     name,
     "-v",
     `${volume}:/cloudsql`,
-    // The image's init-time psql uses PGHOST, so it finds the relocated socket.
-    "-e",
-    `PGHOST=${socketDir}`,
     "-e",
     "POSTGRES_PASSWORD=errtraq-admin",
     "-e",
@@ -90,7 +87,9 @@ try {
     "POSTGRES_DB=errtraq",
     image,
     "-c",
-    `unix_socket_directories=${socketDir}`,
+    // The image's init-time psql clears PGHOST and looks in the default socket directory, so
+    // that one stays listed first; the Cloud SQL style directory is added beside it.
+    `unix_socket_directories=/var/run/postgresql,${socketDir}`,
   );
   if (r.status !== 0) throw new Error(`Cannot start Postgres: ${r.stderr}`);
   let ready = false;

@@ -43,6 +43,28 @@ const event = (
 });
 
 describe("Firestore store specifics", () => {
+  it("never runs two transactions for one issue at once in a process", async () => {
+    const { store, client } = makeFakeStore();
+    let active = 0;
+    let peak = 0;
+    const run = client.runTransaction.bind(client);
+    client.runTransaction = async (body) => {
+      active++;
+      peak = Math.max(peak, active);
+      try {
+        return await run(body);
+      } finally {
+        active--;
+      }
+    };
+    await Promise.all(
+      Array.from({ length: 20 }, (_, i) =>
+        store.recordEvent(occurrence(`s${i}`, i), event(`s${i}`, i)),
+      ),
+    );
+    expect(peak).toBe(1);
+    expect((await store.issues.get(project, "i1" as IssueId))?.count).toBe(20);
+  });
   it("counts exactly under concurrent recordEvent on one issue", async () => {
     const { store } = makeFakeStore();
     await Promise.all(

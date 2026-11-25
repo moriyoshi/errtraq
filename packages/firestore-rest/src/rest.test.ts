@@ -77,6 +77,46 @@ describe("REST client", () => {
     expect(decodeFields(doc?.fields ?? {})).toEqual({ v: "1", c: true, n: 5 });
   });
 
+  it("never sends the transaction id as a query parameter (emulator cannot decode bytes there)", async () => {
+    const fake = new FakeFirestore();
+    const urls: string[] = [];
+    const c = client(fake, {
+      fetch: (url: string, init?: RequestInit) => {
+        urls.push(String(url));
+        return fake.fetch(url, init);
+      },
+    });
+    await c.commit([
+      { kind: "set", path: "x/1", fields: encodeFields({ n: 0 }) },
+    ]);
+    const seen = await c.runTransaction(async (tx) => tx.get("x/1"));
+    expect(seen).not.toBeNull();
+    expect(urls.some((u) => u.includes("?"))).toBe(false);
+    const read = fake.requests.find((r) => r.action === "batchGet");
+    expect(
+      (read?.body as { transaction?: string } | undefined)?.transaction,
+    ).toEqual(expect.any(String));
+  });
+
+  it("fails fast on a server that never answers, without retrying the timeout", async () => {
+    let calls = 0;
+    const c = client(new FakeFirestore(), {
+      requestTimeoutMs: 20,
+      fetch: (_url: string, init?: RequestInit) => {
+        calls++;
+        return new Promise((_resolve, reject) =>
+          init?.signal?.addEventListener("abort", () =>
+            reject(new Error("aborted")),
+          ),
+        );
+      },
+    });
+    await expect(c.get("x/1")).rejects.toMatchObject({
+      status: "DEADLINE_EXCEEDED",
+    });
+    expect(calls).toBe(1);
+  });
+
   it("retries an aborted transaction body and rolls back on failure", async () => {
     const fake = new FakeFirestore();
     const c = client(fake);
