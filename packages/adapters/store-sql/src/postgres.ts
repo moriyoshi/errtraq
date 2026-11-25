@@ -72,6 +72,8 @@ export async function create({
         ca,
         environment: environment ?? process.env,
       }),
+      undefined,
+      { viaProxy: bindings.ERRTRAQ_POSTGRES_VIA_PROXY === "true" },
     );
   } else if (
     mode === "secret" ||

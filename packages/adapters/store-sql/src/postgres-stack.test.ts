@@ -94,6 +94,26 @@ it("validates IAM configuration and requires AWS credentials from the platform",
       (binding) => binding.name === "ERRTRAQ_POSTGRES_CA_PATH",
     )?.value,
   ).toEqual(variable("ca_path"));
+  // Run 3: RDS Proxy certificates chain to the public Amazon roots, absent from the RDS bundle,
+  // and the proxy refuses session timeouts as startup options.
+  const binding = (store: ReturnType<typeof postgres>, name: string) =>
+    store.infra.bindings.find((item) => item.name === name)?.value;
+  const viaProxy = postgres({
+    mode: "iam",
+    host: "proxy.proxy-example.us-east-1.rds.amazonaws.com",
+    database: "errtraq",
+    user: "app",
+    region: "us-east-1",
+    resourceId: "prx-ABC123",
+  });
+  expect(binding(viaProxy, "ERRTRAQ_POSTGRES_CA_PATH")).toBe(
+    "/etc/pki/tls/certs/ca-bundle.crt",
+  );
+  expect(binding(viaProxy, "ERRTRAQ_POSTGRES_VIA_PROXY")).toBe("true");
+  expect(binding(iam, "ERRTRAQ_POSTGRES_CA_PATH")).toBe(
+    "/var/runtime/ca-cert.pem",
+  );
+  expect(binding(iam, "ERRTRAQ_POSTGRES_VIA_PROXY")).toBeUndefined();
   const wrongPlatform = {
     ...Object.fromEntries(Object.entries(local)),
     store: iam,

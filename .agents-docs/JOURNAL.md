@@ -1657,3 +1657,25 @@ once per command, not refreshed, which is fine for these short commands.
   `/var/runtime/bootstrap` sets `NODE_EXTRA_CA_CERTS` only in regions with three dashes in the name.
 - **A7:** every role's `rds-db:connect` is exactly `dbuser:<db-id>/errtraq_app`; cron has no database
   access; a second database user without an IAM grant is refused with `28000`.
+
+## 2026-11-25 — M3h run 3: RDS Proxy needs a different CA and no startup timeouts (Claude)
+
+- **Proxy TLS:** RDS Proxy presents an ACM certificate chained to the public Amazon roots. The
+  Lambda RDS bundle `/var/runtime/ca-cert.pem` holds only RDS CAs (118 of its 119 certificates in the
+  nodejs22 image), so every connection through the proxy failed with `unable to get local issuer
+  certificate`. With an IAM `resourceId` of `prx-...` the default CA path is now the system bundle
+  `/etc/pki/tls/certs/ca-bundle.crt`; `sslRootCert` still overrides it.
+- **Proxy startup options:** RDS Proxy refuses `statement_timeout` as a startup parameter ("Feature not
+  supported: RDS Proxy currently doesn't support the option statement_timeout"). Through a proxy the
+  pool now sends no session timeouts and bounds statements with pg's client-side `query_timeout`; a
+  per-connection `SET` would pin proxy connections and defeat multiplexing. The binding
+  `ERRTRAQ_POSTGRES_VIA_PROXY=true` (derived from the `prx-` id) carries the choice to the runtime.
+  Without a server-side bound, a statement abandoned by the client timeout may keep running on the
+  server until it finishes.
+- **Bootstrap through a proxy:** with `default_auth_scheme = "IAM_AUTH"` the proxy accepts IAM logins
+  only, so the bootstrap role's admin step (master user and password) cannot run through it; point the
+  stack at the instance for the first bootstrap, or provision the IAM user before switching.
+- **A8/A9:** an api execution environment lived 19.3 minutes with fresh tokens per connection and no
+  auth failure; 30 concurrent requests hit the sandbox account's 10-concurrency limit (10 ok, 20
+  throttled), so the concurrency half ran at 10. The visibility race fired on the second try (40
+  receives for 10 events) and the count stayed exactly 10.

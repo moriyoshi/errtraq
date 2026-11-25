@@ -112,13 +112,21 @@ export function postgres(
     };
   }
   const config = iamSchema.parse(input);
+  // An RDS Proxy endpoint presents an ACM certificate chained to the public Amazon roots, which
+  // the Lambda RDS bundle (/var/runtime/ca-cert.pem) lacks; the system bundle has them.
+  const viaProxy = config.resourceId.startsWith("prx-");
   const names = {
     ERRTRAQ_POSTGRES_HOST: config.host,
     ERRTRAQ_POSTGRES_PORT: String(config.port),
     ERRTRAQ_POSTGRES_DATABASE: config.database,
     ERRTRAQ_POSTGRES_USER: config.user,
     ERRTRAQ_POSTGRES_REGION: config.region,
-    ERRTRAQ_POSTGRES_CA_PATH: config.sslRootCert ?? "/var/runtime/ca-cert.pem",
+    ERRTRAQ_POSTGRES_CA_PATH:
+      config.sslRootCert ??
+      (viaProxy
+        ? "/etc/pki/tls/certs/ca-bundle.crt"
+        : "/var/runtime/ca-cert.pem"),
+    ...(viaProxy ? { ERRTRAQ_POSTGRES_VIA_PROXY: "true" } : {}),
   };
   const iamInfra: InfraDescriptor<Config> = {
     module: {

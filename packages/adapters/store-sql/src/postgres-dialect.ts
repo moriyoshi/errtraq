@@ -4,11 +4,16 @@ import pg from "pg";
 import type { SqlStoreDialect } from "./dialect.js";
 import { createIndexIfAbsent } from "./dialect.js";
 
-/** A small pool is reused across warm invocations and can be closed on shutdown. */
-export function postgresDialect(
+/**
+ * Pool settings. Through RDS Proxy, server-side session timeouts cannot be sent as startup
+ * options (the proxy refuses `statement_timeout`) and a per-session `SET` would pin the proxy
+ * connection, so the statement bound becomes pg's client-side `query_timeout`.
+ */
+export function postgresPoolConfig(
   connectionString: string | pg.PoolConfig,
   statementTimeoutMs = 30000,
-): PostgresDialect {
+  options: { viaProxy?: boolean } = {},
+): pg.PoolConfig {
   const types = {
     getTypeParser(oid: number, format?: "text" | "binary") {
       if (oid === 20 && format !== "binary")
@@ -21,18 +26,33 @@ export function postgresDialect(
       return pg.types.getTypeParser(oid, format);
     },
   };
+  return {
+    ...(typeof connectionString === "string"
+      ? { connectionString }
+      : connectionString),
+    max: 4,
+    idleTimeoutMillis: 10000,
+    connectionTimeoutMillis: 5000,
+    ...(options.viaProxy
+      ? { query_timeout: statementTimeoutMs }
+      : {
+          statement_timeout: statementTimeoutMs,
+          idle_in_transaction_session_timeout: 35000,
+        }),
+    types,
+  };
+}
+
+/** A small pool is reused across warm invocations and can be closed on shutdown. */
+export function postgresDialect(
+  connectionString: string | pg.PoolConfig,
+  statementTimeoutMs = 30000,
+  options: { viaProxy?: boolean } = {},
+): PostgresDialect {
   return new PostgresDialect({
-    pool: new pg.Pool({
-      ...(typeof connectionString === "string"
-        ? { connectionString }
-        : connectionString),
-      max: 4,
-      idleTimeoutMillis: 10000,
-      connectionTimeoutMillis: 5000,
-      statement_timeout: statementTimeoutMs,
-      idle_in_transaction_session_timeout: 35000,
-      types,
-    }),
+    pool: new pg.Pool(
+      postgresPoolConfig(connectionString, statementTimeoutMs, options),
+    ),
   });
 }
 
