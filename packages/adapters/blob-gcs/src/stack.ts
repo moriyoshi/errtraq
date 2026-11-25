@@ -42,8 +42,8 @@ export const manifest: AdapterManifest = {
   requires: [],
   capabilities: {},
 };
-// TODO(G6): infra/modules/google/gcs does not exist yet; the descriptor fixes its interface. The S3 module's
-// lifecycle inputs (claim retention, event retention, orphan margin) are added when the module is written.
+// The HCL module is infra/modules/google/gcs; its optional lifecycle inputs (claim retention, event
+// retention, orphan margin) keep their defaults here.
 export const infra: InfraDescriptor<Config> = {
   module: {
     provider: "google",

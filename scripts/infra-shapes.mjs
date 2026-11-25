@@ -2,7 +2,11 @@ import { deepStrictEqual } from "node:assert";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
-export const snapshotPath = resolve("infra/modules/aws/output-shapes.json");
+export const snapshotPaths = {
+  aws: resolve("infra/modules/aws/output-shapes.json"),
+  google: resolve("infra/modules/google/output-shapes.json"),
+};
+export const snapshotPath = snapshotPaths.aws;
 export const captureRuns = {
   dynamodb: "store_indexes_and_permissions",
   "rds-iam-access": "rds_connect_policies",
@@ -10,6 +14,12 @@ export const captureRuns = {
   s3: "policies_and_lifecycle",
   s3tables: "bucket_namespace_and_policies",
   sqs: "queues_and_policies",
+  gcs: "policies_and_lifecycle",
+  pubsub: "queues_and_policies",
+  firestore: "database_indexes_and_policies",
+  "cloudsql-iam-access": "cloudsql_policies",
+  "cloud-run-app": "functions_triggers_and_urls",
+  "artifact-registry": "repository",
 };
 export function shape(value) {
   if (typeof value === "string") {
@@ -55,8 +65,8 @@ export function capturedShape(output, component) {
   }
   throw new Error(`No mock-provider output captured for ${component}`);
 }
-export function checkShape(component, value) {
-  const expected = JSON.parse(readFileSync(snapshotPath, "utf8"));
+export function checkShape(component, value, provider = "aws") {
+  const expected = JSON.parse(readFileSync(snapshotPaths[provider], "utf8"));
   deepStrictEqual(
     value,
     expected[component],
@@ -83,7 +93,7 @@ export function shapeFixture(source) {
     }
     throw new Error("Unterminated Terraform test block");
   }
-  const provider = source.search(/^mock_provider\s+"aws"/m);
+  const provider = source.search(/^mock_provider\s+"(?:aws|google)"/m);
   const run = source.search(/^run\s+"/m);
   if (provider < 0 || run < 0) throw new Error("Missing mock provider or run");
   let runBlock = block(run);
@@ -98,5 +108,7 @@ export function shapeFixture(source) {
     runBlock =
       runBlock.slice(0, index) + runBlock.slice(index + assertion.length);
   }
-  return `${block(provider)}\n${runBlock}\n`;
+  // A file-level variables block is shared by the runs and must travel with the copied run.
+  const shared = source.search(/^variables\s*\{/m);
+  return `${block(provider)}\n${shared < 0 ? "" : `${block(shared)}\n`}${runBlock}\n`;
 }

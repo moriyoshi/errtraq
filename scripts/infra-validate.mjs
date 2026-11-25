@@ -14,7 +14,7 @@ import {
   capturedShape,
   checkShape,
   shapeFixture,
-  snapshotPath,
+  snapshotPaths,
 } from "./infra-shapes.mjs";
 
 const root = resolve("infra/modules");
@@ -48,16 +48,68 @@ function run(args, cwd, offline = false) {
   const output = `${result.stdout}\n${result.stderr}`;
   const summary = output.match(/Success! \d+ passed, \d+ failed\./)?.[0];
   console.log(`  ${args[0]}: ${summary ?? "passed"}`);
+  // A -json run embeds provider schemas whose descriptions say "deprecated"; only diagnostics count there.
+  const checked = args.includes("-json")
+    ? output
+        .split("\n")
+        .flatMap((line) => {
+          try {
+            const event = JSON.parse(line);
+            return event.type === "diagnostic" &&
+              event.diagnostic?.severity === "warning"
+              ? [
+                  `Warning: ${event.diagnostic.summary} ${event.diagnostic.detail ?? ""}`,
+                ]
+              : [];
+          } catch {
+            return [];
+          }
+        })
+        .join("\n")
+    : output;
   if (
-    /Warning:[\s\S]*?deprecated/i.test(output) ||
-    /"summary"\s*:\s*"[^"]*deprecated/i.test(output)
+    /Warning:[\s\S]*?deprecated/i.test(checked) ||
+    /"summary"\s*:\s*"[^"]*deprecated/i.test(checked)
   ) {
-    process.stdout.write(output);
+    process.stdout.write(checked);
     throw new Error(`terraform ${args[0]} emitted a deprecation warning`);
   }
   return output;
 }
-const observed = {};
+// Each provider family pins two versions for validation: the floor and a recent release. A module may
+// raise its own floor (lambda-app needs a provider whose runtime enum includes nodejs26.x).
+const families = {
+  aws: {
+    label: "AWS",
+    constraint: /version = ">= (\d+\.\d+\.\d+), < 7\.0"/,
+    versions: ["6.32.1", "6.73.0"],
+    defaultFloor: "6.32.1",
+  },
+  google: {
+    label: "Google",
+    constraint: /version = ">= (\d+\.\d+\.\d+), < 9\.0"/,
+    versions: ["8.0.0", "8.12.0"],
+    defaultFloor: "8.0.0",
+  },
+};
+const observed = { aws: {}, google: {} };
+const platform = `${process.platform === "win32" ? "windows" : process.platform}_${process.arch === "x64" ? "amd64" : process.arch}`;
+function cachedProvider(source, version) {
+  const directory = resolve(
+    cache,
+    "registry.terraform.io",
+    "hashicorp",
+    source,
+    version,
+    platform,
+  );
+  return (
+    existsSync(directory) &&
+    readdirSync(directory).some((name) =>
+      name.startsWith(`terraform-provider-${source}_v${version}`),
+    )
+  );
+}
 try {
   const build = spawnSync("pnpm", ["build"], { stdio: "inherit" });
   if (build.status !== 0) throw new Error("Workspace build failed");
@@ -68,18 +120,18 @@ try {
   for (const provider of readdirSync(root, { withFileTypes: true }).filter(
     (entry) => entry.isDirectory(),
   )) {
+    const family = families[provider.name];
+    if (!family) throw new Error(`No provider family for ${provider.name}`);
     const providerRoot = resolve(root, provider.name);
     for (const component of readdirSync(providerRoot, {
       withFileTypes: true,
     }).filter((entry) => entry.isDirectory())) {
       const name = `${provider.name}/${component.name}`;
-      // A module may raise its provider floor (lambda-app needs a provider whose runtime enum
-      // includes nodejs26.x); the tested versions are the pinned ones at or above that floor.
       const floor =
         readFileSync(
           resolve(providerRoot, component.name, "versions.tf"),
           "utf8",
-        ).match(/version = ">= (\d+\.\d+\.\d+), < 7\.0"/)?.[1] ?? "6.32.1";
+        ).match(family.constraint)?.[1] ?? family.defaultFloor;
       const atLeastFloor = (version) => {
         const a = version.split(".").map(Number);
         const b = floor.split(".").map(Number);
@@ -87,7 +139,7 @@ try {
           if (a[i] !== b[i]) return (a[i] ?? 0) > (b[i] ?? 0);
         return true;
       };
-      for (const version of ["6.32.1", "6.73.0"].filter(atLeastFloor)) {
+      for (const version of family.versions.filter(atLeastFloor)) {
         const target = resolve(
           temporary,
           version,
@@ -100,28 +152,17 @@ try {
         });
         const versions = resolve(target, "versions.tf");
         const source = readFileSync(versions, "utf8");
-        const constraint = `version = ">= ${floor}, < 7.0"`;
-        if (!source.includes(constraint))
+        const constraint = source.match(family.constraint)?.[0];
+        if (!constraint)
           throw new Error(`Unexpected provider constraint in ${name}`);
         writeFileSync(
           versions,
           source.replace(constraint, `version = "= ${version}"`),
         );
-        console.log(`\nValidating ${name} with AWS provider ${version}`);
-        const platform = `${process.platform === "win32" ? "windows" : process.platform}_${process.arch === "x64" ? "amd64" : process.arch}`;
-        const cachedDirectory = resolve(
-          cache,
-          "registry.terraform.io",
-          "hashicorp",
-          "aws",
-          version,
-          platform,
+        console.log(
+          `\nValidating ${name} with ${family.label} provider ${version}`,
         );
-        const cached =
-          existsSync(cachedDirectory) &&
-          readdirSync(cachedDirectory).some((name) =>
-            name.startsWith(`terraform-provider-aws_v${version}`),
-          );
+        const cached = cachedProvider(provider.name, version);
         const initArgs = [
           "init",
           "-backend=false",
@@ -154,15 +195,16 @@ try {
         );
         const current = capturedShape(output, component.name);
         if (process.env.UPDATE_INFRA_SHAPES === "1") {
+          const seen = observed[provider.name];
           if (
-            observed[component.name] &&
-            JSON.stringify(observed[component.name]) !== JSON.stringify(current)
+            seen[component.name] &&
+            JSON.stringify(seen[component.name]) !== JSON.stringify(current)
           )
             throw new Error(
               `Provider versions disagree on ${component.name} output shape`,
             );
-          observed[component.name] = current;
-        } else checkShape(component.name, current);
+          seen[component.name] = current;
+        } else checkShape(component.name, current, provider.name);
         console.log(`  shape: matched`);
       }
     }
@@ -209,7 +251,11 @@ try {
     }
   }
   if (process.env.UPDATE_INFRA_SHAPES === "1")
-    writeFileSync(snapshotPath, `${JSON.stringify(observed, null, 2)}\n`);
+    for (const [provider, shapes] of Object.entries(observed))
+      writeFileSync(
+        snapshotPaths[provider],
+        `${JSON.stringify(shapes, null, 2)}\n`,
+      );
   // Every generated root contains the lambda-app module, so the minimum provider version tested
   // here is the lambda-app floor.
   const lambdaFloor = readFileSync(
@@ -273,6 +319,36 @@ try {
   }
   console.log(
     `Generated roots: ${Object.keys(fixtures).length} variants passed at both pinned provider versions.`,
+  );
+  const { gcpFixtures, prepareGcpRoot } = await import("./infra-gcp-roots.mjs");
+  for (const version of families.google.versions) {
+    for (const name of Object.keys(gcpFixtures)) {
+      const target = prepareGcpRoot(
+        resolve(temporary, `gcp-roots-${version}`),
+        name,
+        version,
+      );
+      console.log(
+        `\nValidating generated ${name} with Google provider ${version}`,
+      );
+      run(["fmt", "-check"], target);
+      run(
+        [
+          "init",
+          "-backend=false",
+          "-input=false",
+          "-no-color",
+          `-plugin-dir=${cache}`,
+        ],
+        target,
+        true,
+      );
+      run(["validate", "-no-color"], target);
+      run(["test", "-no-color"], target);
+    }
+  }
+  console.log(
+    `Generated Google roots: ${Object.keys(gcpFixtures).length} variants passed at both pinned provider versions.`,
   );
 } catch (error) {
   console.error(error);

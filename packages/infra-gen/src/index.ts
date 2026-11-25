@@ -290,9 +290,9 @@ export function renderInfraValue(
 
 const MIN_AWS = ">= 6.32.1, < 7.0";
 /**
- * Provisional floor for `hashicorp/google` (GCP_PLAN D11: recommend the 8.x line, GA at the time of
- * writing). TODO(G6): confirm against the 8.0 upgrade guide while writing the modules; never
- * `google-beta`.
+ * Floor for `hashicorp/google` (GCP_PLAN D11). The 8.0 upgrade guide removes or changes none of
+ * the resources the modules use, so 8.0.0 is the floor; validation also runs the latest 8.x
+ * (`scripts/infra-validate.mjs`). Never `google-beta`.
  */
 export const MIN_GOOGLE = ">= 8.0.0, < 9.0";
 const REQUIRED_VERSION = ">= 1.9.0, < 2.0.0";

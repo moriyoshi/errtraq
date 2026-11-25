@@ -13,7 +13,8 @@
     }
   },
   "files": [
-    "aws"
+    "aws",
+    "google"
   ],
   "scripts": {
     "prepack": "node ./prepack.mjs"

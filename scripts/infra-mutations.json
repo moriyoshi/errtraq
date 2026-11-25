@@ -1030,5 +1030,1119 @@
     "id": "root-archive-binding-to-ingest",
     "root": "dynamodb-archive",
     "operation": "archive-binding-to-ingest"
+  },
+  {
+    "id": "gcs-read-adds-list",
+    "provider": "google",
+    "module": "gcs",
+    "file": "main.tf",
+    "find": "read   = [\"storage.objects.get\"]",
+    "replace": "read   = [\"storage.objects.get\", \"storage.objects.list\"]"
+  },
+  {
+    "id": "gcs-list-adds-get",
+    "provider": "google",
+    "module": "gcs",
+    "file": "main.tf",
+    "find": "list   = [\"storage.objects.list\"]",
+    "replace": "list   = [\"storage.objects.list\", \"storage.objects.get\"]"
+  },
+  {
+    "id": "gcs-write-drops-delete",
+    "provider": "google",
+    "module": "gcs",
+    "file": "main.tf",
+    "find": "write  = [\"storage.objects.create\", \"storage.objects.delete\"]",
+    "replace": "write  = [\"storage.objects.create\"]"
+  },
+  {
+    "id": "gcs-write-adds-update",
+    "provider": "google",
+    "module": "gcs",
+    "file": "main.tf",
+    "find": "write  = [\"storage.objects.create\", \"storage.objects.delete\"]",
+    "replace": "write  = [\"storage.objects.create\", \"storage.objects.delete\", \"storage.objects.update\"]"
+  },
+  {
+    "id": "gcs-delete-adds-create",
+    "provider": "google",
+    "module": "gcs",
+    "file": "main.tf",
+    "find": "delete = [\"storage.objects.delete\"]",
+    "replace": "delete = [\"storage.objects.delete\", \"storage.objects.create\"]"
+  },
+  {
+    "id": "gcs-delete-wildcard",
+    "provider": "google",
+    "module": "gcs",
+    "file": "main.tf",
+    "find": "delete = [\"storage.objects.delete\"]",
+    "replace": "delete = [\"storage.*\"]"
+  },
+  {
+    "id": "gcs-public-access",
+    "provider": "google",
+    "module": "gcs",
+    "file": "main.tf",
+    "find": "public_access_prevention    = \"enforced\"",
+    "replace": "public_access_prevention    = \"inherited\""
+  },
+  {
+    "id": "gcs-fine-grained-acl",
+    "provider": "google",
+    "module": "gcs",
+    "file": "main.tf",
+    "find": "uniform_bucket_level_access = true",
+    "replace": "uniform_bucket_level_access = false"
+  },
+  {
+    "id": "gcs-versioning-on",
+    "provider": "google",
+    "module": "gcs",
+    "file": "main.tf",
+    "find": "    enabled = false",
+    "replace": "    enabled = true"
+  },
+  {
+    "id": "gcs-soft-delete-on",
+    "provider": "google",
+    "module": "gcs",
+    "file": "main.tf",
+    "find": "retention_duration_seconds = 0",
+    "replace": "retention_duration_seconds = 604800"
+  },
+  {
+    "id": "gcs-force-destroy-always",
+    "provider": "google",
+    "module": "gcs",
+    "file": "main.tf",
+    "find": "force_destroy               = var.protection == \"disposable\"",
+    "replace": "force_destroy               = true"
+  },
+  {
+    "id": "gcs-binding-resource-wildcard",
+    "provider": "google",
+    "module": "gcs",
+    "file": "main.tf",
+    "find": "resource = \"projects/_/buckets/${google_storage_bucket.this.name}\"",
+    "replace": "resource = \"projects/_/buckets/*\""
+  },
+  {
+    "id": "gcs-binding-role-predefined",
+    "provider": "google",
+    "module": "gcs",
+    "file": "main.tf",
+    "find": "role     = \"projects/${google_project_iam_custom_role.capability[capability].project}/roles/${google_project_iam_custom_role.capability[capability].role_id}\"",
+    "replace": "role     = \"roles/storage.admin\""
+  },
+  {
+    "id": "gcs-binding-condition-added",
+    "provider": "google",
+    "module": "gcs",
+    "file": "main.tf",
+    "find": "resource = \"projects/_/buckets/${google_storage_bucket.this.name}\"\n      }])",
+    "replace": "resource = \"projects/_/buckets/${google_storage_bucket.this.name}\"\n        condition = { title = \"x\", expression = \"true\" }\n      }])"
+  },
+  {
+    "id": "gcs-envelope-expiry",
+    "provider": "google",
+    "module": "gcs",
+    "file": "main.tf",
+    "find": "age            = var.raw_retention_days",
+    "replace": "age            = var.raw_retention_days + 1"
+  },
+  {
+    "id": "gcs-claim-expiry",
+    "provider": "google",
+    "module": "gcs",
+    "file": "main.tf",
+    "find": "age            = var.record_claim_retention_days",
+    "replace": "age            = var.raw_retention_days"
+  },
+  {
+    "id": "gcs-orphan-margin-dropped",
+    "provider": "google",
+    "module": "gcs",
+    "file": "main.tf",
+    "find": "age            = var.max_event_retention_days + var.overflow_orphan_margin_days",
+    "replace": "age            = var.max_event_retention_days"
+  },
+  {
+    "id": "gcs-orphan-prefix-digit",
+    "provider": "google",
+    "module": "gcs",
+    "file": "main.tf",
+    "find": "[for digit in range(10) : \"payloads/${digit}\"]",
+    "replace": "[for digit in range(9) : \"payloads/${digit}\"]"
+  },
+  {
+    "id": "gcs-chunk-expiry",
+    "provider": "google",
+    "module": "gcs",
+    "file": "main.tf",
+    "find": "age            = var.artifact_chunk_retention_days",
+    "replace": "age            = 1"
+  },
+  {
+    "id": "gcs-lifecycle-action",
+    "provider": "google",
+    "module": "gcs",
+    "file": "main.tf",
+    "find": "type = \"Delete\"\n    }\n  }\n  # Grouped",
+    "replace": "type = \"AbortIncompleteMultipartUpload\"\n    }\n  }\n  # Grouped"
+  },
+  {
+    "id": "gcs-location-fixed",
+    "provider": "google",
+    "module": "gcs",
+    "file": "main.tf",
+    "find": "location                    = var.location",
+    "replace": "location                    = \"US\""
+  },
+  {
+    "id": "gcs-bucket-name",
+    "provider": "google",
+    "module": "gcs",
+    "file": "main.tf",
+    "find": "bucket_name = \"${var.name}-${local.project}-blob\"",
+    "replace": "bucket_name = \"${var.name}-blob\""
+  },
+  {
+    "id": "gcs-bucket-id-list",
+    "provider": "google",
+    "module": "gcs",
+    "file": "outputs.tf",
+    "find": "value       = google_storage_bucket.this.id",
+    "replace": "value       = [google_storage_bucket.this.id]"
+  },
+  {
+    "id": "gcs-policies-extra-purpose",
+    "provider": "google",
+    "module": "gcs",
+    "file": "main.tf",
+    "find": "      primary = jsonencode([{",
+    "replace": "      other = jsonencode([{"
+  },
+  {
+    "id": "gcs-claim-retention-floor",
+    "provider": "google",
+    "module": "gcs",
+    "file": "variables.tf",
+    "find": "var.record_claim_retention_days >= 8",
+    "replace": "var.record_claim_retention_days >= 1"
+  },
+  {
+    "id": "pubsub-publisher-role",
+    "provider": "google",
+    "module": "pubsub",
+    "file": "main.tf",
+    "find": "role = \"roles/pubsub.publisher\"",
+    "replace": "role = \"roles/pubsub.editor\""
+  },
+  {
+    "id": "pubsub-consume-binding",
+    "provider": "google",
+    "module": "pubsub",
+    "file": "main.tf",
+    "find": "consume = { for key, queue in local.queues : key => jsonencode([]) }",
+    "replace": "consume = { for key, queue in local.queues : key => jsonencode([{ role = \"roles/pubsub.subscriber\", resource = queue.subscription }]) }"
+  },
+  {
+    "id": "pubsub-produce-wrong-resource",
+    "provider": "google",
+    "module": "pubsub",
+    "file": "main.tf",
+    "find": "resource = queue.topic }",
+    "replace": "resource = \"projects/${var.project_id}\" }"
+  },
+  {
+    "id": "pubsub-dlq-name",
+    "provider": "google",
+    "module": "pubsub",
+    "file": "main.tf",
+    "find": "name     = \"${var.name}-${each.key}-dlq\"\n  labels   = var.labels\n  message_storage_policy {\n    allowed_persistence_regions = [var.region]\n  }\n}\n# The dead-letter topic retains",
+    "replace": "name     = \"${var.name}-${each.key}-dead\"\n  labels   = var.labels\n  message_storage_policy {\n    allowed_persistence_regions = [var.region]\n  }\n}\n# The dead-letter topic retains"
+  },
+  {
+    "id": "pubsub-dlq-retention",
+    "provider": "google",
+    "module": "pubsub",
+    "file": "main.tf",
+    "find": "message_retention_duration = \"1209600s\"",
+    "replace": "message_retention_duration = \"86400s\""
+  },
+  {
+    "id": "pubsub-dlq-expiry",
+    "provider": "google",
+    "module": "pubsub",
+    "file": "main.tf",
+    "find": "    ttl = \"\"",
+    "replace": "    ttl = \"2678400s\""
+  },
+  {
+    "id": "pubsub-dlq-always",
+    "provider": "google",
+    "module": "pubsub",
+    "file": "main.tf",
+    "find": "queues_with_dlq = { for key, queue in var.physical_queues : key => queue if queue.dlq_enabled }",
+    "replace": "queues_with_dlq = var.physical_queues"
+  },
+  {
+    "id": "pubsub-region-policy",
+    "provider": "google",
+    "module": "pubsub",
+    "file": "main.tf",
+    "find": "  name     = \"${var.name}-${each.key}\"\n  labels   = var.labels\n  message_storage_policy {\n    allowed_persistence_regions = [var.region]",
+    "replace": "  name     = \"${var.name}-${each.key}\"\n  labels   = var.labels\n  message_storage_policy {\n    allowed_persistence_regions = [\"us-central1\"]"
+  },
+  {
+    "id": "pubsub-subscription-name",
+    "provider": "google",
+    "module": "pubsub",
+    "file": "main.tf",
+    "find": "subscription     = \"projects/${topic.project}/subscriptions/${topic.name}\"",
+    "replace": "subscription     = \"projects/${topic.project}/subscriptions/${topic.name}-push\""
+  },
+  {
+    "id": "pubsub-queues-string",
+    "provider": "google",
+    "module": "pubsub",
+    "file": "main.tf",
+    "find": "topic = \"projects/${topic.project}/topics/${topic.name}\"",
+    "replace": "topic = topic.name"
+  },
+  {
+    "id": "pubsub-attempts-floor",
+    "provider": "google",
+    "module": "pubsub",
+    "file": "variables.tf",
+    "find": "queue.max_delivery_attempts >= 5",
+    "replace": "queue.max_delivery_attempts >= 1"
+  },
+  {
+    "id": "pubsub-ack-ceiling",
+    "provider": "google",
+    "module": "pubsub",
+    "file": "variables.tf",
+    "find": "queue.ack_deadline_sec <= 600",
+    "replace": "queue.ack_deadline_sec <= 6000"
+  },
+  {
+    "id": "fs-read-adds-delete",
+    "provider": "google",
+    "module": "firestore",
+    "file": "main.tf",
+    "find": "read   = [\"datastore.databases.get\", \"datastore.entities.get\", \"datastore.entities.list\"]",
+    "replace": "read   = [\"datastore.databases.get\", \"datastore.entities.get\", \"datastore.entities.list\", \"datastore.entities.delete\"]"
+  },
+  {
+    "id": "fs-read-drops-list",
+    "provider": "google",
+    "module": "firestore",
+    "file": "main.tf",
+    "find": "\"datastore.entities.get\", \"datastore.entities.list\"]",
+    "replace": "\"datastore.entities.get\"]"
+  },
+  {
+    "id": "fs-write-adds-delete",
+    "provider": "google",
+    "module": "firestore",
+    "file": "main.tf",
+    "find": "write  = [\"datastore.databases.get\", \"datastore.entities.create\", \"datastore.entities.update\"]",
+    "replace": "write  = [\"datastore.databases.get\", \"datastore.entities.create\", \"datastore.entities.update\", \"datastore.entities.delete\"]"
+  },
+  {
+    "id": "fs-write-drops-update",
+    "provider": "google",
+    "module": "firestore",
+    "file": "main.tf",
+    "find": "\"datastore.entities.create\", \"datastore.entities.update\"]",
+    "replace": "\"datastore.entities.create\"]"
+  },
+  {
+    "id": "fs-delete-wildcard",
+    "provider": "google",
+    "module": "firestore",
+    "file": "main.tf",
+    "find": "delete = [\"datastore.entities.delete\"]",
+    "replace": "delete = [\"datastore.*\"]"
+  },
+  {
+    "id": "fs-condition-dropped",
+    "provider": "google",
+    "module": "firestore",
+    "file": "main.tf",
+    "find": "condition = local.database_condition",
+    "replace": "condition = null"
+  },
+  {
+    "id": "fs-condition-other-db",
+    "provider": "google",
+    "module": "firestore",
+    "file": "main.tf",
+    "find": "/databases/${google_firestore_database.this.name}\\\"\"",
+    "replace": "/databases/(default)\\\"\""
+  },
+  {
+    "id": "fs-binding-resource",
+    "provider": "google",
+    "module": "firestore",
+    "file": "main.tf",
+    "find": "resource  = \"projects/${var.project_id}\"",
+    "replace": "resource  = \"projects/-\""
+  },
+  {
+    "id": "fs-binding-role-predefined",
+    "provider": "google",
+    "module": "firestore",
+    "file": "main.tf",
+    "find": "role      = \"projects/${role.project}/roles/${role.role_id}\"",
+    "replace": "role      = \"roles/datastore.owner\""
+  },
+  {
+    "id": "fs-metadata-delete-write",
+    "provider": "google",
+    "module": "firestore",
+    "file": "main.tf",
+    "find": "\"metadata-delete\" = { primary = local.document[\"delete\"] }",
+    "replace": "\"metadata-delete\" = { primary = local.document[\"write\"] }"
+  },
+  {
+    "id": "fs-delete-protection",
+    "provider": "google",
+    "module": "firestore",
+    "file": "main.tf",
+    "find": "delete_protection_state           = local.production ? \"DELETE_PROTECTION_ENABLED\" : \"DELETE_PROTECTION_DISABLED\"",
+    "replace": "delete_protection_state           = \"DELETE_PROTECTION_DISABLED\""
+  },
+  {
+    "id": "fs-deletion-policy",
+    "provider": "google",
+    "module": "firestore",
+    "file": "main.tf",
+    "find": "deletion_policy                   = local.production ? \"ABANDON\" : \"DELETE\"",
+    "replace": "deletion_policy                   = \"DELETE\""
+  },
+  {
+    "id": "fs-pitr-enabled",
+    "provider": "google",
+    "module": "firestore",
+    "file": "main.tf",
+    "find": "point_in_time_recovery_enablement = \"POINT_IN_TIME_RECOVERY_DISABLED\"",
+    "replace": "point_in_time_recovery_enablement = \"POINT_IN_TIME_RECOVERY_ENABLED\""
+  },
+  {
+    "id": "fs-edition",
+    "provider": "google",
+    "module": "firestore",
+    "file": "main.tf",
+    "find": "database_edition                  = \"STANDARD\"",
+    "replace": "database_edition                  = \"ENTERPRISE\""
+  },
+  {
+    "id": "fs-location",
+    "provider": "google",
+    "module": "firestore",
+    "file": "main.tf",
+    "find": "location_id                       = var.location",
+    "replace": "location_id                       = \"nam5\""
+  },
+  {
+    "id": "fs-index-scope",
+    "provider": "google",
+    "module": "firestore",
+    "file": "main.tf",
+    "find": "query_scope = \"COLLECTION\"",
+    "replace": "query_scope = \"COLLECTION_GROUP\""
+  },
+  {
+    "id": "fs-index-order-lost",
+    "provider": "google",
+    "module": "firestore",
+    "file": "main.tf",
+    "find": "order      = fields.value.order",
+    "replace": "order      = \"ASCENDING\""
+  },
+  {
+    "id": "fs-exemption-dropped",
+    "provider": "google",
+    "module": "firestore",
+    "file": "main.tf",
+    "find": "for_each = each.value.exempt ? [1] : []",
+    "replace": "for_each = []"
+  },
+  {
+    "id": "fs-ttl-dropped",
+    "provider": "google",
+    "module": "firestore",
+    "file": "main.tf",
+    "find": "for_each = each.value.ttl ? [1] : []",
+    "replace": "for_each = []"
+  },
+  {
+    "id": "fs-database-id",
+    "provider": "google",
+    "module": "firestore",
+    "file": "main.tf",
+    "find": "database_id = coalesce(var.database_id, \"${var.name}-${var.purpose}\")",
+    "replace": "database_id = coalesce(var.database_id, var.name)"
+  },
+  {
+    "id": "fs-database-id-list",
+    "provider": "google",
+    "module": "firestore",
+    "file": "outputs.tf",
+    "find": "value       = google_firestore_database.this.name",
+    "replace": "value       = [google_firestore_database.this.name]"
+  },
+  {
+    "id": "sql-instance-user-role",
+    "provider": "google",
+    "module": "cloudsql-iam-access",
+    "file": "main.tf",
+    "find": "role      = \"roles/cloudsql.instanceUser\"",
+    "replace": "role      = \"roles/cloudsql.admin\""
+  },
+  {
+    "id": "sql-client-role",
+    "provider": "google",
+    "module": "cloudsql-iam-access",
+    "file": "main.tf",
+    "find": "role      = \"roles/cloudsql.client\"",
+    "replace": "role      = \"roles/cloudsql.editor\""
+  },
+  {
+    "id": "sql-condition-dropped",
+    "provider": "google",
+    "module": "cloudsql-iam-access",
+    "file": "main.tf",
+    "find": "expression  = \"resource.name == 'projects/${local.project}/instances/${local.instance}' && resource.type == 'sqladmin.googleapis.com/Instance'\"",
+    "replace": "expression  = \"true\""
+  },
+  {
+    "id": "sql-condition-wrong-instance",
+    "provider": "google",
+    "module": "cloudsql-iam-access",
+    "file": "main.tf",
+    "find": "instances/${local.instance}' &&",
+    "replace": "instances/other' &&"
+  },
+  {
+    "id": "sql-user-dropped",
+    "provider": "google",
+    "module": "cloudsql-iam-access",
+    "file": "main.tf",
+    "find": "var.database_user == null ? { iam_database_user = { project = local.project, instance = local.instance } } : {}",
+    "replace": "{}"
+  },
+  {
+    "id": "sql-client-on-tcp",
+    "provider": "google",
+    "module": "cloudsql-iam-access",
+    "file": "main.tf",
+    "find": "var.transport == \"unix-socket\" ? [local.client] : []",
+    "replace": "[local.client]"
+  },
+  {
+    "id": "sql-project-split",
+    "provider": "google",
+    "module": "cloudsql-iam-access",
+    "file": "main.tf",
+    "find": "join(\":\", slice(local.parts, 0, length(local.parts) - 2))",
+    "replace": "local.parts[0]"
+  },
+  {
+    "id": "sql-delete-differs",
+    "provider": "google",
+    "module": "cloudsql-iam-access",
+    "file": "main.tf",
+    "find": "delete = { primary = local.document }",
+    "replace": "delete = { primary = jsonencode([]) }"
+  },
+  {
+    "id": "ar-writer-role",
+    "provider": "google",
+    "module": "artifact-registry",
+    "file": "main.tf",
+    "find": "role       = \"roles/artifactregistry.writer\"",
+    "replace": "role       = \"roles/artifactregistry.admin\""
+  },
+  {
+    "id": "ar-reader-role",
+    "provider": "google",
+    "module": "artifact-registry",
+    "file": "main.tf",
+    "find": "role       = \"roles/artifactregistry.reader\"",
+    "replace": "role       = \"roles/artifactregistry.writer\""
+  },
+  {
+    "id": "ar-mutable-tags",
+    "provider": "google",
+    "module": "artifact-registry",
+    "file": "main.tf",
+    "find": "immutable_tags = true",
+    "replace": "immutable_tags = false"
+  },
+  {
+    "id": "ar-url",
+    "provider": "google",
+    "module": "artifact-registry",
+    "file": "outputs.tf",
+    "find": "docker.pkg.dev/",
+    "replace": "pkg.dev/"
+  },
+  {
+    "id": "run-public-all",
+    "provider": "google",
+    "module": "cloud-run-app",
+    "file": "main.tf",
+    "find": "for_each = { for id, fn in var.functions : id => fn if fn.public }",
+    "replace": "for_each = var.functions"
+  },
+  {
+    "id": "run-push-public",
+    "provider": "google",
+    "module": "cloud-run-app",
+    "file": "main.tf",
+    "find": "for_each = { for id, fn in var.functions : id => fn if !fn.public && contains([for trigger in values(var.queue_triggers) : trigger.function_id], id) }",
+    "replace": "for_each = { for id, fn in var.functions : id => fn if contains([for trigger in values(var.queue_triggers) : trigger.function_id], id) }"
+  },
+  {
+    "id": "run-push-all",
+    "provider": "google",
+    "module": "cloud-run-app",
+    "file": "main.tf",
+    "find": "if !fn.public && contains([for trigger in values(var.queue_triggers) : trigger.function_id], id) }",
+    "replace": "if !fn.public }"
+  },
+  {
+    "id": "run-scheduler-all",
+    "provider": "google",
+    "module": "cloud-run-app",
+    "file": "main.tf",
+    "find": "if !fn.public && contains([for trigger in values(var.cron_triggers) : trigger.function_id], id) }",
+    "replace": "if !fn.public }"
+  },
+  {
+    "id": "run-scheduler-as-push",
+    "provider": "google",
+    "module": "cloud-run-app",
+    "file": "main.tf",
+    "find": "member   = \"serviceAccount:${google_service_account.scheduler.email}\"\n}\nresource \"google_cloud_run_v2_service_iam_member\" \"operator\"",
+    "replace": "member   = \"serviceAccount:${google_service_account.push.email}\"\n}\nresource \"google_cloud_run_v2_service_iam_member\" \"operator\""
+  },
+  {
+    "id": "run-operator-all",
+    "provider": "google",
+    "module": "cloud-run-app",
+    "file": "main.tf",
+    "find": "setproduct([for id, fn in var.functions : id if contains(fn.roles, \"bootstrap\")], var.operator_members)",
+    "replace": "setproduct([for id, fn in var.functions : id], var.operator_members)"
+  },
+  {
+    "id": "run-invoker-role",
+    "provider": "google",
+    "module": "cloud-run-app",
+    "file": "main.tf",
+    "find": "role     = \"roles/run.invoker\"\n  member   = \"allUsers\"",
+    "replace": "role     = \"roles/run.admin\"\n  member   = \"allUsers\""
+  },
+  {
+    "id": "run-audience-dropped",
+    "provider": "google",
+    "module": "cloud-run-app",
+    "file": "main.tf",
+    "find": "custom_audiences = [var.oidc_audience]",
+    "replace": "custom_audiences = []"
+  },
+  {
+    "id": "run-default-account",
+    "provider": "google",
+    "module": "cloud-run-app",
+    "file": "main.tf",
+    "find": "service_account                  = google_service_account.function[each.key].email",
+    "replace": "service_account                  = google_service_account.function[\"ingest\"].email"
+  },
+  {
+    "id": "run-account-id",
+    "provider": "google",
+    "module": "cloud-run-app",
+    "file": "main.tf",
+    "find": "account_id   = \"${var.name}-${each.key}\"",
+    "replace": "account_id   = var.name"
+  },
+  {
+    "id": "run-ingress",
+    "provider": "google",
+    "module": "cloud-run-app",
+    "file": "main.tf",
+    "find": "\"internal\"                          = \"INGRESS_TRAFFIC_INTERNAL_ONLY\"",
+    "replace": "\"internal\"                          = \"INGRESS_TRAFFIC_ALL\""
+  },
+  {
+    "id": "run-concurrency",
+    "provider": "google",
+    "module": "cloud-run-app",
+    "file": "main.tf",
+    "find": "max_instance_request_concurrency = each.value.concurrency",
+    "replace": "max_instance_request_concurrency = 80"
+  },
+  {
+    "id": "run-max-instances",
+    "provider": "google",
+    "module": "cloud-run-app",
+    "file": "main.tf",
+    "find": "max_instance_count = each.value.max_instances",
+    "replace": "max_instance_count = 100"
+  },
+  {
+    "id": "run-timeout",
+    "provider": "google",
+    "module": "cloud-run-app",
+    "file": "main.tf",
+    "find": "timeout                          = \"${each.value.timeout_sec}s\"",
+    "replace": "timeout                          = \"300s\""
+  },
+  {
+    "id": "run-memory",
+    "provider": "google",
+    "module": "cloud-run-app",
+    "file": "main.tf",
+    "find": "memory = \"${each.value.memory_mb}Mi\"",
+    "replace": "memory = \"512Mi\""
+  },
+  {
+    "id": "run-cpu",
+    "provider": "google",
+    "module": "cloud-run-app",
+    "file": "main.tf",
+    "find": "cpu    = \"${floor(each.value.cpu * 1000)}m\"",
+    "replace": "cpu    = \"1000m\""
+  },
+  {
+    "id": "run-command",
+    "provider": "google",
+    "module": "cloud-run-app",
+    "file": "main.tf",
+    "find": "command = each.value.command",
+    "replace": "command = [\"node\", \"/app/ingest/index.mjs\"]"
+  },
+  {
+    "id": "run-image",
+    "provider": "google",
+    "module": "cloud-run-app",
+    "file": "main.tf",
+    "find": "image   = var.image",
+    "replace": "image   = \"gcr.io/other/app:latest\""
+  },
+  {
+    "id": "run-secret-env",
+    "provider": "google",
+    "module": "cloud-run-app",
+    "file": "main.tf",
+    "find": "for_each = merge(each.value.environment, each.value.secrets)",
+    "replace": "for_each = each.value.environment"
+  },
+  {
+    "id": "run-vpc-egress",
+    "provider": "google",
+    "module": "cloud-run-app",
+    "file": "main.tf",
+    "find": "\"all-traffic\"         = \"ALL_TRAFFIC\"",
+    "replace": "\"all-traffic\"         = \"PRIVATE_RANGES_ONLY\""
+  },
+  {
+    "id": "run-cloudsql-volume",
+    "provider": "google",
+    "module": "cloud-run-app",
+    "file": "main.tf",
+    "find": "instances = [local.cloudsql[each.key]]",
+    "replace": "instances = [\"other:region:instance\"]"
+  },
+  {
+    "id": "run-sub-audience",
+    "provider": "google",
+    "module": "cloud-run-app",
+    "file": "main.tf",
+    "find": "      service_account_email = google_service_account.push.email\n      audience              = var.oidc_audience",
+    "replace": "      service_account_email = google_service_account.push.email\n      audience              = \"other\""
+  },
+  {
+    "id": "run-sub-account",
+    "provider": "google",
+    "module": "cloud-run-app",
+    "file": "main.tf",
+    "find": "      service_account_email = google_service_account.push.email\n      audience",
+    "replace": "      service_account_email = google_service_account.scheduler.email\n      audience"
+  },
+  {
+    "id": "run-sub-ack",
+    "provider": "google",
+    "module": "cloud-run-app",
+    "file": "main.tf",
+    "find": "ack_deadline_seconds       = each.value.ack_deadline_sec",
+    "replace": "ack_deadline_seconds       = 10"
+  },
+  {
+    "id": "run-sub-ordering",
+    "provider": "google",
+    "module": "cloud-run-app",
+    "file": "main.tf",
+    "find": "enable_message_ordering    = each.value.ordered",
+    "replace": "enable_message_ordering    = false"
+  },
+  {
+    "id": "run-sub-retention",
+    "provider": "google",
+    "module": "cloud-run-app",
+    "file": "main.tf",
+    "find": "message_retention_duration = \"604800s\"",
+    "replace": "message_retention_duration = \"3600s\""
+  },
+  {
+    "id": "run-sub-expiry",
+    "provider": "google",
+    "module": "cloud-run-app",
+    "file": "main.tf",
+    "find": "expiration_policy {\n    ttl = \"\"\n  }\n  push_config",
+    "replace": "expiration_policy {\n    ttl = \"2678400s\"\n  }\n  push_config"
+  },
+  {
+    "id": "run-sub-endpoint",
+    "provider": "google",
+    "module": "cloud-run-app",
+    "file": "main.tf",
+    "find": "push_endpoint = \"${google_cloud_run_v2_service.function[each.value.function_id].uri}${each.value.push_path}\"",
+    "replace": "push_endpoint = google_cloud_run_v2_service.function[each.value.function_id].uri"
+  },
+  {
+    "id": "run-sub-retry-dropped",
+    "provider": "google",
+    "module": "cloud-run-app",
+    "file": "main.tf",
+    "find": "for_each = each.value.min_backoff_sec != null && each.value.max_backoff_sec != null ? [1] : []",
+    "replace": "for_each = []"
+  },
+  {
+    "id": "run-sub-backoff",
+    "provider": "google",
+    "module": "cloud-run-app",
+    "file": "main.tf",
+    "find": "minimum_backoff = \"${each.value.min_backoff_sec}s\"",
+    "replace": "minimum_backoff = \"1s\""
+  },
+  {
+    "id": "run-sub-dlq-dropped",
+    "provider": "google",
+    "module": "cloud-run-app",
+    "file": "main.tf",
+    "find": "for_each = each.value.dlq_enabled ? [1] : []",
+    "replace": "for_each = []"
+  },
+  {
+    "id": "run-sub-dlq-attempts",
+    "provider": "google",
+    "module": "cloud-run-app",
+    "file": "main.tf",
+    "find": "max_delivery_attempts = each.value.max_delivery_attempts",
+    "replace": "max_delivery_attempts = 100"
+  },
+  {
+    "id": "run-sub-dlq-topic",
+    "provider": "google",
+    "module": "cloud-run-app",
+    "file": "main.tf",
+    "find": "dead_letter_topic     = local.dlq_topic_ids[each.key]",
+    "replace": "dead_letter_topic     = local.topic_ids[each.key]"
+  },
+  {
+    "id": "run-dlq-publisher-role",
+    "provider": "google",
+    "module": "cloud-run-app",
+    "file": "main.tf",
+    "find": "role     = \"roles/pubsub.publisher\"\n  member   = local.pubsub_agent",
+    "replace": "role     = \"roles/pubsub.editor\"\n  member   = local.pubsub_agent"
+  },
+  {
+    "id": "run-dlq-subscriber-role",
+    "provider": "google",
+    "module": "cloud-run-app",
+    "file": "main.tf",
+    "find": "role         = \"roles/pubsub.subscriber\"",
+    "replace": "role         = \"roles/pubsub.editor\""
+  },
+  {
+    "id": "run-dlq-grant-all",
+    "provider": "google",
+    "module": "cloud-run-app",
+    "file": "main.tf",
+    "find": "for_each = local.dlq_topic_ids\n  project  = var.project_id\n  topic",
+    "replace": "for_each = local.topic_ids\n  project  = var.project_id\n  topic"
+  },
+  {
+    "id": "run-token-creator-role",
+    "provider": "google",
+    "module": "cloud-run-app",
+    "file": "main.tf",
+    "find": "role               = \"roles/iam.serviceAccountTokenCreator\"",
+    "replace": "role               = \"roles/iam.serviceAccountUser\""
+  },
+  {
+    "id": "run-agent-address",
+    "provider": "google",
+    "module": "cloud-run-app",
+    "file": "main.tf",
+    "find": "gcp-sa-pubsub.iam.gserviceaccount.com",
+    "replace": "compute-system.iam.gserviceaccount.com"
+  },
+  {
+    "id": "run-cron-zone",
+    "provider": "google",
+    "module": "cloud-run-app",
+    "file": "main.tf",
+    "find": "time_zone        = each.value.time_zone",
+    "replace": "time_zone        = \"Asia/Tokyo\""
+  },
+  {
+    "id": "run-cron-retry",
+    "provider": "google",
+    "module": "cloud-run-app",
+    "file": "main.tf",
+    "find": "retry_count = each.value.retry_count",
+    "replace": "retry_count = 0"
+  },
+  {
+    "id": "run-cron-uri",
+    "provider": "google",
+    "module": "cloud-run-app",
+    "file": "main.tf",
+    "find": "uri         = \"${google_cloud_run_v2_service.function[each.value.function_id].uri}${each.value.path}\"",
+    "replace": "uri         = google_cloud_run_v2_service.function[each.value.function_id].uri"
+  },
+  {
+    "id": "run-cron-account",
+    "provider": "google",
+    "module": "cloud-run-app",
+    "file": "main.tf",
+    "find": "      service_account_email = google_service_account.scheduler.email",
+    "replace": "      service_account_email = google_service_account.push.email"
+  },
+  {
+    "id": "run-secret-role",
+    "provider": "google",
+    "module": "cloud-run-app",
+    "file": "main.tf",
+    "find": "role      = \"roles/secretmanager.secretAccessor\"",
+    "replace": "role      = \"roles/secretmanager.admin\""
+  },
+  {
+    "id": "run-secret-member",
+    "provider": "google",
+    "module": "cloud-run-app",
+    "file": "main.tf",
+    "find": "secret_id = element(split(\"/\", each.value.secret), 3)",
+    "replace": "secret_id = \"other\""
+  },
+  {
+    "id": "run-bootstrap-permissions",
+    "provider": "google",
+    "module": "cloud-run-app",
+    "file": "main.tf",
+    "find": "\"secretmanager.versions.add\", \"secretmanager.versions.access\"]",
+    "replace": "\"secretmanager.versions.add\", \"secretmanager.versions.access\", \"secretmanager.secrets.delete\"]"
+  },
+  {
+    "id": "run-bootstrap-condition",
+    "provider": "google",
+    "module": "cloud-run-app",
+    "file": "main.tf",
+    "find": "resource.name == \\\"projects/${data.google_project.this.number}/secrets/${each.value}\\\" ||",
+    "replace": "true ||"
+  },
+  {
+    "id": "run-binding-member",
+    "provider": "google",
+    "module": "cloud-run-app",
+    "file": "main.tf",
+    "find": "role     = each.value.role\n  member   = \"serviceAccount:${google_service_account.function[each.value.function].email}\"\n  dynamic \"condition\" {\n    for_each = each.value.condition == null ? [] : [each.value.condition]\n    content {\n      title       = condition.value.title\n      description = try(condition.value.description, null)\n      expression  = condition.value.expression\n    }\n  }\n  depends_on = [terraform_data.binding_forms]\n}\nresource \"google_storage_bucket_iam_member\" \"binding\"",
+    "replace": "role     = each.value.role\n  member   = \"allUsers\"\n  dynamic \"condition\" {\n    for_each = each.value.condition == null ? [] : [each.value.condition]\n    content {\n      title       = condition.value.title\n      description = try(condition.value.description, null)\n      expression  = condition.value.expression\n    }\n  }\n  depends_on = [terraform_data.binding_forms]\n}\nresource \"google_storage_bucket_iam_member\" \"binding\""
+  },
+  {
+    "id": "run-binding-condition-dropped",
+    "provider": "google",
+    "module": "cloud-run-app",
+    "file": "main.tf",
+    "find": "for_each = each.value.condition == null ? [] : [each.value.condition]\n    content {\n      title       = condition.value.title\n      description = try(condition.value.description, null)\n      expression  = condition.value.expression\n    }\n  }\n  depends_on = [terraform_data.binding_forms]\n}\nresource \"google_storage_bucket_iam_member\" \"binding\"",
+    "replace": "for_each = []\n    content {\n      title       = condition.value.title\n      description = try(condition.value.description, null)\n      expression  = condition.value.expression\n    }\n  }\n  depends_on = [terraform_data.binding_forms]\n}\nresource \"google_storage_bucket_iam_member\" \"binding\""
+  },
+  {
+    "id": "run-unsupported-ignored",
+    "provider": "google",
+    "module": "cloud-run-app",
+    "file": "main.tf",
+    "find": "condition     = length(local.unsupported) == 0",
+    "replace": "condition     = true"
+  },
+  {
+    "id": "run-bucket-binding-bucket",
+    "provider": "google",
+    "module": "cloud-run-app",
+    "file": "main.tf",
+    "find": "bucket   = element(split(\"/\", each.value.resource), 3)",
+    "replace": "bucket   = \"other\""
+  },
+  {
+    "id": "run-topic-binding-topic",
+    "provider": "google",
+    "module": "cloud-run-app",
+    "file": "main.tf",
+    "find": "topic    = element(split(\"/\", each.value.resource), 3)",
+    "replace": "topic    = \"other\""
+  },
+  {
+    "id": "run-sql-user-type",
+    "provider": "google",
+    "module": "cloud-run-app",
+    "file": "main.tf",
+    "find": "type     = \"CLOUD_IAM_SERVICE_ACCOUNT\"",
+    "replace": "type     = \"BUILT_IN\""
+  },
+  {
+    "id": "run-sql-user-name",
+    "provider": "google",
+    "module": "cloud-run-app",
+    "file": "main.tf",
+    "find": "name     = trimsuffix(google_service_account.function[each.value.function].email, \".gserviceaccount.com\")",
+    "replace": "name     = google_service_account.function[each.value.function].email"
+  },
+  {
+    "id": "run-api-url-empty",
+    "provider": "google",
+    "module": "cloud-run-app",
+    "file": "outputs.tf",
+    "find": "value       = local.role_urls[\"api\"] == null ? \"\" : local.role_urls[\"api\"]",
+    "replace": "value       = \"\""
+  },
+  {
+    "id": "run-bootstrap-url-list",
+    "provider": "google",
+    "module": "cloud-run-app",
+    "file": "outputs.tf",
+    "find": "value       = local.role_urls[\"bootstrap\"] == null ? \"\" : local.role_urls[\"bootstrap\"]",
+    "replace": "value       = [local.role_urls[\"bootstrap\"]]"
+  },
+  {
+    "id": "run-public-validation",
+    "provider": "google",
+    "module": "cloud-run-app",
+    "file": "variables.tf",
+    "find": "fn.public == (length(fn.http) > 0) &&",
+    "replace": "true &&"
+  },
+  {
+    "id": "run-bootstrap-validation",
+    "provider": "google",
+    "module": "cloud-run-app",
+    "file": "variables.tf",
+    "find": "(!contains(fn.roles, \"bootstrap\") || (length(fn.roles) == 1 && length(fn.http) == 0))",
+    "replace": "true"
+  },
+  {
+    "id": "run-image-digest-validation",
+    "provider": "google",
+    "module": "cloud-run-app",
+    "file": "variables.tf",
+    "find": "@sha256:[a-f0-9]{64}$",
+    "replace": ""
+  },
+  {
+    "id": "gcp-root-drop-policy",
+    "provider": "google",
+    "root": "gcp-firestore",
+    "operation": "drop-policy"
+  },
+  {
+    "id": "gcp-root-wrong-function-policy",
+    "provider": "google",
+    "root": "gcp-firestore",
+    "operation": "wrong-function-policy"
+  },
+  {
+    "id": "gcp-root-drop-binding",
+    "provider": "google",
+    "root": "gcp-firestore",
+    "operation": "drop-binding"
+  },
+  {
+    "id": "gcp-root-drop-trigger",
+    "provider": "google",
+    "root": "gcp-firestore",
+    "operation": "drop-trigger"
+  },
+  {
+    "id": "gcp-root-record-unordered",
+    "provider": "google",
+    "root": "gcp-firestore",
+    "operation": "gcp-record-unordered"
+  },
+  {
+    "id": "gcp-root-drop-dlq",
+    "provider": "google",
+    "root": "gcp-firestore",
+    "operation": "gcp-drop-dlq"
+  },
+  {
+    "id": "gcp-root-consumer-public",
+    "provider": "google",
+    "root": "gcp-firestore",
+    "operation": "gcp-consumer-public"
+  },
+  {
+    "id": "gcp-root-ingest-private",
+    "provider": "google",
+    "root": "gcp-firestore",
+    "operation": "gcp-ingest-private"
+  },
+  {
+    "id": "gcp-root-drop-cron",
+    "provider": "google",
+    "root": "gcp-firestore",
+    "operation": "gcp-drop-cron-trigger"
+  },
+  {
+    "id": "gcp-root-cron-to-ingest",
+    "provider": "google",
+    "root": "gcp-cloudsql",
+    "operation": "gcp-cron-to-ingest"
+  },
+  {
+    "id": "gcp-root-queue-to-api",
+    "provider": "google",
+    "root": "gcp-firestore",
+    "operation": "gcp-queue-to-api"
+  },
+  {
+    "id": "gcp-root-audience",
+    "provider": "google",
+    "root": "gcp-firestore",
+    "operation": "gcp-drop-audience"
+  },
+  {
+    "id": "gcp-root-drop-store-policy",
+    "provider": "google",
+    "root": "gcp-cloudsql",
+    "operation": "gcp-drop-store-policy"
+  },
+  {
+    "id": "gcp-root-record-gets-kv-policy",
+    "provider": "google",
+    "root": "gcp-firestore",
+    "operation": "gcp-record-gets-ingest-policy"
+  },
+  {
+    "id": "gcp-root-drop-store-binding",
+    "provider": "google",
+    "root": "gcp-firestore",
+    "operation": "gcp-drop-store-binding"
   }
 ]

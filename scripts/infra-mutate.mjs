@@ -9,32 +9,48 @@ import {
   writeFileSync,
 } from "node:fs";
 import { resolve } from "node:path";
-import { dynamoMetadataProtection } from "./infra-security-contract.mjs";
+import {
+  dynamoMetadataProtection,
+  googleRoleContract,
+} from "./infra-security-contract.mjs";
 import { capturedShape, checkShape, shapeFixture } from "./infra-shapes.mjs";
 
-const root = resolve("infra/modules/aws");
+// One mutation version per provider family; the baselines and every mutation run against it.
+const families = {
+  aws: {
+    root: resolve("infra/modules/aws"),
+    version: "6.73.0",
+    constraint: /version = ">= \d+\.\d+\.\d+, < 7\.0"/,
+  },
+  google: {
+    root: resolve("infra/modules/google"),
+    version: "8.12.0",
+    constraint: /version = ">= \d+\.\d+\.\d+, < 9\.0"/,
+  },
+};
 const scratch = resolve(".agents-workspace/tmp");
 const cache = resolve(scratch, "terraform-plugin-cache");
 mkdirSync(scratch, { recursive: true });
 const temp = mkdtempSync(resolve(scratch, "terraform-mutations-"));
-const version = "6.73.0";
 const platform = `${process.platform === "win32" ? "windows" : process.platform}_${process.arch === "x64" ? "amd64" : process.arch}`;
-if (
-  !existsSync(
-    resolve(
-      cache,
-      "registry.terraform.io",
-      "hashicorp",
-      "aws",
-      version,
-      platform,
-    ),
+for (const [name, family] of Object.entries(families))
+  if (
+    !existsSync(
+      resolve(
+        cache,
+        "registry.terraform.io",
+        "hashicorp",
+        name,
+        family.version,
+        platform,
+      ),
+    )
   )
-)
-  throw new Error("Provider is not cached; run pnpm infra:validate first");
+    throw new Error("Provider is not cached; run pnpm infra:validate first");
 const mutations = JSON.parse(
   readFileSync(resolve("scripts/infra-mutations.json"), "utf8"),
 );
+const providerOf = (item) => item.provider ?? "aws";
 const moduleMutations = mutations.filter((item) => item.module);
 const rootMutations = mutations.filter((item) => item.root);
 function terraform(args, cwd) {
@@ -54,18 +70,18 @@ function terraform(args, cwd) {
   if (result.error) throw result.error;
   return result;
 }
-function prepare(component, label) {
+function prepare(component, label, provider = "aws") {
+  const family = families[provider];
   const target = resolve(temp, label);
   mkdirSync(target, { recursive: true });
-  cpSync(resolve(root, component), target, { recursive: true });
+  cpSync(resolve(family.root, component), target, { recursive: true });
   const versions = resolve(target, "versions.tf");
   const source = readFileSync(versions, "utf8");
-  const constraint = /version = ">= \d+\.\d+\.\d+, < 7\.0"/;
-  if (!constraint.test(source))
+  if (!family.constraint.test(source))
     throw new Error(`Unexpected provider constraint for ${component}`);
   writeFileSync(
     versions,
-    source.replace(constraint, `version = "= ${version}"`),
+    source.replace(family.constraint, `version = "= ${family.version}"`),
   );
   const init = terraform(
     [
@@ -83,7 +99,7 @@ function prepare(component, label) {
     );
   return target;
 }
-function runShape(target, component) {
+function runShape(target, component, provider = "aws") {
   const fixture = resolve(target, "tests", "shapes.tftest.hcl");
   writeFileSync(
     fixture,
@@ -104,7 +120,7 @@ function runShape(target, component) {
   if (run.status !== 0) return { available: false, differs: false };
   const value = capturedShape(run.stdout, component);
   try {
-    checkShape(component, value);
+    checkShape(component, value, provider);
     return { available: true, differs: false };
   } catch {
     return { available: true, differs: true };
@@ -114,10 +130,19 @@ try {
   const build = spawnSync("pnpm", ["build"], { stdio: "inherit" });
   if (build.status !== 0) throw new Error("Workspace build failed");
   const { prepareRoot } = await import("./infra-roots.mjs");
-  for (const component of [
-    ...new Set(moduleMutations.map((item) => item.module)),
-  ]) {
-    const target = prepare(component, `baseline-${component}`);
+  const { prepareGcpRoot } = await import("./infra-gcp-roots.mjs");
+  const baselines = [
+    ...new Set(
+      moduleMutations.map((item) => `${providerOf(item)}/${item.module}`),
+    ),
+  ];
+  for (const entry of baselines) {
+    const [provider, component] = entry.split("/");
+    const target = prepare(
+      component,
+      `baseline-${provider}-${component}`,
+      provider,
+    );
     const validated = terraform(["validate", "-no-color"], target);
     const tested = terraform(
       ["test", "-no-color", "-filter=tests/contract.tftest.hcl"],
@@ -125,18 +150,23 @@ try {
     );
     if (component === "dynamodb" && !dynamoMetadataProtection(target))
       throw new Error("DynamoDB metadata protection baseline failed");
+    if (provider === "google" && googleRoleContract(target).length)
+      throw new Error(
+        `Google role contract baseline failed for ${component}: ${googleRoleContract(target)}`,
+      );
     if (validated.status !== 0 || tested.status !== 0)
       throw new Error(
         `Baseline failed for ${component}: ${tested.stdout} ${tested.stderr} ${validated.stderr}`,
       );
-    const actual = runShape(target, component);
+    const actual = runShape(target, component, provider);
     if (!actual.available || actual.differs)
       throw new Error(`Baseline output shape failed for ${component}`);
-    console.log(`baseline ${component}: passed`);
+    console.log(`baseline ${entry}: passed`);
   }
   const failures = [];
   for (const mutation of moduleMutations) {
-    const target = prepare(mutation.module, mutation.id);
+    const provider = providerOf(mutation);
+    const target = prepare(mutation.module, mutation.id, provider);
     const file = resolve(target, mutation.file);
     const source = readFileSync(file, "utf8");
     if (source.split(mutation.find).length !== 2)
@@ -147,12 +177,15 @@ try {
       ["test", "-no-color", "-filter=tests/contract.tftest.hcl"],
       target,
     );
-    const result = runShape(target, mutation.module);
+    const result = runShape(target, mutation.module, provider);
     const caught = [
       validation.status !== 0 ? "validate" : "",
       tests.status !== 0 ? "tests" : "",
       result.differs ? "shape" : "",
       mutation.module === "dynamodb" && !dynamoMetadataProtection(target)
+        ? "source"
+        : "",
+      provider === "google" && googleRoleContract(target).length
         ? "source"
         : "",
     ].filter(Boolean);
@@ -162,11 +195,19 @@ try {
     if (!caught.length) failures.push(mutation.id);
   }
   for (const mutation of rootMutations) {
-    const target = prepareRoot(
-      resolve(temp, mutation.id),
-      mutation.root,
-      version,
-    );
+    const provider = providerOf(mutation);
+    const target =
+      provider === "google"
+        ? prepareGcpRoot(
+            resolve(temp, mutation.id),
+            mutation.root,
+            families.google.version,
+          )
+        : prepareRoot(
+            resolve(temp, mutation.id),
+            mutation.root,
+            families.aws.version,
+          );
     const init = terraform(
       [
         "init",
@@ -333,6 +374,47 @@ try {
         break;
       case "drop-dlq":
         main.module.queue.physical_queues.record.dlq_enabled = false;
+        break;
+      case "gcp-record-unordered":
+        platform.queue_triggers.record.ordered = false;
+        break;
+      case "gcp-drop-dlq":
+        platform.queue_triggers.shared.dlq_enabled = false;
+        break;
+      case "gcp-consumer-public":
+        platform.functions.consumer.public = true;
+        break;
+      case "gcp-ingest-private":
+        platform.functions.ingest.public = false;
+        break;
+      case "gcp-drop-cron-trigger":
+        delete platform.cron_triggers["bundle-cleanup"];
+        break;
+      case "gcp-cron-to-ingest":
+        platform.cron_triggers["bundle-cleanup"].function_id = "ingest";
+        break;
+      case "gcp-queue-to-api":
+        platform.queue_triggers.shared.function_id = "api";
+        break;
+      case "gcp-drop-audience":
+        platform.oidc_audience = "other";
+        break;
+      case "gcp-drop-store-policy": {
+        const policies = platform.functions.consumer.policies;
+        const index = policies.findIndex((p) => p.includes("module.store"));
+        if (index < 0) throw new Error("Store policy mutation target missing");
+        policies.splice(index, 1);
+        break;
+      }
+      case "gcp-record-gets-ingest-policy":
+        platform.functions.record.policies.push(
+          ...platform.functions.ingest.policies.filter((p) =>
+            p.includes("module.kv"),
+          ),
+        );
+        break;
+      case "gcp-drop-store-binding":
+        delete platform.functions.api.environment.ERRTRAQ_STORE_DATABASE;
         break;
       default:
         throw new Error(`Unknown root mutation ${mutation.operation}`);

@@ -43,8 +43,7 @@ const policy = (capability: string) => ({
   primary: out("policies", capability, "primary"),
 });
 /**
- * HCL module contract. TODO(G6): `infra/modules/google/firestore` does not exist yet; the output
- * names below are the placeholder shape G6 implements. Firestore has no key-prefix narrowing, so
+ * HCL module contract (`infra/modules/google/firestore`, one database per purpose). Firestore has no key-prefix narrowing, so
  * `key-read`, `project-read` and `release-read` resolve to the same read binding as `read`.
  */
 export const infra: InfraDescriptor<Config> = {
