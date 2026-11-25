@@ -1,0 +1,111 @@
+import {
+  type AdapterManifest,
+  type AdapterSelection,
+  type InfraDescriptor,
+  out,
+  stackValue,
+} from "@moriyoshi/errtraq-core";
+import { z } from "zod";
+
+/** How the adapter obtains Google credentials. */
+export const authSchema = z.discriminatedUnion("mode", [
+  /** The metadata server (Cloud Run, GCE, GKE); signing goes through IAM Credentials. */
+  z.strictObject({
+    mode: z.literal("metadata"),
+    host: z.string().min(1).optional(),
+  }),
+  /** A service account JSON key read through the secret source (non-GCP hosts, CI). */
+  z.strictObject({
+    mode: z.literal("service-account"),
+    keySecretId: z.string().min(1),
+  }),
+  /** A pre-minted access token held in an environment variable (tests). */
+  z.strictObject({ mode: z.literal("static"), tokenEnv: z.string().min(1) }),
+  /** No Authorization header; accepted only together with an endpoint override (emulators). */
+  z.strictObject({ mode: z.literal("none") }),
+]);
+export const configSchema = z.strictObject({
+  /** Bucket location. There is deliberately no default: it is immutable after creation (D7). */
+  location: z.string().min(1),
+  auth: authSchema.default({ mode: "metadata" }),
+  /** Emulator or private endpoint override (JSON API root). */
+  endpoint: z.url().optional(),
+  requestTimeoutMs: z.number().int().min(1).max(300000).optional(),
+  overallTimeoutMs: z.number().int().min(1).max(300000).optional(),
+});
+export type Config = z.input<typeof configSchema>;
+export const manifest: AdapterManifest = {
+  id: "blob-gcs",
+  kind: "blob",
+  configSchema,
+  runtimes: ["node", "workers"],
+  requires: [],
+  capabilities: {},
+};
+// TODO(G6): infra/modules/gcp/gcs does not exist yet; the descriptor fixes its interface. The S3 module's
+// lifecycle inputs (claim retention, event retention, orphan margin) are added when the module is written.
+export const infra: InfraDescriptor<Config> = {
+  module: {
+    provider: "gcp",
+    component: "gcs",
+    outputs: {
+      bucket_name: "string",
+      bucket_id: "string",
+      staging_id: "string",
+      policies: { map: { map: "json-document" } },
+    },
+  },
+  inputs: (config) => ({
+    name: stackValue("name"),
+    protection: stackValue("protection"),
+    location: config.location,
+    staging_prefix: "archive-staging/",
+  }),
+  resources: { primary: out("bucket_id"), staging: out("staging_id") },
+  capabilities: {
+    read: {
+      primary: out("policies", "read", "primary"),
+      staging: out("policies", "read", "staging"),
+    },
+    write: {
+      primary: out("policies", "write", "primary"),
+      staging: out("policies", "write", "staging"),
+    },
+    delete: {
+      primary: out("policies", "delete", "primary"),
+      staging: out("policies", "delete", "staging"),
+    },
+    list: {
+      primary: out("policies", "list", "primary"),
+      staging: out("policies", "list", "staging"),
+    },
+  },
+  bindings: [
+    {
+      name: "ERRTRAQ_BLOB_BUCKET",
+      kind: "env",
+      purpose: "primary",
+      value: out("bucket_name"),
+    },
+    {
+      name: "ERRTRAQ_STAGING_BUCKET",
+      kind: "env",
+      purpose: "staging",
+      value: out("bucket_name"),
+    },
+    {
+      name: "ERRTRAQ_STAGING_PREFIX",
+      kind: "env",
+      purpose: "staging",
+      value: "archive-staging/",
+    },
+  ],
+};
+export function gcsBlob(config: Config): AdapterSelection<Config> {
+  return {
+    manifest,
+    infra,
+    config,
+    runtimeModule: "@moriyoshi/errtraq-blob-gcs/runtime",
+  };
+}

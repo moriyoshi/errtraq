@@ -77,6 +77,16 @@
         "packages/platforms/aws-lambda/src/stack.ts"
       ],
       "@moriyoshi/errtraq-aws-signing": ["packages/aws-signing/src/index.ts"],
+      "@moriyoshi/errtraq-gcp-auth": ["packages/gcp-auth/src/index.ts"],
+      "@moriyoshi/errtraq-blob-gcs": [
+        "packages/adapters/blob-gcs/src/index.ts"
+      ],
+      "@moriyoshi/errtraq-blob-gcs/stack": [
+        "packages/adapters/blob-gcs/src/stack.ts"
+      ],
+      "@moriyoshi/errtraq-blob-gcs/runtime": [
+        "packages/adapters/blob-gcs/src/runtime.ts"
+      ],
       "@moriyoshi/errtraq-archive-iceberg": [
         "packages/adapters/archive-iceberg/src/index.ts"
       ],

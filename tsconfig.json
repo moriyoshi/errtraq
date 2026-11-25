@@ -5,6 +5,9 @@
       "path": "./packages/aws-signing"
     },
     {
+      "path": "./packages/gcp-auth"
+    },
+    {
       "path": "./packages/core"
     },
     {
@@ -42,6 +45,9 @@
     },
     {
       "path": "./packages/adapters/blob-s3"
+    },
+    {
+      "path": "./packages/adapters/blob-gcs"
     },
     {
       "path": "./packages/adapters/archive-iceberg"

@@ -91,6 +91,8 @@ Can start before M4i merges: G0, G1, G2, G3, G3b, G4, G6 (HCL only), the emulato
 
 ### G0. `gcp-auth` package (new, no core change)
 
+- Status (2026-11-26): implemented on branch `g0-g1`, review by Claude Opus pending. `TokenSource` (metadata server, service account key, static, none), `IamSigner` and a local key signer (`BlobSigner`), `verifyGoogleIdToken` with a cached JWKS store for G2, `createCredentials` resolver. Contract and unit tests are offline (39 tests).
+
 - Goal: one Workers-safe, fetch-only credential layer for every GCP adapter, the analogue of `packages/aws-signing`.
 - Scope: new `packages/gcp-auth`: `TokenSource` with `getAccessToken(scopes)` and `getIdToken(audience)`; providers in resolution order: explicit static token (tests), emulator (`none`), service-account key JSON signed with WebCrypto RS256 (non-GCP hosts such as the standalone container and CI), metadata server (`http://metadata.google.internal/computeMetadata/v1/...`, header `Metadata-Flavor: Google`; also `GCE_METADATA_HOST` override). Token cache with an expiry skew and single-flight refresh; `signBlob` helper through the IAM Credentials API (for GCS V4 signed URLs); no `node:*` (the metadata server and key file are reached through injected `fetch` and a key string, never `fs`); no `google-auth-library`.
 - Contract first: a `TokenSource` contract (cache reuse, refresh before expiry, concurrent refresh coalesced, failure not cached, scope keying) run against a fake metadata server (a `fetch` stub) and the JWT signer against a fixed test key.
@@ -98,6 +100,8 @@ Can start before M4i merges: G0, G1, G2, G3, G3b, G4, G6 (HCL only), the emulato
 - Done: contract passes, layering check passes, export surface documented.
 
 ### G1. `blob-gcs` adapter
+
+- Status (2026-11-26): implemented on branch `g0-g1`, review by Claude Opus pending. `blobStoreContract` is green against a fetch fake offline and against `fake-gcs-server` 1.56.1 (opt-in, `pnpm test:gcs-emulated`, `ERRTRAQ_GCS_EMULATOR`). The put path is a simple media upload (not multipart, no object metadata beyond the content type is needed) and resumable for streams. The `gcp/gcs` module is not written yet (`TODO(G6)`). Spike results are in JOURNAL 2026-11-26 (G0/G1).
 
 - Goal: `BlobStore` over the GCS JSON API, passing `blobStoreContract`.
 - Scope: new `packages/adapters/blob-gcs` (`manifest`, `create`, `infra`, `gcsBlob()` selection, `runtime` subpath). Operations: `put` (multipart for bodies up to a threshold, resumable for streams and unknown size; honour `size` metadata; `Content-Type`), `get` (`alt=media`, `Range` header; missing key gives `null` on 404; corrupt data raises `BlobCorruptError` using the object's crc32c/md5 when a full read), `head` (object metadata), `list` (`prefix`, `maxResults` up to 1000, `pageToken` as the opaque cursor; order is already lexicographic UTF-8, matching the port), `delete` (404 is success), `presign` (V4 signed URL via `signBlob`, GET and PUT, at most 7 days). Key validation reuses the shared blob key rules. Retry policy for 408/429/5xx with jitter and idempotency awareness (`ifGenerationMatch` makes resumable and multipart creates retry-safe where the port needs it). Config: `bucket`, `endpoint` override (emulator), `requestTimeoutMs`, `overallTimeoutMs`, auth mode.

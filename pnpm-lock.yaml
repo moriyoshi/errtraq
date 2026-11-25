@@ -175,6 +175,9 @@ importers:
       '@moriyoshi/errtraq-blob-fs':
         specifier: workspace:*
         version: link:packages/adapters/blob-fs
+      '@moriyoshi/errtraq-blob-gcs':
+        specifier: workspace:*
+        version: link:packages/adapters/blob-gcs
       '@moriyoshi/errtraq-blob-s3':
         specifier: workspace:*
         version: link:packages/adapters/blob-s3
@@ -294,6 +297,22 @@ importers:
 
   packages/adapters/blob-fs:
     dependencies:
+      zod:
+        specifier: 4.6.7
+        version: 4.6.7
+    devDependencies:
+      '@moriyoshi/errtraq-core':
+        specifier: workspace:*
+        version: link:../../core
+      '@moriyoshi/errtraq-testing':
+        specifier: workspace:*
+        version: link:../../testing
+
+  packages/adapters/blob-gcs:
+    dependencies:
+      '@moriyoshi/errtraq-gcp-auth':
+        specifier: workspace:*
+        version: link:../../gcp-auth
       zod:
         specifier: 4.6.7
         version: 4.6.7
@@ -498,6 +517,8 @@ importers:
       zod:
         specifier: 4.6.7
         version: 4.6.7
+
+  packages/gcp-auth: {}
 
   packages/http:
     dependencies:
