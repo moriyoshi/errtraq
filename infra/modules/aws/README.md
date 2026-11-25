@@ -123,3 +123,13 @@ committed `output-shapes.json` snapshot. `pnpm infra:validate` runs mock-provide
 at both pinned provider versions, captures actual output values and compares their normalized
 shapes with that snapshot. Output descriptions are informational and are not trusted as type
 proof. The opt-in `pnpm infra:mutate` checks the contract against the reviewed fault catalog.
+
+The `s3tables` module provisions the archive tier's S3 Tables table bucket (default SSE-S3 or a
+customer-managed key, TLS-only bucket policy, bucket-level unreferenced-file-removal maintenance)
+and the Iceberg namespace. It does not create the `events` table: the archive engine creates it
+with the table format version, partition spec and sort order, which a Terraform table cannot
+express, so table-level compaction and snapshot settings are exported as `table_maintenance`
+rather than applied. Its `read`, `write` and `delete` policies grant the Iceberg REST catalog
+actions and `GetTableData` / `PutTableData` on the bucket's tables; no function role can drop or
+reconfigure the bucket. `catalog_uri` and `table_bucket_arn` are the REST endpoint and warehouse
+the adapter uses.

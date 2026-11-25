@@ -804,5 +804,117 @@
     "id": "root-bootstrap-extra-api-binding",
     "root": "bootstrap-dynamodb",
     "operation": "bootstrap-add-secret-name-to-ingest"
+  },
+  {
+    "id": "s3tables-tls-deny-disabled",
+    "module": "s3tables",
+    "file": "main.tf",
+    "find": "\"aws:SecureTransport\" = \"false\"",
+    "replace": "\"aws:SecureTransport\" = \"true\""
+  },
+  {
+    "id": "s3tables-read-can-write",
+    "module": "s3tables",
+    "file": "main.tf",
+    "find": "table  = [\"s3tables:GetTable\", \"s3tables:GetTableMetadataLocation\", \"s3tables:GetTableData\"]",
+    "replace": "table  = [\"s3tables:GetTable\", \"s3tables:GetTableMetadataLocation\", \"s3tables:GetTableData\", \"s3tables:PutTableData\"]"
+  },
+  {
+    "id": "s3tables-delete-can-drop",
+    "module": "s3tables",
+    "file": "main.tf",
+    "find": "bucket = []\n      table  = [\"s3tables:PutTableData\", \"s3tables:UpdateTableMetadataLocation\"]",
+    "replace": "bucket = []\n      table  = [\"s3tables:DeleteTable\", \"s3tables:PutTableData\", \"s3tables:UpdateTableMetadataLocation\"]"
+  },
+  {
+    "id": "s3tables-write-wildcard",
+    "module": "s3tables",
+    "file": "main.tf",
+    "find": "table  = [\"s3tables:CreateTable\", \"s3tables:PutTableData\", \"s3tables:UpdateTableMetadataLocation\"]",
+    "replace": "table  = [\"s3tables:*\"]"
+  },
+  {
+    "id": "s3tables-table-resource-widened",
+    "module": "s3tables",
+    "file": "main.tf",
+    "find": "tables_arn = \"${aws_s3tables_table_bucket.this.arn}/table/*\"",
+    "replace": "tables_arn = \"*\""
+  },
+  {
+    "id": "s3tables-reader-can-generate-keys",
+    "module": "s3tables",
+    "file": "main.tf",
+    "find": "read   = [\"kms:Decrypt\"]",
+    "replace": "read   = [\"kms:Decrypt\", \"kms:GenerateDataKey\"]"
+  },
+  {
+    "id": "s3tables-encryption-ignored",
+    "module": "s3tables",
+    "file": "main.tf",
+    "find": "sse_algorithm = var.sse_algorithm",
+    "replace": "sse_algorithm = \"AES256\""
+  },
+  {
+    "id": "s3tables-force-destroy-always",
+    "module": "s3tables",
+    "file": "main.tf",
+    "find": "force_destroy = var.protection == \"disposable\"",
+    "replace": "force_destroy = true"
+  },
+  {
+    "id": "s3tables-unreferenced-removal-disabled",
+    "module": "s3tables",
+    "file": "main.tf",
+    "find": "status = \"enabled\"",
+    "replace": "status = \"disabled\""
+  },
+  {
+    "id": "s3tables-unreferenced-days-ignored",
+    "module": "s3tables",
+    "file": "main.tf",
+    "find": "unreferenced_days = var.unreferenced_days",
+    "replace": "unreferenced_days = 3"
+  },
+  {
+    "id": "s3tables-unreferenced-minimum",
+    "module": "s3tables",
+    "file": "variables.tf",
+    "find": "var.unreferenced_days >= 1",
+    "replace": "var.unreferenced_days >= 0"
+  },
+  {
+    "id": "s3tables-compaction-minimum",
+    "module": "s3tables",
+    "file": "variables.tf",
+    "find": "var.compaction_target_file_size_mb >= 64",
+    "replace": "var.compaction_target_file_size_mb >= 1"
+  },
+  {
+    "id": "s3tables-snapshot-age-minimum",
+    "module": "s3tables",
+    "file": "variables.tf",
+    "find": "var.snapshot_max_age_hours >= 1",
+    "replace": "var.snapshot_max_age_hours >= 0"
+  },
+  {
+    "id": "s3tables-kms-key-optional",
+    "module": "s3tables",
+    "file": "variables.tf",
+    "find": "(var.sse_algorithm == \"aws:kms\") == (var.kms_key_arn != null) &&",
+    "replace": "true &&"
+  },
+  {
+    "id": "s3tables-namespace-case",
+    "module": "s3tables",
+    "file": "variables.tf",
+    "find": "^[a-z][a-z0-9_]{0,254}$",
+    "replace": "^[a-zA-Z][a-zA-Z0-9_]{0,254}$"
+  },
+  {
+    "id": "s3tables-catalog-endpoint",
+    "module": "s3tables",
+    "file": "outputs.tf",
+    "find": "https://s3tables.${data.aws_region.current.region}",
+    "replace": "https://s3.${data.aws_region.current.region}"
   }
 ]

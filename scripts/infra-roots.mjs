@@ -1,6 +1,7 @@
 import { cpSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { z } from "zod";
+import { s3TablesArchive } from "../packages/adapters/archive-iceberg/dist/stack.js";
 import { sqsQueue } from "../packages/adapters/queue-sqs/dist/stack.js";
 import { postgres } from "../packages/adapters/store-sql/dist/postgres-stack.js";
 import {
@@ -289,6 +290,9 @@ export const fixtures = {
         ),
       },
     },
+  }),
+  "s3tables-archive": variant(perTopic, {
+    archive: s3TablesArchive({ region: "us-east-1" }),
   }),
   variables: variant(shared, {
     variables: {
@@ -750,6 +754,23 @@ export function prepareRoot(parent, name, version) {
 }`,
         )
         .join("\n");
+  const archiveOverride =
+    stack.archive?.infra.module.component === "s3tables" &&
+    !stack.archive.existing
+      ? `
+override_resource {
+  target = module.archive.aws_s3tables_table_bucket.this
+  values = { arn = "arn:aws:s3tables:us-east-1:123456789012:bucket/${stack.name}-archive" }
+}
+override_data {
+  target = module.archive.data.aws_region.current
+  values = { region = "us-east-1" }
+}
+override_data {
+  target = module.archive.data.aws_partition.current
+  values = { dns_suffix = "amazonaws.com" }
+}`
+      : "";
   const vpcAssertions =
     name === "postgres-vpc"
       ? `
@@ -796,7 +817,7 @@ export function prepareRoot(parent, name, version) {
   );
   writeFileSync(
     resolve(target, "tests/root.tftest.hcl"),
-    `${functionOverrides}\n${queueOverrides}\n${rootTest}`,
+    `${functionOverrides}\n${queueOverrides}${archiveOverride}\n${rootTest}`,
   );
   return target;
 }

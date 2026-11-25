@@ -8,6 +8,7 @@ export const captureRuns = {
   "rds-iam-access": "rds_connect_policies",
   "lambda-app": "functions_triggers_and_urls",
   s3: "policies_and_lifecycle",
+  s3tables: "bucket_namespace_and_policies",
   sqs: "queues_and_policies",
 };
 export function shape(value) {
