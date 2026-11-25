@@ -1636,3 +1636,24 @@ profile `region`, and hands the adapters an environment with those values filled
 SDK out of the platform package and the Lambda bundles, and covers every environment-reading adapter
 (DynamoDB, KV, Secrets Manager, RDS IAM) without changing them. Trade-off: credentials are resolved
 once per command, not refreshed, which is fine for these short commands.
+
+## 2026-11-25 — M3h run 3, part A results so far (Claude)
+
+- **A4 deployed bootstrap:** after the two fixes above, a 3 s timeout interrupts the first run, the rerun
+  completes, and a third run reports everything "already existed". The CLI resolved the operator's SSO
+  profile with no exported keys. CreateSecret through the `secret:<name>-??????` pattern is authorized
+  (open question closed). The secret holds `dsn`, `token` and the vault's id metadata (`orgId`,
+  `projectId`, `stack`, `version`); logs hold no DSN or token.
+- **A5:** events stored and grouped through RDS with IAM tokens; no password or DSN in any function
+  environment and the admin secret binding only on bootstrap; every `VpcConfig` matches; no ENI
+  permission errors; every role reached its services through the created network's endpoints.
+- **A6 TLS:** connecting by IP is refused (`ERR_TLS_CERT_ALTNAME_INVALID`); a single unrelated root
+  (ISRG Root X1) is refused (`SELF_SIGNED_CERT_IN_CHAIN`). The planned negative "system CA bundle instead
+  of the RDS bundle" was a wrong premise: on real Lambda `/etc/pki/tls/certs/ca-bundle.crt` verifies the
+  RDS certificate, although that file in the public `public.ecr.aws/lambda/nodejs:22` image holds no
+  `Amazon RDS` subject, and no single Amazon or Starfield root verifies it. The deployed filesystem's
+  system trust evidently differs from the published image; do not use the image to reason about which
+  bundles trust RDS. The `ca` option itself is honored (pg passes `ssl` to `tls.connect`).
+  `/var/runtime/bootstrap` sets `NODE_EXTRA_CA_CERTS` only in regions with three dashes in the name.
+- **A7:** every role's `rds-db:connect` is exactly `dbuser:<db-id>/errtraq_app`; cron has no database
+  access; a second database user without an IAM grant is refused with `28000`.

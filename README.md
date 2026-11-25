@@ -2,8 +2,10 @@
 
 A Sentry-compatible issue tracker with pluggable storage, queues and compute. Node.js `^22.18.0 || >=23.6.0`
 is required. The local stack
-runs on Node and SQLite. AWS infrastructure and bundles can be generated; AWS runtime adapters
-are planned for M3 and currently throw when invoked.
+runs on Node and SQLite. On AWS, errtraq runs on Lambda with DynamoDB or RDS PostgreSQL, SQS, S3 and a
+DynamoDB key-value table: the stack file generates both the function bundles and the Terraform root, and
+the AWS runtime adapters have been verified in real deployments. The Iceberg archive (M4), releases and
+sourcemaps (M5) and Cloudflare (M6) are planned.
 
 ```sh
 pnpm install --frozen-lockfile

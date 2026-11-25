@@ -13,9 +13,9 @@ short orientation; it is kept current by the `distill-memories` skill.
 - **Ingest**: accepts Sentry envelopes (and the legacy store endpoint), stages the raw payload
   in a blob store, and enqueues a small reference (claim-check).
 - **Process**: a queue consumer normalizes the event, symbolicates JavaScript frames from
-  uploaded sourcemaps, computes a grouping fingerprint, and atomically creates or bumps an issue.
-- **Serve**: a Sentry-compatible API subset for releases / artifact upload and issue / event access.
-- **Archive**: events older than a per-project retention move from the active store into an
+  uploaded sourcemaps (M5), computes a grouping fingerprint, and atomically creates or bumps an issue.
+- **Serve**: a Sentry-compatible API subset for issue / event access, and (M5) releases / artifact upload.
+- **Archive** (M4): events older than a per-project retention move from the active store into an
   Iceberg table (via the Iceberg REST catalog protocol, e.g. Lakekeeper) and stay queryable
   together with active events. End-user PII erasure uses Iceberg v3 deletion vectors followed by
   a physical rewrite.
@@ -53,4 +53,9 @@ M0 (ports, stack-config validation, contract suites) and M1 (local standalone st
 timer in one Node process on SQLite, an in-memory queue, filesystem blobs and an in-memory KV;
 `pnpm e2e` drives it with the real `@sentry/node` SDK. M2 is complete: the infra model,
 Terraform generator, AWS modules, role-scoped build and generation CLI, and standalone container
-are in place. AWS runtime adapters remain M3 stubs. See "Milestones" in ARCHITECTURE.md.
+are in place. M3 is in progress: the AWS runtime adapters (DynamoDB store and KV, PostgreSQL with
+RDS IAM authentication, SQS, S3), deployed secret sources, exact rate counting with per-project
+limits and the deployed bootstrap function (`errtraq bootstrap --remote`) are implemented, and real
+AWS deployments have passed; the remaining M3 verification is tracked in `TODO.md`. Packages publish
+to GitHub Packages as `@moriyoshi/errtraq-*`. Releases and sourcemaps (M5) are not implemented yet:
+the API serves issues and events only. See "Milestones" in ARCHITECTURE.md.
