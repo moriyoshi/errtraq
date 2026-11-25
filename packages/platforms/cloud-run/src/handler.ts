@@ -9,6 +9,7 @@ export {
   createGcpRuntimeAuth,
   createOidcVerifier,
   type GcpRuntimeAuth,
+  gcpAuthFromTokens,
   gcpHostBindings,
   SQL_LOGIN_SCOPE,
 } from "./auth.js";

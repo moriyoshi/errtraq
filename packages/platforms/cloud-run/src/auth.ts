@@ -105,6 +105,24 @@ export function createGcpRuntimeAuth(
 }
 
 /**
+ * Auth over a token source that is not the metadata server (the operator CLI): Cloud SQL logins
+ * and database users need the service account email, which only a service account has.
+ */
+export function gcpAuthFromTokens(
+  tokens: TokenSource,
+  email?: string,
+): GcpRuntimeAuth {
+  return {
+    tokens,
+    accessToken: () => tokens.getAccessToken([CLOUD_PLATFORM_SCOPE]),
+    sqlAccessToken: () => tokens.getAccessToken([SQL_LOGIN_SCOPE]),
+    serviceAccountEmail: async () => {
+      if (!email) throw new Error("No service account email");
+      return email;
+    },
+  };
+}
+/**
  * Host bindings (never configuration) for the GCP adapters: the token sources they declare as
  * TODO(G5) inputs. `blob-gcs` resolves the metadata server itself, so it needs none.
  */

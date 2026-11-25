@@ -14,13 +14,17 @@ import { archiveBindings, hasEnsureTable } from "./archive-engine.js";
 import { resolveOperatorAwsEnvironment } from "./aws-credentials.js";
 import { buildStack } from "./build.js";
 import { constructStack } from "./construction.js";
-import { bootstrapAwsStack } from "./deployed-bootstrap.js";
+import {
+  bootstrapAwsStack,
+  bootstrapCloudRunStack,
+} from "./deployed-bootstrap.js";
 import {
   formatTokens,
   listTokens,
   revokeToken,
   withDeployedStore,
 } from "./deployed-token.js";
+import { resolveOperatorGcpCredentials } from "./gcp-credentials.js";
 import { generateInfra, projectRoot, safeDirectory } from "./infra.js";
 import { assertNodeVersion } from "./node-version.js";
 import {
@@ -31,6 +35,7 @@ import {
 } from "./project-limits.js";
 import {
   formatRemoteBootstrap,
+  invokeCloudRunBootstrap,
   invokeRemoteBootstrap,
 } from "./remote-bootstrap.js";
 import { devToken } from "./token.js";
@@ -116,6 +121,7 @@ export async function main(args: string[]): Promise<void> {
               "--issue-events",
               "--new-issues",
               "--function-name",
+              "--service-url",
             ]
           : projectLimits
             ? ["--org", "--project", "--issue-events", "--new-issues"]
@@ -213,11 +219,16 @@ export async function main(args: string[]): Promise<void> {
       !options["--org"] ||
       !options["--project"] ||
       (remote ? !!options["--secret-name"] : !options["--secret-name"]) ||
-      (!remote && options["--function-name"])
+      (!remote && options["--function-name"]) ||
+      (options["--service-url"] !== undefined &&
+        !(remote && stack.platform.manifest.id === "cloud-run")) ||
+      (remote &&
+        stack.platform.manifest.id === "cloud-run" &&
+        (!options["--service-url"] || options["--function-name"]))
     )
       throw new Error(
         remote
-          ? "Remote bootstrap requires --ingest-url, --org and --project (the secret name is fixed by the deployment)"
+          ? "Remote bootstrap requires --ingest-url, --org and --project (the secret name is fixed by the deployment); a Cloud Run stack also needs --service-url (the bootstrap_url output)"
           : "Bootstrap requires --secret-name, --ingest-url, --org and --project",
       );
     const issueEvents = parseLimit("--issue-events", options["--issue-events"]);
@@ -227,6 +238,25 @@ export async function main(args: string[]): Promise<void> {
         "Bootstrap sets limits only; use project rate-limits to clear them",
       );
     const bootstrapLimits = limitsFromInput({ issueEvents, newIssues }).set;
+    if (remote && stack.platform.manifest.id === "cloud-run") {
+      const result = await invokeCloudRunBootstrap(
+        stack,
+        await resolveOperatorGcpCredentials(process.env),
+        {
+          orgSlug: options["--org"],
+          projectSlug: options["--project"],
+          ingestUrl: options["--ingest-url"],
+          rateLimits: bootstrapLimits,
+          serviceUrl: options["--service-url"] ?? "",
+        },
+      );
+      if (!result.ok)
+        throw new Error(
+          `Bootstrap failed (${result.error.code}): ${result.error.message}`,
+        );
+      console.log(formatRemoteBootstrap(result, "Secret Manager"));
+      return;
+    }
     if (remote) {
       const result = await invokeRemoteBootstrap(
         stack,
@@ -244,6 +274,19 @@ export async function main(args: string[]): Promise<void> {
           `Bootstrap failed (${result.error.code}): ${result.error.message}`,
         );
       console.log(formatRemoteBootstrap(result));
+      return;
+    }
+    if (stack.platform.manifest.id === "cloud-run") {
+      const secret = await bootstrapCloudRunStack(stack, process.env, {
+        secretName: options["--secret-name"],
+        ingestUrl: options["--ingest-url"],
+        orgSlug: options["--org"],
+        projectSlug: options["--project"],
+        rateLimits: bootstrapLimits,
+      });
+      console.log(
+        `Bootstrap complete; read DSN and API token from Secret Manager: ${secret}`,
+      );
       return;
     }
     const arn = await bootstrapAwsStack(

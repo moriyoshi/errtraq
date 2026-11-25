@@ -96,6 +96,14 @@ async function issues(change: (stack: StackConfig) => Partial<StackConfig>) {
     .validateStack({ ...base, ...change(base) })
     .map((issue) => `${issue.path}: ${issue.message}`);
 }
+
+import {
+  createGcpRuntimeAuth,
+  createHandler,
+  createOidcVerifier,
+  gcpHostBindings,
+} from "@moriyoshi/errtraq-platform-cloud-run/handler";
+
 const project = "example-project";
 const region = "europe-west1";
 const image = `registry.example/errtraq/app@sha256:${"a".repeat(64)}`;
@@ -233,5 +241,103 @@ describe("GCP stack validation", () => {
       })
       .map((issue) => issue.message);
     expect(found).toContain("Platform does not provide ambient-credentials");
+  });
+  it("rejects labels Google would refuse", async () => {
+    const found = await issues(
+      (base) =>
+        ({
+          providers: {
+            google: { ...base.providers?.google, tags: { App: "errtraq" } },
+          },
+        }) as never,
+    );
+    expect(found.join("\n")).toContain("Google labels need lowercase");
+  });
+});
+describe("subscription to consumer mapping", () => {
+  it("delivers the reserved subscription name as the event source and routes a push to it", async () => {
+    for (const [key, value] of Object.entries(env)) vi.stubEnv(key, value);
+    const { stack, core } = await fresh("gcp-firestore");
+    const plan = core.deployedPlan(stack, "consumer");
+    expect(plan.queueConsumers).toEqual([
+      {
+        physical: "shared",
+        topics: ["ingest"],
+        eventSourceBinding: "ERRTRAQ_QUEUE_SOURCE_SHARED",
+      },
+    ]);
+    const subscription = `projects/${project}/subscriptions/gcp-firestore-shared`;
+    const environment: Record<string, string> = {
+      ERRTRAQ_BLOB_BUCKET: "bucket",
+      ERRTRAQ_STORE_DATABASE: "store",
+      ERRTRAQ_KV_DATABASE: "kv",
+      ERRTRAQ_QUEUE_SHARED_TOPIC: `projects/${project}/topics/gcp-firestore-shared`,
+      ERRTRAQ_QUEUE_RECORD_TOPIC: `projects/${project}/topics/gcp-firestore-record`,
+      ERRTRAQ_QUEUE_SOURCE_SHARED: subscription,
+      // Never reached: the construction below must not call the network.
+      GCE_METADATA_HOST: "127.0.0.1:1",
+    };
+    const auth = createGcpRuntimeAuth(environment);
+    const verifyPush = createOidcVerifier({
+      audience: "errtraq-push",
+      email: "push@example-project.iam.gserviceaccount.com",
+      requireEmail: true,
+      verify: async () => ({}) as never,
+    });
+    const built = await core.constructDeployedPlan(
+      plan,
+      environment,
+      (name) => import(/* @vite-ignore */ name),
+      undefined,
+      undefined,
+      gcpHostBindings(auth, (request) => verifyPush(request.headers as never)),
+    );
+    try {
+      const adapters = Object.fromEntries(
+        plan.selections
+          .filter((item) => !item.path.includes("."))
+          .map((item) => [item.kind, built.instances.get(item.path)]),
+      );
+      const handler = createHandler({
+        roles: ["consumer"],
+        http: [],
+        recordMode: "grouped",
+        queuePhysicals: ["shared"],
+        adapters: adapters as never,
+      });
+      const body = (sub: string) =>
+        JSON.stringify({
+          message: {
+            data: btoa(
+              JSON.stringify({
+                key: "0123456789abcdef0123456789abcdef",
+                body: {
+                  projectId: "1",
+                  blobKey: "envelopes/1/x",
+                  receivedAt: "2026-11-26T00:00:00.000Z",
+                },
+              }),
+            ),
+            attributes: { "errtraq-topic": "ingest" },
+            messageId: "m1",
+            publishTime: "2026-11-26T00:00:00Z",
+          },
+          subscription: sub,
+          deliveryAttempt: 1,
+        });
+      const push = (sub: string) =>
+        handler(
+          new Request("https://service.test/_errtraq/push/shared", {
+            method: "POST",
+            headers: { authorization: "Bearer a.b.c" },
+            body: body(sub),
+          }),
+        );
+      // The delivered name is the one the queue adapter maps to the consumer; others are invalid.
+      expect((await push(subscription)).status).not.toBe(400);
+      expect((await push(`${subscription}-other`)).status).toBe(400);
+    } finally {
+      await built.close();
+    }
   });
 });

@@ -7,6 +7,7 @@ import {
   type RemoteBootstrapResponse,
   type StackConfig,
 } from "@moriyoshi/errtraq-core";
+import type { OperatorGcpCredentials } from "./gcp-credentials.js";
 import { assertProjectLimitsAllowed } from "./project-limits.js";
 
 const FUNCTION_NAME = /^[A-Za-z0-9_-]{1,64}$/;
@@ -189,9 +190,91 @@ export async function invokeRemoteBootstrap(
   }
   return parseRemoteBootstrapResponse(body);
 }
+/**
+ * The deployed bootstrap service (Cloud Run): `POST <service url>/_errtraq/bootstrap` with an ID
+ * token of the operator for the stack's OIDC audience. The service is private, so Cloud Run IAM
+ * (`roles/run.invoker`) decides who may call it; the function verifies the token again. The URL
+ * is the `bootstrap_url` output of the generated Terraform (there is no name to derive it from).
+ */
+export async function invokeCloudRunBootstrap(
+  stack: StackConfig,
+  credentials: OperatorGcpCredentials,
+  input: Omit<RemoteBootstrapInput, "functionName"> & { serviceUrl: string },
+  fetcher: typeof fetch = fetch,
+): Promise<RemoteBootstrapResponse> {
+  if (stack.platform.manifest.id !== "cloud-run")
+    throw new Error("Expected a Cloud Run stack");
+  if (
+    !deriveDeployment(stack).functions.some((fn) =>
+      fn.roles.includes("bootstrap"),
+    )
+  )
+    throw new Error(
+      'This stack does not deploy the bootstrap role; add "bootstrap" to the platform roles (and a bootstrapSecretName), redeploy, or bootstrap directly without --remote',
+    );
+  if (input.rateLimits) assertProjectLimitsAllowed(stack, input.rateLimits);
+  let origin: URL;
+  try {
+    origin = new URL(input.serviceUrl);
+  } catch {
+    throw new Error("Invalid --service-url");
+  }
+  if (
+    origin.protocol !== "https:" ||
+    origin.username ||
+    origin.password ||
+    origin.search ||
+    origin.hash ||
+    origin.pathname !== "/"
+  )
+    throw new Error("--service-url must be the bare https URL of the service");
+  const audience = (stack.platform.config as { oidcAudience: string })
+    .oidcAudience;
+  const payload: RemoteBootstrapRequest = {
+    version: REMOTE_BOOTSTRAP_VERSION,
+    orgSlug: input.orgSlug,
+    projectSlug: input.projectSlug,
+    ingestUrl: input.ingestUrl,
+    ...(input.rateLimits && Object.keys(input.rateLimits).length
+      ? { rateLimits: input.rateLimits }
+      : {}),
+  };
+  let response: Response;
+  try {
+    const token = await credentials.tokens.getIdToken(audience);
+    response = await fetcher(`${origin.origin}/_errtraq/bootstrap`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${token}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(300_000),
+    });
+  } catch (error) {
+    // A credential error says what to do (it never carries a token); a network error says nothing.
+    if (error instanceof Error && error.name === "GcpAuthError")
+      throw new Error(error.message);
+    throw new Error("Bootstrap service invocation failed");
+  }
+  if (!response.ok) {
+    await response.body?.cancel();
+    throw new Error(
+      `Bootstrap service invocation failed (${response.status}); check roles/run.invoker on the service and the ID token audience`,
+    );
+  }
+  let body: unknown;
+  try {
+    body = await response.json();
+  } catch {
+    throw new Error("Unexpected bootstrap function response");
+  }
+  return parseRemoteBootstrapResponse(body);
+}
 /** Operator-facing summary: ids, slugs and what was created, never the DSN or token. */
 export function formatRemoteBootstrap(
   result: Extract<RemoteBootstrapResponse, { ok: true }>,
+  store = "Secrets Manager",
 ): string {
   const state = (created: boolean) => (created ? "created" : "already existed");
   return [
@@ -200,6 +283,6 @@ export function formatRemoteBootstrap(
     `Project key: ${state(result.key.created)}`,
     `Bootstrap API token ${result.token.id}: ${state(result.token.created)}`,
     `Bootstrap secret: ${state(result.secret.created)}`,
-    `Bootstrap complete; read DSN and API token from Secrets Manager: ${result.secret.arn}`,
+    `Bootstrap complete; read DSN and API token from ${store}: ${result.secret.arn}`,
   ].join("\n");
 }

@@ -32,9 +32,14 @@ import {
   type LambdaRuntime,
   lambdaEsbuildTarget,
 } from "@moriyoshi/errtraq-platform-aws-lambda/stack";
+import { CLOUD_RUN_NODE_IMAGE } from "@moriyoshi/errtraq-platform-cloud-run/stack";
 import { build } from "esbuild";
 import { strToU8, zipSync } from "fflate";
-import { isErrtraqWorkspace, safeDirectory } from "./infra.js";
+import {
+  CLOUD_RUN_ARTIFACT,
+  isErrtraqWorkspace,
+  safeDirectory,
+} from "./infra.js";
 
 function sourceValue(value: unknown): string {
   if (isEnvRef(value))
@@ -106,6 +111,30 @@ export function lambdaDockerfile(options: {
       (id) => `COPY ${id}/index.mjs \${LAMBDA_TASK_ROOT}/${id}/index.mjs`,
     ),
     "# No CMD: each function's image configuration sets the command (<function id>/index.handler).",
+    "",
+  ].join("\n");
+}
+/**
+ * The container image of the Cloud Run functions: one image carries every function's bundle under
+ * `/app/<function id>/index.mjs`, and each service's container `command` selects its bundle (the
+ * module input `command`). Non-root, Node base image of the standalone lineage (D12, provisional:
+ * the operator builds and pushes it, and passes the digest through the stack variable).
+ */
+export function cloudRunDockerfile(options: {
+  functionIds: readonly string[];
+}): string {
+  return [
+    `FROM ${CLOUD_RUN_NODE_IMAGE}`,
+    "WORKDIR /app",
+    "ENV NODE_ENV=production",
+    ...options.functionIds.map(
+      (id) => `COPY --chown=node:node ${id}/index.mjs /app/${id}/index.mjs`,
+    ),
+    "USER node",
+    "# Cloud Run supplies PORT; the server binds to it on all interfaces.",
+    "EXPOSE 8080",
+    "# No entrypoint of its own: each service sets its command to node /app/<function id>/index.mjs.",
+    `CMD ["node", "-e", "console.error('Set the container command to: node /app/<function id>/index.mjs'); process.exit(64)"]`,
     "",
   ].join("\n");
 }
@@ -246,6 +275,39 @@ export async function buildStack(
       const bootstrapOptions = `{stackName:${JSON.stringify(stack.name)},store:adapters.store,kv:adapters.kv,vault:awsBootstrapVault(process.env),secretName:bootstrapSecretName(process.env),...${JSON.stringify(bootstrapRetentionPolicy(stack))},rateRejection:plan.rateRejection,logger}`;
       entry = `${imports}\n${engineImport}import { constructDeployedPlan, env, variable } from "@moriyoshi/errtraq-core/runtime";\nimport { ${handlerImports}, createSecretsManagerSource, lambdaAwsCredentials, lambdaRateLimit, retryableInitialization } from "@moriyoshi/errtraq-platform-aws-lambda/handler";\nconst plan=${sourceValue(plan)}; const modules={${modules}}; const kinds=${JSON.stringify(kinds)}; const logger={debug:(m,f)=>console.debug(m,f??{}),info:(m,f)=>console.info(m,f??{}),warn:(m,f)=>console.warn(m,f??{}),error:(m,f)=>console.error(m,f??{})};\nconst secretSource=createSecretsManagerSource({environment:process.env});
 const getHandler=retryableInitialization(async()=>{ const built=await constructDeployedPlan(plan,process.env, async (name)=>{ if(!Object.hasOwn(modules,name)) throw new Error("Unknown module "+name); return modules[name]; }, logger, secretSource${engineBindings}); try { const adapters=Object.fromEntries(Object.entries(kinds).map(([kind,path])=>[kind,built.instances.get(path)])); return ${bootstrapFn ? `createBootstrapHandler(${bootstrapOptions})` : `createHandler({roles:${JSON.stringify(fn.roles)},http:${JSON.stringify(fn.http)},recordMode:plan.recordMode,rateRejection:plan.rateRejection,rateLimit:lambdaRateLimit(process.env.ERRTRAQ_INGEST_RATE_LIMIT),archiveRetentionDays:plan.archiveRetentionDays,archiveInvocationTimeoutMs:${archiveTimeoutMs},adapters,logger})`}; } catch(error) { try { await built.close(); } catch(cleanup) { throw new AggregateError([error,cleanup],"Handler creation and cleanup failed"); } throw error; } });\nexport async function handler(event){return (await getHandler())(event);}\n`;
+    } else if (stack.platform.manifest.id === "cloud-run") {
+      const plan = deployedPlan(stack, fn.id);
+      const specs = [
+        ...new Set(plan.selections.map((item) => item.runtimeModule)),
+      ];
+      const imports = specs
+        .map((spec, i) => `import * as m${i} from ${JSON.stringify(spec)};`)
+        .join("\n");
+      const modules = specs
+        .map((spec, i) => `${JSON.stringify(spec)}:m${i}`)
+        .join(",");
+      const kinds = Object.fromEntries(
+        plan.selections
+          .filter((item) => !item.path.includes("."))
+          .map((item) => [item.kind, item.path]),
+      );
+      const bootstrapFn = fn.roles.includes("bootstrap");
+      const projectId = (stack.platform.config as { projectId: string })
+        .projectId;
+      const bootstrapOptions = `{stackName:${JSON.stringify(stack.name)},store:adapters.store,kv:adapters.kv,vault:gcpBootstrapVault({projectId:${JSON.stringify(projectId)},tokens:auth.tokens}),secretName:bootstrapSecretName(process.env),...${JSON.stringify(bootstrapRetentionPolicy(stack))},rateRejection:plan.rateRejection,logger}`;
+      // Fail closed: the verifiers reject every request when the deployment lacks a binding.
+      entry = `${imports}\nimport { constructDeployedPlan, env, variable } from "@moriyoshi/errtraq-core/runtime";\nimport { bootstrapSecretName, cloudRunRateLimit, createBootstrapHandler, createGcpRuntimeAuth, createHandler, createOidcVerifier, createSecretManagerSource, createServer, gcpBootstrapVault, gcpHostBindings, retryableInitialization } from "@moriyoshi/errtraq-platform-cloud-run/handler";
+const plan=${sourceValue(plan)}; const modules={${modules}}; const kinds=${JSON.stringify(kinds)}; const logger={debug:(m,f)=>console.debug(m,f??{}),info:(m,f)=>console.info(m,f??{}),warn:(m,f)=>console.warn(m,f??{}),error:(m,f)=>console.error(m,f??{})};
+const auth=createGcpRuntimeAuth(process.env); const secretSource=createSecretManagerSource({tokens:auth.tokens});
+const audience=process.env.ERRTRAQ_OIDC_AUDIENCE;
+const verifyPush=createOidcVerifier({audience,email:process.env.ERRTRAQ_PUSH_SERVICE_ACCOUNT,requireEmail:true,logger});
+const verifyCron=createOidcVerifier({audience,email:process.env.ERRTRAQ_SCHEDULER_SERVICE_ACCOUNT,requireEmail:true,logger});
+const verifyOperator=createOidcVerifier({audience,logger});
+const queuePhysicals=${JSON.stringify(plan.queueConsumers.map((item) => item.physical))};
+const getHandler=retryableInitialization(async()=>{ const built=await constructDeployedPlan(plan,process.env, async (name)=>{ if(!Object.hasOwn(modules,name)) throw new Error("Unknown module "+name); return modules[name]; }, logger, secretSource, gcpHostBindings(auth,(request)=>verifyPush(request.headers))); try { const adapters=Object.fromEntries(Object.entries(kinds).map(([kind,path])=>[kind,built.instances.get(path)])); const handler=${bootstrapFn ? `createHandler({roles:${JSON.stringify(fn.roles)},http:[],adapters:{},verifyOperator,bootstrap:createBootstrapHandler(${bootstrapOptions}),logger})` : `createHandler({roles:${JSON.stringify(fn.roles)},http:${JSON.stringify(fn.http)},recordMode:plan.recordMode,rateRejection:plan.rateRejection,rateLimit:cloudRunRateLimit(process.env.ERRTRAQ_INGEST_RATE_LIMIT),queuePhysicals,verifyCron,adapters,logger})`}; return {handler,close:()=>built.close()}; } catch(error) { try { await built.close(); } catch(cleanup) { throw new AggregateError([error,cleanup],"Handler creation and cleanup failed"); } throw error; } });
+const server=createServer(async(request)=>{ try { return (await getHandler()).handler(request); } catch(error) { logger.error("Initialization failed",{reason:error instanceof Error?error.name:"Error"}); return new Response(null,{status:503}); } },process.env);
+for(const signal of ["SIGTERM","SIGINT"]) process.on(signal,()=>{ void server.close().then(async()=>{ try { await (await getHandler()).close(); } catch {} }).finally(()=>process.exit(0)); });
+`;
     } else if (stack.platform.manifest.id === "standalone") {
       const localImport = (path: string) => {
         const location = relative(repo, path).split(sep).join("/");
@@ -330,7 +392,24 @@ for(const signal of ["SIGTERM","SIGINT"]) process.on(signal,()=>{if(stopping){if
       join(directory, "meta.json"),
       `${JSON.stringify(result.metafile, null, 2)}\n`,
     );
-    if (stack.platform.manifest.id === "aws-lambda" && image) {
+    if (stack.platform.manifest.id === "cloud-run") {
+      // The bundle is copied into the container image; there is no ZIP.
+      imageFunctions.push(fn.id);
+      await rm(join(directory, "bundle.zip"), { force: true });
+      manifest.artifacts[fn.id] = {
+        path: relative(repo, join(directory, "index.mjs")).split(sep).join("/"),
+        handler: CLOUD_RUN_ARTIFACT.handler,
+        runtime: CLOUD_RUN_ARTIFACT.runtime,
+        contentHash: createHash("sha256")
+          .update(file.contents)
+          .digest("base64"),
+        packaging: "image",
+      };
+      await writeFile(
+        join(directory, "manifest.json"),
+        `${JSON.stringify(manifest.artifacts[fn.id], null, 2)}\n`,
+      );
+    } else if (stack.platform.manifest.id === "aws-lambda" && image) {
       imageFunctions.push(fn.id);
       // The bundle ships inside the image, not as a ZIP; a leftover ZIP from an earlier build of
       // this function as a ZIP function would only mislead.
@@ -403,6 +482,14 @@ for(const signal of ["SIGTERM","SIGINT"]) process.on(signal,()=>{if(stopping){if
       await rm(dockerfile, { force: true });
       await rm(join(output, EXTENSION_SCRIPT), { force: true });
     }
+  }
+  if (stack.platform.manifest.id === "cloud-run") {
+    await rm(join(output, "Dockerfile"), { force: true });
+    await writeFile(
+      join(output, "Dockerfile"),
+      cloudRunDockerfile({ functionIds: imageFunctions }),
+    );
+    manifest.dockerfile = "Dockerfile";
   }
   if (stack.platform.manifest.id === "standalone") {
     const id = view.functions[0]?.id;
