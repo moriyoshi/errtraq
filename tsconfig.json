@@ -44,6 +44,9 @@
       "path": "./packages/adapters/blob-s3"
     },
     {
+      "path": "./packages/adapters/archive-iceberg"
+    },
+    {
       "path": "./packages/adapters/kv-dynamodb"
     },
     {

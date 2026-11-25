@@ -1,0 +1,7 @@
+# Optional override that publishes Lakekeeper on the loopback interface so host-side tests (for
+# example the archive-iceberg catalog test) can reach it:
+#   docker compose -p errtraq-archive -f docker/archive/compose.yaml -f docker/archive/compose.ports.yaml up -d --wait
+services:
+  lakekeeper:
+    ports:
+      - "127.0.0.1:18181:8181"

@@ -100,6 +100,7 @@ M4d -> M4e -> M4f -----/
 
 ### M4e. Iceberg REST catalog client (minimal) and `archive-iceberg` package skeleton
 
+- Status: implemented (2026-11-25). `packages/adapters/archive-iceberg` (`src/catalog/` client, subpath `./catalog`; `create` returns an ArchiveStore that throws `ArchiveEngineNotWiredError`, `TODO(M4f)`). Offline tests green; the opt-in Lakekeeper test (`lakekeeper.opt-in.test.ts`, `ERRTRAQ_LAKEKEEPER_URL`, `docker/archive/compose.ports.yaml`) passed against the M4d stack. The infra descriptor is the local no-module placeholder, `TODO(M4i)` for S3 Tables.
 - Goal: the `IcebergRestCatalog` named in ARCHITECTURE, scoped to what errtraq itself needs (the DuckDB engine talks to the catalog on its own).
 - Scope: new `packages/adapters/archive-iceberg` exporting the triple `manifest`, `create`, `infra` (kind `archive`, `childKinds` catalog and engine, matching the existing schema); `catalog/` module with `getConfig`, `loadTable`, `createNamespace`, `createTable`, `commit` (updates and requirements) limited to `set-properties`, `remove-snapshots`, `set-snapshot-ref`; auth modes none, bearer and OAuth2 client credentials, SigV4 (reuse `packages/aws-signing`), warehouse and prefix handling, 409 mapped to a retryable error. Web-standard `fetch` only, so it stays Workers-bundleable.
 - Port changes: none. If `expireSnapshots` is implemented through `remove-snapshots` (D3), it lives here.

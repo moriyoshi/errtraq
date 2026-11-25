@@ -1,0 +1,7 @@
+{
+  "defaults": {
+    "prefix": "arn%3Aaws%3As3tables%3Aus-east-1%3A000000000000%3Abucket%2Ferrtraq",
+    "oauth2-server-uri": "https://auth.example.test/token"
+  },
+  "overrides": {}
+}

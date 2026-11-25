@@ -77,6 +77,15 @@
         "packages/platforms/aws-lambda/src/stack.ts"
       ],
       "@moriyoshi/errtraq-aws-signing": ["packages/aws-signing/src/index.ts"],
+      "@moriyoshi/errtraq-archive-iceberg": [
+        "packages/adapters/archive-iceberg/src/index.ts"
+      ],
+      "@moriyoshi/errtraq-archive-iceberg/stack": [
+        "packages/adapters/archive-iceberg/src/stack.ts"
+      ],
+      "@moriyoshi/errtraq-archive-iceberg/catalog": [
+        "packages/adapters/archive-iceberg/src/catalog/index.ts"
+      ],
       "@moriyoshi/errtraq-blob-s3/runtime": [
         "packages/adapters/blob-s3/src/runtime.ts"
       ],

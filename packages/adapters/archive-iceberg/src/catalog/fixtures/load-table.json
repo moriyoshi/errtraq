@@ -1,0 +1,35 @@
+{
+  "metadata-location": "s3://errtraq-archive/warehouse/events/metadata/00002-a.metadata.json",
+  "metadata": {
+    "format-version": 2,
+    "table-uuid": "5d2c8a3e-7e43-4c74-9c0a-1d7b1b9d0f01",
+    "location": "s3://errtraq-archive/warehouse/events",
+    "last-sequence-number": 2,
+    "current-snapshot-id": 8272731873417586179,
+    "properties": { "write.delete.mode": "merge-on-read" },
+    "snapshots": [
+      {
+        "snapshot-id": 5418930217356184321,
+        "timestamp-ms": 1764000000000,
+        "sequence-number": 1,
+        "manifest-list": "s3://errtraq-archive/warehouse/events/metadata/snap-1.avro",
+        "summary": { "operation": "append" }
+      },
+      {
+        "snapshot-id": 8272731873417586179,
+        "parent-snapshot-id": 5418930217356184321,
+        "timestamp-ms": 1764000100000,
+        "sequence-number": 2,
+        "manifest-list": "s3://errtraq-archive/warehouse/events/metadata/snap-2.avro",
+        "summary": { "operation": "append", "note": "9999999999999999999" }
+      }
+    ],
+    "refs": {
+      "main": { "snapshot-id": 8272731873417586179, "type": "branch" }
+    }
+  },
+  "config": {
+    "s3.endpoint": "http://winterbaume:5555",
+    "s3.path-style-access": "true"
+  }
+}

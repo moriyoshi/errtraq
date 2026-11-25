@@ -1,0 +1,65 @@
+{
+  "name": "@moriyoshi/errtraq-archive-iceberg",
+  "version": "0.0.0",
+  "type": "module",
+  "exports": {
+    ".": {
+      "development": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./stack": {
+      "development": "./src/stack.ts",
+      "types": "./dist/stack.d.ts",
+      "import": "./dist/stack.js"
+    },
+    "./catalog": {
+      "development": "./src/catalog/index.ts",
+      "types": "./dist/catalog/index.d.ts",
+      "import": "./dist/catalog/index.js"
+    }
+  },
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com",
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "import": "./dist/index.js"
+      },
+      "./stack": {
+        "types": "./dist/stack.d.ts",
+        "import": "./dist/stack.js"
+      },
+      "./catalog": {
+        "types": "./dist/catalog/index.d.ts",
+        "import": "./dist/catalog/index.js"
+      }
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "prepack": "pnpm --workspace-root run build"
+  },
+  "engines": {
+    "node": "^22.18.0 || >=23.6.0"
+  },
+  "dependencies": {
+    "zod": "4.6.7",
+    "@moriyoshi/errtraq-aws-signing": "workspace:*"
+  },
+  "peerDependencies": {
+    "@moriyoshi/errtraq-core": "workspace:^"
+  },
+  "devDependencies": {
+    "@moriyoshi/errtraq-testing": "workspace:*",
+    "@moriyoshi/errtraq-core": "workspace:*"
+  },
+  "errtraqWorkersRuntime": "./src/catalog/index.ts",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/moriyoshi/errtraq.git",
+    "directory": "packages/adapters/archive-iceberg"
+  }
+}

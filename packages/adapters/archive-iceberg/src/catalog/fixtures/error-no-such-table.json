@@ -1,0 +1,7 @@
+{
+  "error": {
+    "message": "Table does not exist: errtraq.events",
+    "type": "NoSuchTableException",
+    "code": 404
+  }
+}

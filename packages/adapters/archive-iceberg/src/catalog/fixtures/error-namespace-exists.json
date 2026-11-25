@@ -1,0 +1,7 @@
+{
+  "error": {
+    "message": "Namespace already exists: errtraq",
+    "type": "AlreadyExistsException",
+    "code": 409
+  }
+}

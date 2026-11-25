@@ -28,6 +28,7 @@
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.15",
+    "@moriyoshi/errtraq-archive-iceberg": "workspace:*",
     "@moriyoshi/errtraq-blob-fs": "workspace:*",
     "@moriyoshi/errtraq-blob-s3": "workspace:*",
     "@moriyoshi/errtraq-cli": "workspace:*",
