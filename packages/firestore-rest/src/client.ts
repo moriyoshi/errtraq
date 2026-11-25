@@ -193,6 +193,7 @@ export class FirestoreRestClient implements FirestoreClient {
         const retryable =
           error instanceof FirestoreThrottledError ||
           (error instanceof FirestoreUnavailableError &&
+            error.status !== "DEADLINE_EXCEEDED" &&
             (options.retry503 || !error.ambiguous));
         if (!retryable || attempt >= retries) throw error;
         await this.sleep(this.backoff(attempt, 100, 4000));
@@ -224,6 +225,7 @@ export class FirestoreRestClient implements FirestoreClient {
         signal: controller.signal,
       });
     } catch {
+      clearTimeout(timer);
       throw new FirestoreUnavailableError(
         controller.signal.aborted
           ? "Firestore request timed out"
@@ -233,14 +235,22 @@ export class FirestoreRestClient implements FirestoreClient {
         true,
         true,
       );
-    } finally {
-      clearTimeout(timer);
     }
     let parsed: unknown;
     try {
       parsed = await response.json();
     } catch {
+      if (controller.signal.aborted)
+        throw new FirestoreUnavailableError(
+          "Firestore request timed out",
+          "DEADLINE_EXCEEDED",
+          undefined,
+          true,
+          true,
+        );
       if (response.ok) throw new FirestoreError("Invalid Firestore response");
+    } finally {
+      clearTimeout(timer);
     }
     if (!response.ok) {
       const error = (
@@ -272,13 +282,15 @@ export class FirestoreRestClient implements FirestoreClient {
   }
 
   async get(path: string, transaction?: string): Promise<RawDocument | null> {
-    const suffix = transaction
-      ? `?transaction=${encodeURIComponent(transaction)}`
-      : "";
+    // A transactional read goes through `batchGet` (transaction id in the POST body): the
+    // `documents.get` form carries the id as a `bytes` query parameter, which the Cloud SDK
+    // Firestore emulator cannot decode ("Unmapped JavaType: BYTE_STRING", no response ever).
+    if (transaction)
+      return (await this.batchGet([path], transaction))[0] ?? null;
     try {
       const raw = await this.send(
         "GET",
-        `${this.base}/${this.url(path)}${suffix}`,
+        `${this.base}/${this.url(path)}`,
         undefined,
         {
           retry503: true,

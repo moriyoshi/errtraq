@@ -59,7 +59,7 @@ function newIssue(o: Occurrence): Issue {
  * update or create the issue (plus its pointer). Atomicity of recordOccurrence is exactly this
  * transaction; idempotency on (projectId, eventId) is the event-document existence check.
  */
-async function recordGroup(
+async function recordGroupInTransaction(
   client: FirestoreClient,
   group: readonly RecordInput[],
 ): Promise<RecordResult[]> {
@@ -182,6 +182,34 @@ async function recordGroup(
         : result,
     );
   });
+}
+
+/**
+ * In-process writers of one issue run one after another. Firestore transactions lock
+ * pessimistically: N concurrent read-then-write transactions on one document all take the read
+ * lock and then deadlock on the upgrade until the server's lock timeout aborts them (observed on
+ * the emulator: a 40-way burst never finished). Queueing per issue within a process removes that
+ * self-inflicted contention; transactions still arbitrate between processes.
+ */
+const tails = new WeakMap<FirestoreClient, Map<string, Promise<unknown>>>();
+function recordGroup(
+  client: FirestoreClient,
+  group: readonly RecordInput[],
+): Promise<RecordResult[]> {
+  const first = group[0]?.occurrence;
+  if (!first || !Array.isArray(group))
+    return recordGroupInTransaction(client, group); // rejects with the validation error
+  const queues = tails.get(client) ?? new Map<string, Promise<unknown>>();
+  tails.set(client, queues);
+  const key = `${first.projectId}/${first.issueId}`;
+  const previous = queues.get(key) ?? Promise.resolve();
+  const run = previous.then(() => recordGroupInTransaction(client, group));
+  const tail = run.catch(() => {});
+  queues.set(key, tail);
+  void tail.then(() => {
+    if (queues.get(key) === tail) queues.delete(key);
+  });
+  return run;
 }
 
 export function recordEvent(
