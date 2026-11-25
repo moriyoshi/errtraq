@@ -327,7 +327,9 @@ describe("shared AWS request", () => {
       base({
         service: "s3",
         protocol: "s3",
-        overallTimeoutMs: 30,
+        // Well under the idle timeout, but long enough that a loaded machine still returns the
+        // response before the deadline fires (30 ms flaked under parallel test load).
+        overallTimeoutMs: 250,
         bodyIdleTimeoutMs: 1000,
         fetch: async (_url, init) => {
           signal = init?.signal ?? undefined;
