@@ -91,4 +91,17 @@ describe("Secrets Manager source", () => {
       ),
     ).rejects.toMatchObject({ providerCode: "InvalidIdentifier" });
   });
+  it("reads secrets that RDS manages, whose names start with rds!", async () => {
+    // RDS-managed master secrets are named `rds!db-<uuid>`; `!` is outside the character set
+    // of user-created names, and rejecting it broke the deployed bootstrap (third AWS run).
+    const source = createSecretsManagerSource({
+      environment,
+      fetch: async () => Response.json({ SecretString: "admin" }),
+    });
+    expect(
+      await source.read(
+        "arn:aws:secretsmanager:us-west-2:123456789012:secret:rds!db-0f1e2d3c-4b5a-6978-8a9b-0c1d2e3f4a5b-AbC123",
+      ),
+    ).toBe("admin");
+  });
 });

@@ -31,7 +31,7 @@ export function createSecretsManagerSource(
   return {
     async read(identifier) {
       if (
-        !/^arn:[a-z0-9-]+:secretsmanager:[a-z0-9-]+:\d{12}:secret:[A-Za-z0-9/_+=.@-]+-[A-Za-z0-9]{6}$/.test(
+        !/^arn:[a-z0-9-]+:secretsmanager:[a-z0-9-]+:\d{12}:secret:[A-Za-z0-9/_+=.@!-]+-[A-Za-z0-9]{6}$/.test(
           identifier,
         )
       )

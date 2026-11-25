@@ -1620,3 +1620,8 @@ are not recorded here. Findings so far, appended as the run produces them:
 - **`infra generate` refuses an output directory holding `plan.bin`** ("files not owned by the
   generator"); Terraform's own working files are allowed, saved plans are not. Keep plan files outside
   the generated root.
+- **RDS-managed secrets were rejected before any request:** the Lambda Secrets Manager source checked
+  ARNs against the user-created name character set (`A-Za-z0-9/_+=.@-`), but RDS names the master
+  secret `rds!db-<uuid>`. The deployed bootstrap failed with `SecretReadError` (`InvalidIdentifier`) in
+  about 2 ms. `!` is now allowed. Unit tests elsewhere already used `rds!db-...` ARNs, but only as
+  Terraform inputs, never through this reader.
