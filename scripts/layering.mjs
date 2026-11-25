@@ -59,6 +59,7 @@ export function findLayeringViolations(
             options.workers &&
             (specifier.startsWith("@moriyoshi/errtraq-core/") ||
               specifier === "@moriyoshi/errtraq-aws-signing" ||
+              specifier === "@moriyoshi/errtraq-gcp-auth" ||
               specifier === "aws4fetch" ||
               specifier === "fast-xml-parser")) ||
           (specifier === "vitest" && /\.test\.[cm]?[jt]sx?$/.test(path))

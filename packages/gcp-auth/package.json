@@ -1,0 +1,36 @@
+{
+  "name": "@moriyoshi/errtraq-gcp-auth",
+  "version": "0.0.0",
+  "type": "module",
+  "exports": {
+    ".": {
+      "development": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com",
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "import": "./dist/index.js"
+      }
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "prepack": "pnpm --workspace-root run build"
+  },
+  "engines": {
+    "node": "^22.18.0 || >=23.6.0"
+  },
+  "errtraqWorkersRuntime": "./src/index.ts",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/moriyoshi/errtraq.git",
+    "directory": "packages/gcp-auth"
+  }
+}
