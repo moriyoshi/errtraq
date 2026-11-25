@@ -1,9 +1,17 @@
-import type {
-  AdapterManifest,
-  AdapterSelection,
-  InfraDescriptor,
+import {
+  type AdapterManifest,
+  type AdapterSelection,
+  type InfraDescriptor,
+  type InfraValue,
+  out,
+  stackValue,
 } from "@moriyoshi/errtraq-core";
 import { z } from "zod";
+
+/** Environment bindings the AWS descriptor delivers; the runtime lets them override the config. */
+export const ARCHIVE_WAREHOUSE_BINDING = "ERRTRAQ_ARCHIVE_WAREHOUSE";
+export const ARCHIVE_CATALOG_URI_BINDING = "ERRTRAQ_ARCHIVE_CATALOG_URI";
+export const ARCHIVE_REGION_BINDING = "ERRTRAQ_ARCHIVE_REGION";
 
 /**
  * Catalog authentication. Secrets are identifiers resolved through the host secret source when
@@ -98,8 +106,35 @@ export const engineConfigSchema = z.strictObject({
     })
     .prefault({}),
 });
+/**
+ * Provisioning knobs of the AWS (S3 Tables) module; ignored by every other deployment. Maintenance
+ * values are bounded by the S3 Tables minimums (1 day or 1 hour, 64 MB compaction target).
+ */
+export const s3TablesProvisioningSchema = z.strictObject({
+  /** Customer-managed KMS key for the table bucket; absent selects SSE-S3. */
+  kmsKeyArn: z.string().min(1).optional(),
+  /** Days before an unreferenced file is marked noncurrent (service default 3). */
+  unreferencedDays: z.number().int().min(1).optional(),
+  /** Days a noncurrent file is kept before deletion (service default 10). */
+  nonCurrentDays: z.number().int().min(1).optional(),
+  /** Table-level settings exported by the module for the step that creates the table. */
+  compaction: z
+    .strictObject({
+      targetFileSizeMb: z.number().int().min(64).max(512).optional(),
+      strategy: z.enum(["auto", "binpack", "sort", "z-order"]).optional(),
+    })
+    .optional(),
+  snapshots: z
+    .strictObject({
+      maxAgeHours: z.number().int().min(1).optional(),
+      minToKeep: z.number().int().min(1).optional(),
+    })
+    .optional(),
+});
 export const configSchema = z.strictObject({
   catalog: catalogConfigSchema,
+  /** Read only by the AWS descriptor (`s3TablesArchive`). */
+  s3Tables: s3TablesProvisioningSchema.optional(),
   /** Iceberg namespace holding the `events` table. */
   namespace: z
     .string()
@@ -124,11 +159,81 @@ export const manifest: AdapterManifest<Config> = {
   childKinds: { catalog: "catalog", engine: "engine" },
 };
 
-// TODO(M4i): AWS provisioning (S3 Tables table bucket, namespace, maintenance configuration, IAM
-// for the s3tables REST actions). Until the HCL module exists the descriptor names the same
-// "local, no module" placeholder as the in-memory adapters: the catalog is external (Lakekeeper
-// brought by the operator or by docker/archive).
+/**
+ * AWS: an S3 Tables table bucket and namespace (`infra/modules/aws/s3tables`). Terraform does not
+ * create the `events` table: the engine's `ensureTable` sets the format version, partition spec and
+ * sort order, which a Terraform table cannot express. The warehouse (table bucket ARN), catalog URI
+ * and region are delivered as environment bindings that override the config at run time.
+ * TODO(M4i): the `archive` function role; grants are keyed by capability only, so the later slice
+ * adds the role without touching this descriptor.
+ */
 export const infra: InfraDescriptor<Config> = {
+  module: {
+    provider: "aws",
+    component: "s3tables",
+    outputs: {
+      table_bucket_arn: "string",
+      table_bucket_name: "string",
+      namespace: "string",
+      region: "string",
+      catalog_uri: "string",
+      table_maintenance: "json-document",
+      policies: { map: { map: "json-document" } },
+    },
+  },
+  inputs: (config) => {
+    const p = config.s3Tables;
+    const inputs: Record<string, InfraValue> = {
+      name: stackValue("name"),
+      protection: stackValue("protection"),
+      tags: stackValue("tags"),
+      namespace: config.namespace ?? "errtraq",
+    };
+    const optional: Record<string, number | string | undefined> = {
+      kms_key_arn: p?.kmsKeyArn,
+      sse_algorithm: p?.kmsKeyArn ? "aws:kms" : undefined,
+      unreferenced_days: p?.unreferencedDays,
+      non_current_days: p?.nonCurrentDays,
+      compaction_target_file_size_mb: p?.compaction?.targetFileSizeMb,
+      compaction_strategy: p?.compaction?.strategy,
+      snapshot_max_age_hours: p?.snapshots?.maxAgeHours,
+      snapshot_min_to_keep: p?.snapshots?.minToKeep,
+    };
+    for (const [key, value] of Object.entries(optional))
+      if (value !== undefined) inputs[key] = value;
+    return inputs;
+  },
+  resources: { primary: out("table_bucket_arn") },
+  capabilities: Object.fromEntries(
+    ["read", "write", "delete"].map((capability) => [
+      capability,
+      { primary: out("policies", capability, "primary") },
+    ]),
+  ),
+  bindings: [
+    {
+      name: ARCHIVE_WAREHOUSE_BINDING,
+      kind: "env",
+      purpose: "primary",
+      value: out("table_bucket_arn"),
+    },
+    {
+      name: ARCHIVE_CATALOG_URI_BINDING,
+      kind: "env",
+      purpose: "primary",
+      value: out("catalog_uri"),
+    },
+    {
+      name: ARCHIVE_REGION_BINDING,
+      kind: "env",
+      purpose: "primary",
+      value: out("region"),
+    },
+  ],
+};
+
+/** Local or Lakekeeper catalog under the standalone platform, which has no Terraform: nothing is provisioned. */
+export const localInfra: InfraDescriptor<Config> = {
   module: { provider: "local", component: "archive-iceberg", outputs: {} },
   inputs: () => ({}),
   bindings: [],
@@ -147,8 +252,56 @@ export function rowDeleteModeFor(
   return config.formatVersion === 3 ? "deletion-vector" : "position-delete";
 }
 
-/** The stack selection: `archive: icebergArchive({ catalog: { uri, warehouse }, ... })`. */
-export function icebergArchive(config: Config): AdapterSelection<Config> {
+/**
+ * A catalog the operator runs: `archive: icebergArchive({ catalog: { uri, warehouse }, ... })`.
+ * Under the standalone platform nothing is provisioned. On AWS pass `existing`, an operator
+ * promise that the catalog and its storage exist; it must supply every output the AWS descriptor
+ * references (`table_bucket_arn` as the warehouse, `catalog_uri`, `region`, and one IAM policy
+ * document per `policies.<read|write|delete>.primary`) and no module is generated.
+ */
+export function icebergArchive(
+  config: Config,
+  options: { existing?: Record<string, InfraValue> } = {},
+): AdapterSelection<Config> {
+  return {
+    manifest,
+    infra: options.existing ? infra : localInfra,
+    config,
+    runtimeModule: "@moriyoshi/errtraq-archive-iceberg",
+    ...(options.existing ? { existing: options.existing } : {}),
+  };
+}
+
+export interface S3TablesArchiveOptions {
+  /** The AWS region of the stack's provider; the module's `region` output overrides it at run time. */
+  region: string;
+  namespace?: string;
+  /** Provisioning knobs of the table bucket and its maintenance. */
+  s3Tables?: z.input<typeof s3TablesProvisioningSchema>;
+  engine?: z.input<typeof engineConfigSchema>;
+  requestTimeoutMs?: number;
+}
+
+/**
+ * AWS: provisions the S3 Tables table bucket and namespace and wires the adapter to them
+ * (`archive: s3TablesArchive({ region: "us-east-1" })`). SigV4 credentials come from the
+ * function role through the platform's `awsCredentials` binding.
+ */
+export function s3TablesArchive(
+  options: S3TablesArchiveOptions,
+): AdapterSelection<Config> {
+  const config: Config = {
+    catalog: {
+      uri: `https://s3tables.${options.region}.amazonaws.com/iceberg`,
+      auth: { type: "sigv4", region: options.region },
+      ...(options.requestTimeoutMs
+        ? { requestTimeoutMs: options.requestTimeoutMs }
+        : {}),
+    },
+    ...(options.namespace ? { namespace: options.namespace } : {}),
+    ...(options.s3Tables ? { s3Tables: options.s3Tables } : {}),
+    engine: { ...options.engine, catalogType: "s3_tables" },
+  };
   return {
     manifest,
     infra,

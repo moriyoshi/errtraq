@@ -9,11 +9,35 @@ import {
   type IcebergRestCatalogOptions,
 } from "./catalog/client.js";
 import {
+  ARCHIVE_CATALOG_URI_BINDING,
+  ARCHIVE_REGION_BINDING,
+  ARCHIVE_WAREHOUSE_BINDING,
   type Config,
   configSchema,
   type ParsedConfig,
   rowDeleteModeFor,
 } from "./stack.js";
+
+/**
+ * Apply the environment bindings of the AWS (S3 Tables) descriptor: the module's table bucket ARN,
+ * catalog URI and region are the source of truth and override the config's values. Without the
+ * bindings (local, Lakekeeper, bring-your-own) the config is returned unchanged.
+ */
+export function applyEnvironmentBindings(
+  config: Config,
+  environment: Readonly<Record<string, string | undefined>> | undefined,
+): Config {
+  const warehouse = environment?.[ARCHIVE_WAREHOUSE_BINDING];
+  const uri = environment?.[ARCHIVE_CATALOG_URI_BINDING];
+  const region = environment?.[ARCHIVE_REGION_BINDING];
+  if (!warehouse && !uri && !region) return config;
+  const catalog = { ...config.catalog };
+  if (warehouse) catalog.warehouse = warehouse;
+  if (uri) catalog.uri = uri;
+  if (region && catalog.auth?.type === "sigv4")
+    catalog.auth = { ...catalog.auth, region };
+  return { ...config, catalog };
+}
 
 /** Thrown by every ArchiveStore operation of the main-entry `create` when no engine is bound. */
 export class ArchiveEngineNotWiredError extends Error {
@@ -115,10 +139,14 @@ export function createCatalog(
 export function create(
   context: CreateContext<Config, ArchiveIcebergBindings>,
 ): ArchiveStore {
-  const { config, bindings, secretSource } = context;
+  const { bindings, secretSource } = context;
+  const config = applyEnvironmentBindings(context.config, context.environment);
   const parsed = configSchema.parse(config);
   createCatalog(parsed, { secretSource, bindings });
-  if (bindings?.createEngine) return bindings.createEngine(context);
+  if (bindings?.createEngine)
+    return bindings.createEngine(
+      config === context.config ? context : { ...context, config },
+    );
   const fail = (operation: string) => (): Promise<never> =>
     Promise.reject(new ArchiveEngineNotWiredError(operation));
   return {

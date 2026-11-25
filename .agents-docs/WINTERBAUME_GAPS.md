@@ -335,3 +335,7 @@ by this emulator; mock-provider tests and ultimately a real AWS deployment must 
 Filed as [#64](https://github.com/moriyoshi/winterbaume/issues/64),
 [#65](https://github.com/moriyoshi/winterbaume/issues/65) and
 [#66](https://github.com/moriyoshi/winterbaume/issues/66).
+
+## S3 Tables is not emulated
+
+Noted at v0.2.9 for the M4i Terraform piece (not reproduced against a running emulator and not filed: the brief said not to file issues). winterbaume has no S3 Tables service, so the `aws_s3tables_table_bucket`, `aws_s3tables_namespace` and `aws_s3tables_table_bucket_policy` resources of `infra/modules/aws/s3tables` cannot be planned or applied against it, and the Iceberg REST endpoint (`s3tables.<region>.amazonaws.com/iceberg`) does not exist locally. ECR is also absent (container image repository, later M4i slice). The local archive path uses Lakekeeper with winterbaume only as its S3 object store. Coverage for the module is Terraform mock-provider tests, `terraform validate` on both pinned provider versions, the mutation suite, and ultimately a real account (M4m).

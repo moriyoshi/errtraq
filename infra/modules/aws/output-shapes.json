@@ -68,6 +68,25 @@
     },
     "staging_arn": "string"
   },
+  "s3tables": {
+    "catalog_uri": "string",
+    "namespace": "string",
+    "policies": {
+      "delete": {
+        "primary": "json-document"
+      },
+      "read": {
+        "primary": "json-document"
+      },
+      "write": {
+        "primary": "json-document"
+      }
+    },
+    "region": "string",
+    "table_bucket_arn": "string",
+    "table_bucket_name": "string",
+    "table_maintenance": "json-document"
+  },
   "sqs": {
     "policies": {
       "consume": {
