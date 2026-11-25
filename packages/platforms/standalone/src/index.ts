@@ -1,6 +1,9 @@
 import { serve } from "@hono/node-server";
 import {
   type ActiveStore,
+  ARCHIVE_PROJECT_TOPIC,
+  type ArchiveStore,
+  ArchiveWorker,
   type BatchHandler,
   type BlobStore,
   bootstrapProject,
@@ -35,6 +38,8 @@ export interface Bindings {
   clock?: Clock;
   logger?: Logger;
   cronHandler?: CronHandler;
+  /** Selected archive; hosts the `archive.project` worker in this single process. */
+  archive?: ArchiveStore;
   maxEnvelopeBytes?: number;
 }
 const defaultLogger: Logger = {
@@ -224,12 +229,28 @@ export function create({
               logger,
             })
           : undefined;
+      // The single process hosts every handler; AWS routes this topic to the archive role (M4i).
+      const archival = bindings.archive
+        ? new ArchiveWorker({
+            store: bindings.store,
+            blobs: bindings.blob,
+            archive: bindings.archive,
+            queue: bindings.queue.producer,
+            logger,
+            clock,
+          })
+        : undefined;
       const dispatch: BatchHandler = async (batch) => {
         const result: Awaited<ReturnType<BatchHandler>> = [];
-        for (const topic of ["ingest", "record"]) {
+        for (const topic of ["ingest", "record", ARCHIVE_PROJECT_TOPIC]) {
           const selected = batch.filter((item) => item.topic === topic);
           if (!selected.length) continue;
-          const handler = topic === "ingest" ? consumer.handle : record?.handle;
+          const handler =
+            topic === "ingest"
+              ? consumer.handle
+              : topic === "record"
+                ? record?.handle
+                : archival?.handle;
           if (handler) result.push(...(await handler(selected)));
           else
             result.push(
@@ -240,7 +261,11 @@ export function create({
             );
         }
         for (const item of batch)
-          if (item.topic !== "ingest" && item.topic !== "record")
+          if (
+            item.topic !== "ingest" &&
+            item.topic !== "record" &&
+            item.topic !== ARCHIVE_PROJECT_TOPIC
+          )
             result.push({ deliveryId: item.id, action: "retry" });
         return result;
       };

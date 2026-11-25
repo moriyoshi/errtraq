@@ -1,6 +1,7 @@
 import {
   type ActiveStore,
   type ApiToken,
+  type ArchiveStore,
   ArtifactBundleService,
   type BlobStore,
   type ChunkUploadLimits,
@@ -8,6 +9,7 @@ import {
   ConflictError,
   type Cursor,
   type EventId,
+  EventQueryService,
   hashApiToken,
   type IdGen,
   InvalidCursorError,
@@ -47,9 +49,15 @@ export function createApiApp(options: {
   ids?: IdGen;
   /** Chunk upload limits advertised to sentry-cli and enforced during assembly. */
   chunkUpload?: Partial<ChunkUploadLimits>;
+  /** Second event tier; absent means events are read from the active store only. */
+  archive?: ArchiveStore;
 }): Hono<Env> {
   const app = new Hono<Env>({ strict: false });
   const { store, clock } = options;
+  const events = new EventQueryService({
+    store,
+    ...(options.archive ? { archive: options.archive } : {}),
+  });
   if (rateRejectionEnabled(options.rateRejection) && !options.kv)
     throw new Error("Rate rejection API requires KV");
   async function payloadOf(
@@ -77,7 +85,11 @@ export function createApiApp(options: {
     const org = project && (await store.projects.getOrg(project.orgId));
     if (!project || !org)
       throw new Error("Issue project or organization missing");
-    const event = await store.events.get(issue.projectId, issue.lastEventId);
+    const event = await events.getEvent(
+      issue.projectId,
+      issue.lastEventId,
+      issue.lastEventReceivedAt,
+    );
     const result = issueJson(
       issue,
       project,
@@ -326,7 +338,7 @@ export function createApiApp(options: {
     allowed(c, ["cursor", "limit"]);
     const issue = await scopedIssue(c.req.param("id"), c.get("token"));
     if (!issue) return c.json({ detail: "Not found" }, 404);
-    const page = await store.events.listByIssue({
+    const page = await events.listByIssue({
       projectId: issue.projectId,
       issueId: issue.id,
       order: "desc",
@@ -341,7 +353,11 @@ export function createApiApp(options: {
   app.get("/api/0/issues/:id/events/latest", async (c) => {
     const issue = await scopedIssue(c.req.param("id"), c.get("token"));
     if (!issue) return c.json({ detail: "Not found" }, 404);
-    const event = await store.events.get(issue.projectId, issue.lastEventId);
+    const event = await events.getEvent(
+      issue.projectId,
+      issue.lastEventId,
+      issue.lastEventReceivedAt,
+    );
     return event
       ? c.json(await renderEvent(event, issue))
       : c.json({ detail: "Not found" }, 404);
@@ -349,7 +365,7 @@ export function createApiApp(options: {
   app.get("/api/0/issues/:id/events/:event", async (c) => {
     const issue = await scopedIssue(c.req.param("id"), c.get("token"));
     if (!issue) return c.json({ detail: "Not found" }, 404);
-    const event = await store.events.get(
+    const event = await events.getEvent(
       issue.projectId,
       c.req.param("event") as EventId,
     );
@@ -364,7 +380,7 @@ export function createApiApp(options: {
       c.get("token"),
     );
     if (!p) return c.json({ detail: "Not found" }, 404);
-    const event = await store.events.get(p.id, c.req.param("event") as EventId);
+    const event = await events.getEvent(p.id, c.req.param("event") as EventId);
     if (!event) return c.json({ detail: "Not found" }, 404);
     const issue = await store.issues.get(p.id, event.issueId);
     return issue

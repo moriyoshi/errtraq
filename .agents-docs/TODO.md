@@ -52,7 +52,7 @@ item should be resolved or removed once addressed. Milestone work itself is trac
 - [ ] M1: define indexed tag-key discovery and issue tag-filter semantics before exposing tag filters through active-store adapters. — *source: JOURNAL 2026-11-21 — M0c: contract harness and memory semantics*
 - [x] M1: design crash-safe coordination of event insertion and issue occurrence updates; an inserted flag alone cannot make both operations atomic. — *source: JOURNAL 2026-11-21 — M0c review: delivery, scan and pagination contracts*
 - [x] M1: allocate project IDs as decimal-digit strings for Sentry-compatible DSNs. — *source: M0d final review A6*
-- [ ] M4: prevent stale lease holders overwriting staging batches, using a nonce in staged keys or conditional blob writes. — *source: M0d final review B*
+- [x] M4: prevent stale lease holders overwriting staging batches. Resolved by removal (M4b): there is no staged object; the COMMIT CAS fences the append and `hasBatch` plus idempotence on the batch id catch a late one. — *source: M0d final review B*
 - [x] M1: `tsconfig.tests.json` type-checks every package with WebWorker libs and no Node types; Node-only adapter and platform packages (for example `store-sql` sqlite, `blob-fs`, `standalone`) need their own lib / types settings without loosening `core` and `http`. — *source: JOURNAL 2026-11-21 — M0 closed: final review, verification and research*
 - [ ] M4: act on `.agents-docs/M4_ICEBERG_SPIKE_RESEARCH.md`: the Athena query engine cannot read v3 tables, winterbaume has no Docker image (compose must run the binary), Lakekeeper needs `sts-enabled: false` against winterbaume, and Cloudflare has no verified in-process write path. Revise the "ArchiveStore" engine list in ARCHITECTURE.md once the hands-on spikes report. — *source: JOURNAL 2026-11-21 — M0 closed: final review, verification and research*
 - [x] M1d: make concurrent bootstrap of the same organization/project slug safe across processes and use cryptographically secure DSN keys. — *source: JOURNAL 2026-11-21 — M1c ingest pipeline; resolved in M1f*
@@ -101,7 +101,7 @@ item should be resolved or removed once addressed. Milestone work itself is trac
 
 - [x] M3: grouped-record claim checks expire through an S3 lifecycle rule (default 30 days, validated above SQS's 14-day maximum retention); a missing claim is poison and redrives to the DLQ. No cron; standalone has no sweep (see `M3_BLOB_CLEANUP_DESIGN.md`). — *source: issue-keyed queue turn 5; M3 queue item 3; resolved in M3 item 3*
 - [x] M3: `deleteExpiredEvents` deletes events first and their overflow blobs second; orphans expire through lifecycle rules after the longest retention plus a margin. — *source: M3 queue item 3; resolved in M3 item 3*
-- [ ] M4: wire the `retention` cron job to `deleteExpiredEvents` (archived events only when archival is selected) and hand overflow blob keys to the archive and erasure hooks. — *source: M3 item 3*
+- [x] M4: wire the `retention` cron job to `deleteExpiredEvents` (done in M4b for stacks without an archive; with an archive the job leaves events to archival). Overflow keys are handed to the archival worker (M4b). Open: archive-side hard-retention hook (M4h) and the erasure hook (M4j). — *source: M3 item 3*
 - [x] M3h (second run, 2026-11-24): real S3 accepts the claim and overflow lifecycle rules, and a missing-claim record redriven from the FIFO DLQ returns to it after five attempts. Actual expiry (days) is not observed. Original item: verify the lifecycle rules (claim and overflow prefixes) and a DLQ redrive after claim expiry against real AWS. — *source: M3 item 3*
 - [ ] M3 / product: a project-settings API must validate retention against the stack's `maxEventRetentionDays`. — *source: M3 item 3*
 
@@ -167,3 +167,5 @@ item should be resolved or removed once addressed. Milestone work itself is trac
 
 - [ ] M5b: scope the cron role's DynamoDB `write` for `bundle-cleanup` more tightly (it currently holds the generic store `write`/`read` policies although it only needs the pending-bundle claim transitions and project/pending-bundle reads). — *source: M5b review fixes*
 - [ ] M5b: replace the rotating project window in `runBundleCleanup` with a persisted resume cursor if the per-run project listing becomes costly. — *source: M5b review fixes*
+- [ ] M4i: remove the `archive-staging/` lifecycle rule and `staging_prefix` from the blob-s3 stack and `infra/modules/aws/s3` (staging was dropped in M4b); add a sweep or lifecycle rule for orphan `archive-overflow/` manifests (M4h). — *source: M4b staging removal*
+- [ ] M4f: the real engine must implement `append` with rows and `batchEventIds` and run `archiveStoreContract` plus the M4b fault matrix. — *source: M4b*

@@ -36,12 +36,5 @@ queueContract(() => new MemoryQueue(clock), {
   },
 });
 archiveStoreContract(() => new MemoryArchiveStore(), {
-  stage: async (store, key, events) => {
-    if (!(store instanceof MemoryArchiveStore))
-      throw new Error("Expected memory archive");
-    await store.blobs.put(
-      key,
-      new TextEncoder().encode(JSON.stringify(events)),
-    );
-  },
+  rowDelete: "deletion-vector",
 });

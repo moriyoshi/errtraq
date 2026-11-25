@@ -172,8 +172,9 @@ binding, GCS and Azure adapters are thin additions.
 ### ArchiveStore — Iceberg over REST catalog
 ```ts
 interface ArchiveStore {
-  append(batch: { batchId: string; stagedKey: string; dayRange: [Day, Day] }): Promise<{ snapshotId: string; rowCount: number }>;
+  append(batch: { batchId: string; dayRange: [Day, Day]; rows: StoredEvent[] }): Promise<{ snapshotId: string; rowCount: number }>; // idempotent on batchId
   hasBatch(batchId: string, dayRange: [Day, Day]): Promise<boolean>;   // idempotency probe, partition-pruned
+  batchEventIds(projectId, batchId, dayRange): Promise<EventId[]>;      // the DELETE step's id list, read from the archive
   query(q: EventQuery): Promise<EventPage>;                                // same keyset paging as EventRepo.listByIssue
   getEvent(projectId, eventId, hintTs?): Promise<StoredEvent | null>;
   // erasure operations: see "End-user PII erasure"
@@ -183,7 +184,9 @@ interface ArchiveStore {
   project (see archival job), so manifest column bounds on `project_id` prune per project
   without a projects×days partition explosion. Sorted by `issue_id, received_at`. Full event
   JSON in one column plus promoted columns (issue_id, level, release, environment, tags map,
-  `archive_batch`).
+  the user fields used by erasure, `archive_batch`). Core `archive-rows.ts` defines the row (`archiveRow`),
+  `summarizeBatch` (count, UTC day range, max `receivedAt`) and the batch bounds (50k rows, 128 MiB of
+  uncompressed event JSON by default) that every engine follows.
 - Catalog access is always the **Iceberg REST spec** (`IcebergRestCatalog` client: config,
   load table, commit, vended credentials) → Lakekeeper locally and self-hosted; S3 Tables /
   Glue REST on AWS; R2 Data Catalog on Cloudflare.
@@ -200,6 +203,24 @@ interface ArchiveStore {
   rows, and resumes both sources from the last emitted key, so no row is skipped or repeated
   (opaque per-source cursors could not guarantee that). The watermark therefore only ever *skips the archive*, never the active store,
   so late or not-yet-deleted rows can't be missed. Details in "Archival job" below.
+  M4c settles these details:
+  - The public cursor (`v1.` form, scope `["fed", projectId, issueId, from, to, order]`) encodes
+    only the last emitted `[receivedAt, eventId]`. Per-source cursors never leave the service: each
+    source is queried with `after` and drained internally (a source page may be short or empty
+    while `hasMore` is true) until it holds `limit` rows or is exhausted. The cursor is scoped to
+    every filter and rejected on another query, and `cursor` together with `after` is rejected.
+    `hasMore` is exact: more than `limit` merged rows, or a source that still has rows.
+  - The cursor is a federation cursor whenever an archive is configured, even if a given request
+    reads the active store only, so it stays valid when the watermark moves between pages. With no
+    archive configured the service passes straight through and the source cursor format is used
+    unchanged (a cursor does not survive turning an archive on).
+  - `ArchiveState` is read once per list call and never cached across calls or requests (the
+    worker advances it at every MARK). The archive is skipped when `from >= archivedThrough` or
+    an ascending resume key is already at or past it; `getEvent` reads the active store, then
+    `archive.getEvent` with a hint such as `issue.lastEventReceivedAt`, without consulting the
+    watermark.
+  - `createApiApp` takes an optional `archive`; the events list, event detail, project event
+    detail and the issue latest-event lookup go through the service.
 
 ### Small ports
 `KV` (rate limits via atomic `increment`, DSN-key cache, erasure suppression list; memory /
@@ -504,8 +525,8 @@ interface ArchiveState {
   projectId: string; version: number;
   archivedThrough: Timestamp;                 // monotonic watermark (max receivedAt committed)
   seq: number;                                // batch counter -> batchId = `${projectId}/${seq}`
-  batch?: { id: string; state: 'staged' | 'committed'; stagedKey: string;
-            rowCount: number; dayRange: [Day, Day]; maxReceivedAt: Timestamp };
+  batch?: { id: string; state: 'committing' | 'committed'; rowCount: number;
+            dayRange: [Day, Day]; maxReceivedAt: Timestamp; overflowKey?: string };
   lease?: { owner: string; until: Timestamp };  // expiry ≈ 2× invocation timeout; CAS doubles as fencing
 }
 ```
@@ -515,11 +536,26 @@ interface ArchiveState {
 | Step | Action | If we crash right after |
 |---|---|---|
 | 1 SCAN | `events.scanOlderThan(project, cutoff, limit)` ordered by (receivedAt, eventId); because finished batches are deleted, the scan always starts at the oldest remaining row — no cursor to persist. Overflow payloads are re-inlined from BlobStore. | Nothing written; retry rescans. |
-| 2 STAGE | Write the rows to `BlobStore` at `archive-staging/<batchId>-<nonce>.parquet` (the nonce stops a stale lease holder overwriting a newer owner's staged object), then CAS `batch = {state:'staged', …}`. The staged object is the write-ahead record: it is both the exact content to append and the exact id list to delete. | Orphan staged object without state → overwritten by the retry (same key). |
-| 3 COMMIT | `archive.append({batchId, stagedKey, dayRange})` — one Iceberg snapshot, rows tagged `archive_batch = batchId`, split by day partition. Catalog 409s (concurrent commits from other projects) are retried inside the adapter. | State still `staged`: retry first calls `archive.hasBatch(batchId, dayRange)`; if true skip to step 4, else append again from the same staged object. This is what makes the commit exactly-once. |
-| 4 MARK | CAS `batch.state = 'committed'`, `archivedThrough = max(old, maxReceivedAt)`. | Covered by the `hasBatch` probe above. |
-| 5 DELETE | Read ids from the staged object; `events.deleteBatch` in store-sized chunks (DynamoDB 25, D1 ≤100 bound params, pg/mysql ~1000); delete overflow blobs. Idempotent. | State `committed`: retry redoes the deletes. Readers see duplicates meanwhile, removed by eventId dedupe. |
-| 6 CLEAR | CAS `batch = undefined`, `seq += 1`; delete the staged object. Next batch. | Staged object leaks → bucket lifecycle rule on `archive-staging/` (7 days). |
+| 2 COMMIT | CAS `batch = {state:'committing', id, dayRange, maxReceivedAt, rowCount}` (the fence: a stale holder fails here, before it can append), then `archive.append({batchId, dayRange, rows})` — one Iceberg snapshot, rows tagged `archive_batch = batchId`, split by day partition. Catalog 409s (concurrent commits from other projects) are retried inside the adapter. There is no write-ahead object: the rows are in memory and still in the active store. | State `committing`: retry calls `archive.hasBatch(batchId, dayRange)`; if true go to MARK; if false the batch never committed and nothing durable existed, so the worker clears `batch` (CAS) and rescans, rebuilding the batch under the same `batchId`. This is what makes the commit exactly-once. |
+| 3 MARK | CAS `batch.state = 'committed'`, `archivedThrough = max(old, maxReceivedAt)`. | Covered by the `hasBatch` probe above. |
+| 4 DELETE | The id list comes from the archive itself: `archive.batchEventIds(projectId, batchId, dayRange)` (partition-pruned, filtered on `archive_batch`), never a rescan of the active store; `events.deleteBatch` in store-sized chunks (DynamoDB 25, D1 ≤100 bound params, pg/mysql ~1000); delete overflow blobs (their keys come from a small nonce-keyed manifest named by `batch.overflowKey`, written before the COMMIT CAS). Idempotent. | State `committed`: retry redoes the reads and deletes. Readers see duplicates meanwhile, removed by eventId dedupe. |
+| 5 CLEAR | CAS `batch = undefined`, `seq += 1`; delete the overflow manifest. Next batch. | Manifest leaks (keys only) → swept by housekeeping (TODO M4h). |
+
+The committed snapshot, rows tagged with `archive_batch`, is the record the DELETE step reads, so the
+archive is the write-ahead record. Cost: one archive read per batch. Staging the batch as an object
+(a Parquet file in the blob store, with a nonce-keyed name) may return as an engine option for engines
+that need a file to commit, such as a native committer or Cloudflare; the removed M4a codec is in git
+history at 14c8c9e.
+
+Details settled in M4b: the lease lasts 2× the invocation timeout and is renewed by every CAS; the
+worker stops starting batches at 60% of the invocation timeout, releases the lease by CAS and then sends
+the continuation `archive.project {projectId, continuation: true}` keyed
+`archive-continue/<projectId>/<seq>`; the planner keys its messages `archive-planner/<tick>/<projectId>`.
+The hot-tier cutoff is `now − project.retentionDays` (D12; `archiveRetentionDays` bounding total life is
+M4h). A worker whose CAS fails stops without writing. An append racing a lease takeover (the stale
+holder passed its COMMIT CAS, stalled for longer than the lease, and appends late) is caught by `hasBatch`
+and the engine's idempotence on the same `batchId`: the first append wins. Its interaction with
+erasure is M4j's.
 
 On entry the worker resumes from whatever `batch.state` it finds, so a timed-out invocation,
 a redelivered message, or a lease takeover all converge on the same path.
@@ -529,7 +565,7 @@ a redelivered message, or a lease takeover all converge on the same path.
 - *Late events* (queue retries, DLQ redrive) land in the active store with an old `receivedAt`;
   the next run's scan picks them up naturally since it is "everything older than cutoff", not
   "between watermark and cutoff". Readers never miss them because the active store is always queried.
-- *Rows inserted into an already-scanned range between scan and delete* survive, because step 5
+- *Rows inserted into an already-scanned range between scan and delete* survive, because step 4
   deletes by id list, not by range.
 - *Two workers on one project*: lease prevents it; if a lease expires mid-flight, the stale
   worker's next CAS fails and it stops. A stale append is still caught by `hasBatch`.
@@ -539,10 +575,11 @@ a redelivered message, or a lease takeover all converge on the same path.
 
 **How the commit is done per engine** (the only engine-specific step)
 
-- DuckDB (local, Lambda, Cloud Run): `INSERT INTO cat.events SELECT *, '<batchId>' FROM read_parquet('<staged>')` against the REST catalog (Lakekeeper / S3 Tables).
-- Native committer (fallback, and the likely answer for Workers): the staged Parquet is written
-  straight into the table's data location, so COMMIT is just manifest + REST `commit` adding that
-  file — and `hasBatch` can read the snapshot summary property instead of querying.
+- DuckDB (local, Lambda, Cloud Run): `INSERT INTO cat.events SELECT ... , '<batchId>'` from the appended rows against the REST catalog (Lakekeeper / S3 Tables).
+- Native committer (fallback, and the likely answer for Workers): would write a Parquet file straight
+  into the table's data location, so COMMIT is just manifest + REST `commit` adding that file — and
+  `hasBatch` can read the snapshot summary property instead of querying. It needs a staged file, which
+  is where the staging option above would return.
 - Cloudflare Pipelines / Athena variants are evaluated in the M4/M6 spikes; the state machine does not change.
 
 **Store-specific delete strategies** (declared as an `EventRepo` capability)
@@ -608,12 +645,12 @@ currently available endpoint. Main-queue drain proof remains a blocker to claimi
 | State | Work | Timing |
 |---|---|---|
 | `received` | Persist request; publish selector to `KV` suppression list so the consumer drops still-queued events from that subject with `receivedAt ≤ requestedAt`. | Synchronous |
-| `active-purged` | Under the project's **archive lease** (serializes with the archival worker): first drive any in-flight archive batch to completion so nothing is sitting in staging, then use the planned SubjectIndex to identify active event IDs, delete them and their overflow blobs, and repair latest-event pointers without decrementing counts. Completion remains blocked on proving main-queue drain. | Minutes |
+| `active-purged` | Under the project's **archive lease** (serializes with the archival worker): first drive any in-flight archive batch to completion so no committing batch is in flight, then use the planned SubjectIndex to identify active event IDs, delete them and their overflow blobs, and repair latest-event pointers without decrementing counts. Completion remains blocked on proving main-queue drain. | Minutes |
 | `archive-masked` | `archive.deleteWhere` → one snapshot adding DVs; record `maskSnapshotId` and a blob key holding the touched file list (the list can exceed a key-value store's item size). From here no query returns the data. | Minutes |
 | `archive-erased` | `archive.hardErase(files)` rewrites just the touched data files without the deleted rows (cheap: files are one project-batch each), then `expireSnapshots` once the pre-rewrite snapshots age past the table's max snapshot age (set to 7 days) and orphan files are removed. | Cron, well inside the 30-day GDPR window |
 | `done` | Stamp completion time; replace the stored selector with a salted hash so the ledger is an audit trail that holds no PII. | — |
 
-Taking the archive lease in `active-purged` is what closes the race where a staged batch
+Taking the archive lease in `active-purged` is what closes the race where an in-flight batch
 containing the subject's rows would otherwise be committed *after* the archive was masked.
 Every step is idempotent (re-deleting matches nothing; DV snapshot carries
 `errtraq.erasure-id` in its summary), so the same resume-from-state worker pattern as archival applies.
@@ -756,7 +793,7 @@ First implementation round = **M0–M2** (plus `git init`).
   one; assert (a) federated queries return nothing for that user right after `archive-masked`,
   (b) the snapshot contains Puffin DVs and no rewritten data files, (c) after `hardErase` +
   snapshot expiry, a raw byte scan of every object under the table location finds no occurrence
-  of the user's email, (d) the other user's events are intact, (e) an erasure racing a staged
+  of the user's email, (d) the other user's events are intact, (e) an erasure racing an in-flight
   archive batch still ends clean.
 - **Archive (M4)**: seed events, run archival with a short cutoff, assert rows in Iceberg (query via DuckDB against Lakekeeper), assert a cross-watermark `listByIssue` returns a gapless, duplicate-free, correctly ordered page sequence.
 - **Sourcemaps (M5)**: `sentry-cli sourcemaps inject/upload` against the local server, send a minified-stack error, assert symbolicated frames.

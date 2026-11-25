@@ -9,7 +9,9 @@ import {
 } from "@moriyoshi/errtraq-core";
 import {
   activeStoreContract,
+  archivalSuite,
   FakeClock,
+  federationSuite,
   MemoryKV,
 } from "@moriyoshi/errtraq-testing";
 import { Kysely, sql } from "kysely";
@@ -44,6 +46,22 @@ let sequence = 0;
 for (const kind of ["memory", "file"] as const) {
   describe(`SQLite ${kind}`, () => {
     activeStoreContract(async () => {
+      const db = database(
+        kind === "memory" ? ":memory:" : join(directory, `${++sequence}.db`),
+      );
+      const store = createSqlStore({ db, dialect: sqliteStoreDialect });
+      await store.migrate();
+      return store;
+    });
+    federationSuite(async () => {
+      const db = database(
+        kind === "memory" ? ":memory:" : join(directory, `${++sequence}.db`),
+      );
+      const store = createSqlStore({ db, dialect: sqliteStoreDialect });
+      await store.migrate();
+      return store;
+    });
+    archivalSuite(async () => {
       const db = database(
         kind === "memory" ? ":memory:" : join(directory, `${++sequence}.db`),
       );

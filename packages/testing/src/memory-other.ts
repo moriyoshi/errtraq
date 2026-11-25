@@ -11,6 +11,7 @@ import type {
   StoredEvent,
 } from "@moriyoshi/errtraq-core";
 import {
+  dayOf,
   InvalidCounterError,
   validateBlobKey,
   validateQueueBody,
@@ -290,7 +291,7 @@ export class MemoryQueue implements Queue {
   };
 }
 
-/** The fake stages JSON arrays through a blob store; production archive adapters choose their own format. */
+/** In-memory archive; rows are appended directly and tagged with their batch id. */
 export class MemoryArchiveStore implements ArchiveStore {
   readonly capabilities = { rowDelete: "deletion-vector" as const };
   private batches = new Map<
@@ -307,7 +308,6 @@ export class MemoryArchiveStore implements ArchiveStore {
     string,
     Promise<{ snapshotId: string; rowCount: number }>
   >();
-  constructor(readonly blobs: BlobStore = new MemoryBlobStore()) {}
   private rowKey(row: StoredEvent) {
     return JSON.stringify([row.projectId, row.eventId]);
   }
@@ -325,20 +325,16 @@ export class MemoryArchiveStore implements ArchiveStore {
       };
     const inflight = this.pending.get(batch.batchId);
     if (inflight) return inflight;
+    if (!batch.rows.length) throw new Error("Empty archive batch");
     const write = (async () => {
-      const body = await this.blobs.get(batch.stagedKey);
-      if (!body) throw new Error("Missing staged batch");
-      const rows = JSON.parse(
-        new TextDecoder().decode(await bytes(body)),
-      ) as StoredEvent[];
       const snapshotId = `snapshot-${++this.snapshots}`;
       this.batches.set(batch.batchId, {
         snapshotId,
-        rowCount: rows.length,
-        rows: copy(rows),
-        file: batch.stagedKey,
+        rowCount: batch.rows.length,
+        rows: copy(batch.rows),
+        file: `memory://${batch.batchId}`,
       });
-      return { snapshotId, rowCount: rows.length };
+      return { snapshotId, rowCount: batch.rows.length };
     })();
     this.pending.set(batch.batchId, write);
     try {
@@ -347,11 +343,33 @@ export class MemoryArchiveStore implements ArchiveStore {
       this.pending.delete(batch.batchId);
     }
   }
+  /** True when a row of the batch falls in the inclusive day range, like the partition-pruned probe. */
   async hasBatch(
     batchId: string,
-    _range: Parameters<ArchiveStore["hasBatch"]>[1],
+    range: Parameters<ArchiveStore["hasBatch"]>[1],
   ) {
-    return this.batches.has(batchId);
+    const batch = this.batches.get(batchId);
+    return (
+      !!batch &&
+      batch.rows.some((row) => {
+        const rowDay = dayOf(row.receivedAt);
+        return rowDay >= range[0] && rowDay <= range[1];
+      })
+    );
+  }
+  async batchEventIds(
+    projectId: Parameters<ArchiveStore["batchEventIds"]>[0],
+    batchId: string,
+    range: Parameters<ArchiveStore["batchEventIds"]>[2],
+  ) {
+    return (this.batches.get(batchId)?.rows ?? [])
+      .filter(
+        (row) =>
+          row.projectId === projectId &&
+          dayOf(row.receivedAt) >= range[0] &&
+          dayOf(row.receivedAt) <= range[1],
+      )
+      .map((row) => row.eventId);
   }
   async query(query: Parameters<ArchiveStore["query"]>[0]) {
     return eventPage(
@@ -368,6 +386,7 @@ export class MemoryArchiveStore implements ArchiveStore {
   async getEvent(
     projectId: Parameters<ArchiveStore["getEvent"]>[0],
     eventId: Parameters<ArchiveStore["getEvent"]>[1],
+    _hintTs?: Parameters<ArchiveStore["getEvent"]>[2],
   ) {
     return copy(
       this.rows().find(

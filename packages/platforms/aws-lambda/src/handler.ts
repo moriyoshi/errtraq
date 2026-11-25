@@ -8,6 +8,7 @@ export { createSecretsManagerSource, SecretReadError } from "./secrets.js";
 
 import {
   type ActiveStore,
+  type ArchiveStore,
   type BatchHandler,
   type BlobStore,
   type Clock,
@@ -36,7 +37,14 @@ export interface HandlerOptions {
   rateRejection?: RateRejectionConfig;
   rateLimit?: number | null;
   http: readonly FunctionRole[];
-  adapters: { store?: ActiveStore; blob?: BlobStore; queue?: Queue; kv?: KV };
+  adapters: {
+    store?: ActiveStore;
+    blob?: BlobStore;
+    queue?: Queue;
+    kv?: KV;
+    /** Selected archive; only the cron side (planner, retention) uses it before M4i. */
+    archive?: ArchiveStore;
+  };
   clock?: Clock;
   logger?: Logger;
   cronHandler?: CronHandler;
@@ -217,6 +225,21 @@ export function createHandler(
                 projects: adapters.store.projects,
                 releases: adapters.store.releases,
                 blobs: adapters.blob,
+              }
+            : undefined,
+          // TODO(M4i): the dedicated `archive` role hosts the `archive.project` worker; until
+          // then the planner only runs where an archive is selected and a queue exists.
+          adapters.archive && adapters.store && adapters.queue
+            ? {
+                projects: adapters.store.projects,
+                queue: adapters.queue.producer,
+              }
+            : undefined,
+          adapters.blob && adapters.store
+            ? {
+                store: adapters.store,
+                blobs: adapters.blob,
+                archived: !!adapters.archive,
               }
             : undefined,
         )

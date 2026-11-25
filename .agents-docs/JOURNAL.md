@@ -1866,3 +1866,67 @@ choice; no quota increase). Findings:
 * Image facts (public.ecr.aws/lambda/nodejs:26, Node 26.13.1): `/var/runtime/ca-cert.pem` holds the 118 RDS CAs, `/etc/pki/tls/certs/ca-bundle.crt` the public roots including Amazon Root CA 1-4 (both identical to nodejs22), and `/var/runtime/bootstrap` keeps the same NODE_EXTRA_CA_CERTS logic. Current ESM bundles with the createRequire banner load and export `handler`. The Postgres CA defaults are therefore unchanged.
 * Changing the default changes the generated `runtime` input for stacks that did not set it; their next `terraform plan` shows an in-place Lambda runtime update. Pin `runtime: "nodejs22.x"` to avoid that.
 * The AWS provider's runtime enum is checked at validate time: 6.32.1 (the previous floor) rejects `nodejs26.x`, 6.73.0 and 6.74.0 accept it. The `lambda-app` module therefore requires `>= 6.73.0, < 7.0` (the earliest version verified here; an intermediate version may also work but could not be checked offline). `scripts/infra-validate.mjs` reads each module's floor and tests only the pinned versions at or above it, the generated roots run on 6.73.0 only, and `scripts/infra-mutate.mjs` rewrites the constraint by pattern. Root stacks that declare `>= 6.32.1` still resolve, since Terraform intersects the constraints.
+
+## 2026-11-25 — M4a: archive contracts, Parquet staging codec, fault wrappers
+
+- Parquet library choice: `hyparquet` 1.32.0 (reader) and `hyparquet-writer` 0.18.0 (writer), both MIT, zero other
+  dependencies, pure JS (SNAPPY built in). The writer pins `hyparquet` 1.32.0 exactly, so both are pinned to match
+  and install a single copy. Non-obvious: the package roots of both resolve, under the default export condition, to
+  a `node.js` entry that imports `fs`; only the `browser` condition reaches the node-free `index.js`. Core therefore
+  imports the explicit `hyparquet/src/index.js` and `hyparquet-writer/src/index.js` subpaths (exported by both
+  packages), which resolve identically under every condition and keep the Workers bundle free of `node:*`.
+  `scripts/layering.mjs` allowlists exactly those two specifiers; `scripts/layering.test.js` bundles `packages/core`
+  with esbuild (neutral platform, workerd/worker/browser conditions) and asserts no `node:` inputs.
+- Timestamps are written as INT64 MICROS with the UTC TIMESTAMP logical type by passing an explicit schema (the
+  writer's auto schema only emits MILLIS). `tags` is a real MAP and round trips through `hyparquet`.
+  On decode the `event` JSON is authoritative; the promoted project/event/issue/received_at columns are
+  cross-checked and a mismatch is reported as a corrupt batch.
+- Staging key parts are escaped with a stricter set than `encodeURIComponent` (also `-`, `.`, and the other
+  unreserved punctuation) so `-` is an unambiguous separator and `/` in the batch id (`<projectId>/<seq>`) does not
+  create sub-prefixes.
+- `MemoryArchiveStore.hasBatch` is now day-range-scoped like the partition-pruned probe: it answers true when a row of
+  the batch falls inside the inclusive range. It ignores masked rows (the real probe has the same blind spot, see
+  M4_PLAN risk 5). The contract `stage` option now takes the batch id and there is a `stageUnreadable` option.
+- Fault wrappers are functions (`faultyArchiveStore`, `faultyActiveStore`, `faultyMeta`, `faultyBlobStore`) over a
+  shared `FaultInjector`; plans fire once on the Nth call of `<scope>.<method>` before or after the effect.
+
+## 2026-11-25 — M4b: archival planner and worker, staging dropped
+
+- The M4a Parquet staging codec was removed in this slice by owner decision. The archive is the
+  write-ahead record: the worker passes rows straight to `ArchiveStore.append({batchId, dayRange, rows})`,
+  and the DELETE step reads the id list back from the committed snapshot with the new
+  `ArchiveStore.batchEventIds(projectId, batchId, dayRange)`. The state machine is SCAN, COMMIT (CAS
+  `committing`, then append), MARK, DELETE, CLEAR. Costs: one archive read per batch; engines that need
+  a file to commit (native committer, Cloudflare) are out of M4 and would bring staging back as an
+  engine option (codec in git history at 14c8c9e). `hyparquet` and its layering allowlist entries went
+  with it; core keeps only `archive-rows.ts` (row definition, day range, bounds).
+- Resume of a `committing` batch: `hasBatch` true goes to MARK; false means nothing durable existed, so
+  the worker CAS-clears `batch` and rescans, rebuilding under the same batch id (the rows may differ if
+  late events arrived). Residual race, documented in ARCHITECTURE: a stale holder that passed its COMMIT CAS,
+  then stalls longer than the lease, may append late. The engine's idempotence on the batch id (first
+  append wins) prevents duplicates, but if its row set differs from the rebuilt batch the rebuilt
+  `dayRange` could prune some of its rows out of `batchEventIds`, leaving them for a later batch that
+  would archive them twice. This needs a stall longer than 2x the invocation timeout between the CAS and
+  the append call; M4j must also account for erasure interacting with it.
+- Overflow blob keys cannot be recovered from the archive (the archived event is self-contained, the key
+  is dropped), so the worker writes a small nonce-keyed manifest `archive-overflow/<batch>-<owner>-<n>.json`
+  before the COMMIT CAS and records its key in `batch.overflowKey`. Only keys, no PII; orphans from a
+  crash before the CAS are swept in M4h.
+- The `archive-planner` and `retention` cron jobs are wired in `createCronHandler` by optional
+  arguments; the `retention` job now touches the store, so the AWS cold-start test uses the still
+  unimplemented `erasure-worker` job as its no-op. The scan contract already covered cursor-free restart
+  after partial deletes, so no `EventRepo` contract change was needed (DynamoDB emulated suite not rerun).
+- Lease `until` is `now + 2 x invocationTimeoutMs` (default 15 min), renewed by every CAS; the lease is
+  released by CAS before a continuation is sent. The fault matrix (every operation of every call, before
+  and after, on memory and sqlite) is generated from a dry run's call counts, so new operations are
+  covered automatically.
+
+
+## 2026-11-25 — M4c: federated EventQueryService
+
+- `EventQueryService` (core `event-query.ts`) merges the active store and the archive by `(receivedAt, eventId)`, dedupes on `eventId` and resumes both sources from the last emitted key. Its public cursor holds only that key (scope `["fed", project, issue, from, to, order]`). Source cursors stay internal: sources are paged with `after` and drained through their own cursors until they hold `limit` rows, because a source page may be empty or short with `hasMore` true (examined-key cursors).
+- `hasMore` needs no probe row: each drained source either is exhausted or holds at least `limit` rows, so `merged > limit || a source has more` is exact, including when every source row is a duplicate.
+- The cursor is federation-shaped whenever an archive is configured, so it survives the watermark moving mid-pagination; a source cursor is rejected as invalid. Without an archive the service is a pure pass-through, so API output is byte-identical.
+- Archive reachability: `from < archivedThrough` (or no `from`), and not an ascending resume at or past the watermark. Rows between COMMIT and MARK exceed the watermark but still live in the active store, which is always queried, so that skip is safe.
+- Test design: `federationSuite(factory)` in `packages/testing` (random placement over hot, cold and both tiers with tied timestamps, both orders, limits 1..100, issue and range filters, exact `hasMore`, empty-tier cases, archive-skip checks, cursor hygiene, and archival running between pages by crashing the M4b worker right after its first DELETE call so rows sit in both tiers). Mutation check: removing dedupe or the `more` flags fails the suite. Runs on MemoryActiveStore and sqlite (memory and file) with MemoryArchiveStore. `MemoryArchiveStore.getEvent` now accepts the hint argument.
+- Gap: no platform passes `archive` to `createApiApp` yet (standalone, Lambda); that is M4g and M4i.

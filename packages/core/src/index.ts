@@ -1,3 +1,6 @@
+export * from "./archival.js";
+export * from "./archive-planner.js";
+export * from "./archive-rows.js";
 export * from "./artifact-bundles.js";
 export * from "./blob-key.js";
 export * from "./bootstrap.js";
@@ -11,6 +14,7 @@ export * from "./deployed-runtime.js";
 export * from "./domain.js";
 export * from "./envelope.js";
 export * from "./errors.js";
+export * from "./event-query.js";
 export * from "./identifier-limits.js";
 export * from "./ids.js";
 export * from "./ingest.js";
