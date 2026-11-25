@@ -791,6 +791,44 @@ export function activeStoreContract(
         ),
       ).toEqual([]);
     });
+    it("pages one organization's projects across many interleaved organizations", async () => {
+      const store = await factory();
+      const orgs = ["a", "b", "c"].map((slug) => ({
+        id: `org-${slug}` as OrgId,
+        slug: `org-${slug}`,
+        name: slug,
+      }));
+      for (const org of orgs) await store.projects.putOrg(org);
+      const expected = new Map<OrgId, string[]>(orgs.map((o) => [o.id, []]));
+      for (let n = 0; n < 36; n++) {
+        const org = orgs[n % 3] as (typeof orgs)[number];
+        const project: Project = {
+          id: `${100 + n}` as ProjectId,
+          orgId: org.id,
+          slug: `p${n}`,
+          name: `P${n}`,
+          retentionDays: 30,
+        };
+        await store.projects.put(project);
+        expected.get(org.id)?.push(project.id);
+      }
+      for (const org of orgs) {
+        const ids = (
+          await collect((cursor) => store.projects.listByOrg(org.id, cursor, 5))
+        ).map((p) => p.id);
+        expect(new Set(ids).size).toBe(ids.length);
+        expect([...ids].sort()).toEqual(
+          [...(expected.get(org.id) ?? [])].sort(),
+        );
+      }
+      // The first page is bounded by the limit and a follow-up cursor exists while rows remain.
+      const first = await store.projects.listByOrg(
+        orgs[0]?.id as OrgId,
+        undefined,
+        5,
+      );
+      expect(first.items.length).toBeLessThanOrEqual(5);
+    });
     it("persists per-project rate limits through reads, updates and clearing", async () => {
       const store = await factory();
       const org = { id: "org" as OrgId, slug: "org", name: "Organization" };

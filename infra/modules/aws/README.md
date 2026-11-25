@@ -36,10 +36,11 @@ one strong issue-ID pointer per issue alongside the canonical records. Sparse GS
 live on their source items and their indexes are eventually consistent. Natural-key aliases
 provide organization and project slug, project key, token hash, release version and debug-ID
 lookups; an issue-ID pointer partition serves cross-project issue lookup.
-The store has eleven sparse, `KEYS_ONLY` GSIs: `event-project-time`,
+The store has twelve sparse, `KEYS_ONLY` GSIs: `event-project-time`,
 `event-issue-time`, `issue-id`, `issue-last`, `issue-first`, `issue-count`,
-`entity-list`, `erasure-all`, `erasure-project`, `erasure-state`, and
-`erasure-project-state`. Their exact string attributes live in `dynamodb/indexes.json`.
+`entity-list`, `erasure-all`, `erasure-project`, `erasure-state`,
+`erasure-project-state`, and `project-org`. Their exact string attributes live in
+`dynamodb/indexes.json`.
 See `.agents-docs/DYNAMODB_DESIGN.md` for the key encodings, per-operation access
 patterns, eventually consistent hydration and the strong issue-ID pointer. No subject
 index is stored in DynamoDB. KV has no GSIs and keeps its numeric `expiresAt` TTL;

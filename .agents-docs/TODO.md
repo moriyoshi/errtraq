@@ -29,7 +29,7 @@ item should be resolved or removed once addressed. Milestone work itself is trac
 - [x] M5b: symbolicate JS frames in the consumer; schedule cleanup (also expire stale `artifacts/chunks/` on blob-fs). Done; whole-bundle reads, no ZIP range reads. — *source: M5a*
 - [ ] M5: consider a bundle delete/replace API for debug-ID overlap, and a dedicated release scope. — *source: M5a*
 - [ ] M5: verify on real AWS that the generated consumer role can symbolicate (`release-read` IAM `LeadingKeys` condition on `GetItem`, blob read of bundles). Narrowed 2026-11-25: the cron role ran `bundle-cleanup` on the nodejs26.x stack without errors, and the sentry-cli e2e ran in a container (see below). — *source: M5b*
-- [ ] M5: `bundle-cleanup` does not persist a project cursor, so a deployment with more than 1000 projects never reaches the later ones; add a cursor (KV or blob) or an expiry index across projects. Optionally read bundles by ZIP range requests instead of whole objects. — *source: M5b*
+- [ ] M5: read bundles by ZIP range requests instead of whole objects. (The `bundle-cleanup` project cursor is done: blob `cron/bundle-cleanup-cursor`, cron role blob `write`.) — *source: M5b*
 - [x] M3h: count-sort key updates under contention on real DynamoDB: the hot issue ranks first with its exact count in both record modes (third run, 2026-11-25, JOURNAL).
 - [ ] M4: resolve the main-queue drain proof before claiming erasure completion; waiting and inspecting the DLQ and index cannot prove that a committed, unindexed event is not still retrying in the main queue. Verify blob list/read consistency and lease-fenced manifest operations for the Parquet index. — *source: M3e step 1c*
 - [ ] M3h: measured in run 3 at the sandbox account limit (500 events, HTTP concurrency 5, both modes; WCU, conflicts and throttles in JOURNAL). Remaining: 500 truly concurrent writers (needs quota or consumer `maxConcurrency`), GSI write units and index backpressure, and fence ConditionCheck conflict rates. — *source: M3e step 1c*
@@ -163,7 +163,7 @@ item should be resolved or removed once addressed. Milestone work itself is trac
 - [ ] M3 / postgres admin: the bootstrap admin client (`postgres-admin.ts`) still sends `statement_timeout` as a startup option, which RDS Proxy refuses (`0A000`); align it with the pool's proxy handling if bootstrap through a password-capable proxy is ever supported. — *source: M3h run 3 A10*
 - [x] M5: run the opt-in real sentry-cli e2e (`ERRTRAQ_SENTRY_CLI`) for the M5a upload path and M5b symbolication. Done 2026-11-25 in a Node 26.13.1 container (the CLI is not installed on the host). — *source: M5b*
 
-- [ ] M5: a per-organization project index in DynamoDB (`ProjectRepo.listByOrg` currently filters the shared project index one page per call). — *source: M5a review*
+- [x] M5: a per-organization project index in DynamoDB (`project-org` GSI12; existing tables run `DynamoStore.backfillProjectOrgIndexes()` once). — *source: M5a review*
 
 - [ ] M5b: scope the cron role's DynamoDB `write` for `bundle-cleanup` more tightly (it currently holds the generic store `write`/`read` policies although it only needs the pending-bundle claim transitions and project/pending-bundle reads). — *source: M5b review fixes*
 - [ ] M5b: replace the rotating project window in `runBundleCleanup` with a persisted resume cursor if the per-run project listing becomes costly. — *source: M5b review fixes*

@@ -20,6 +20,7 @@ import {
   type Driver,
   dataItem,
   get,
+  type Item,
   itemData,
   pageIndex,
   primary,
@@ -27,6 +28,14 @@ import {
 } from "./repository-base.js";
 
 const indexPartition = (...parts: string[]) => partition("ENTITY", ...parts);
+/** Sparse GSI12 pair of a project: one partition per organization, project ID as the sort key. */
+export const projectOrgIndex = (project: {
+  id: string;
+  orgId: string;
+}): Item => ({
+  GSI12PK: s(indexPartition("projects-by-org", project.orgId)),
+  GSI12SK: s(sortKey(project.id)),
+});
 const ownerKey = (kind: string, id: string) => partition("KEYID", kind, id);
 async function markerLookup<T>(
   driver: Driver,
@@ -44,6 +53,7 @@ async function writeUnique<T>(
   marker: string,
   oldMarker: (old: T) => string,
   index?: { partition: string; sort: string },
+  extra?: Item,
 ): Promise<void> {
   for (let attempt = 0; attempt < 12; attempt++) {
     const previous = await get(driver, PK);
@@ -53,7 +63,7 @@ async function writeUnique<T>(
       {
         Put: {
           TableName: driver.table,
-          Item: dataItem(PK, value, index),
+          Item: dataItem(PK, value, index, extra),
           ...conditionFor(previous),
         },
       },
@@ -185,6 +195,7 @@ export function projectRepository(driver: Driver): ProjectRepo {
         projectSlug(project.orgId, project.slug),
         (old) => projectSlug(old.orgId, old.slug),
         { partition: indexPartition("projects"), sort: sortKey(project.id) },
+        projectOrgIndex(project),
       ),
     list: (cursor, limit) =>
       pageIndex<Project>(
@@ -197,24 +208,19 @@ export function projectRepository(driver: Driver): ProjectRepo {
         cursor,
         limit,
       ),
-    // The project index is shared by every organization, so this filters one global page per
-    // call; the cursor advances over examined keys and a page may be short or empty.
-    listByOrg: async (orgId, cursor, limit) => {
-      const page = await pageIndex<Project>(
+    // One Query of the organization's own GSI12 partition (sparse: only projects written since
+    // the index existed; see backfillProjectOrgIndexes for older rows).
+    listByOrg: (orgId, cursor, limit) =>
+      pageIndex<Project>(
         driver,
-        "entity-list",
-        "GSI7PK",
-        "GSI7SK",
-        indexPartition("projects"),
-        "projects",
+        "project-org",
+        "GSI12PK",
+        "GSI12SK",
+        indexPartition("projects-by-org", orgId),
+        "projects-by-org",
         cursor,
         limit,
-      );
-      return {
-        items: page.items.filter((p) => p.orgId === orgId),
-        nextCursor: page.nextCursor,
-      };
-    },
+      ),
     getKey: async (publicKey) =>
       itemData<ProjectKey>(await get(driver, keyPk(publicKey))),
     putKey: (key) =>
@@ -408,3 +414,70 @@ export function projectRepository(driver: Driver): ProjectRepo {
   };
 }
 export { indexPartition, markerLookup, writeUnique };
+
+/**
+ * Add the `project-org` index attributes to projects written before that index existed. It pages
+ * the global project index (no table scan), strongly reads each project, and conditionally sets
+ * the two attributes on the unchanged revision. Idempotent; contention retries rereads.
+ */
+export async function backfillProjectOrgIndexes(
+  driver: Driver,
+  repo: Pick<ProjectRepo, "list">,
+): Promise<{ updated: number; unchanged: number }> {
+  const counts = { updated: 0, unchanged: 0 };
+  let cursor: Parameters<ProjectRepo["list"]>[0];
+  do {
+    const page = await repo.list(cursor, 100);
+    cursor = page.nextCursor ?? undefined;
+    for (const listed of page.items) {
+      const PK = partition("PROJECT", listed.id);
+      for (let attempt = 0; attempt < 12; attempt++) {
+        const item = await get(driver, PK);
+        const project = itemData<Project>(item);
+        if (!item || !project) break;
+        const target = projectOrgIndex(project);
+        if (
+          item.GSI12PK?.S === target.GSI12PK?.S &&
+          item.GSI12SK?.S === target.GSI12SK?.S
+        ) {
+          counts.unchanged++;
+          break;
+        }
+        try {
+          await driver.request("UpdateItem", {
+            TableName: driver.table,
+            Key: primary(PK),
+            UpdateExpression:
+              "SET #rev = :revision, GSI12PK = :pk, GSI12SK = :sk",
+            ConditionExpression: item.revision
+              ? "#rev = :old"
+              : "attribute_not_exists(#rev)",
+            ExpressionAttributeNames: { "#rev": "revision" },
+            ExpressionAttributeValues: {
+              ":revision": s(crypto.randomUUID()),
+              ":pk": target.GSI12PK as { S: string },
+              ":sk": target.GSI12SK as { S: string },
+              ...(item.revision ? { ":old": item.revision } : {}),
+            },
+          });
+          counts.updated++;
+          break;
+        } catch (error) {
+          if (
+            !(error instanceof DynamoStoreError) ||
+            error.providerCode !== "ConditionalCheckFailedException"
+          )
+            throw error;
+          if (attempt === 11)
+            throw new DynamoStoreError(
+              "DynamoDB project index backfill contention limit reached",
+              "ConditionalCheckFailedException",
+              true,
+            );
+          await contentionDelay(attempt);
+        }
+      }
+    }
+  } while (cursor);
+  return counts;
+}
