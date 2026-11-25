@@ -195,10 +195,13 @@ prefix-scoped list access needed to distinguish missing objects.
 Deployed cron also needs primary blob read / list and ingest-queue produce to recover staged
 envelopes; M3 must schedule that job. `ingest` is produced by ingest and cron, and consumed by consumer. The M4 `notifications` route is
 produced and consumed by consumer and is enabled only by `features.notifications: true`; the M4
-`archive.project` route is enabled when archive is selected, produced by cron and consumer, and
-consumed by consumer. Archive selection adds the marked M4 store, blob staging and primary,
-archive and KV requirements in the table. In particular cron needs staging read/write/delete/list and also
-primary blob read/delete to remove archived overflow blobs. These are model requirements, not implemented M4 handlers. The API receives no erasure suppression-write grant while subject erasure is unavailable.
+`archive.project` route is enabled when archive is selected. On the single-process platform it is
+produced by cron and consumer and consumed by consumer; on a function platform (M4i, D6) it is produced
+and consumed by the always-split `archive` role, which validation adds to the platform roles. Archive
+selection adds the marked M4 requirements in the table: the `archive` role gets store read/write/delete,
+primary blob read/write/delete/list (overflow payloads and `archive-overflow/` manifests) and archive
+read/write/delete, and `api` gets archive read; there are no staging or archive KV rows and consumer and
+cron hold no archive grant. These are model requirements. The API receives no erasure suppression-write grant while subject erasure is unavailable.
 
 Core validates that selected adapters support each active role / capability / purpose, derives
 `DerivedGrant` records and binding scopes for physical functions, and groups duplicate grants.
@@ -208,7 +211,8 @@ and `deriveTriggers` expose these derivations. Queue routes map all core topics 
 keys; per-topic mode requires distinct physical queues, shared mode one physical queue. Queue
 triggers are derived only for active topics, one per physical queue. Cron triggers come from
 `CRON_JOBS`: Lambda schedules staged-envelope recovery every five minutes whenever the cron role
-is deployed, and schedules the M4 jobs when archive is selected. Recovery skips newly staged
+is deployed, and schedules the M4 jobs when archive is selected (on a function platform `archive-planner` and
+`retention` run on the `archive` role; `erasure-worker` is not scheduled until its handler exists). Recovery skips newly staged
 objects for ten minutes, then republishes old claims; a recovered claim whose blob has since been
 deleted is acknowledged because the successful consumer deletes only after its durable handoff.
 Known M4 placeholders log that they are not implemented, and unknown jobs log an error.
@@ -413,13 +417,17 @@ independently from the SQLite path. The local stack assigns both from `ERRTRAQ_D
 ## Worked AWS examples
 
 The complete type-checked and validated illustrative fixtures are in
-[`packages/core/src/infra-examples.test.ts`](../packages/core/src/infra-examples.test.ts). Both
-include an illustrative archive selection. The per-topic fixture also enables notifications so
-all three topics are active. Neither fixture runs an
+[`packages/core/src/infra-examples.test.ts`](../packages/core/src/infra-examples.test.ts). The
+fixtures differ: the per-topic fixture includes an illustrative archive selection (a function platform needs a
+per-topic queue for it, because `archive.project` is consumed by another function) and enables
+notifications so all three topics are active. Neither fixture runs an
 AWS adapter or creates Terraform. This exact excerpt constructs the shared and per-topic stacks:
 
 ```ts
-function exampleStack(mode: "shared" | "per-topic"): StackConfig {
+function exampleStack(
+  mode: "shared" | "per-topic",
+  withArchive = mode === "per-topic",
+): StackConfig {
   return {
     name: "example",
     providers: {
@@ -435,7 +443,9 @@ function exampleStack(mode: "shared" | "per-topic"): StackConfig {
     queue: queue(mode),
     blob: resource("blob", ["read", "write", "delete", "list"]),
     kv: resource("kv", ["read", "write"]),
-    archive: resource("archive", ["read", "write", "delete"]),
+    ...(withArchive
+      ? { archive: resource("archive", ["read", "write", "delete"]) }
+      : {}),
     outputs: {
       ingest_url: output("platform", "ingest_url"),
       api_url: output("platform", "api_url"),
