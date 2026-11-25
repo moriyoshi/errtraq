@@ -2027,3 +2027,8 @@ choice; no quota increase). Findings:
 - DynamoDB `listByOrg` now queries the new sparse `project-org` GSI (GSI12PK `ENTITY|projects-by-org|<orgId>`, GSI12SK project ID), one Query per page with strong hydration, so pages are full. `projects.put` writes the attributes with the entity-list pair and a change of organization rewrites them. The Terraform module derives GSIs and IAM index ARNs from `indexes.json`, so adding the entry (and the 11 to 12 count in the tftest) is the whole infra change; adding a GSI to an existing table is an online update.
 - Backfill: projects written before the index existed are invisible to `listByOrg` until `DynamoStore.backfillProjectOrgIndexes()` runs once (pages the global project index, no scan; revision-fenced; idempotent; needs table `GetItem`, `UpdateItem` and index `Query`). Run it after the GSI finishes backfilling. The emulated suite covers it (winterbaume ran: 37 passed).
 
+
+## 2026-11-25 — Review of the M5 follow-ups
+
+- Reviewed by Claude Opus; implemented by Claude Sonnet. Accepted: the bundle-cleanup cursor as one blob (round-robin laps, restart on corrupt or stale cursors), and the sparse `project-org` GSI with a one-off `backfillProjectOrgIndexes()` for tables created before it (pages the project index, no scan; run after the GSI finishes building).
+- Accepted with a follow-up: the cron role gained bucket-wide blob `write` (PutObject on the primary bucket). It already held bucket-wide delete, so the widening is modest, but requirement rows cannot scope a key prefix yet (TODO). Choosing blob over KV kept the per-topic cron role within the inline policy budget guard.

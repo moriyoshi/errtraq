@@ -165,6 +165,7 @@ item should be resolved or removed once addressed. Milestone work itself is trac
 
 - [x] M5: a per-organization project index in DynamoDB (`project-org` GSI12; existing tables run `DynamoStore.backfillProjectOrgIndexes()` once). — *source: M5a review*
 
+- [ ] M5: the cron role's blob `write` (added for the `bundle-cleanup` cursor blob `cron/bundle-cleanup-cursor`) is bucket-wide `PutObject` on the primary bucket because requirement rows cannot express a key prefix; scope it to `cron/*` once grants can carry a prefix. — *source: M5 follow-up review*
 - [ ] M5b: scope the cron role's DynamoDB `write` for `bundle-cleanup` more tightly (it currently holds the generic store `write`/`read` policies although it only needs the pending-bundle claim transitions and project/pending-bundle reads). — *source: M5b review fixes*
 - [ ] M5b: replace the rotating project window in `runBundleCleanup` with a persisted resume cursor if the per-run project listing becomes costly. — *source: M5b review fixes*
 - [ ] M4i: remove the `archive-staging/` lifecycle rule and `staging_prefix` from the blob-s3 stack and `infra/modules/aws/s3` (staging was dropped in M4b); the orphan `archive-overflow/` manifest sweep exists since M4h (retention job, under the project lease); an overflow-payload (`payloads/<projectId>/`) orphan sweep is not possible without blob age metadata, keep the bucket lifecycle rule. — *source: M4b staging removal*
