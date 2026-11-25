@@ -2042,3 +2042,9 @@ choice; no quota increase). Findings:
 - Unverified: the TLS-deny table bucket policy (`Deny` on `s3tables:*` with `aws:SecureTransport`) passes mock tests only; AWS may reject an `s3tables:*` wildcard in a table bucket policy. No account was touched.
 - Implemented by Claude Sonnet; review by Claude Opus pending.
 
+
+## 2026-11-25 — Review of the M4i Terraform piece
+
+- Reviewed by Claude Opus; implemented by Claude Sonnet. Accepted: `infra/modules/aws/s3tables` (table bucket, namespace, TLS-only bucket policy, unreferenced-file removal), per-capability policies that grant no drop, policy or maintenance action to any function role, and the decision that Terraform does not create the `events` table (the provider resource cannot express format v3, the partition spec or the sort order, so `ensureTable` keeps it and table-level maintenance becomes an M4l engine/operator step).
+- The descriptor injects the table bucket ARN, catalog URI and region as environment bindings applied over the config at `create`, so a stack does not need the ARN at config time.
+- Merged after the M5 per-organization index change; `pnpm infra:validate` passed on the combined main (22 generated root variants at both pinned provider versions). The IAM action list is still unverified against a real least-privilege role (M4m TODO).
