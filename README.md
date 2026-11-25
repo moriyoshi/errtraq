@@ -78,8 +78,11 @@ documents; an empty document grants no access.
 After deploying the stack, run migrations and create the first organization, project and
 credentials from the operator's machine. Supply the deployed store and KV binding names in
 the environment (for the DynamoDB examples, `ERRTRAQ_STORE_TABLE` and `ERRTRAQ_KV_TABLE`),
-`AWS_REGION`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, and, for temporary credentials,
-`AWS_SESSION_TOKEN`. For Postgres secret mode, supply the full existing
+and AWS credentials: either `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` (and `AWS_SESSION_TOKEN`
+for temporary credentials), which take precedence, or any profile the AWS SDK for JavaScript
+resolves (`AWS_PROFILE`, shared config and credentials files, SSO sessions after `aws sso login`,
+`credential_process`, assume-role profiles). `AWS_REGION` falls back to the profile's `region`.
+For Postgres secret mode, supply the full existing
 database-secret ARN in `ERRTRAQ_POSTGRES_SECRET`; IAM mode also needs its documented database
 bindings and CA bundle. `errtraq validate` lists binding names. Use the deployed ingest URL,
 without a DSN key, and a new Secrets Manager name:
@@ -117,7 +120,7 @@ platform: awsLambda({
 ```
 
 See `stacks/aws-dynamodb-bootstrap.ts`. After `terraform apply`, from any machine with AWS
-credentials and `AWS_REGION`:
+credentials (environment variables or an AWS profile, as above) and a region:
 
 ```sh
 pnpm exec errtraq bootstrap --remote --stack stacks/aws-dynamodb-bootstrap.ts \

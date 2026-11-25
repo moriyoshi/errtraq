@@ -2,6 +2,7 @@ import { resolveStack } from "@moriyoshi/errtraq-core";
 import { describe, expect, it } from "vitest";
 import grouped from "../../../stacks/aws-dynamodb.js";
 import bootstrapStack from "../../../stacks/aws-dynamodb-bootstrap.js";
+import { resolveOperatorAwsEnvironment } from "./aws-credentials.js";
 import {
   bootstrapFunctionName,
   formatRemoteBootstrap,
@@ -83,6 +84,28 @@ describe("remote bootstrap", () => {
       version: 1,
       ...input,
     });
+  });
+  it("signs the invoke with profile-resolved credentials and region", async () => {
+    const f = fake(() => Response.json(ok));
+    const resolved = await resolveOperatorAwsEnvironment(
+      { AWS_PROFILE: "sso" },
+      {
+        credentials: async () => ({
+          accessKeyId: "ASIASSOEXAMPLE",
+          secretAccessKey: "sso-secret",
+          sessionToken: "sso-token",
+        }),
+        profileRegion: async () => "eu-west-1",
+        required: true,
+      },
+    );
+    await invokeRemoteBootstrap(stack, resolved, input, f.fetcher);
+    const [call] = f.seen;
+    expect(call?.url).toContain("https://lambda.eu-west-1.amazonaws.com/");
+    expect(call?.headers.get("x-amz-security-token")).toBe("sso-token");
+    expect(call?.headers.get("authorization")).toContain(
+      "Credential=ASIASSOEXAMPLE/",
+    );
   });
   it("sends rate limits and refuses ones the stack cannot honour before calling", async () => {
     const limited = resolveStack({

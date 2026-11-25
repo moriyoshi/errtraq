@@ -10,6 +10,7 @@ import {
   stackOrigin,
 } from "@moriyoshi/errtraq-core";
 import { buildSummary, dsnHost, dsnOrigin } from "./address.js";
+import { resolveOperatorAwsEnvironment } from "./aws-credentials.js";
 import { buildStack } from "./build.js";
 import { constructStack } from "./construction.js";
 import { bootstrapAwsStack } from "./deployed-bootstrap.js";
@@ -148,6 +149,11 @@ export async function main(args: string[]): Promise<void> {
       "The stack file loads a different copy of @moriyoshi/errtraq-core than the errtraq CLI; install one shared @moriyoshi/errtraq-core (it is a peer dependency of every errtraq package) and avoid duplicate copies in node_modules",
     );
   const stack = resolveStack(imported.default);
+  /** Operator-side AWS credentials and region (profile, SSO, ...) for the commands that sign. */
+  const operatorEnvironment = (target: typeof stack, required = false) =>
+    target.platform.manifest.id === "aws-lambda"
+      ? resolveOperatorAwsEnvironment(process.env, { required })
+      : Promise.resolve(process.env);
   if (tokenAdmin) {
     const orgSlug = options["--org"];
     if (!orgSlug || (tokenAdmin === "revoke" && !options["--id"]))
@@ -156,18 +162,22 @@ export async function main(args: string[]): Promise<void> {
           ? "token list requires --org"
           : "token revoke requires --org and --id",
       );
-    await withDeployedStore(stack, process.env, async (store) => {
-      if (tokenAdmin === "list")
-        console.log(formatTokens(await listTokens(store, orgSlug)));
-      else {
-        const revoked = await revokeToken(store, {
-          orgSlug,
-          id: options["--id"] ?? "",
-          force: options["--force"] === "true",
-        });
-        console.log(`Revoked token ${revoked.id} at ${revoked.revokedAt}`);
-      }
-    });
+    await withDeployedStore(
+      stack,
+      await operatorEnvironment(stack),
+      async (store) => {
+        if (tokenAdmin === "list")
+          console.log(formatTokens(await listTokens(store, orgSlug)));
+        else {
+          const revoked = await revokeToken(store, {
+            orgSlug,
+            id: options["--id"] ?? "",
+            force: options["--force"] === "true",
+          });
+          console.log(`Revoked token ${revoked.id} at ${revoked.revokedAt}`);
+        }
+      },
+    );
     return;
   }
   if (projectLimits) {
@@ -179,14 +189,18 @@ export async function main(args: string[]): Promise<void> {
       issueEvents: parseLimit("--issue-events", options["--issue-events"]),
       newIssues: parseLimit("--new-issues", options["--new-issues"]),
     };
-    await withDeployedStore(stack, process.env, async (store) => {
-      const project = await setProjectRateLimits(store, stack, {
-        orgSlug,
-        projectSlug,
-        ...change,
-      });
-      console.log(formatProjectLimits(project));
-    });
+    await withDeployedStore(
+      stack,
+      await operatorEnvironment(stack),
+      async (store) => {
+        const project = await setProjectRateLimits(store, stack, {
+          orgSlug,
+          projectSlug,
+          ...change,
+        });
+        console.log(formatProjectLimits(project));
+      },
+    );
     return;
   }
   if (command === "bootstrap") {
@@ -211,13 +225,17 @@ export async function main(args: string[]): Promise<void> {
       );
     const bootstrapLimits = limitsFromInput({ issueEvents, newIssues }).set;
     if (remote) {
-      const result = await invokeRemoteBootstrap(stack, process.env, {
-        orgSlug: options["--org"],
-        projectSlug: options["--project"],
-        ingestUrl: options["--ingest-url"],
-        rateLimits: bootstrapLimits,
-        functionName: options["--function-name"],
-      });
+      const result = await invokeRemoteBootstrap(
+        stack,
+        await operatorEnvironment(stack, true),
+        {
+          orgSlug: options["--org"],
+          projectSlug: options["--project"],
+          ingestUrl: options["--ingest-url"],
+          rateLimits: bootstrapLimits,
+          functionName: options["--function-name"],
+        },
+      );
       if (!result.ok)
         throw new Error(
           `Bootstrap failed (${result.error.code}): ${result.error.message}`,
@@ -225,13 +243,17 @@ export async function main(args: string[]): Promise<void> {
       console.log(formatRemoteBootstrap(result));
       return;
     }
-    const arn = await bootstrapAwsStack(stack, process.env, {
-      secretName: options["--secret-name"],
-      ingestUrl: options["--ingest-url"],
-      orgSlug: options["--org"],
-      projectSlug: options["--project"],
-      rateLimits: bootstrapLimits,
-    });
+    const arn = await bootstrapAwsStack(
+      stack,
+      await operatorEnvironment(stack),
+      {
+        secretName: options["--secret-name"],
+        ingestUrl: options["--ingest-url"],
+        orgSlug: options["--org"],
+        projectSlug: options["--project"],
+        rateLimits: bootstrapLimits,
+      },
+    );
     console.log(
       `Bootstrap complete; read DSN and API token from Secrets Manager: ${arn}`,
     );

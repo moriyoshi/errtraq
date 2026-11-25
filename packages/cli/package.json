@@ -40,26 +40,28 @@
     "node": "^22.18.0 || >=23.6.0"
   },
   "dependencies": {
+    "@aws-sdk/credential-providers": "^3.1176.0",
+    "@moriyoshi/errtraq-aws-signing": "workspace:*",
     "@moriyoshi/errtraq-blob-fs": "workspace:*",
     "@moriyoshi/errtraq-infra-gen": "workspace:*",
+    "@moriyoshi/errtraq-kv-dynamodb": "workspace:*",
     "@moriyoshi/errtraq-kv-memory": "workspace:*",
+    "@moriyoshi/errtraq-platform-aws-lambda": "workspace:*",
     "@moriyoshi/errtraq-platform-standalone": "workspace:*",
     "@moriyoshi/errtraq-queue-memory": "workspace:*",
-    "@moriyoshi/errtraq-store-sql": "workspace:*",
-    "esbuild": "0.28.2",
-    "fflate": "0.8.2",
-    "@moriyoshi/errtraq-aws-signing": "workspace:*",
-    "@moriyoshi/errtraq-platform-aws-lambda": "workspace:*",
     "@moriyoshi/errtraq-store-dynamodb": "workspace:*",
-    "@moriyoshi/errtraq-kv-dynamodb": "workspace:*",
-    "@moriyoshi/errtraq-terraform-modules": "workspace:*"
+    "@moriyoshi/errtraq-store-sql": "workspace:*",
+    "@moriyoshi/errtraq-terraform-modules": "workspace:*",
+    "@smithy/shared-ini-file-loader": "^4.7.2",
+    "esbuild": "0.28.2",
+    "fflate": "0.8.2"
   },
   "peerDependencies": {
     "@moriyoshi/errtraq-core": "workspace:^"
   },
   "devDependencies": {
-    "@moriyoshi/errtraq-testing": "workspace:*",
-    "@moriyoshi/errtraq-core": "workspace:*"
+    "@moriyoshi/errtraq-core": "workspace:*",
+    "@moriyoshi/errtraq-testing": "workspace:*"
   },
   "repository": {
     "type": "git",

@@ -558,7 +558,7 @@ Further AWS verification and remaining M3 work are tracked in the agent document
 Bootstrap (migrations, the first organization, project, DSN key and API token, and the bootstrap
 secret holding the DSN and token) has two paths that share one idempotent implementation in core
 (`bootstrapDeployed`). The direct path runs `errtraq bootstrap` from the operator's machine with
-the operator's AWS credentials; it needs network access to the store. When the store is reachable
+the operator's AWS credentials (environment keys first, otherwise the SDK profile chain: `AWS_PROFILE`, SSO, `credential_process`, assume-role; resolved in the CLI only, never in Lambda bundles); it needs network access to the store. When the store is reachable
 only inside the VPC, the AWS Lambda platform offers an optional sixth function role, `bootstrap`
 (`awsLambda({ roles: [..., "bootstrap"], bootstrapSecretName })`), and `errtraq bootstrap --remote`
 invokes it synchronously through the Lambda Invoke API (signed with `aws-signing`, no SDK).

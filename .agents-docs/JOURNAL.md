@@ -1625,3 +1625,14 @@ are not recorded here. Findings so far, appended as the run produces them:
   secret `rds!db-<uuid>`. The deployed bootstrap failed with `SecretReadError` (`InvalidIdentifier`) in
   about 2 ms. `!` is now allowed. Unit tests elsewhere already used `rds!db-...` ARNs, but only as
   Terraform inputs, never through this reader.
+
+## 2026-11-25 — Operator AWS profile resolution lives in the CLI only
+
+`errtraq bootstrap` (direct and `--remote`) and the token and project-limit commands used to sign
+with `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` read straight from the environment, so SSO and
+profile shells failed with `CredentialsUnavailable`. `packages/cli/src/aws-credentials.ts` now
+resolves credentials once with `fromNodeProviderChain()` (env keys win, as in the SDK) and the
+profile `region`, and hands the adapters an environment with those values filled in. This keeps the
+SDK out of the platform package and the Lambda bundles, and covers every environment-reading adapter
+(DynamoDB, KV, Secrets Manager, RDS IAM) without changing them. Trade-off: credentials are resolved
+once per command, not refreshed, which is fine for these short commands.
