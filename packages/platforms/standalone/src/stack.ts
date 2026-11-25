@@ -49,6 +49,11 @@ const baseConfigSchema = z.strictObject({
       z.number().int().positive(),
     )
     .optional(),
+  /**
+   * Bound on the total life of an archived event in days (counted from receivedAt); each project's
+   * `retentionDays` is the hot-tier age and must be smaller. Absent keeps archived events forever.
+   */
+  archiveRetentionDays: z.number().int().positive().optional(),
   settings: z
     .partialRecord(
       z.enum(["ingest", "api", "consumer", "record", "cron"]),

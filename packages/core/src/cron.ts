@@ -1,3 +1,7 @@
+import {
+  type ArchiveHousekeepingOptions,
+  runArchiveHousekeeping,
+} from "./archive-housekeeping.js";
 import { runArchivePlanner } from "./archive-planner.js";
 import {
   type BundleCleanupLimits,
@@ -35,6 +39,8 @@ export function createCronHandler(
     store: Pick<ActiveStore, "projects" | "events">;
     blobs: BlobStore;
     archived?: boolean;
+    /** With `archived`: archive-side housekeeping (hard retention, orphan sweeps, lag alarm). */
+    housekeeping?: Omit<ArchiveHousekeepingOptions, "logger">;
     /** Upper bound on events deleted per project per tick. */
     maxEventsPerProject?: number;
   },
@@ -66,8 +72,12 @@ export function createCronHandler(
     }
     if (name === "retention" && retention) {
       if (retention.archived) {
-        // TODO(M4h): archive-side hard retention hooks.
-        logger.info("Retention left to archival", { job: name });
+        if (retention.housekeeping)
+          await runArchiveHousekeeping(
+            { ...retention.housekeeping, logger },
+            firedAt,
+          );
+        else logger.info("Retention left to archival", { job: name });
         return;
       }
       let cursor: Parameters<ProjectRepo["list"]>[0];

@@ -120,6 +120,31 @@ describe("capabilities", () => {
   });
 });
 
+describe("housekeeping deletes", () => {
+  it("reports the affected count and retries commit conflicts", async () => {
+    let deletes = 0;
+    const { store, fake } = makeStore(({ sql }) => {
+      if (sql.startsWith("DELETE") && deletes++ === 0)
+        return new Error("HTTP 409 CommitFailed");
+      return [{ Count: "4" }];
+    });
+    expect(
+      await store.deleteOlderThan(
+        project,
+        "2024-03-01T00:00:00.000Z" as Timestamp,
+      ),
+    ).toEqual({ rowsDeleted: 4 });
+    expect(fake.calls.filter((c) => c.sql.startsWith("DELETE"))).toHaveLength(
+      2,
+    );
+    expect(await store.deleteProject(project)).toEqual({ rowsDeleted: 4 });
+  });
+  it("reports zero when the engine returns no row", async () => {
+    const { store } = makeStore(() => []);
+    expect(await store.deleteProject(project)).toEqual({ rowsDeleted: 0 });
+  });
+});
+
 describe("append", () => {
   it("rejects an empty batch without touching the engine", async () => {
     const { store, fake } = makeStore(() => []);

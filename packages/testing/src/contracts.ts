@@ -2468,6 +2468,68 @@ export function archiveStoreContract(
         await ids(project, "ids", days("2024-03-01", "2024-03-02")),
       ).toEqual(["d1", "d2"]);
     });
+    it("deletes one project's rows older than a cutoff (exclusive) and is idempotent", async () => {
+      const a = await factory();
+      await a.append({
+        batchId: "retention",
+        dayRange: days("2024-03-01", "2024-03-03"),
+        rows: [
+          event("old1", 1, { receivedAt: at("2024-03-01T10:00:00.000Z") }),
+          event("old2", 1, { receivedAt: at("2024-03-02T10:00:00.000Z") }),
+          event("edge", 1, { receivedAt: at("2024-03-03T00:00:00.000Z") }),
+          event("new", 1, { receivedAt: at("2024-03-03T10:00:00.000Z") }),
+          event("foreign", 1, {
+            projectId: otherProject,
+            receivedAt: at("2024-03-01T10:00:00.000Z"),
+          }),
+        ],
+      });
+      const cutoff = at("2024-03-03T00:00:00.000Z");
+      expect(await a.deleteOlderThan(project, cutoff)).toEqual({
+        rowsDeleted: 2,
+      });
+      expect(await a.deleteOlderThan(project, cutoff)).toEqual({
+        rowsDeleted: 0,
+      });
+      const ids = async (p: ProjectId) =>
+        (
+          await collectEvents((after) =>
+            a.query({ projectId: p, after, limit: 2, order: "asc" }),
+          )
+        ).map((e) => e.eventId);
+      expect(await ids(project)).toEqual(["edge", "new"]);
+      expect(await ids(otherProject)).toEqual(["foreign"]);
+      expect(await a.getEvent(project, "old1" as EventId)).toBeNull();
+      expect(
+        await a.deleteOlderThan(project, at("2023-01-01T00:00:00.000Z")),
+      ).toEqual({ rowsDeleted: 0 });
+    });
+    it("deletes every row of one project and is idempotent", async () => {
+      const a = await factory();
+      await a.append({
+        batchId: "project-delete",
+        dayRange: days("2024-03-01", "2024-03-02"),
+        rows: [
+          event("p1", 1, { receivedAt: at("2024-03-01T10:00:00.000Z") }),
+          event("p2", 1, { receivedAt: at("2024-03-02T10:00:00.000Z") }),
+          event("q1", 1, {
+            projectId: otherProject,
+            receivedAt: at("2024-03-02T11:00:00.000Z"),
+          }),
+        ],
+      });
+      expect(await a.deleteProject(project)).toEqual({ rowsDeleted: 2 });
+      expect(await a.deleteProject(project)).toEqual({ rowsDeleted: 0 });
+      expect(await a.query({ projectId: project })).toMatchObject({
+        items: [],
+      });
+      expect(
+        (await a.query({ projectId: otherProject })).items.map(
+          (e) => e.eventId,
+        ),
+      ).toEqual(["q1"]);
+      expect(await a.getEvent(otherProject, "q1" as EventId)).not.toBeNull();
+    });
     it("scopes the batch probe by day range", async () => {
       const a = await factory();
       const rows = [

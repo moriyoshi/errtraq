@@ -12,6 +12,7 @@ import {
   archivalSuite,
   FakeClock,
   federationSuite,
+  housekeepingSuite,
   MemoryKV,
 } from "@moriyoshi/errtraq-testing";
 import { Kysely, sql } from "kysely";
@@ -62,6 +63,14 @@ for (const kind of ["memory", "file"] as const) {
       return store;
     });
     archivalSuite(async () => {
+      const db = database(
+        kind === "memory" ? ":memory:" : join(directory, `${++sequence}.db`),
+      );
+      const store = createSqlStore({ db, dialect: sqliteStoreDialect });
+      await store.migrate();
+      return store;
+    });
+    housekeepingSuite(async () => {
       const db = database(
         kind === "memory" ? ":memory:" : join(directory, `${++sequence}.db`),
       );

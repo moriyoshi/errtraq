@@ -358,6 +358,12 @@ describe("standalone archive tier", () => {
     expect(
       configSchema.safeParse({ cronIntervalSec: { retention: 0 } }).success,
     ).toBe(false);
+    expect(configSchema.safeParse({ archiveRetentionDays: 90 }).success).toBe(
+      true,
+    );
+    expect(configSchema.safeParse({ archiveRetentionDays: 0 }).success).toBe(
+      false,
+    );
     const store = new MemoryActiveStore();
     const { projectId } = await seed(store);
     const platform = create(

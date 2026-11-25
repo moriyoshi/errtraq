@@ -130,6 +130,8 @@ export function create(
     deleteWhere: fail("deleteWhere"),
     hardErase: fail("hardErase"),
     expireSnapshots: fail("expireSnapshots"),
+    deleteOlderThan: fail("deleteOlderThan"),
+    deleteProject: fail("deleteProject"),
     capabilities: { rowDelete: rowDeleteModeFor(parsed.engine) },
   };
 }

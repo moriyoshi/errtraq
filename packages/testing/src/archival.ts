@@ -1,6 +1,7 @@
 import {
   type ActiveStore,
   ARCHIVE_PROJECT_TOPIC,
+  ArchiveBusyError,
   type ArchiveStore,
   ArchiveWorker,
   type Cursor,
@@ -10,9 +11,12 @@ import {
   type OrgId,
   type Project,
   type ProjectId,
+  purgeProjectArchive,
   type QueueProducer,
+  runArchiveHousekeeping,
   type StoredEvent,
   type Timestamp,
+  UnsupportedQueryError,
 } from "@moriyoshi/errtraq-core";
 import { describe, expect, it } from "vitest";
 import {
@@ -253,6 +257,10 @@ function withAppend(
       inner.hardErase(...a),
     expireSnapshots: (...a: Parameters<ArchiveStore["expireSnapshots"]>) =>
       inner.expireSnapshots(...a),
+    deleteOlderThan: (...a: Parameters<ArchiveStore["deleteOlderThan"]>) =>
+      inner.deleteOlderThan(...a),
+    deleteProject: (...a: Parameters<ArchiveStore["deleteProject"]>) =>
+      inner.deleteProject(...a),
   };
 }
 
@@ -615,6 +623,249 @@ export function archivalSuite(factory: () => Promise<ActiveStore>) {
         late.eventId,
         ...s.fixture.old.map((e) => e.eventId),
       ]);
+    });
+  });
+}
+
+/** Archive-side housekeeping (M4h) over the archival scenario; `factory` supplies the active store. */
+export function housekeepingSuite(factory: () => Promise<ActiveStore>) {
+  const FIRED = NOW as Timestamp;
+  function logs() {
+    const entries: { level: string; message: string; fields?: unknown }[] = [];
+    const log =
+      (level: string) => (message: string, fields?: Record<string, unknown>) =>
+        entries.push({ level, message, fields });
+    return {
+      entries,
+      logger: { info: log("info"), warn: log("warn"), error: log("error") },
+    };
+  }
+  const options = (
+    s: Scenario,
+    extra: Partial<Parameters<typeof runArchiveHousekeeping>[0]> = {},
+  ) => {
+    const log = logs();
+    return {
+      log,
+      options: {
+        store: s.store,
+        blobs: s.blobs,
+        archive: s.archive,
+        worker: s.worker({ owner: "housekeeper" }),
+        logger: log.logger,
+        ...extra,
+      },
+    };
+  };
+  const allIds = (s: Scenario) => s.archivedIds();
+
+  describe("archive housekeeping (M4h)", () => {
+    it("hard retention deletes archive rows past archiveRetentionDays and keeps younger ones", async () => {
+      const s = await scenario(factory);
+      await s.worker().run(projectId);
+      const keep = options(s, { archiveRetentionDays: 90 });
+      expect(await runArchiveHousekeeping(keep.options, FIRED)).toMatchObject({
+        retentionDeleted: 0,
+      });
+      expect(await allIds(s)).toHaveLength(5);
+      // the old rows are 60 days old at NOW
+      const drop = options(s, { archiveRetentionDays: 30 });
+      expect(await runArchiveHousekeeping(drop.options, FIRED)).toMatchObject({
+        retentionDeleted: 5,
+        busy: 0,
+      });
+      expect(await allIds(s)).toEqual([]);
+      const again = await runArchiveHousekeeping(drop.options, FIRED);
+      expect(again.retentionDeleted).toBe(0);
+      const state = await s.store.meta.getArchiveState(projectId);
+      expect(state?.lease).toBeUndefined();
+      expect(state?.batch).toBeUndefined();
+    });
+
+    it("skips hard retention for a project whose retentionDays is not below archiveRetentionDays", async () => {
+      const s = await scenario(factory);
+      await s.worker().run(projectId);
+      const run = options(s, { archiveRetentionDays: 1 });
+      expect(await runArchiveHousekeeping(run.options, FIRED)).toMatchObject({
+        retentionDeleted: 0,
+      });
+      expect(run.log.entries.some((e) => e.level === "warn")).toBe(true);
+      expect(await allIds(s)).toHaveLength(5);
+    });
+
+    it("rejects a non-positive archiveRetentionDays", async () => {
+      const s = await scenario(factory);
+      await expect(
+        runArchiveHousekeeping(
+          options(s, { archiveRetentionDays: 0 }).options,
+          FIRED,
+        ),
+      ).rejects.toBeInstanceOf(RangeError);
+    });
+
+    it("leaves a project alone while another holder has a live lease", async () => {
+      const s = await scenario(factory);
+      await s.worker().run(projectId);
+      const holder = s.worker({ owner: "other" });
+      const lease = await holder.acquire(projectId);
+      expect(lease).not.toBeNull();
+      const run = options(s, { archiveRetentionDays: 30 });
+      expect(await runArchiveHousekeeping(run.options, FIRED)).toMatchObject({
+        retentionDeleted: 0,
+        busy: 1,
+      });
+      expect(await allIds(s)).toHaveLength(5);
+      if (lease) await holder.release(lease);
+      expect(await runArchiveHousekeeping(run.options, FIRED)).toMatchObject({
+        retentionDeleted: 5,
+        busy: 0,
+      });
+    });
+
+    it("finishes a batch a crashed worker left in flight before deleting, never racing it", async () => {
+      const s = await scenario(factory);
+      const faults = new FaultInjector().arm({
+        op: "archive.append",
+        nth: 1,
+        when: "after",
+      });
+      await expect(s.worker({ faults }).run(projectId)).rejects.toBeInstanceOf(
+        InjectedFault,
+      );
+      expect(
+        (await s.store.meta.getArchiveState(projectId))?.batch,
+      ).toBeDefined();
+      // while the dead worker's lease is live housekeeping must not touch the project
+      const run = options(s, { archiveRetentionDays: 30 });
+      expect(await runArchiveHousekeeping(run.options, FIRED)).toMatchObject({
+        busy: 1,
+        retentionDeleted: 0,
+      });
+      expect(await allIds(s)).toHaveLength(2);
+      s.clock.advance(2 * TIMEOUT_MS + 1);
+      const result = await runArchiveHousekeeping(run.options, FIRED);
+      // the batch was driven to completion (rows deleted from the active store) and then expired
+      expect(result.retentionDeleted).toBe(2);
+      const state = await s.store.meta.getArchiveState(projectId);
+      expect(state?.batch).toBeUndefined();
+      expect(state?.lease).toBeUndefined();
+      expect(await allIds(s)).toEqual([]);
+      expect((await s.activeOldIds()).length).toBe(3);
+      // the remaining old rows archive later and are expired by the next tick
+      await recover(s);
+      await runArchiveHousekeeping(run.options, FIRED);
+      expect(await allIds(s)).toEqual([]);
+      expect(await s.activeOldIds()).toEqual([]);
+    });
+
+    it("sweeps orphan overflow manifests under the lease, not the payloads, and not a busy project's", async () => {
+      const s = await scenario(factory);
+      const enc = (id: string) => encodeURIComponent(id);
+      const orphan = `archive-overflow/${enc(`${projectId}/7`)}-w9-0.json`;
+      const busyOrphan = `archive-overflow/${enc("2/1")}-w9-0.json`;
+      const unknown = `archive-overflow/${enc("404/1")}-w9-0.json`;
+      const body = new TextEncoder().encode(`["payloads/${projectId}/old2"]`);
+      for (const key of [orphan, busyOrphan, unknown, "archive-overflow/junk"])
+        await s.blobs.put(key, body);
+      await s.store.projects.put({
+        id: "2" as ProjectId,
+        orgId: "org" as OrgId,
+        slug: "p2",
+        name: "p2",
+        retentionDays: 1,
+      });
+      const holder = s.worker({ owner: "other" });
+      const lease = await holder.acquire("2" as ProjectId);
+      const run = options(s);
+      const result = await runArchiveHousekeeping(run.options, FIRED);
+      expect(result.manifestsDeleted).toBe(2);
+      expect(result.busy).toBe(1);
+      expect(await s.blobs.head(orphan)).toBeNull();
+      expect(await s.blobs.head(unknown)).toBeNull();
+      expect(await s.blobs.head(busyOrphan)).not.toBeNull();
+      expect(await s.blobs.head("archive-overflow/junk")).not.toBeNull();
+      // the payload the orphan manifest listed is still referenced by its active row
+      expect(await s.blobs.head(`payloads/${projectId}/old2`)).not.toBeNull();
+      if (lease) await holder.release(lease);
+      expect(
+        (await runArchiveHousekeeping(run.options, FIRED)).manifestsDeleted,
+      ).toBe(1);
+    });
+
+    it("raises the lag alarm for an un-archived backlog and not after archival", async () => {
+      const s = await scenario(factory);
+      const lagging = options(s, { lagAlarmMs: 60_000 });
+      expect(
+        await runArchiveHousekeeping(lagging.options, FIRED),
+      ).toMatchObject({
+        lagAlarms: 1,
+      });
+      const alarm = lagging.log.entries.find((e) => e.level === "warn");
+      expect(alarm?.message).toBe("Archival lag alarm");
+      expect(alarm?.fields).toMatchObject({ alarm: "archival-lag", projectId });
+      await s.worker().run(projectId);
+      const healthy = options(s, { lagAlarmMs: 60_000 });
+      expect(
+        await runArchiveHousekeeping(healthy.options, FIRED),
+      ).toMatchObject({
+        lagAlarms: 0,
+      });
+    });
+
+    it("expires snapshots only when configured and tolerates engines without support", async () => {
+      const s = await scenario(factory);
+      const calls: Timestamp[] = [];
+      const archive: ArchiveStore = {
+        ...s.archive,
+        capabilities: s.archive.capabilities,
+        expireSnapshots: async (olderThan) => {
+          calls.push(olderThan);
+        },
+      } as ArchiveStore;
+      const unset = options(s, { archive });
+      expect(
+        (await runArchiveHousekeeping(unset.options, FIRED)).snapshotsExpired,
+      ).toBe(false);
+      expect(calls).toEqual([]);
+      const set = options(s, { archive, snapshotExpiryDays: 7 });
+      expect(
+        (await runArchiveHousekeeping(set.options, FIRED)).snapshotsExpired,
+      ).toBe(true);
+      expect(calls).toEqual(["2024-02-23T00:00:00.000Z"]);
+      const unsupported: ArchiveStore = {
+        ...archive,
+        expireSnapshots: async () => {
+          throw new UnsupportedQueryError("no");
+        },
+      } as ArchiveStore;
+      const tolerant = options(s, {
+        archive: unsupported,
+        snapshotExpiryDays: 7,
+      });
+      expect(
+        (await runArchiveHousekeeping(tolerant.options, FIRED))
+          .snapshotsExpired,
+      ).toBe(false);
+    });
+
+    it("purges a deleted project's archive rows under its lease and refuses while it is busy", async () => {
+      const s = await scenario(factory);
+      await s.worker().run(projectId);
+      const run = options(s);
+      const holder = s.worker({ owner: "other" });
+      const lease = await holder.acquire(projectId);
+      await expect(
+        purgeProjectArchive(run.options, projectId),
+      ).rejects.toBeInstanceOf(ArchiveBusyError);
+      expect(await allIds(s)).toHaveLength(5);
+      if (lease) await holder.release(lease);
+      expect(await purgeProjectArchive(run.options, projectId)).toEqual({
+        rowsDeleted: 5,
+      });
+      expect(await allIds(s)).toEqual([]);
+      expect(await purgeProjectArchive(run.options, projectId)).toEqual({
+        rowsDeleted: 0,
+      });
     });
   });
 }

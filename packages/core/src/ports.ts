@@ -449,6 +449,18 @@ export interface ArchiveStore {
     files: string[];
   }): Promise<{ snapshotId: string }>;
   expireSnapshots(olderThan: Timestamp): Promise<void>;
+  /**
+   * Housekeeping: delete one project's rows with `receivedAt < cutoff` (exclusive, so a row at the
+   * cutoff survives). Idempotent; other projects are untouched. Rows go through the table's delete
+   * mode (deletion vectors on v3), so the bytes stay until compaction and snapshot expiry; this
+   * is retention, not erasure. Callers hold the project's archive lease.
+   */
+  deleteOlderThan(
+    projectId: ProjectId,
+    cutoff: Timestamp,
+  ): Promise<{ rowsDeleted: number }>;
+  /** Housekeeping: delete every row of one project (project deletion). Idempotent; same caveats. */
+  deleteProject(projectId: ProjectId): Promise<{ rowsDeleted: number }>;
   capabilities: {
     rowDelete: "deletion-vector" | "position-delete" | "copy-on-write";
   };

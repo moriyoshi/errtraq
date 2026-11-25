@@ -12,6 +12,8 @@ import {
   appendStatement,
   batchEventIdsStatement,
   dayRangeBounds,
+  deleteOlderThanStatement,
+  deleteProjectStatement,
   ensureTableStatements,
   getEventStatement,
   hasBatchStatement,
@@ -245,6 +247,29 @@ describe("query", () => {
       "2024-03-01T00:00:00.000Z",
       "2024-03-02T00:00:00.000Z",
     ]);
+  });
+});
+
+describe("housekeeping statements", () => {
+  it("binds the project and the exclusive cutoff", () => {
+    expect(
+      deleteOlderThanStatement(
+        "errtraq",
+        project,
+        "2024-03-01T00:00:00.000Z" as Timestamp,
+      ),
+    ).toEqual({
+      sql: 'DELETE FROM lake."errtraq"."events" WHERE project_id = ? AND received_at < CAST(? AS TIMESTAMPTZ)',
+      params: ["p1", "2024-03-01T00:00:00.000Z"],
+    });
+  });
+  it("scopes project deletion to the bound project id", () => {
+    const evil = "p1' OR '1'='1";
+    const statement = deleteProjectStatement("errtraq", evil as ProjectId);
+    expect(statement.sql).toBe(
+      'DELETE FROM lake."errtraq"."events" WHERE project_id = ?',
+    );
+    expect(statement.params).toEqual([evil]);
   });
 });
 

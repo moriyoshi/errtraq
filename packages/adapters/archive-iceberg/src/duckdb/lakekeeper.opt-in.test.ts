@@ -11,7 +11,9 @@
 // ERRTRAQ_LAKEKEEPER_WAREHOUSE defaults to `errtraq`; ERRTRAQ_ARCHIVE_S3_ENDPOINT is where DuckDB
 // reaches winterbaume (default 127.0.0.1:15555, published by compose.ports.yaml; use
 // `winterbaume:5555` when the tests run inside the compose network). The erasure cases stay
-// skipped until M4l; everything else of archiveStoreContract runs.
+// skipped until M4l; everything else of archiveStoreContract runs (including the M4h retention and
+// project deletion cases). Running next to another stack: use `-p errtraq-m4h` and your own port
+// override file, then point ERRTRAQ_LAKEKEEPER_URL and ERRTRAQ_ARCHIVE_S3_ENDPOINT at it.
 import { archiveStoreContract } from "@moriyoshi/errtraq-testing";
 import { afterAll, describe, expect, it, vi } from "vitest";
 import { configSchema } from "../stack.js";
@@ -146,4 +148,79 @@ describe.skipIf(!enabled)("DuckDB engine against Lakekeeper", () => {
       "w3",
     ]);
   });
+
+  for (const formatVersion of [2, 3] as const)
+    it(`deletes by retention cutoff and by project across day partitions (format v${formatVersion})`, async () => {
+      const store = open(unique(), formatVersion);
+      await store.ensureTable();
+      const row = (project: string, id: string, receivedAt: string) => ({
+        projectId: project as never,
+        eventId: id as never,
+        issueId: "i" as never,
+        timestamp: receivedAt as never,
+        receivedAt: receivedAt as never,
+        level: "error" as const,
+        tags: {},
+        payload: { id },
+      });
+      const days = ["2024-03-01", "2024-03-02", "2024-03-03"];
+      for (const [index, d] of days.entries())
+        await store.append({
+          batchId: `h${index}`,
+          dayRange: [d, d] as never,
+          rows: [
+            row("p", `p${index}a`, `${d}T10:00:00.000Z`),
+            row("p", `p${index}b`, `${d}T23:00:00.000Z`),
+            row("q", `q${index}`, `${d}T10:00:00.000Z`),
+          ],
+        });
+      const ids = async (project: string) =>
+        (
+          await store.query({
+            projectId: project as never,
+            limit: 50,
+            order: "asc",
+          })
+        ).items.map((e) => e.eventId);
+      // whole day partitions below the cutoff plus a boundary row inside a partition
+      expect(
+        await store.deleteOlderThan(
+          "p" as never,
+          "2024-03-03T00:00:00.000Z" as never,
+        ),
+      ).toEqual({ rowsDeleted: 4 });
+      expect(await ids("p")).toEqual(["p2a", "p2b"]);
+      expect(await ids("q")).toEqual(["q0", "q1", "q2"]);
+      expect(
+        await store.deleteOlderThan(
+          "p" as never,
+          "2024-03-03T00:00:00.000Z" as never,
+        ),
+      ).toEqual({ rowsDeleted: 0 });
+      expect(
+        await store.deleteOlderThan(
+          "p" as never,
+          "2024-03-03T10:00:00.000Z" as never,
+        ),
+      ).toEqual({ rowsDeleted: 0 });
+      expect(
+        await store.deleteOlderThan(
+          "p" as never,
+          "2024-03-03T12:00:00.000Z" as never,
+        ),
+      ).toEqual({ rowsDeleted: 1 });
+      expect(await store.deleteProject("q" as never)).toEqual({
+        rowsDeleted: 3,
+      });
+      expect(await ids("q")).toEqual([]);
+      expect(await ids("p")).toEqual(["p2b"]);
+      expect(await store.deleteProject("q" as never)).toEqual({
+        rowsDeleted: 0,
+      });
+      // a repeated batch id still finds nothing after its rows were all deleted: the lease
+      // discipline (no housekeeping against an in-flight batch) is what keeps archival correct.
+      expect(
+        await store.hasBatch("h0", ["2024-03-01", "2024-03-01"] as never),
+      ).toBe(false);
+    });
 });

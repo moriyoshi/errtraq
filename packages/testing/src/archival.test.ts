@@ -10,10 +10,11 @@ import {
   type Timestamp,
 } from "@moriyoshi/errtraq-core";
 import { describe, expect, it } from "vitest";
-import { archivalSuite, scenario } from "./archival.js";
+import { archivalSuite, housekeepingSuite, scenario } from "./archival.js";
 import { MemoryActiveStore } from "./memory-active.js";
 
 archivalSuite(async () => new MemoryActiveStore());
+housekeepingSuite(async () => new MemoryActiveStore());
 
 const logger = { info() {}, warn() {}, error() {} };
 
@@ -120,5 +121,25 @@ describe("retention cron job", () => {
         "old0" as EventId,
       ),
     ).not.toBeNull();
+  });
+
+  it("runs archive housekeeping from the retention job when wired", async () => {
+    const s = await scenario(async () => new MemoryActiveStore());
+    await s.worker().run("1" as ProjectId);
+    const cron = createCronHandler(logger, undefined, undefined, undefined, {
+      store: s.store,
+      blobs: s.blobs,
+      archived: true,
+      housekeeping: {
+        store: s.store,
+        blobs: s.blobs,
+        archive: s.archive,
+        worker: s.worker({ owner: "hk" }),
+        archiveRetentionDays: 30,
+      },
+    });
+    expect(await s.archivedIds()).toHaveLength(5);
+    await cron("retention", s.clock.now());
+    expect(await s.archivedIds()).toEqual([]);
   });
 });

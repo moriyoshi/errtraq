@@ -99,7 +99,7 @@ interface RunStats {
   oldest?: Timestamp;
 }
 
-/** Nonce-keyed manifests of overflow payload keys; orphans are swept by TODO(M4h). */
+/** Nonce-keyed manifests of overflow payload keys; orphans are swept by archive housekeeping. */
 export const ARCHIVE_OVERFLOW_PREFIX = "archive-overflow/";
 const overflowManifestKey = (batchId: string, owner: string, attempt: number) =>
   `${ARCHIVE_OVERFLOW_PREFIX}${encodeURIComponent(batchId)}-${encodeURIComponent(owner)}-${attempt}.json`;
@@ -175,7 +175,7 @@ export class ArchiveWorker {
       lagMs,
     });
     if (store.events.capabilities.deleteStrategy !== "explicit")
-      // TODO(M4h): the TTL strategy needs the persisted scan cursor in ArchiveState.
+      // The TTL strategy is deferred past M4m (D14); it would need the persisted scan cursor.
       throw new UnsupportedQueryError(
         "Archival supports only the explicit delete strategy",
       );
@@ -185,7 +185,7 @@ export class ArchiveWorker {
       return result("missing-project");
     }
     const started = this.nowMs();
-    // D12: retentionDays is the hot-tier age. TODO(M4h): archiveRetentionDays bounds total life.
+    // D12: retentionDays is the hot-tier age; archive housekeeping enforces archiveRetentionDays.
     const cutoff = toTimestamp(
       new Date(started - project.retentionDays * DAY_MS),
     );
@@ -298,7 +298,8 @@ export class ArchiveWorker {
     lease.state = next;
   }
 
-  private async release(lease: ArchiveLease): Promise<void> {
+  /** Release the lease (clears it with a CAS); housekeeping and erasure use it after their work. */
+  async release(lease: ArchiveLease): Promise<void> {
     await this.advance(lease, () => {}, false);
   }
 
