@@ -120,6 +120,8 @@ Can start before M4i merges: G0, G1, G2, G3, G3b, G4, G6 (HCL only), the emulato
 
 ### G3. `store-firestore` adapter
 
+- Status 2026-11-26: built offline on branch `g3` (adapter, shared `packages/firestore-rest` client and fake, index coverage). The emulator run is opt-in and not yet executed (Docker was unavailable). See the JOURNAL entry for deviations from section 3.
+
 - Goal: `ActiveStore` on Firestore (native mode), passing `activeStoreContract`. Design in section 3.
 - Scope: new `packages/adapters/store-firestore`: `keys.ts` (document paths and encodings), a minimal Firestore REST client (`documents:commit`, `beginTransaction`, `batchGet`, `runQuery`, `listCollectionIds` not needed; structured value encoding; transaction retry on `ABORTED`; `RESOURCE_EXHAUSTED` and `UNAVAILABLE` backoff; per-request timeouts), `projects.ts`, `issues.ts`, `events.ts`, `releases.ts`, `meta.ts`, `record-event.ts` (single and grouped `recordEvents`), `indexes.ts` (the declarative composite-index list that both the infra module and an offline test consume), `stack.ts`. Capabilities declared in the manifest: `deleteStrategy: "explicit"`, `textSearch: false`, `lastSeenRangeOnOtherSort: false`, `recordEvents: true`.
 - Port changes: none. A capability for the inline payload limit is needed only if core's overflow threshold is not already adapter-configurable (check `core` before G3 starts; a one-line port addition lands first if so).
@@ -129,6 +131,8 @@ Can start before M4i merges: G0, G1, G2, G3, G3b, G4, G6 (HCL only), the emulato
 - Done: contract suite green on the emulator, index coverage test green, descriptor snapshot, size guard test.
 
 ### G3b. KV on Firestore (`kv-firestore`)
+
+- Status 2026-11-26: built offline on branch `g3`; `increment` result comes from `transformResults` (confirmed in the fake only; verify on the emulator). Emulator run pending.
 
 - Goal: `KV` backing for rate limits, DSN-key cache and erasure suppression.
 - Scope: new package (or a subpath of `store-firestore`; prefer a separate package mirroring `kv-dynamodb`). `increment` through a `commit` with a field transform (`increment`) where the transform result (`transformResults`) gives the new value, to be verified; a transaction when the document must be created with a TTL, since "TTL applies on creation" needs an existence check. Counters stored as an integer field distinct from the string `put/get` value so the "existing value must be a safe integer, otherwise `InvalidCounterError`" rule is checkable. `expireAt` timestamp plus a Firestore TTL policy; reads compare `expireAt` to the clock because TTL deletion lags up to 24 hours.

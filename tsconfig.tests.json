@@ -95,6 +95,30 @@
       "@moriyoshi/errtraq-queue-sqs/runtime": [
         "packages/adapters/queue-sqs/src/runtime.ts"
       ],
+      "@moriyoshi/errtraq-firestore-rest": [
+        "packages/firestore-rest/src/index.ts"
+      ],
+      "@moriyoshi/errtraq-firestore-rest/fake": [
+        "packages/firestore-rest/src/fake.ts"
+      ],
+      "@moriyoshi/errtraq-store-firestore": [
+        "packages/adapters/store-firestore/src/index.ts"
+      ],
+      "@moriyoshi/errtraq-store-firestore/stack": [
+        "packages/adapters/store-firestore/src/stack.ts"
+      ],
+      "@moriyoshi/errtraq-store-firestore/runtime": [
+        "packages/adapters/store-firestore/src/runtime.ts"
+      ],
+      "@moriyoshi/errtraq-kv-firestore": [
+        "packages/adapters/kv-firestore/src/index.ts"
+      ],
+      "@moriyoshi/errtraq-kv-firestore/stack": [
+        "packages/adapters/kv-firestore/src/stack.ts"
+      ],
+      "@moriyoshi/errtraq-kv-firestore/runtime": [
+        "packages/adapters/kv-firestore/src/runtime.ts"
+      ],
       "@moriyoshi/errtraq-core/blob": ["packages/core/src/blob.ts"],
       "@moriyoshi/errtraq-core/kv": ["packages/core/src/kv.ts"],
       "@moriyoshi/errtraq-core/store": ["packages/core/src/store.ts"],

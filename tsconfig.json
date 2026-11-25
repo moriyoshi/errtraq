@@ -5,6 +5,9 @@
       "path": "./packages/aws-signing"
     },
     {
+      "path": "./packages/firestore-rest"
+    },
+    {
       "path": "./packages/core"
     },
     {
@@ -51,6 +54,12 @@
     },
     {
       "path": "./packages/platforms/aws-lambda"
+    },
+    {
+      "path": "./packages/adapters/store-firestore"
+    },
+    {
+      "path": "./packages/adapters/kv-firestore"
     }
   ]
 }

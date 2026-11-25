@@ -11,6 +11,7 @@
     "packages/adapters/*/src/**/*.ts",
     "packages/platforms/*/src/**/*.ts",
     "stacks/**/*.ts",
-    "packages/aws-signing/src/**/*.ts"
+    "packages/aws-signing/src/**/*.ts",
+    "packages/firestore-rest/src/**/*.ts"
   ]
 }
