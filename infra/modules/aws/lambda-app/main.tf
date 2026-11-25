@@ -7,8 +7,12 @@ locals {
   # Core emits standard five-field cron; EventBridge requires six fields and ? in one day field.
   cron                = { for job, trigger in var.cron_triggers : job => split(" ", trigger.schedule) }
   bootstrap_functions = { for id, fn in var.functions : id => fn if contains(fn.roles, "bootstrap") }
-  vpc_enabled         = length(var.vpc_subnet_ids) > 0 && length(var.vpc_security_group_ids) > 0
-  vpc_policy          = jsonencode({ Version = "2012-10-17", Statement = [{ Effect = "Allow", Action = ["ec2:CreateNetworkInterface", "ec2:DescribeNetworkInterfaces", "ec2:DescribeSubnets", "ec2:DeleteNetworkInterface", "ec2:AssignPrivateIpAddresses", "ec2:UnassignPrivateIpAddresses"], Resource = ["*"] }] })
+  image_functions     = { for id, fn in var.functions : id => fn if fn.package_type == "Image" }
+  zip_functions       = { for id, fn in var.functions : id => fn if fn.package_type == "Zip" }
+  # The data sources below serve the bootstrap secret ARN and the ECR repository policy.
+  needs_account = length(local.bootstrap_functions) > 0 || length(local.image_functions) > 0
+  vpc_enabled   = length(var.vpc_subnet_ids) > 0 && length(var.vpc_security_group_ids) > 0
+  vpc_policy    = jsonencode({ Version = "2012-10-17", Statement = [{ Effect = "Allow", Action = ["ec2:CreateNetworkInterface", "ec2:DescribeNetworkInterfaces", "ec2:DescribeSubnets", "ec2:DeleteNetworkInterface", "ec2:AssignPrivateIpAddresses", "ec2:UnassignPrivateIpAddresses"], Resource = ["*"] }] })
 }
 data "aws_iam_policy_document" "assume" {
   statement {
@@ -20,13 +24,13 @@ data "aws_iam_policy_document" "assume" {
   }
 }
 data "aws_caller_identity" "current" {
-  count = length(local.bootstrap_functions) > 0 ? 1 : 0
+  count = local.needs_account ? 1 : 0
 }
 data "aws_partition" "current" {
-  count = length(local.bootstrap_functions) > 0 ? 1 : 0
+  count = local.needs_account ? 1 : 0
 }
 data "aws_region" "current" {
-  count = length(local.bootstrap_functions) > 0 ? 1 : 0
+  count = local.needs_account ? 1 : 0
 }
 resource "aws_iam_role" "function" {
   for_each           = var.functions
@@ -84,7 +88,7 @@ resource "aws_iam_role_policy" "vpc" {
 }
 # The operator supplies the bucket; no public access or bucket is created by this module.
 resource "aws_s3_object" "artifact" {
-  for_each               = var.artifact_bucket == null ? {} : var.functions
+  for_each               = var.artifact_bucket == null ? {} : local.zip_functions
   bucket                 = var.artifact_bucket
   key                    = "${var.name}/${each.key}/${filesha256(each.value.artifact)}.zip"
   source                 = each.value.artifact
@@ -95,16 +99,28 @@ resource "aws_lambda_function" "function" {
   for_each                       = var.functions
   function_name                  = "${var.name}-${each.key}"
   role                           = aws_iam_role.function[each.key].arn
-  runtime                        = var.runtime
-  handler                        = var.handler
+  package_type                   = each.value.package_type
+  runtime                        = each.value.package_type == "Zip" ? var.runtime : null
+  handler                        = each.value.package_type == "Zip" ? var.handler : null
   reserved_concurrent_executions = each.value.reserved_concurrency
-  filename                       = var.artifact_bucket == null ? each.value.artifact : null
-  s3_bucket                      = var.artifact_bucket
-  s3_key                         = var.artifact_bucket == null ? null : aws_s3_object.artifact[each.key].key
-  source_code_hash               = filebase64sha256(each.value.artifact)
+  filename                       = each.value.package_type == "Zip" && var.artifact_bucket == null ? each.value.artifact : null
+  s3_bucket                      = each.value.package_type == "Zip" ? var.artifact_bucket : null
+  s3_key                         = each.value.package_type == "Zip" && var.artifact_bucket != null ? aws_s3_object.artifact[each.key].key : null
+  source_code_hash               = each.value.package_type == "Zip" ? filebase64sha256(each.value.artifact) : null
+  image_uri                      = each.value.package_type == "Image" ? var.image_uri : null
   memory_size                    = each.value.memory_mb
   timeout                        = each.value.timeout_sec
   architectures                  = [each.value.architecture]
+  ephemeral_storage {
+    size = each.value.ephemeral_storage_mb
+  }
+  # One image carries every image function's bundle under <function id>/; the command selects it.
+  dynamic "image_config" {
+    for_each = each.value.package_type == "Image" ? [1] : []
+    content {
+      command = ["${each.key}/${var.handler}"]
+    }
+  }
   environment { variables = merge(each.value.environment, each.value.secrets, contains(each.value.roles, "bootstrap") ? { ERRTRAQ_BOOTSTRAP_SECRET_NAME = var.bootstrap_secret_name } : {}) }
   dynamic "vpc_config" {
     for_each = local.vpc_enabled ? [1] : []
@@ -118,9 +134,46 @@ resource "aws_lambda_function" "function" {
       condition     = (length(var.vpc_subnet_ids) == 0) == (length(var.vpc_security_group_ids) == 0)
       error_message = "VPC subnet IDs and security group IDs must be provided together."
     }
+    precondition {
+      condition     = each.value.package_type == "Zip" || var.image_uri != null
+      error_message = "A container-image function requires image_uri."
+    }
   }
   tags       = var.tags
   depends_on = [aws_iam_role_policy.logs, aws_iam_role_policy.vpc, aws_iam_role_policy.bootstrap_secret]
+}
+# Container images for the functions that run the DuckDB archive engine (D6). Tags are immutable
+# so a deployed image never changes under a function; the Lambda service may pull from the
+# repository only on behalf of this stack's functions. Nothing is pushed here: the operator builds
+# the image with `errtraq build` and pushes it, then supplies image_uri.
+resource "aws_ecr_repository" "image" {
+  count                = length(local.image_functions) > 0 ? 1 : 0
+  name                 = var.name
+  image_tag_mutability = "IMMUTABLE"
+  encryption_configuration { encryption_type = "AES256" }
+  image_scanning_configuration { scan_on_push = true }
+  tags = var.tags
+}
+resource "aws_ecr_lifecycle_policy" "image" {
+  count      = length(local.image_functions) > 0 ? 1 : 0
+  repository = aws_ecr_repository.image[0].name
+  policy = jsonencode({ rules = [{
+    rulePriority = 1
+    description  = "Keep the most recent images"
+    selection    = { tagStatus = "any", countType = "imageCountMoreThan", countNumber = var.image_retention_count }
+    action       = { type = "expire" }
+  }] })
+}
+resource "aws_ecr_repository_policy" "image" {
+  count      = length(local.image_functions) > 0 ? 1 : 0
+  repository = aws_ecr_repository.image[0].name
+  policy = jsonencode({ Version = "2012-10-17", Statement = [{
+    Sid       = "LambdaPull"
+    Effect    = "Allow"
+    Principal = { Service = "lambda.amazonaws.com" }
+    Action    = ["ecr:BatchGetImage", "ecr:GetDownloadUrlForLayer"]
+    Condition = { StringLike = { "aws:sourceArn" = "arn:${data.aws_partition.current[0].partition}:lambda:${data.aws_region.current[0].region}:${data.aws_caller_identity.current[0].account_id}:function:${var.name}-*" } }
+  }] })
 }
 # Public URL is required for ordinary Sentry clients; request authentication is in the application.
 resource "aws_lambda_function_url" "http" {

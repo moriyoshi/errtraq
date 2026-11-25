@@ -10,10 +10,12 @@ function ownValue<T>(
 import {
   type AdapterSelection,
   ALWAYS_SPLIT_ROLES,
+  ARCHIVE_ROLE_DEFAULTS,
   artifact,
   CRON_JOBS,
   configBinding,
   configReferenceBindingName,
+  cronJobRole,
   type DeploymentTrigger,
   type DeploymentView,
   type DerivedGrant,
@@ -45,6 +47,7 @@ import {
   PORT_REQUIREMENTS,
   QUEUE_CAPABILITIES,
   TOPIC_ROUTES,
+  topicRoute,
 } from "./stack-requirements.js";
 import {
   platformConfigSchema,
@@ -166,7 +169,10 @@ function accessRequirements(
   const mapping = stack.queue.infra.topics;
   if (mapping)
     for (const topic of TOPICS) {
-      const route = TOPIC_ROUTES[topic];
+      const route = {
+        ...TOPIC_ROUTES[topic],
+        ...topicRoute(topic, stack.platform.manifest.compute),
+      };
       if (!featureEnabled(stack, route.feature, route.milestone)) continue;
       const physical = mapping.routes[topic]?.physical;
       if (!physical) continue;
@@ -452,7 +458,10 @@ function deploymentFor(
       Extract<DeploymentTrigger, { kind: "queue" }>
     >();
     for (const topic of TOPICS) {
-      const contract = TOPIC_ROUTES[topic];
+      const contract = {
+        ...TOPIC_ROUTES[topic],
+        ...topicRoute(topic, stack.platform.manifest.compute),
+      };
       if (!featureEnabled(stack, contract.feature, contract.milestone))
         continue;
       const route = mapping.routes[topic];
@@ -501,13 +510,26 @@ function deploymentFor(
       }
     }
   }
+  // D6: on a function platform with an archive the archive jobs run on the archive role (its
+  // engine, lease and grants live only there). Without an archive they are not scheduled, as
+  // before. TODO(M4j): `erasure-worker` stays unscheduled until its handler exists.
+  const archiveSplit =
+    !!stack.archive && stack.platform.manifest.compute === "function";
   for (const job of CRON_JOBS) {
+    // TODO(M4j): schedule `erasure-worker` on function platforms once its handler exists; until
+    // then an EventBridge rule would only wake the archive image every five minutes for nothing.
+    if (
+      job.name === "erasure-worker" &&
+      stack.platform.manifest.compute === "function"
+    )
+      continue;
     if (
       (FUNCTION_CRON_JOBS.has(job.name) &&
         stack.platform.manifest.compute === "function") ||
       (!FUNCTION_CRON_JOBS.has(job.name) && stack.archive)
     ) {
-      const fn = functions.find((item) => item.roles.includes(job.role));
+      const jobRole = cronJobRole(job, archiveSplit);
+      const fn = functions.find((item) => item.roles.includes(jobRole));
       if (fn)
         view.triggers.push({
           kind: "cron",
@@ -742,6 +764,27 @@ function inspect(input: unknown): {
       };
     }
   }
+  // D6: on a function platform an archive implies the always-split `archive` role.
+  if (
+    stack.archive &&
+    stack.platform.manifest.compute === "function" &&
+    stack.platform.config &&
+    typeof stack.platform.config === "object"
+  ) {
+    const config = stack.platform.config as {
+      roles?: string[];
+      settings?: Record<string, Record<string, unknown>>;
+    };
+    if (Array.isArray(config.roles) && !config.roles.includes("archive"))
+      stack.platform.config = {
+        ...config,
+        roles: [...config.roles, "archive"],
+        settings: {
+          ...config.settings,
+          archive: { ...ARCHIVE_ROLE_DEFAULTS, ...config.settings?.archive },
+        },
+      };
+  }
   const issues: StackValidationIssue[] = [];
   const fail = (path: string, message: string) =>
     issues.push({ path, message });
@@ -927,6 +970,26 @@ function inspect(input: unknown): {
   for (const roleName of Object.keys(functions.settings ?? {}))
     if (!functions.roles.includes(roleName as FunctionRole))
       fail("platform.config.settings", `Unknown deployed role ${roleName}`);
+  if (functions.roles.includes("archive") && !stack.archive)
+    fail("platform.config.roles", "The archive role requires an archive");
+  if (
+    stack.archiveRetentionDays !== undefined &&
+    !stack.archive &&
+    stack.platform.manifest.compute === "function"
+  )
+    fail("archiveRetentionDays", "archiveRetentionDays requires an archive");
+  if (
+    stack.archive &&
+    stack.platform.manifest.compute === "function" &&
+    functions.roles.includes("api") &&
+    !functions.split.includes("api")
+  )
+    // The API reads the archive through the DuckDB engine, so its function is the container
+    // image; a shared function would put the image (and a cold DuckDB init) on every role in it.
+    fail(
+      "platform.config.split",
+      "With an archive the api role must be split into its own function",
+    );
   const roleExists = (r: FunctionRole, path: string) => {
     if (!functions.roles.includes(r))
       fail(path, `Platform does not deploy ${r}`);
@@ -1941,7 +2004,11 @@ function inspect(input: unknown): {
     const physical: string[] = [];
     for (const [topic, route] of Object.entries(topics.routes)) {
       if (topic !== "record") physical.push(route.physical);
-      const contract = ownValue(TOPIC_ROUTES, topic);
+      const base = ownValue(TOPIC_ROUTES, topic);
+      const contract = base && {
+        ...base,
+        ...topicRoute(topic as RoutedTopic, platform.compute),
+      };
       if (
         contract &&
         featureEnabled(stack, contract.feature, contract.milestone)
@@ -2002,6 +2069,28 @@ function inspect(input: unknown): {
           `queue.infra.topics.${topic}.producerBinding`,
           "Binding authorization requires a platform binding",
         );
+    }
+    if (stack.platform.manifest.compute === "function") {
+      // A physical queue has one event-source mapping, so every topic on it must be consumed by
+      // the same function (the archive role consumes `archive.project`, D6).
+      const owners = groups;
+      const owner = (role: FunctionRole) =>
+        owners.find((fn) => fn.roles.includes(role))?.id;
+      const consumers = new Map<string, Set<string | undefined>>();
+      for (const [topic, route] of Object.entries(topics.routes)) {
+        const base = ownValue(TOPIC_ROUTES, topic);
+        if (!base || !featureEnabled(stack, base.feature, base.milestone))
+          continue;
+        const set = consumers.get(route.physical) ?? new Set();
+        set.add(owner(topicRoute(topic as RoutedTopic, "function").consumer));
+        consumers.set(route.physical, set);
+      }
+      for (const [queue, set] of consumers)
+        if (set.size > 1)
+          fail(
+            "queue.infra.topics",
+            `Queue ${queue} carries topics consumed by different functions; use a per-topic queue`,
+          );
     }
     if (topics.mode === "shared" && new Set(physical).size > 1)
       fail(
@@ -2174,10 +2263,21 @@ export function deriveTriggers(input: StackConfig): DerivedTrigger[] {
     if (trigger.kind === "queue") {
       const first = trigger.topics[0];
       if (!first) throw new Error("Queue trigger has no topics");
-      return { ...trigger, role: TOPIC_ROUTES[first].consumer };
+      return {
+        ...trigger,
+        role: topicRoute(first, resolveStack(input).platform.manifest.compute)
+          .consumer,
+      };
     }
     const job = CRON_JOBS.find((item) => item.name === trigger.name);
     if (!job) throw new Error(`Unknown cron job ${trigger.name}`);
-    return { ...trigger, role: job.role };
+    const stack = resolveStack(input);
+    return {
+      ...trigger,
+      role: cronJobRole(
+        job,
+        !!stack.archive && stack.platform.manifest.compute === "function",
+      ),
+    };
   });
 }

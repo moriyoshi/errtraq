@@ -94,6 +94,7 @@ function configValue(
 export interface DeployedPlan {
   recordMode?: "direct" | "grouped";
   rateRejection?: StackConfig["rateRejection"];
+  archiveRetentionDays?: number;
   variables: StackConfig["variables"];
   selections: {
     path: string;
@@ -123,6 +124,12 @@ export async function constructDeployedPlan(
   loadModule: DeployedModuleLoader,
   logger?: Logger,
   secretSource?: SecretSource,
+  /** Runtime bindings only the host can supply (the DuckDB engine, AWS credentials), per selection. */
+  extraBindings?: (selection: {
+    path: string;
+    id: string;
+    kind: PortKind;
+  }) => Record<string, unknown> | Promise<Record<string, unknown>>,
 ): Promise<DeployedStack> {
   assertImplementedConsumerTopics(
     plan.queueConsumers.flatMap((route) => route.topics),
@@ -162,12 +169,15 @@ export async function constructDeployedPlan(
         throw new Error(
           "Platform bindings require a platform-specific deployed runtime",
         );
-      const bindings = Object.fromEntries(
-        selection.bindings.map((binding) => [
-          binding.name,
-          delivered(binding.name, binding.allowEmpty),
-        ]),
-      );
+      const bindings = {
+        ...Object.fromEntries(
+          selection.bindings.map((binding) => [
+            binding.name,
+            delivered(binding.name, binding.allowEmpty),
+          ]),
+        ),
+        ...(await extraBindings?.(selection)),
+      };
       const dependencies = Object.fromEntries(
         Object.entries(selection.dependsOn).map(([alias, target]) => {
           if (!instances.has(target))

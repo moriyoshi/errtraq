@@ -4,11 +4,10 @@ run "policies_and_lifecycle" {
   variables {
     name = "example"
 
-    tags           = {}
-    staging_prefix = "archive-staging/"
+    tags = {}
   }
   assert {
-    condition = alltrue([for purpose, prefixes in { primary = ["envelopes/", "payloads/", "artifacts/"], staging = ["archive-staging/"] } :
+    condition = alltrue([for purpose, prefixes in { primary = ["envelopes/", "payloads/", "artifacts/", "archive-overflow/"] } :
       jsonencode(jsondecode(output.policies.read[purpose])) == jsonencode({ Version = "2012-10-17", Statement = [
         { Effect = "Allow", Action = ["s3:GetObject"], Resource = [for prefix in prefixes : "${aws_s3_bucket.this.arn}/${prefix}*"] },
         { Effect = "Allow", Action = ["s3:ListBucket"], Resource = aws_s3_bucket.this.arn, Condition = { StringLike = { "s3:prefix" = [for prefix in prefixes : "${prefix}*"] } } }
@@ -20,7 +19,7 @@ run "policies_and_lifecycle" {
     error_message = "Every S3 policy must match its capability and prefix-scoped resources exactly."
   }
   assert {
-    condition     = aws_s3_bucket_public_access_block.this.block_public_acls && aws_s3_bucket_public_access_block.this.block_public_policy && aws_s3_bucket_public_access_block.this.ignore_public_acls && aws_s3_bucket_public_access_block.this.restrict_public_buckets && one(one(aws_s3_bucket_server_side_encryption_configuration.this.rule).apply_server_side_encryption_by_default).sse_algorithm == "AES256" && jsonencode(jsondecode(aws_s3_bucket_policy.tls.policy)) == jsonencode({ Version = "2012-10-17", Statement = [{ Sid = "DenyInsecureTransport", Effect = "Deny", Principal = "*", Action = "s3:*", Resource = [aws_s3_bucket.this.arn, "${aws_s3_bucket.this.arn}/*"], Condition = { Bool = { "aws:SecureTransport" = "false" } } }] }) && one([for rule in aws_s3_bucket_lifecycle_configuration.this.rule : rule.expiration[0].days if rule.id == "abandoned-envelopes"]) == 14 && one([for rule in aws_s3_bucket_lifecycle_configuration.this.rule : rule.expiration[0].days if rule.id == "abandoned-archive-staging"]) == 7
+    condition     = aws_s3_bucket_public_access_block.this.block_public_acls && aws_s3_bucket_public_access_block.this.block_public_policy && aws_s3_bucket_public_access_block.this.ignore_public_acls && aws_s3_bucket_public_access_block.this.restrict_public_buckets && one(one(aws_s3_bucket_server_side_encryption_configuration.this.rule).apply_server_side_encryption_by_default).sse_algorithm == "AES256" && jsonencode(jsondecode(aws_s3_bucket_policy.tls.policy)) == jsonencode({ Version = "2012-10-17", Statement = [{ Sid = "DenyInsecureTransport", Effect = "Deny", Principal = "*", Action = "s3:*", Resource = [aws_s3_bucket.this.arn, "${aws_s3_bucket.this.arn}/*"], Condition = { Bool = { "aws:SecureTransport" = "false" } } }] }) && one([for rule in aws_s3_bucket_lifecycle_configuration.this.rule : rule.expiration[0].days if rule.id == "abandoned-envelopes"]) == 14
     error_message = "Public access, encryption, TLS and expiry rules must remain secure."
   }
   assert {
@@ -28,7 +27,7 @@ run "policies_and_lifecycle" {
     error_message = "Current per-resource policies must fit the 1024-character sizing budget."
   }
   assert {
-    condition     = alltrue([for purpose in ["primary", "staging"] : jsondecode(output.policies.read[purpose]).Statement[1].Action == ["s3:ListBucket"] && length(jsondecode(output.policies.read[purpose]).Statement[1].Condition.StringLike["s3:prefix"]) > 0])
+    condition     = alltrue([for purpose in ["primary"] : jsondecode(output.policies.read[purpose]).Statement[1].Action == ["s3:ListBucket"] && length(jsondecode(output.policies.read[purpose]).Statement[1].Condition.StringLike["s3:prefix"]) > 0])
     error_message = "Read policies must provide prefix-restricted listing for missing keys."
   }
   assert {
@@ -36,20 +35,12 @@ run "policies_and_lifecycle" {
     error_message = "Production bucket must deny insecure transport, enforce ownership and abort incomplete uploads."
   }
   assert {
-    condition     = toset(keys(output.policies)) == toset(["read", "write", "delete", "list"]) && alltrue([for policies in values(output.policies) : toset(keys(policies)) == toset(["primary", "staging"]) && alltrue([for policy in values(policies) : can(jsondecode(policy))])])
+    condition     = toset(keys(output.policies)) == toset(["read", "write", "delete", "list"]) && alltrue([for policies in values(output.policies) : toset(keys(policies)) == toset(["primary"]) && alltrue([for policy in values(policies) : can(jsondecode(policy))])])
     error_message = "Policy output shape and encoded-document leaves must match the descriptor."
   }
   assert {
-    condition     = jsondecode(output.policies.write.staging).Statement[0].Resource[0] == "${aws_s3_bucket.this.arn}/archive-staging/*"
-    error_message = "Staging writes must be limited to the staging prefix."
-  }
-  assert {
-    condition     = !contains(jsondecode(output.policies.write.primary).Statement[0].Resource, "${aws_s3_bucket.this.arn}/archive-staging/*")
-    error_message = "Primary writes must not grant staging access."
-  }
-  assert {
-    condition     = jsondecode(output.policies.list.staging).Statement[0].Condition.StringLike["s3:prefix"][0] == "archive-staging/*"
-    error_message = "Staging list permission must be prefix limited."
+    condition     = toset(jsondecode(output.policies.write.primary).Statement[0].Resource) == toset(["${aws_s3_bucket.this.arn}/envelopes/*", "${aws_s3_bucket.this.arn}/payloads/*", "${aws_s3_bucket.this.arn}/artifacts/*", "${aws_s3_bucket.this.arn}/archive-overflow/*"]) && !anytrue([for rule in aws_s3_bucket_lifecycle_configuration.this.rule : strcontains(rule.id, "staging")])
+    error_message = "The archive batch manifests are covered by the primary grants, and no staging prefix or rule remains."
   }
   assert {
     condition     = aws_s3_bucket_versioning.this.versioning_configuration[0].status == "Disabled"
@@ -60,9 +51,8 @@ run "policies_and_lifecycle" {
 run "claim_and_overflow_lifecycle" {
   command = apply
   variables {
-    name           = "example"
-    tags           = {}
-    staging_prefix = "archive-staging/"
+    name = "example"
+    tags = {}
   }
   assert {
     condition     = one([for rule in aws_s3_bucket_lifecycle_configuration.this.rule : rule.expiration[0].days if rule.id == "expired-record-claims"]) == 30 && one([for rule in aws_s3_bucket_lifecycle_configuration.this.rule : one(rule.filter).prefix if rule.id == "expired-record-claims"]) == "payloads/records/"
@@ -89,7 +79,6 @@ run "custom_overflow_age" {
   variables {
     name                        = "example"
     tags                        = {}
-    staging_prefix              = "archive-staging/"
     max_event_retention_days    = 90
     overflow_orphan_margin_days = 10
     record_claim_retention_days = 20
@@ -104,7 +93,6 @@ run "claim_age_below_sqs_retention" {
   variables {
     name                        = "example"
     tags                        = {}
-    staging_prefix              = "archive-staging/"
     record_claim_retention_days = 14
   }
   expect_failures = [var.record_claim_retention_days]
@@ -112,10 +100,9 @@ run "claim_age_below_sqs_retention" {
 run "disposable_bucket" {
   command = apply
   variables {
-    name           = "example"
-    tags           = {}
-    staging_prefix = "archive-staging/"
-    protection     = "disposable"
+    name       = "example"
+    tags       = {}
+    protection = "disposable"
   }
   assert {
     condition     = aws_s3_bucket.this.force_destroy

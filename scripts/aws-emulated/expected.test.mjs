@@ -23,12 +23,18 @@ describe("derived capability policy expectations", () => {
       ),
     ).toThrow();
   });
-  it("keeps staging policies and table indexes separate", () => {
+  it("scopes blob policies to the primary prefixes and keeps table indexes", () => {
     const blob = capabilityPolicy(
-      { selection: "blob", capability: "write", purpose: "staging" },
+      { selection: "blob", capability: "write", purpose: "primary" },
       resources,
     );
-    expect(blob.Statement[0].Resource).toEqual(["bucket/archive-staging/*"]);
+    expect(blob.Statement[0].Resource).toContain("bucket/archive-overflow/*");
+    expect(() =>
+      capabilityPolicy(
+        { selection: "blob", capability: "write", purpose: "staging" },
+        resources,
+      ),
+    ).toThrow();
     const read = capabilityPolicy(
       { selection: "store", capability: "read", purpose: "primary" },
       resources,

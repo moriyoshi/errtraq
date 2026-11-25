@@ -1,6 +1,6 @@
 // Statements and instance options derived from the config. Pure (no DuckDB import) so they can be
 // unit-tested as plain strings.
-import type { ParsedConfig } from "../stack.js";
+import { DUCKDB_EXTENSIONS, type ParsedConfig } from "../stack.js";
 import {
   EngineConfigurationError,
   type EngineSettings,
@@ -8,7 +8,7 @@ import {
 } from "./session.js";
 import { CATALOG_ALIAS, quoteLiteral } from "./sql.js";
 
-export const EXTENSIONS = ["httpfs", "avro", "iceberg"] as const;
+export const EXTENSIONS = DUCKDB_EXTENSIONS;
 
 /** The DuckDB instance options a config implies (all values are strings in the binding). */
 export function instanceOptions(
