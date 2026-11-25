@@ -2125,3 +2125,11 @@ Built by Claude Sonnet, review by Claude Opus. Offline gate green; emulator run 
 - Gotchas found: a document id may contain `:` so the URL action suffix must only be parsed for POST; ids must be percent-encoded per segment in GET URLs.
 - The fake uses optimistic transactions (abort on conflict); contention tests need a large attempt budget (400). The emulator and Firestore lock pessimistically, so fewer aborts are expected.
 
+
+## 2026-11-26 — Review of G2, G3/G3b and G4; GCP adapters merged
+
+- Reviewed by Claude Opus; implemented by Claude Sonnet in parallel worktrees, merged in the order G4, G2, G3 (conflicts were additions only: docs, workspace registration, the layering allow-list, the lockfile importers).
+- The merged lockfile needed a networked `pnpm install --frozen-lockfile`: the supply-chain policy check re-verifies a changed lockfile against registry metadata, so `--offline` fails even though resolution is skipped. No package changed.
+- None of the opt-in emulator suites for G2, G3/G3b and G4 has run (the Colima Docker socket stopped answering mid-session and agents were told not to restart or tunnel around it). Outstanding: the Pub/Sub retry, dead-letter and undecodable-push cases; the Firestore store and KV contracts and the 50-way concurrent `recordOccurrence`; the Cloud SQL unix-socket script. A `errtraq-g2-pubsub` container may still exist in the VM.
+- Design points accepted: shared non-adapter packages `gcp-auth` and `firestore-rest` (adapters may not depend on each other); the Firestore fake enforces declared indexes so every offline contract run doubles as an index-coverage check; push auth fails closed (verifier error is 503, denial 401); Cloud SQL IAM tokens arrive through the pool password callback.
+- Also on main: a timing test in `aws-signing` widened after it flaked under parallel load.
