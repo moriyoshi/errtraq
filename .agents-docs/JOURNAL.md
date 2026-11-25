@@ -1914,3 +1914,11 @@ choice; no quota increase). Findings:
   and after, on memory and sqlite) is generated from a dry run's call counts, so new operations are
   covered automatically.
 
+
+## 2026-11-25 — M4d: Lakekeeper + winterbaume + DuckDB spike (containers only)
+
+- Environment: `docker/archive/compose.yaml` (postgres:17.12, Lakekeeper v0.15.1 migrate+serve allowall, debian:bookworm-slim with the aarch64 winterbaume v0.2.9 binary bind-mounted, node:26.13.1 runner with `@duckdb/node-api@2.0.1-r.1`), `pnpm archive:smoke` brings it up, runs `scripts/archive-local/container/spike.mjs`, prints PASS/FAIL per question, `down -v`; SKIPs without Docker. Owner changed D10: winterbaume runs in a container, not on the host. Full record: `.agents-docs/M4D_LOCAL_ARCHIVE_SPIKE.md`.
+- Results: Lakekeeper warehouse validation passes against winterbaume (`sts-enabled false`, path style, `s3-compat`); DuckDB 2.0.1 ATTACH (`ACCESS_DELEGATION_MODE none`, static secret) CREATE v3 and v2, INSERT, DELETE, read back all work; v3 DELETE writes real Puffin deletion vectors (`added-dvs`), v2 writes Parquet positional deletes; default warehouse allows format versions 1, 2, 3; `iceberg_rewrite_data_files` still refuses v3 (works on v2).
+- Not available: the open-source Lakekeeper image registers only `soft_deletion`, `tabular_purge`, `task_log_cleanup`; the expire_snapshots, remove_orphan_files and optimize queues return `QueueNotFound`. Snapshot expiry, orphan cleanup and compaction are not catalog-provided locally.
+- winterbaume handled 3 multipart uploads, 112 ranged GETs and a 50k-row (48.7 MB) insert with matching checksums and no 5xx. Only quirk: an unsigned bucket PUT returns 404 instead of 403 (harmless).
+- M4b operations verified: day-pruned `hasBatch` and `batchEventIds` (files read 3 down to 1), D13 sort order honored on write. `iceberg_use_metadata_log` staleness did not reproduce against Lakekeeper; keep it false anyway.
