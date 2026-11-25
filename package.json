@@ -41,6 +41,7 @@
     "@moriyoshi/errtraq-platform-aws-lambda": "workspace:*",
     "@moriyoshi/errtraq-platform-standalone": "workspace:*",
     "@moriyoshi/errtraq-queue-memory": "workspace:*",
+    "@moriyoshi/errtraq-queue-pubsub": "workspace:*",
     "@moriyoshi/errtraq-queue-sqs": "workspace:*",
     "@moriyoshi/errtraq-store-dynamodb": "workspace:*",
     "@moriyoshi/errtraq-store-sql": "workspace:*",

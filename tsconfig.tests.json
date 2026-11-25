@@ -121,7 +121,16 @@
       "@moriyoshi/errtraq-store-sql/postgres/stack": [
         "packages/adapters/store-sql/src/postgres-stack.ts"
       ],
-      "@moriyoshi/errtraq-core/runtime": ["packages/core/src/runtime.ts"]
+      "@moriyoshi/errtraq-core/runtime": ["packages/core/src/runtime.ts"],
+      "@moriyoshi/errtraq-queue-pubsub": [
+        "packages/adapters/queue-pubsub/src/index.ts"
+      ],
+      "@moriyoshi/errtraq-queue-pubsub/stack": [
+        "packages/adapters/queue-pubsub/src/stack.ts"
+      ],
+      "@moriyoshi/errtraq-queue-pubsub/runtime": [
+        "packages/adapters/queue-pubsub/src/runtime.ts"
+      ]
     }
   },
   "include": ["packages/core/src/**/*.ts", "packages/http/src/**/*.ts"]

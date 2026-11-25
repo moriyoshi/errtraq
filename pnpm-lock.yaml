@@ -202,6 +202,9 @@ importers:
       '@moriyoshi/errtraq-queue-memory':
         specifier: workspace:*
         version: link:packages/adapters/queue-memory
+      '@moriyoshi/errtraq-queue-pubsub':
+        specifier: workspace:*
+        version: link:packages/adapters/queue-pubsub
       '@moriyoshi/errtraq-queue-sqs':
         specifier: workspace:*
         version: link:packages/adapters/queue-sqs
@@ -373,6 +376,19 @@ importers:
         version: link:../../testing
 
   packages/adapters/queue-memory:
+    dependencies:
+      zod:
+        specifier: 4.6.7
+        version: 4.6.7
+    devDependencies:
+      '@moriyoshi/errtraq-core':
+        specifier: workspace:*
+        version: link:../../core
+      '@moriyoshi/errtraq-testing':
+        specifier: workspace:*
+        version: link:../../testing
+
+  packages/adapters/queue-pubsub:
     dependencies:
       zod:
         specifier: 4.6.7
