@@ -615,31 +615,9 @@ export function create({
   bindings,
   environment = {},
 }: CreateContext<Config, Record<string, unknown>>): S3BlobStore {
-  const bucket =
-    bindings.ERRTRAQ_BLOB_BUCKET ?? bindings.ERRTRAQ_STAGING_BUCKET;
+  const bucket = bindings.ERRTRAQ_BLOB_BUCKET;
   if (typeof bucket !== "string" || !bucket)
     throw new Error("Missing S3 bucket binding");
-  if (
-    typeof bindings.ERRTRAQ_BLOB_BUCKET === "string" &&
-    typeof bindings.ERRTRAQ_STAGING_BUCKET === "string" &&
-    bindings.ERRTRAQ_BLOB_BUCKET !== bindings.ERRTRAQ_STAGING_BUCKET
-  )
-    throw new Error("S3 purpose bindings must share the same bucket");
-  if (
-    typeof bindings.ERRTRAQ_STAGING_BUCKET === "string" &&
-    (typeof bindings.ERRTRAQ_STAGING_PREFIX !== "string" ||
-      !bindings.ERRTRAQ_STAGING_PREFIX)
-  )
-    throw new Error("Missing S3 staging prefix binding");
-  if (
-    typeof bindings.ERRTRAQ_STAGING_BUCKET === "string" &&
-    (typeof bindings.ERRTRAQ_STAGING_PREFIX !== "string" ||
-      !/^[a-zA-Z0-9_-]+\/$/.test(bindings.ERRTRAQ_STAGING_PREFIX) ||
-      ["envelopes/", "payloads/", "artifacts/"].includes(
-        bindings.ERRTRAQ_STAGING_PREFIX,
-      ))
-  )
-    throw new Error("Invalid S3 staging prefix binding");
   const value = (name: string): string | undefined => {
     const binding = bindings[name];
     return typeof binding === "string" ? binding : environment[name];
@@ -655,15 +633,13 @@ export function create({
     requestTimeoutMs: config.requestTimeoutMs,
     overallTimeoutMs: config.overallTimeoutMs,
     bodyIdleTimeoutMs: config.bodyIdleTimeoutMs,
+    // `archive-overflow/` holds the archive worker's batch manifests (the staging purpose was
+    // dropped with write-ahead staging).
     allowedPrefixes: [
-      ...(typeof bindings.ERRTRAQ_BLOB_BUCKET === "string"
-        ? ["envelopes/", "payloads/", "artifacts/"]
-        : []),
-      ...(typeof bindings.ERRTRAQ_STAGING_BUCKET === "string" &&
-      typeof bindings.ERRTRAQ_STAGING_PREFIX === "string" &&
-      bindings.ERRTRAQ_STAGING_PREFIX
-        ? [bindings.ERRTRAQ_STAGING_PREFIX]
-        : []),
+      "envelopes/",
+      "payloads/",
+      "artifacts/",
+      "archive-overflow/",
     ],
     credentials: () => {
       const sessionToken = value("AWS_SESSION_TOKEN");

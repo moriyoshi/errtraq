@@ -56,7 +56,7 @@ export class ArchiveLeaseLostError extends Error {
 
 export interface ArchivalOptions {
   store: Pick<ActiveStore, "projects" | "events" | "meta">;
-  /** Holds overflow payloads and the `archive-staging/` objects. */
+  /** Holds overflow payloads and the `archive-overflow/` batch manifests. */
   blobs: BlobStore;
   archive: ArchiveStore;
   queue: QueueProducer;

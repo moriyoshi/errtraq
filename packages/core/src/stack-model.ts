@@ -17,6 +17,7 @@ export type FunctionRole =
   | "consumer"
   | "record"
   | "cron"
+  | "archive"
   | "bootstrap";
 export const FUNCTION_ROLES: readonly FunctionRole[] = [
   "ingest",
@@ -24,14 +25,23 @@ export const FUNCTION_ROLES: readonly FunctionRole[] = [
   "consumer",
   "record",
   "cron",
+  "archive",
   "bootstrap",
 ];
 /**
- * Roles that are never grouped into the shared function: `bootstrap` carries administrative
+ * Roles that are never grouped into the shared function. `bootstrap` carries administrative
  * access (migrations, secret creation, the optional database admin secret) that no runtime
  * role may share, and it has no trigger, so a shared function would only widen another role.
+ * `archive` (D6) runs the DuckDB archive engine from a container image with its own memory,
+ * timeout and `/tmp` sizing, and holds the archive write grants no other role has; sharing it
+ * would put a 200 MB native payload on the hot ingest path.
  */
-export const ALWAYS_SPLIT_ROLES: readonly FunctionRole[] = ["bootstrap"];
+export const ALWAYS_SPLIT_ROLES: readonly FunctionRole[] = [
+  "archive",
+  "bootstrap",
+];
+/** Defaults of the archive role: the 60% budget batch loop and a DuckDB init need headroom (D6). */
+export const ARCHIVE_ROLE_DEFAULTS = { timeoutSec: 300, memoryMb: 1024 };
 /** Logical topics are part of core's contract; later handlers must not acknowledge unknown topics. */
 export const TOPICS = [
   "ingest",
@@ -42,17 +52,45 @@ export const TOPICS = [
 export type RoutedTopic = (typeof TOPICS)[number];
 /** Visibility must cover six consumer timeouts, allowing for retries and delays. */
 export const QUEUE_VISIBILITY_FACTOR = 6;
+/**
+ * `role` hosts the job in a single process (and, without an archive, on a function platform).
+ * `archiveRole` is where a function platform with an archive selected hosts it instead (D6): the
+ * archive engine and the per-project lease live only on the `archive` role.
+ */
 export const CRON_JOBS = [
   { name: "staged-recovery", schedule: "*/5 * * * *", role: "cron" },
   { name: "bundle-cleanup", schedule: "*/15 * * * *", role: "cron" },
-  { name: "archive-planner", schedule: "0 * * * *", role: "cron" },
-  { name: "retention", schedule: "15 * * * *", role: "cron" },
-  { name: "erasure-worker", schedule: "*/5 * * * *", role: "cron" },
+  {
+    name: "archive-planner",
+    schedule: "0 * * * *",
+    role: "cron",
+    archiveRole: "archive",
+  },
+  {
+    name: "retention",
+    schedule: "15 * * * *",
+    role: "cron",
+    archiveRole: "archive",
+  },
+  {
+    name: "erasure-worker",
+    schedule: "*/5 * * * *",
+    role: "cron",
+    archiveRole: "archive",
+  },
 ] as const satisfies readonly {
   name: string;
   schedule: string;
   role: FunctionRole;
+  archiveRole?: FunctionRole;
 }[]; // TODO(M4j): the erasure-worker handler.
+/** The role that hosts a cron job: the archive role on a function platform with an archive. */
+export function cronJobRole(
+  job: (typeof CRON_JOBS)[number],
+  split: boolean,
+): FunctionRole {
+  return split && "archiveRole" in job ? job.archiveRole : job.role;
+}
 export type CapabilityValue = string | number | boolean;
 export const ENVIRONMENT_FEATURES = [
   "writable-filesystem",
@@ -143,6 +181,8 @@ export interface BuildArtifact {
   handler: string;
   runtime: string;
   contentHash: string;
+  /** `image`: the bundle is copied into the stack's container image rather than uploaded as a ZIP. */
+  packaging?: "image";
 }
 export interface ArtifactRef {
   readonly [REF]: "artifact";
@@ -382,6 +422,8 @@ export interface CreateContext<
   secretSource?: SecretSource;
   logger?: Logger;
   cronJobs?: readonly string[];
+  /** Supplied only to a platform: the stack-wide archive retention bound (days). */
+  archiveRetentionDays?: number;
   /** Supplied only to a queue adapter. */
   topics?: Partial<Record<RoutedTopic, TopicRoute>>;
   /** Push event-source identifier to physical queue and the topics it carries. */
@@ -422,6 +464,12 @@ export interface StackConfig {
   protection?: "production" | "disposable";
   /** Defaults to grouped for Lambda with SQS and direct otherwise. */
   recordMode?: "direct" | "grouped";
+  /**
+   * Bound on the total life of an archived event in days, counted from `receivedAt`; each project's
+   * `retentionDays` is the hot-tier age and must be smaller (D12). Absent keeps archived events
+   * forever. Requires an archive.
+   */
+  archiveRetentionDays?: number;
   /** Stack-wide fixed-window limits; unset limits are disabled. */
   rateRejection?: RateRejectionConfig;
   outputs?: Record<string, OutputRef>;

@@ -488,8 +488,10 @@ describe("AWS descriptor stacks", () => {
       deleteStrategy: "explicit",
       deleteBySubject: false,
     });
-    expect(s3Blob().infra.capabilities.write?.staging).toEqual(
-      outPolicy("write", "staging"),
+    // The staging purpose was dropped with write-ahead staging (D5).
+    expect(s3Blob().infra.capabilities.write?.staging).toBeUndefined();
+    expect(s3Blob().infra.capabilities.write?.primary).toEqual(
+      outPolicy("write", "primary"),
     );
     expect(dynamoKv().infra.capabilities.write?.primary).toEqual(
       outPolicy("write", "primary"),

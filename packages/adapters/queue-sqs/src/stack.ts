@@ -23,6 +23,14 @@ export const configSchema = z.strictObject({
   maxConcurrency: z.number().int().min(2).max(1000).optional(),
   dlq: z.boolean().default(true),
   maxReceiveCount: z.number().int().min(1).max(1000).default(5),
+  /**
+   * Per-topic mode only: the `archive.project` queue. The archive function (D6) runs up to 300 s
+   * and stops starting batches at 60 percent of that, so visibility is six times the timeout (the
+   * default of the archive role); one project per invocation (batch size 1) keeps the lease and
+   * the time budget per message, and a low concurrency bounds Iceberg commit contention.
+   */
+  archiveVisibilityTimeoutSec: z.number().int().min(1).max(43200).default(1800),
+  archiveMaxConcurrency: z.number().int().min(2).max(1000).default(5),
   /** Existing operator-owned SNS topic notified by the queue alarms; never created here. */
   alarmTopicArn: z
     .string()
@@ -64,6 +72,12 @@ function descriptor(config: ResolvedConfig): InfraDescriptor<Config> {
         notifications: "notifications",
       };
   const keys = [...new Set([...Object.values(physical), "record"])];
+  const archiveQueue = (key: string) =>
+    config.mode === "per-topic" && key === physical["archive.project"];
+  const visibility = (key: string) =>
+    archiveQueue(key)
+      ? config.archiveVisibilityTimeoutSec
+      : config.visibilityTimeoutSec;
   const bindings: Binding[] = keys.map((key) => ({
     name: `ERRTRAQ_QUEUE_${key.toUpperCase()}_URL`,
     kind: "env",
@@ -96,11 +110,13 @@ function descriptor(config: ResolvedConfig): InfraDescriptor<Config> {
       keys.map((key) => [
         key,
         {
-          visibilityTimeoutSec: config.visibilityTimeoutSec,
-          batchSize: config.batchSize,
-          ...(config.maxConcurrency === undefined
-            ? {}
-            : { maxConcurrency: config.maxConcurrency }),
+          visibilityTimeoutSec: visibility(key),
+          batchSize: archiveQueue(key) ? 1 : config.batchSize,
+          ...(archiveQueue(key)
+            ? { maxConcurrency: config.archiveMaxConcurrency }
+            : config.maxConcurrency === undefined
+              ? {}
+              : { maxConcurrency: config.maxConcurrency }),
           dlq:
             config.dlq || key === "record"
               ? { enabled: true, maxReceiveCount: config.maxReceiveCount }
@@ -135,7 +151,7 @@ function descriptor(config: ResolvedConfig): InfraDescriptor<Config> {
           key,
           {
             ...(key === "record" ? { fifo: true } : {}),
-            visibility_timeout_sec: config.visibilityTimeoutSec,
+            visibility_timeout_sec: visibility(key),
             dlq_enabled: config.dlq || key === "record",
             max_receive_count: config.maxReceiveCount,
           },

@@ -117,6 +117,9 @@ export async function constructStack(
           ? {
               recordMode: stack.recordMode ?? "direct",
               rateRejection: stack.rateRejection,
+              ...(stack.archiveRetentionDays === undefined
+                ? {}
+                : { archiveRetentionDays: stack.archiveRetentionDays }),
             }
           : {}),
         config: resolveRuntimeValue(selection.config, path, stack, environment),

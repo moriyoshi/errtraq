@@ -1,6 +1,9 @@
 import {
+  ARCHIVE_ROLE_DEFAULTS,
   configReference,
+  type DeploymentFunction,
   type InfraDescriptor,
+  type InfraValue,
   type PlatformManifest,
   type PlatformSelection,
   stackValue,
@@ -26,14 +29,39 @@ const role = z.enum([
   "consumer",
   "record",
   "cron",
+  "archive",
   "bootstrap",
 ]);
+/** Where a container-image function finds its image: an ECR image reference, tag or digest. */
+export const IMAGE_URI =
+  /^[0-9]{12}\.dkr\.ecr\.[a-z0-9-]+\.amazonaws\.com(?:\.cn)?\/[a-z0-9][a-z0-9._/-]*(?::[A-Za-z0-9_][A-Za-z0-9._-]{0,127}|@sha256:[a-f0-9]{64})$/;
+/** Lambda `/tmp` size of a container-image function that runs the DuckDB engine (D6). */
+export const IMAGE_EPHEMERAL_STORAGE_MB = 2048;
+/** Memory of an image function that has no explicit setting (the spike's 1024 MB). */
+export const IMAGE_MEMORY_MB = 1024;
+/**
+ * A function runs from the container image when it holds the archive role or reads the archive
+ * (the API, for federated queries): both load the DuckDB engine and its baked extensions (D6).
+ */
+export function isImageFunction(
+  fn: Pick<DeploymentFunction, "roles" | "policies">,
+): boolean {
+  return (
+    fn.roles.includes("archive") ||
+    fn.policies.some(
+      (grant) =>
+        grant.selection === "archive" || grant.selection.startsWith("archive."),
+    )
+  );
+}
 const settings = z.strictObject({
   memoryMb: z.number().int().min(128).max(10240).optional(),
   timeoutSec: z.number().int().min(1).max(900).optional(),
   architecture: z.enum(["x86_64", "arm64"]).optional(),
   urlAuth: z.enum(["NONE", "AWS_IAM"]).optional(),
   reservedConcurrency: z.number().int().min(0).max(100000).optional(),
+  /** `/tmp` size in MB (Lambda allows 512 to 10240). */
+  ephemeralStorageMb: z.number().int().min(512).max(10240).optional(),
 });
 export const configSchema = z
   .strictObject({
@@ -53,6 +81,15 @@ export const configSchema = z
       })
       .default(DEFAULT_LAMBDA_RUNTIME),
     handler: z.string().min(1).default("index.handler"),
+    /**
+     * ECR image (tag or digest) that holds every container-image function's bundle, the DuckDB
+     * binding and the baked extensions (build it with `errtraq build`; the generated Terraform
+     * creates the repository). Required exactly when the stack selects an archive: the
+     * `archive` and `api` roles then run from the image (D6).
+     */
+    imageUri: configReference(z.string().regex(IMAGE_URI)).optional(),
+    /** CPU architecture of the image the build produces; every image function must use it. */
+    imageArchitecture: z.enum(["x86_64", "arm64"]).default("arm64"),
     rateLimit: z.number().int().positive().safe().nullable().default(60),
     artifactBucket: configReference(
       z.string().regex(/^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/),
@@ -106,6 +143,14 @@ export const configSchema = z
         ? { record: { timeoutSec: 30, ...config.settings.record } }
         : {}),
       // Migrations plus a cold start inside the VPC; override with settings.bootstrap.
+      ...(config.roles.includes("archive")
+        ? {
+            archive: {
+              ...ARCHIVE_ROLE_DEFAULTS,
+              ...config.settings.archive,
+            },
+          }
+        : {}),
       ...(config.roles.includes("bootstrap")
         ? { bootstrap: { timeoutSec: 120, ...config.settings.bootstrap } }
         : {}),
@@ -128,6 +173,7 @@ export const manifest: PlatformManifest = {
   configReferenceKinds: ["env", "variable"],
   infrastructureConfigReferences: {
     artifactBucket: "string",
+    imageUri: "string",
     vpcSubnetIds: "string[]",
     vpcSecurityGroupIds: "string[]",
   },
@@ -155,100 +201,133 @@ export const infra: InfraDescriptor<Config> = {
     outputs: {
       ingest_url: "string",
       api_url: "string",
+      image_repository_url: "string",
       bootstrap_function_name: "string",
       bootstrap_function_arn: "string",
     },
   },
-  inputs: (config, deployment) => ({
-    name: stackValue("name"),
-    tags: stackValue("tags"),
-    ...(config.alarmTopicArn ? { alarm_topic_arn: config.alarmTopicArn } : {}),
-    ...(config.bootstrapSecretName
-      ? { bootstrap_secret_name: config.bootstrapSecretName }
-      : {}),
-    ...(config.artifactBucket
-      ? { artifact_bucket: config.artifactBucket }
-      : {}),
-    vpc_subnet_ids: config.vpcSubnetIds ?? [],
-    vpc_security_group_ids: config.vpcSecurityGroupIds ?? [],
-    runtime: config.runtime ?? DEFAULT_LAMBDA_RUNTIME,
-    handler: config.handler ?? "index.handler",
-    functions: Object.fromEntries(
-      deployment.functions.map((fn) => [
-        fn.id,
-        {
-          roles: fn.roles,
-          http: fn.http,
-          artifact: fn.artifact,
-          memory_mb: fn.settings.memoryMb ?? 512,
-          timeout_sec: fn.settings.timeoutSec ?? 30,
-          architecture: fn.settings.architecture ?? "x86_64",
-          auth_type:
-            typeof fn.settings.urlAuth === "string"
-              ? fn.settings.urlAuth
-              : "NONE",
-          ...(typeof fn.settings.reservedConcurrency !== "number"
-            ? {}
-            : { reserved_concurrency: fn.settings.reservedConcurrency }),
-          environment: Object.fromEntries(
-            fn.envBindings.map((item) => [
-              item.binding.name,
-              item.binding.value,
-            ]),
-          ),
-          secrets: Object.fromEntries(
-            fn.secretBindings.map((item) => [
-              item.binding.name,
-              item.binding.value,
-            ]),
-          ),
-          policies: fn.policies.flatMap((grant) =>
-            grant.policyOutput ? [grant.policyOutput] : [],
-          ),
-          secret_reads: fn.secretReads.map((item) => item.identifier),
-        },
-      ]),
-    ),
-    queue_triggers: Object.fromEntries(
-      deployment.triggers
-        .filter((trigger) => trigger.kind === "queue")
-        .map((trigger) => {
-          if (trigger.settings.visibilityTimeoutSec === undefined)
-            throw new Error(
-              `Queue ${trigger.physical} requires a visibility timeout for Lambda`,
-            );
-          return [
-            trigger.physical,
-            {
-              function_id: trigger.functionId,
-              resource: trigger.resource,
-              topics: trigger.topics,
-              visibility_timeout_sec: trigger.settings.visibilityTimeoutSec,
-              ...(trigger.settings.batchSize === undefined
-                ? {}
-                : { batch_size: trigger.settings.batchSize }),
-              ...(trigger.settings.maxConcurrency === undefined
-                ? {}
-                : { max_concurrency: trigger.settings.maxConcurrency }),
-            },
-          ];
-        }),
-    ),
-    cron_triggers: Object.fromEntries(
-      deployment.triggers
-        .filter((trigger) => trigger.kind === "cron")
-        .map((trigger) => [
-          trigger.name,
+  inputs: (config, deployment): Record<string, InfraValue> => {
+    const images = deployment.functions.filter(isImageFunction);
+    const imageArchitecture = config.imageArchitecture ?? "arm64";
+    if (images.length && config.imageUri === undefined)
+      throw new Error(
+        `Container-image functions (${images.map((fn) => fn.id).join(", ")}) need the platform config imageUri`,
+      );
+    for (const fn of images)
+      if (
+        fn.settings.architecture !== undefined &&
+        fn.settings.architecture !== imageArchitecture
+      )
+        throw new Error(
+          `Function ${fn.id} runs from the ${imageArchitecture} image and cannot use ${fn.settings.architecture}`,
+        );
+    return {
+      name: stackValue("name"),
+      tags: stackValue("tags"),
+      ...(config.alarmTopicArn
+        ? { alarm_topic_arn: config.alarmTopicArn }
+        : {}),
+      ...(config.bootstrapSecretName
+        ? { bootstrap_secret_name: config.bootstrapSecretName }
+        : {}),
+      ...(config.artifactBucket
+        ? { artifact_bucket: config.artifactBucket }
+        : {}),
+      vpc_subnet_ids: config.vpcSubnetIds ?? [],
+      vpc_security_group_ids: config.vpcSecurityGroupIds ?? [],
+      runtime: config.runtime ?? DEFAULT_LAMBDA_RUNTIME,
+      handler: config.handler ?? "index.handler",
+      ...(images.length && config.imageUri !== undefined
+        ? { image_uri: config.imageUri }
+        : {}),
+      functions: Object.fromEntries(
+        deployment.functions.map((fn) => [
+          fn.id,
           {
-            function_id: trigger.functionId,
-            schedule: trigger.schedule,
-            retry_attempts: config.cronRetryAttempts ?? 185,
-            max_event_age_seconds: config.cronMaxEventAgeSec ?? 86400,
-            ...(config.cronDlqArn ? { dlq_arn: config.cronDlqArn } : {}),
+            roles: fn.roles,
+            http: fn.http,
+            artifact: fn.artifact,
+            package_type: isImageFunction(fn) ? "Image" : "Zip",
+            memory_mb:
+              fn.settings.memoryMb ??
+              (isImageFunction(fn) ? IMAGE_MEMORY_MB : 512),
+            timeout_sec: fn.settings.timeoutSec ?? 30,
+            architecture: isImageFunction(fn)
+              ? imageArchitecture
+              : (fn.settings.architecture ?? "x86_64"),
+            ephemeral_storage_mb:
+              typeof fn.settings.ephemeralStorageMb === "number"
+                ? fn.settings.ephemeralStorageMb
+                : isImageFunction(fn)
+                  ? IMAGE_EPHEMERAL_STORAGE_MB
+                  : 512,
+            auth_type:
+              typeof fn.settings.urlAuth === "string"
+                ? fn.settings.urlAuth
+                : "NONE",
+            ...(typeof fn.settings.reservedConcurrency !== "number"
+              ? {}
+              : { reserved_concurrency: fn.settings.reservedConcurrency }),
+            environment: Object.fromEntries(
+              fn.envBindings.map((item) => [
+                item.binding.name,
+                item.binding.value,
+              ]),
+            ),
+            secrets: Object.fromEntries(
+              fn.secretBindings.map((item) => [
+                item.binding.name,
+                item.binding.value,
+              ]),
+            ),
+            policies: fn.policies.flatMap((grant) =>
+              grant.policyOutput ? [grant.policyOutput] : [],
+            ),
+            secret_reads: fn.secretReads.map((item) => item.identifier),
           },
         ]),
-    ),
-  }),
+      ),
+      queue_triggers: Object.fromEntries(
+        deployment.triggers
+          .filter((trigger) => trigger.kind === "queue")
+          .map((trigger) => {
+            if (trigger.settings.visibilityTimeoutSec === undefined)
+              throw new Error(
+                `Queue ${trigger.physical} requires a visibility timeout for Lambda`,
+              );
+            return [
+              trigger.physical,
+              {
+                function_id: trigger.functionId,
+                resource: trigger.resource,
+                topics: trigger.topics,
+                visibility_timeout_sec: trigger.settings.visibilityTimeoutSec,
+                ...(trigger.settings.batchSize === undefined
+                  ? {}
+                  : { batch_size: trigger.settings.batchSize }),
+                ...(trigger.settings.maxConcurrency === undefined
+                  ? {}
+                  : { max_concurrency: trigger.settings.maxConcurrency }),
+              },
+            ];
+          }),
+      ),
+      cron_triggers: Object.fromEntries(
+        deployment.triggers
+          .filter((trigger) => trigger.kind === "cron")
+          .map((trigger) => [
+            trigger.name,
+            {
+              function_id: trigger.functionId,
+              schedule: trigger.schedule,
+              retry_attempts: config.cronRetryAttempts ?? 185,
+              max_event_age_seconds: config.cronMaxEventAgeSec ?? 86400,
+              ...(config.cronDlqArn ? { dlq_arn: config.cronDlqArn } : {}),
+            },
+          ]),
+      ),
+    };
+  },
   bindings: [],
   capabilities: {},
   resources: {},

@@ -16,7 +16,7 @@ import {
 } from "./index.js";
 
 // Illustrative descriptors only: no AWS adapters or Terraform modules exist here.
-const role = z.enum(["ingest", "api", "consumer", "cron"]);
+const role = z.enum(["ingest", "api", "consumer", "cron", "archive"]);
 const platform: PlatformSelection = {
   manifest: {
     id: "example-lambda",
@@ -189,9 +189,10 @@ function queue(mode: "shared" | "per-topic"): AdapterSelection {
         keys.map((key) => [
           key,
           {
-            batchSize: 10,
+            batchSize: key === "archive_project" ? 1 : 10,
             maxConcurrency: 4,
-            visibilityTimeoutSec: 180,
+            // Six times the archive role's 300 s timeout.
+            visibilityTimeoutSec: key === "archive_project" ? 1800 : 180,
             dlq: { enabled: true, maxReceiveCount: 5 },
           },
         ]),
@@ -221,7 +222,10 @@ function queue(mode: "shared" | "per-topic"): AdapterSelection {
 }
 
 // These are the two worked stacks quoted by INFRA_MODEL.md.
-function exampleStack(mode: "shared" | "per-topic"): StackConfig {
+function exampleStack(
+  mode: "shared" | "per-topic",
+  withArchive = mode === "per-topic",
+): StackConfig {
   return {
     name: "example",
     providers: {
@@ -245,7 +249,9 @@ function exampleStack(mode: "shared" | "per-topic"): StackConfig {
     queue: queue(mode),
     blob: resource("blob", ["read", "write", "delete", "list"]),
     kv: resource("kv", ["read", "write"]),
-    archive: resource("archive", ["read", "write", "delete"]),
+    ...(withArchive
+      ? { archive: resource("archive", ["read", "write", "delete"]) }
+      : {}),
     outputs: {
       ingest_url: output("platform", "ingest_url"),
       api_url: output("platform", "api_url"),
@@ -280,7 +286,17 @@ describe("documented infrastructure examples", () => {
       consumer?.policies.filter(
         (g) => g.selection === "queue" && g.capability === "consume",
       ),
-    ).toHaveLength(3);
+    ).toHaveLength(2);
+    // D6: archive.project is consumed (and produced) by the archive role, not the consumer.
+    const archive = view.functions.find((fn) => fn.id === "archive");
+    expect(
+      archive?.policies
+        .filter((g) => g.selection === "queue")
+        .map((g) => [g.capability, g.purpose]),
+    ).toEqual([
+      ["produce", "archive_project"],
+      ["consume", "archive_project"],
+    ]);
   });
 });
 

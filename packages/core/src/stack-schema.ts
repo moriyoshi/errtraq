@@ -158,6 +158,7 @@ export const rootSchema = z.strictObject({
   name: z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/),
   protection: z.enum(["production", "disposable"]).default("production"),
   recordMode: z.enum(["direct", "grouped"]).optional(),
+  archiveRetentionDays: z.number().int().min(1).max(36500).optional(),
   rateRejection: z
     .strictObject({
       issueRateLimit: z

@@ -271,6 +271,35 @@ try {
         platform.functions.ingest.environment.ERRTRAQ_BOOTSTRAP_SECRET_NAME =
           platform.bootstrap_secret_name;
         break;
+      case "archive-grant-to-consumer":
+        // The consumer receives an archive policy (the archive grants belong to the archive role).
+        platform.functions.consumer.policies.push(
+          ...platform.functions.archive.policies.filter((p) =>
+            p.includes("module.archive"),
+          ),
+        );
+        break;
+      case "archive-drop-archive-policy": {
+        const policies = platform.functions.archive.policies;
+        const index = policies.findIndex((p) => p.includes("module.archive"));
+        if (index < 0)
+          throw new Error("Archive policy mutation target missing");
+        policies.splice(index, 1);
+        break;
+      }
+      case "archive-queue-to-consumer":
+        platform.queue_triggers.archive_project.function_id = "consumer";
+        break;
+      case "archive-retention-to-cron":
+        platform.cron_triggers.retention.function_id = "cron";
+        break;
+      case "archive-drop-image-uri":
+        delete platform.image_uri;
+        break;
+      case "archive-binding-to-ingest":
+        platform.functions.ingest.environment.ERRTRAQ_ARCHIVE_WAREHOUSE =
+          platform.functions.archive.environment.ERRTRAQ_ARCHIVE_WAREHOUSE;
+        break;
       case "drop-policy":
         platform.functions.ingest.policies.pop();
         break;

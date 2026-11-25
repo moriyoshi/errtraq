@@ -105,6 +105,9 @@ export function deployedPlan(
   return {
     recordMode: stack.recordMode ?? "direct",
     ...(stack.rateRejection ? { rateRejection: stack.rateRejection } : {}),
+    ...(stack.archiveRetentionDays === undefined
+      ? {}
+      : { archiveRetentionDays: stack.archiveRetentionDays }),
     variables: stack.variables,
     selections: ordered,
     topics,

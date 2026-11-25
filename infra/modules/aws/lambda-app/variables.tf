@@ -33,11 +33,13 @@ variable "artifact_bucket" {
   }
 }
 variable "functions" {
-  description = "Physical functions, scoped bindings, policies and build-produced ZIP artifacts."
+  description = "Physical functions, scoped bindings, policies and build-produced artifacts: a ZIP, or for package_type Image the bundle inside the container image named by image_uri."
   type = map(object({
     roles                = list(string)
     http                 = list(string)
     artifact             = string
+    package_type         = optional(string, "Zip")
+    ephemeral_storage_mb = optional(number, 512)
     memory_mb            = number
     timeout_sec          = number
     architecture         = string
@@ -51,7 +53,9 @@ variable "functions" {
   validation {
     condition = alltrue([for id, fn in var.functions :
       can(regex("^[a-zA-Z0-9_-]{1,23}$", id)) &&
-      length(fn.roles) > 0 && alltrue([for role in fn.roles : contains(["ingest", "api", "consumer", "record", "cron", "bootstrap"], role)]) &&
+      length(fn.roles) > 0 && alltrue([for role in fn.roles : contains(["ingest", "api", "consumer", "record", "cron", "archive", "bootstrap"], role)]) &&
+      contains(["Zip", "Image"], fn.package_type) &&
+      fn.ephemeral_storage_mb >= 512 && fn.ephemeral_storage_mb <= 10240 && floor(fn.ephemeral_storage_mb) == fn.ephemeral_storage_mb &&
       alltrue([for role in fn.http : contains(["ingest", "api"], role) && contains(fn.roles, role)]) &&
       fn.memory_mb >= 128 && fn.memory_mb <= 10240 && floor(fn.memory_mb) == fn.memory_mb &&
       fn.timeout_sec >= 1 && fn.timeout_sec <= 900 && floor(fn.timeout_sec) == fn.timeout_sec &&
@@ -62,7 +66,10 @@ variable "functions" {
       alltrue([for secret in fn.secret_reads : can(regex("^arn:[^:]+:secretsmanager:[^:]+:[0-9]{12}:secret:.+", secret))]) &&
       alltrue([for secret in values(fn.secrets) : contains(fn.secret_reads, secret)]) &&
       # The bootstrap role is operator-invoked only: its own function, never exposed or triggered.
-      (!contains(fn.roles, "bootstrap") || (length(fn.roles) == 1 && length(fn.http) == 0 && !contains(keys(fn.environment), "ERRTRAQ_BOOTSTRAP_SECRET_NAME") && !contains(keys(fn.secrets), "ERRTRAQ_BOOTSTRAP_SECRET_NAME")))
+      (!contains(fn.roles, "bootstrap") || (length(fn.roles) == 1 && length(fn.http) == 0 && !contains(keys(fn.environment), "ERRTRAQ_BOOTSTRAP_SECRET_NAME") && !contains(keys(fn.secrets), "ERRTRAQ_BOOTSTRAP_SECRET_NAME"))) &&
+      # The archive role is its own container-image function (D6): it loads the DuckDB engine, has no URL and
+      # is reached only by its queue and its EventBridge schedules.
+      (!contains(fn.roles, "archive") || (length(fn.roles) == 1 && fn.package_type == "Image" && length(fn.http) == 0))
     ])
     error_message = "Functions must have valid roles, limits, artifact, distinct bindings and Secrets Manager ARN read grants."
   }
@@ -127,6 +134,28 @@ variable "cron_triggers" {
   }
 }
 
+variable "image_uri" {
+  type        = string
+  description = "ECR image (tag or digest) for functions with package_type Image; required exactly when one exists. Push it to the repository output image_repository_url first (the first apply may be limited to the repository with -target)."
+  default     = null
+  validation {
+    condition     = var.image_uri == null ? true : can(regex("^[0-9]{12}\\.dkr\\.ecr\\.[a-z0-9-]+\\.amazonaws\\.com(\\.cn)?/[a-z0-9][a-z0-9._/-]*(:[A-Za-z0-9_][A-Za-z0-9._-]{0,127}|@sha256:[a-f0-9]{64})$", var.image_uri))
+    error_message = "image_uri must be an ECR image reference with a tag or a sha256 digest."
+  }
+  validation {
+    condition     = (var.image_uri != null) == anytrue([for fn in values(var.functions) : fn.package_type == "Image"])
+    error_message = "image_uri is required with a container-image function and invalid without one."
+  }
+}
+variable "image_retention_count" {
+  type        = number
+  description = "Number of images kept in the ECR repository; older images expire."
+  default     = 30
+  validation {
+    condition     = var.image_retention_count >= 1 && var.image_retention_count <= 1000 && floor(var.image_retention_count) == var.image_retention_count
+    error_message = "image_retention_count must be an integer from 1 to 1000."
+  }
+}
 variable "runtime" {
   type        = string
   description = "Lambda runtime compatible with the built handler."

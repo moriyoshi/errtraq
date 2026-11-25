@@ -147,7 +147,6 @@ try {
     s3: {
       name,
       tags: {},
-      staging_prefix: "archive-staging/",
       protection: "disposable",
     },
     "lambda-app": {

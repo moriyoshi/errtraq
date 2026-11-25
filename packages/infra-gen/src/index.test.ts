@@ -18,6 +18,7 @@ import {
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import shared from "../../../stacks/aws-dynamodb.js";
+import archiveExample from "../../../stacks/aws-dynamodb-archive.js";
 import perTopic from "../../../stacks/aws-dynamodb-per-topic.js";
 import local from "../../../stacks/local.js";
 import {
@@ -33,10 +34,9 @@ const options: GenerateOptions = {
   modulesDirectory: "infra/modules",
   generationEnv: {},
   artifactPaths: Object.fromEntries(
-    ["ingest", "api", "consumer", "record", "cron", "shared"].map((id) => [
-      id,
-      `build/${id}.zip`,
-    ]),
+    ["ingest", "api", "consumer", "record", "cron", "archive", "shared"].map(
+      (id) => [id, `build/${id}.zip`],
+    ),
   ),
 };
 const raw = (stack: StackConfig): StackConfig =>
@@ -308,6 +308,7 @@ describe("Terraform generator", () => {
   it.each([
     ["shared", shared],
     ["per-topic", perTopic],
+    ["dynamodb-archive", archiveExample],
   ] as const)("renders the full %s stack deterministically", (_name, stack) => {
     const files = terraform(stack);
     expect(terraform(stack)).toEqual(files);
