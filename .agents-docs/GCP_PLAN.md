@@ -16,6 +16,16 @@ been built or verified on a real GCP project. Statements marked "to verify" were
 - Compute: Cloud Run (`packages/platforms/cloud-run`). It cannot start until M4i (in progress, edits core role,
   requirement and validation files) merges.
 
+Owner decisions taken 2026-11-26:
+
+- D7: no default region. The region must be provided explicitly in every GCP stack config (and example stacks take it
+  from a required input), never defaulted.
+- D8: a real GCP project comes later, when G5 is ready. Until then everything is built and tested against emulators;
+  no early real-service spike.
+- The other open decisions (D1 to D6, D9 to D14) await the owner's review. G0 to G4 start now on the recommendations
+  as provisional choices, keeping their dependence on D4 (Firestore client), D6 (emulators), D9 (Cloud SQL transport)
+  and D10 (secrets) behind narrow seams so a different answer is a local change.
+
 ## 1. Status
 
 ### 1.1 What GCP can reuse today
