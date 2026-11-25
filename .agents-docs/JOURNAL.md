@@ -1735,3 +1735,43 @@ opt-in test) and symbolic's `sourcebundle/mod.rs`:
 - **Other:** the release named by a request is ensured before any short-circuit; chunks are dropped
   after deterministic failures (bad ZIP, checksum) and kept after transient ones; organization
   release lists read everything and refuse beyond 1000 releases.
+
+## 2026-11-25 — M3h run 3, part B results and teardown (Claude)
+
+The `aws-dynamodb` stack ran within the sandbox account's Lambda concurrency limit of 10 (owner's
+choice; no quota increase). Findings:
+
+- **Contention at the account limit (B2, B4):** 500 same-issue events at HTTP concurrency 5. The
+  ingest queue's poller took all 10 execution slots, so ingest returned 429 for part of the burst
+  (185 of 500 in direct mode, 36 in grouped mode); every accepted event was counted exactly once and
+  no queue redelivered into a DLQ. Direct mode: 302 conditional-check failures and 204 transaction
+  conflicts on the store table, all retried, no throttling. Grouped mode: zero of either, because the
+  per-issue message group serializes the writes. A full 500-of-500 run needs a consumer
+  `maxConcurrency` (topic settings) below the account limit.
+- **Mode switch (B4):** a 100-event backlog queued in direct mode was recorded exactly once after the
+  apply to grouped mode, and a second 100-event backlog was drained through both queues before the
+  apply back to direct mode removed the record queue. In this stack the record role runs in the
+  platform's `shared` function, not a function named `record`; run scripts that looked for `record`
+  misreported the mode until fixed.
+- **Exact rate counting (B5):** in both modes, 15 events whose first delivery failed after the charge
+  were counted once (a double charge would have admitted 5); in grouped mode six new issues all
+  survived a record-handler redelivery against a cap of 6. Overrides: 50 above the stack's 20 is
+  refused by the tighten-only rule, 5 admits exactly 5 of 12, clearing restores 20 of 25.
+  `errtraq project rate-limits` reads the deployed store directly and needs `ERRTRAQ_STORE_TABLE` and
+  `ERRTRAQ_KV_TABLE` in the operator environment (as the README says).
+- **SQS and S3 edges (B3):** raw U+FFFE / U+FFFF bodies refused, the adapter's escaped form
+  round-trips; exactly 1 MiB accepted, 1 MiB + 1 byte refused, size counted in UTF-8 bytes; batch over
+  1 MiB refused as a whole; FIFO id limits as the adapter assumes; receive count 1, 2, 3, then the
+  message moves to the DLQ on the next receive (not on the third). No SQS throttling code was produced
+  at this rate. S3: unsigned payload accepted, 404 inside the granted prefix and 403 outside, encoded
+  listing uses `+` for space and `%2B` for plus, multipart abort allowed; AbortMultipartUpload of an
+  unknown upload id returns 204 rather than 404 `NoSuchUpload` (the adapter does not depend on it).
+- **FIFO high-throughput readback (B6):** empty repeat plan after the grouped apply and
+  `messageGroup` / `perMessageGroupId` read back, as on the postgres stack.
+- **Event fixtures (B7):** SQS standard and FIFO, function URL POST, GET and OPTIONS, and EventBridge
+  scheduled events captured and scrubbed (account, region, hosts, IPs, user agents, ids replaced);
+  kept in the ignored run workspace pending a decision to commit them.
+- **Teardown (B8):** the SSO session expired mid-destroy; Terraform failed to refresh it while the AWS
+  CLI's cached role credentials still worked, so the remaining destroy ran with those credentials
+  exported to the environment. Everything the run created is gone; the resource-tagging API kept
+  stale entries for deleted EC2 endpoints, a NAT gateway and an event source mapping for a while.
