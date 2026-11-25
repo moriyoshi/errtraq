@@ -166,6 +166,8 @@ upstream lands the two blocking changes below; otherwise stay with the container
 
 ## 5. Proposed upstream oganesson changes
 
+Filed 2026-11-26 on the oganesson repository as issues #14 (durable SQLite), #15 (host mounts and FileHandle), #21 (startup hook and scheduler), #16 (`node:sqlite`), #17 (plain server entries), #18 (persistent `og:kv`), #19 (release and Go module) and #20 (long-lived VM mode), in the order below.
+
 1. Durable SQLite on absolute paths: in `runtime/natives/sqlite.go` take the host-file branch for absolute
    filenames even when `Files` is set (the spike's one-line patch), plus a test and the docs claim made
    true. Also support `OG_DATA_DIR`-style mounts for node:fs.
