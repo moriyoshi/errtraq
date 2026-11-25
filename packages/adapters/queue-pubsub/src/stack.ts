@@ -122,6 +122,10 @@ function descriptor(config: ResolvedConfig): InfraDescriptor<Config> {
         {
           // One message per push request: batchSize is not a setting.
           visibilityTimeoutSec: config.ackDeadlineSec,
+          retryBackoffSec: {
+            min: config.minBackoffSec,
+            max: config.maxBackoffSec,
+          },
           dlq:
             config.dlq || key === "record"
               ? { enabled: true, maxReceiveCount: config.maxDeliveryAttempts }

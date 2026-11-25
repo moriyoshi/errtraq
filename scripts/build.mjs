@@ -20,6 +20,7 @@ export async function staleOutputs(packageDirectory) {
       else if (
         entry.name.endsWith(".ts") &&
         !entry.name.endsWith(".test.ts") &&
+        !entry.name.endsWith(".testing.ts") &&
         !entry.name.endsWith(".d.ts")
       ) {
         const source = await stat(join(packageDirectory, "src", path));

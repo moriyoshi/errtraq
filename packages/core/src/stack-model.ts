@@ -84,6 +84,11 @@ export const CRON_JOBS = [
   role: FunctionRole;
   archiveRole?: FunctionRole;
 }[]; // TODO(M4j): the erasure-worker handler.
+/** Cron jobs every function-compute stack schedules; the rest need the archive feature. */
+export const FUNCTION_CRON_JOBS: ReadonlySet<string> = new Set([
+  "staged-recovery",
+  "bundle-cleanup",
+]);
 /** The role that hosts a cron job: the archive role on a function platform with an archive. */
 export function cronJobRole(
   job: (typeof CRON_JOBS)[number],
@@ -393,7 +398,10 @@ export interface TopicMapping {
 export interface QueueTriggerSettings {
   batchSize?: number;
   maxConcurrency?: number;
+  /** Visibility timeout (SQS) or push ack deadline (Pub/Sub): the same setting under both names. */
   visibilityTimeoutSec?: number;
+  /** Redelivery backoff of a push queue; absent where the queue has no such policy. */
+  retryBackoffSec?: { min: number; max: number };
   dlq?: { enabled: boolean; maxReceiveCount?: number };
 }
 export interface DeploymentFunction extends PhysicalFunction {

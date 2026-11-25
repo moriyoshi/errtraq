@@ -187,15 +187,24 @@ importers:
       '@moriyoshi/errtraq-core':
         specifier: workspace:*
         version: link:packages/core
+      '@moriyoshi/errtraq-gcp-auth':
+        specifier: workspace:*
+        version: link:packages/gcp-auth
       '@moriyoshi/errtraq-kv-dynamodb':
         specifier: workspace:*
         version: link:packages/adapters/kv-dynamodb
+      '@moriyoshi/errtraq-kv-firestore':
+        specifier: workspace:*
+        version: link:packages/adapters/kv-firestore
       '@moriyoshi/errtraq-kv-memory':
         specifier: workspace:*
         version: link:packages/adapters/kv-memory
       '@moriyoshi/errtraq-platform-aws-lambda':
         specifier: workspace:*
         version: link:packages/platforms/aws-lambda
+      '@moriyoshi/errtraq-platform-cloud-run':
+        specifier: workspace:*
+        version: link:packages/platforms/cloud-run
       '@moriyoshi/errtraq-platform-standalone':
         specifier: workspace:*
         version: link:packages/platforms/standalone
@@ -211,6 +220,9 @@ importers:
       '@moriyoshi/errtraq-store-dynamodb':
         specifier: workspace:*
         version: link:packages/adapters/store-dynamodb
+      '@moriyoshi/errtraq-store-firestore':
+        specifier: workspace:*
+        version: link:packages/adapters/store-firestore
       '@moriyoshi/errtraq-store-sql':
         specifier: workspace:*
         version: link:packages/adapters/store-sql
@@ -510,6 +522,9 @@ importers:
       '@moriyoshi/errtraq-blob-fs':
         specifier: workspace:*
         version: link:../adapters/blob-fs
+      '@moriyoshi/errtraq-gcp-auth':
+        specifier: workspace:*
+        version: link:../gcp-auth
       '@moriyoshi/errtraq-infra-gen':
         specifier: workspace:*
         version: link:../infra-gen
@@ -522,6 +537,9 @@ importers:
       '@moriyoshi/errtraq-platform-aws-lambda':
         specifier: workspace:*
         version: link:../platforms/aws-lambda
+      '@moriyoshi/errtraq-platform-cloud-run':
+        specifier: workspace:*
+        version: link:../platforms/cloud-run
       '@moriyoshi/errtraq-platform-standalone':
         specifier: workspace:*
         version: link:../platforms/standalone
@@ -566,9 +584,9 @@ importers:
         specifier: 4.6.7
         version: 4.6.7
 
-  packages/gcp-auth: {}
-
   packages/firestore-rest: {}
+
+  packages/gcp-auth: {}
 
   packages/http:
     dependencies:
@@ -607,6 +625,34 @@ importers:
       '@moriyoshi/errtraq-queue-sqs':
         specifier: workspace:*
         version: link:../../adapters/queue-sqs
+      '@moriyoshi/errtraq-testing':
+        specifier: workspace:*
+        version: link:../../testing
+
+  packages/platforms/cloud-run:
+    dependencies:
+      '@hono/node-server':
+        specifier: ^2.1.9
+        version: 2.1.9(hono@4.13.19)
+      '@moriyoshi/errtraq-gcp-auth':
+        specifier: workspace:*
+        version: link:../../gcp-auth
+      '@moriyoshi/errtraq-http':
+        specifier: workspace:*
+        version: link:../../http
+      hono:
+        specifier: ^4.13.19
+        version: 4.13.19
+      zod:
+        specifier: 4.6.7
+        version: 4.6.7
+    devDependencies:
+      '@moriyoshi/errtraq-core':
+        specifier: workspace:*
+        version: link:../../core
+      '@moriyoshi/errtraq-queue-pubsub':
+        specifier: workspace:*
+        version: link:../../adapters/queue-pubsub
       '@moriyoshi/errtraq-testing':
         specifier: workspace:*
         version: link:../../testing

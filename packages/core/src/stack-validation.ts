@@ -17,6 +17,7 @@ import {
   type DeploymentTrigger,
   type DeploymentView,
   type DerivedGrant,
+  FUNCTION_CRON_JOBS,
   FUNCTION_ROLES,
   type FunctionRole,
   type FunctionSettings,
@@ -551,11 +552,6 @@ function deploymentFor(
   }
   return view;
 }
-/** Cron jobs every function-compute stack schedules; the rest need the archive feature. */
-const FUNCTION_CRON_JOBS: ReadonlySet<string> = new Set([
-  "staged-recovery",
-  "bundle-cleanup",
-]);
 export function deriveDeployment(input: StackConfig): DeploymentView {
   const stack = resolveStack(input);
   const config = platformConfigSchema.parse(stack.platform.config);

@@ -1,0 +1,68 @@
+{
+  "name": "@moriyoshi/errtraq-platform-cloud-run",
+  "version": "0.0.0",
+  "type": "module",
+  "exports": {
+    ".": {
+      "development": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./handler": {
+      "development": "./src/handler.ts",
+      "types": "./dist/handler.d.ts",
+      "import": "./dist/handler.js"
+    },
+    "./stack": {
+      "development": "./src/stack.ts",
+      "types": "./dist/stack.d.ts",
+      "import": "./dist/stack.js"
+    }
+  },
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com",
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "import": "./dist/index.js"
+      },
+      "./handler": {
+        "types": "./dist/handler.d.ts",
+        "import": "./dist/handler.js"
+      },
+      "./stack": {
+        "types": "./dist/stack.d.ts",
+        "import": "./dist/stack.js"
+      }
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "prepack": "pnpm --workspace-root run build"
+  },
+  "engines": {
+    "node": "^22.18.0 || >=23.6.0"
+  },
+  "dependencies": {
+    "@hono/node-server": "^2.1.9",
+    "@moriyoshi/errtraq-gcp-auth": "workspace:*",
+    "@moriyoshi/errtraq-http": "workspace:*",
+    "hono": "^4.13.19",
+    "zod": "4.6.7"
+  },
+  "peerDependencies": {
+    "@moriyoshi/errtraq-core": "workspace:^"
+  },
+  "devDependencies": {
+    "@moriyoshi/errtraq-core": "workspace:*",
+    "@moriyoshi/errtraq-queue-pubsub": "workspace:*",
+    "@moriyoshi/errtraq-testing": "workspace:*"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/moriyoshi/errtraq.git",
+    "directory": "packages/platforms/cloud-run"
+  }
+}

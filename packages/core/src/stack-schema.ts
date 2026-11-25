@@ -135,6 +135,13 @@ const descriptorSchema = z.strictObject({
             batchSize: z.number().int().positive().optional(),
             maxConcurrency: z.number().int().positive().optional(),
             visibilityTimeoutSec: z.number().int().positive().optional(),
+            retryBackoffSec: z
+              .strictObject({
+                min: z.number().int().min(0),
+                max: z.number().int().min(0),
+              })
+              .refine((value) => value.min <= value.max)
+              .optional(),
             dlq: z
               .strictObject({
                 enabled: z.boolean(),

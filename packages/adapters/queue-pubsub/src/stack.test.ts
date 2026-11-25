@@ -94,6 +94,7 @@ describe("manifest and descriptor", () => {
     });
     expect(selection.infra.topics?.settings?.record).toEqual({
       visibilityTimeoutSec: 180,
+      retryBackoffSec: { min: 10, max: 600 },
       dlq: { enabled: true, maxReceiveCount: 5 },
     });
   });
