@@ -1,6 +1,7 @@
 import {
   type AdapterManifest,
   type AdapterSelection,
+  type Binding,
   type EnvRef,
   type InfraDescriptor,
   isEnvRef,
@@ -9,6 +10,13 @@ import {
   type VariableRef,
 } from "@moriyoshi/errtraq-core";
 import { z } from "zod";
+import {
+  type CloudSqlIamConfig,
+  cloudSqlEnvBindings,
+  cloudSqlIamSchema,
+  cloudSqlInfra,
+  cloudSqlRuntimeSchema,
+} from "./postgres-cloudsql.js";
 
 /** Binding that delivers the administrator secret ARN to the bootstrap role only. */
 export const ADMIN_SECRET_BINDING = "ERRTRAQ_POSTGRES_ADMIN_SECRET";
@@ -42,6 +50,7 @@ const iamModeSchema = iamSchema.omit({ sslRootCert: true, adminSecret: true });
 const modeSchema = z.discriminatedUnion("mode", [
   secretModeSchema,
   iamModeSchema,
+  cloudSqlRuntimeSchema,
 ]);
 type Config = z.infer<typeof modeSchema>;
 export const manifest: AdapterManifest = {
@@ -72,11 +81,16 @@ export const infra: InfraDescriptor<Config> = {
   },
   bindings: [],
 };
+export type { CloudSqlIamConfig } from "./postgres-cloudsql.js";
 export type PostgresIamConfig = z.input<typeof iamSchema>;
 export type PostgresSecretConfig = { mode: "secret"; secret: VariableRef };
 /** Existing database: a secret identifier or a role-bound RDS IAM identity. */
 export function postgres(
-  input: VariableRef | PostgresSecretConfig | PostgresIamConfig,
+  input:
+    | VariableRef
+    | PostgresSecretConfig
+    | PostgresIamConfig
+    | CloudSqlIamConfig,
 ): AdapterSelection {
   if (isVariableRef(input) || input.mode === "secret") {
     const secret = isVariableRef(input) ? input : input.secret;
@@ -112,6 +126,7 @@ export function postgres(
       existing: {},
     };
   }
+  if (input.mode === "cloudsql-iam") return cloudSqlSelection(input);
   const config = iamSchema.parse(input);
   // An RDS Proxy endpoint presents an ACM certificate chained to the public Amazon roots, which
   // the Lambda RDS bundle (/var/runtime/ca-cert.pem) lacks; the system bundle has them.
@@ -193,6 +208,50 @@ export function postgres(
       user: config.user,
       region: config.region,
       resourceId: config.resourceId,
+    },
+  };
+}
+
+/**
+ * Cloud SQL for PostgreSQL with IAM database authentication. The functions' service accounts
+ * need `roles/cloudsql.instanceUser` (login) and, on the unix socket, `roles/cloudsql.client`;
+ * the IAM database user itself is created by Terraform, not by SQL.
+ */
+function cloudSqlSelection(input: CloudSqlIamConfig): AdapterSelection {
+  const config = cloudSqlIamSchema.parse(input);
+  const bindings: Binding[] = [
+    ...cloudSqlEnvBindings(config),
+    ...(config.adminSecret
+      ? [
+          {
+            name: ADMIN_SECRET_BINDING,
+            kind: "secret" as const,
+            purpose: "primary",
+            value: config.adminSecret,
+            capabilities: ["admin"],
+          },
+        ]
+      : []),
+  ];
+  return {
+    manifest: {
+      ...manifest,
+      configSchema: cloudSqlRuntimeSchema,
+      capabilities: {
+        ...manifest.capabilities,
+        authorizationScope:
+          "IAM grants login to one PostgreSQL user; PostgreSQL privileges enforce read, write and delete.",
+      },
+      // TODO(G5): requires a "gcp-credentials" environment feature once core knows it.
+      requires: [],
+    },
+    infra: cloudSqlInfra(config, bindings) as InfraDescriptor<unknown>,
+    runtimeModule: "@moriyoshi/errtraq-store-sql/postgres",
+    config: {
+      mode: "cloudsql-iam",
+      instanceConnectionName: config.instanceConnectionName,
+      region: config.region,
+      database: config.database,
     },
   };
 }
