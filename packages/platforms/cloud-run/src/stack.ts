@@ -46,7 +46,9 @@ export const FUNCTION_DEFAULTS = {
   vpcEgress: "private-ranges-only",
 } as const;
 /** Node base image of the container; the Node 22 lineage the standalone image uses. */
-export const CLOUD_RUN_NODE_IMAGE = "node:22.23-bookworm-slim";
+/** Node 26, matching the default Lambda runtime (`nodejs26.x`); bundles target `node26`. */
+export const CLOUD_RUN_NODE_IMAGE = "node:26.13.1-bookworm-slim";
+export const CLOUD_RUN_ESBUILD_TARGET = "node26";
 
 const role = z.enum([
   "ingest",

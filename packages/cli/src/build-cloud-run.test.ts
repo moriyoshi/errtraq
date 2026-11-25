@@ -39,7 +39,7 @@ const freePort = () =>
 describe("Cloud Run build", () => {
   it("renders a non-root image that selects each bundle by command", () => {
     const dockerfile = cloudRunDockerfile({ functionIds: ["ingest", "api"] });
-    expect(dockerfile).toContain("FROM node:22.");
+    expect(dockerfile).toContain("FROM node:26.13.1-bookworm-slim");
     expect(dockerfile).toContain("USER node");
     expect(dockerfile).toContain(
       "COPY --chown=node:node ingest/index.mjs /app/ingest/index.mjs",

@@ -32,7 +32,10 @@ import {
   type LambdaRuntime,
   lambdaEsbuildTarget,
 } from "@moriyoshi/errtraq-platform-aws-lambda/stack";
-import { CLOUD_RUN_NODE_IMAGE } from "@moriyoshi/errtraq-platform-cloud-run/stack";
+import {
+  CLOUD_RUN_ESBUILD_TARGET,
+  CLOUD_RUN_NODE_IMAGE,
+} from "@moriyoshi/errtraq-platform-cloud-run/stack";
 import { build } from "esbuild";
 import { strToU8, zipSync } from "fflate";
 import {
@@ -346,7 +349,9 @@ for(const signal of ["SIGTERM","SIGINT"]) process.on(signal,()=>{if(stopping){if
             ((stack.platform.config as { runtime?: string }).runtime ??
               DEFAULT_LAMBDA_RUNTIME) as LambdaRuntime,
           )
-        : "node22";
+        : stack.platform.manifest.id === "cloud-run"
+          ? CLOUD_RUN_ESBUILD_TARGET
+          : "node22";
     const result = await build({
       stdin: {
         contents: entry,
