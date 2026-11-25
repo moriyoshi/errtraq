@@ -301,6 +301,8 @@ reproduces).
 | EventBridge `PutRule` drops `Tags` | [#67](https://github.com/moriyoshi/winterbaume/issues/67) |
 | CloudWatch `DescribeAlarms` omits `TreatMissingData`; new alarms start in `OK` | [#68](https://github.com/moriyoshi/winterbaume/issues/68) |
 | CloudWatch rejects AWS JSON 1.0 protocol requests (`MissingAction`); AWS CLI 2.35 cannot call it | [#69](https://github.com/moriyoshi/winterbaume/issues/69) |
+| S3 presigned (query-string SigV4) requests are not routed: 404 `UnknownService` (found 2026-11-25 at v0.2.9; `blob-s3` presign is covered only by the published-vector unit test, not against the emulator) | [#81](https://github.com/moriyoshi/winterbaume/issues/81) |
+| S3 unsigned requests return 404 JSON `UnknownService` instead of 403 `AccessDenied` (found in the M4d spike at v0.2.9) | [#82](https://github.com/moriyoshi/winterbaume/issues/82) |
 | S3 ranged GET in server release 0.2.6 | [#29](https://github.com/moriyoshi/winterbaume/issues/29) (closed; fixed at the pinned revision) |
 
 ## Lambda VPC configuration is discarded
