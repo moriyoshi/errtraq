@@ -57,7 +57,11 @@ export function createCronHandler(
     }
     if (name === "bundle-cleanup") {
       if (!cleanup) throw new Error("Bundle cleanup adapters are missing");
-      await runBundleCleanup({ ...cleanup, logger }, firedAt, cleanup.limits);
+      await runBundleCleanup(
+        { ...cleanup, logger, persistCursor: true },
+        firedAt,
+        cleanup.limits,
+      );
       return;
     }
     if (name === "archive-planner" && archival) {

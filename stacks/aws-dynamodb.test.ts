@@ -314,6 +314,7 @@ describe("AWS descriptor stacks", () => {
       "blob:delete:primary",
       "blob:list:primary",
       "blob:read:primary",
+      "blob:write:primary",
       "queue:produce:shared",
       "store:metadata-delete:primary",
       "store:read:primary",
@@ -664,7 +665,7 @@ describe("AWS descriptor stacks", () => {
       // Each current generated policy is budgeted at 1024 characters and logging at 1024.
       expect((fn.policies.length + 1) * 1024).toBeLessThan(10240);
     }
-    expect(Math.max(...view.functions.map((fn) => fn.policies.length))).toBe(7);
+    expect(Math.max(...view.functions.map((fn) => fn.policies.length))).toBe(8);
   });
   it("keeps stack helpers free of runtime imports", async () => {
     for (const path of [

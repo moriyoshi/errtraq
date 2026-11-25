@@ -85,6 +85,37 @@ export const DEFAULT_BUNDLE_CLEANUP_LIMITS: BundleCleanupLimits = {
   maxBundlesPerProject: 10,
   pageSize: 50,
 };
+/** Blob key holding the resumable project position of the `bundle-cleanup` job. */
+export const BUNDLE_CLEANUP_CURSOR_KEY = "cron/bundle-cleanup-cursor";
+/** Where the next run resumes: the project-list page, the items already done in it, its limit. */
+interface CleanupPosition {
+  cursor?: Cursor;
+  skip: number;
+  limit: number;
+}
+function parsePosition(raw: string | null): CleanupPosition | undefined {
+  if (!raw) return undefined;
+  try {
+    const value: unknown = JSON.parse(raw);
+    if (typeof value !== "object" || value === null) return undefined;
+    const { c, s, l } = value as Record<string, unknown>;
+    if (
+      (c !== undefined && typeof c !== "string") ||
+      !Number.isSafeInteger(s) ||
+      !Number.isSafeInteger(l) ||
+      (s as number) < 0 ||
+      (l as number) < 1
+    )
+      return undefined;
+    return {
+      cursor: c as Cursor | undefined,
+      skip: s as number,
+      limit: l as number,
+    };
+  } catch {
+    return undefined;
+  }
+}
 /** FNV-1a; scrambles the run time into the start of the project window. */
 function fnv1a(text: string): number {
   let hash = 0x811c9dc5;
@@ -110,11 +141,13 @@ export const ABANDONED_CHUNK_TTL_MS = 7 * 24 * 60 * 60 * 1000;
  * abandoned upload chunks on blob stores that cannot do it themselves. Failures of one bundle
  * are logged and do not stop the run; the claim protocol makes every step resumable.
  *
- * Fairness without persisted state (the cron role holds no KV or blob write): when there are more
- * projects than `maxProjects`, each run examines a circular window of the project order whose
- * start is a hash of the run time, and one project cleans at most `maxBundlesPerProject` bundles.
- * A starved project is therefore reached by a later run with probability 1, whatever the early
- * projects hold. Returns the number of bundles cleaned.
+ * Fairness: with `persistCursor` each run resumes the project listing where the last one stopped
+ * (a page cursor plus the items already done in that page), examines at most `maxProjects`
+ * projects, and starts over at the first project after a complete lap, so every project is
+ * reached in order. A bundle-limit stop resumes right after the project that hit it. Without
+ * it there is no persisted state: when there are more projects than `maxProjects`, each
+ * run examines a circular window of the project order whose start is a hash of the run time.
+ * One project cleans at most `maxBundlesPerProject` bundles. Returns the number of bundles cleaned.
  */
 export async function runBundleCleanup(
   deps: {
@@ -128,6 +161,8 @@ export async function runBundleCleanup(
     >;
     blobs: BlobStore;
     logger: Pick<Logger, "info" | "warn" | "error">;
+    /** Persist the project position as a blob so runs rotate round-robin over all projects. */
+    persistCursor?: boolean;
   },
   now: Timestamp,
   limits: BundleCleanupLimits = DEFAULT_BUNDLE_CLEANUP_LIMITS,
@@ -199,36 +234,117 @@ export async function runBundleCleanup(
     } while (cursor);
     return visited;
   };
-  // One listing pass: keep the first `maxProjects` IDs (the common case needs nothing more) and
-  // only count the rest.
-  let total = 0;
-  const first: ProjectId[] = [];
-  {
-    let cursor: Cursor | undefined;
-    do {
-      const page = await deps.projects.list(cursor, limits.pageSize);
-      cursor = page.nextCursor ?? undefined;
-      for (const project of page.items) {
-        total++;
-        if (first.length < limits.maxProjects) first.push(project.id);
-      }
-    } while (cursor);
-  }
-  const window = Math.min(limits.maxProjects, total);
-  if (total <= limits.maxProjects) {
-    for (const id of first) {
-      await cleanProject(id);
-      if (stopped) break;
+  const persist = deps.persistCursor === true;
+  const savePosition = async (position: CleanupPosition | null) => {
+    try {
+      if (position)
+        await deps.blobs.put(
+          BUNDLE_CLEANUP_CURSOR_KEY,
+          new TextEncoder().encode(
+            JSON.stringify({
+              ...(position.cursor ? { c: position.cursor } : {}),
+              s: position.skip,
+              l: position.limit,
+            }),
+          ),
+          { contentType: "application/json" },
+        );
+      else await deps.blobs.delete(BUNDLE_CLEANUP_CURSOR_KEY);
+    } catch (error) {
+      deps.logger.error("Bundle cleanup cursor save failed", {
+        error: redactLogText(String(error)),
+      });
     }
-  } else {
-    const start = fnv1a(now) % total;
-    const tail = await visit(start, Math.min(window, total - start));
-    if (!stopped && tail < window) await visit(0, window - tail);
+  };
+  /** Resume from the persisted position; returns after `maxProjects` projects or one full lap. */
+  const runFromCursor = async () => {
+    let raw: string | null = null;
+    try {
+      const body = await deps.blobs.get(BUNDLE_CLEANUP_CURSOR_KEY);
+      raw = body ? await new Response(body).text() : null;
+    } catch (error) {
+      deps.logger.warn("Bundle cleanup cursor unreadable; starting over", {
+        error: redactLogText(String(error)),
+      });
+    }
+    let position = parsePosition(raw) ?? {
+      skip: 0,
+      limit: limits.pageSize,
+    };
+    let visited = 0;
+    for (;;) {
+      let page: Awaited<ReturnType<ProjectRepo["list"]>>;
+      try {
+        page = await deps.projects.list(position.cursor, position.limit);
+      } catch (error) {
+        if (!position.cursor) throw error;
+        deps.logger.warn("Bundle cleanup cursor is stale; starting over", {
+          error: redactLogText(String(error)),
+        });
+        position = { skip: 0, limit: limits.pageSize };
+        continue;
+      }
+      for (let i = position.skip; i < page.items.length; i++) {
+        if (visited >= limits.maxProjects) {
+          deps.logger.warn("Bundle cleanup reached its project limit", {
+            projects: limits.maxProjects,
+          });
+          await savePosition({ ...position, skip: i });
+          return;
+        }
+        visited++;
+        await cleanProject((page.items[i] as { id: ProjectId }).id);
+        if (stopped) {
+          await savePosition(
+            i + 1 < page.items.length
+              ? { ...position, skip: i + 1 }
+              : page.nextCursor
+                ? { cursor: page.nextCursor, skip: 0, limit: limits.pageSize }
+                : null,
+          );
+          return;
+        }
+      }
+      if (!page.nextCursor) {
+        await savePosition(null);
+        return;
+      }
+      position = { cursor: page.nextCursor, skip: 0, limit: limits.pageSize };
+    }
+  };
+  if (persist) await runFromCursor();
+  else {
+    // One listing pass: keep the first `maxProjects` IDs (the common case needs nothing more) and
+    // only count the rest.
+    let total = 0;
+    const first: ProjectId[] = [];
+    {
+      let cursor: Cursor | undefined;
+      do {
+        const page = await deps.projects.list(cursor, limits.pageSize);
+        cursor = page.nextCursor ?? undefined;
+        for (const project of page.items) {
+          total++;
+          if (first.length < limits.maxProjects) first.push(project.id);
+        }
+      } while (cursor);
+    }
+    const window = Math.min(limits.maxProjects, total);
+    if (total <= limits.maxProjects) {
+      for (const id of first) {
+        await cleanProject(id);
+        if (stopped) break;
+      }
+    } else {
+      const start = fnv1a(now) % total;
+      const tail = await visit(start, Math.min(window, total - start));
+      if (!stopped && tail < window) await visit(0, window - tail);
+    }
+    if (!stopped && total > window)
+      deps.logger.warn("Bundle cleanup reached its project limit", {
+        projects: limits.maxProjects,
+      });
   }
-  if (!stopped && total > window)
-    deps.logger.warn("Bundle cleanup reached its project limit", {
-      projects: limits.maxProjects,
-    });
   if (isExpiringBlobStore(deps.blobs)) {
     const cutoff = toTimestamp(
       new Date(Date.parse(now) - ABANDONED_CHUNK_TTL_MS),
