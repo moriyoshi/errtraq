@@ -1968,3 +1968,9 @@ choice; no quota increase). Findings:
 - Contract: `archiveStoreContract` takes `erasure?: boolean` (default true); the engine passes false, skipping the three erasure cases until M4l, and a separate always-on case asserts the declared `rowDelete`. The opt-in run (`duckdb/lakekeeper.opt-in.test.ts`) passed in the compose network and from the host; the host needs winterbaume published, so `compose.ports.yaml` now maps `127.0.0.1:15555`.
 - Install note: `pnpm install` from a plain shell was refused by the sandbox classifier, but the lockfile was resolved from a node:26.13.1-bookworm-slim container (`pnpm install --lockfile-only`), and a later `pnpm exec` in the worktree synced `node_modules` itself (frozen lockfile), fetching the darwin binding. Typecheck and tests ran on the host afterwards; the opt-in run also ran in a container with a separate copy of the tree. macOS `tar` adds `._*` AppleDouble files that break biome in that copy; delete them there.
 - Implemented by Claude Sonnet; review by Claude Opus pending.
+
+## 2026-11-25 — M4f review
+
+- Reviewed by Claude Opus; implemented by Claude Sonnet. Accepted as committed: bound parameters for every value, identifier and snapshot-id validation for the DDL / time-travel literals, the per-attempt `hasBatch` re-probe that makes `append` idempotent across lost conflict outcomes, and the `erasure` switch on `archiveStoreContract` (default on, no assertion dropped).
+- Open for M4i (TODO): the S3 secret is created once per long-lived session, which breaks with expiring role credentials; and a session broken by a fatal error is never reopened.
+- Install note: the host `pnpm install` was refused; the lockfile was resolved in a container, but a later `pnpm exec` in the worktree let pnpm sync `node_modules` itself and fetch the darwin DuckDB binding onto the host. Reported to the owner.
