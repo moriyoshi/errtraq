@@ -2065,3 +2065,10 @@ choice; no quota increase). Findings:
 - Emulator. See WINTERBAUME_GAPS.md: no ECR, so only ZIP parts were probed; results there.
 - Left open (TODO): M4m live verification list, two-step image apply, lazy engine init versus module init, the `archive-overflow/` grant breadth, `retention` without an archive, and the bucket naming question (not changed).
 - Implemented by Claude Sonnet; review by Claude Opus pending.
+
+## 2026-11-26 — Review of M4i (archive role, image packaging, AWS wiring)
+
+- Reviewed by Claude Opus; implemented by Claude Sonnet. Accepted: the always-split `archive` role (only with an archive selected), the deployed route of `archive.project` to it, the requirement rows reduced to `archive` and `api` (staging and archive KV rows removed), the per-topic queue requirement for archive stacks, one arm64 image holding every image function's bundle, ECR pull limited to this stack's functions by `aws:sourceArn`, extensions baked and loadable with networking disabled.
+- Fixed in the slice and worth remembering: the `archive-overflow/` manifest prefix was missing from both the module grants and the blob-s3 allow-list, so the first overflow batch on AWS would have been denied. The fix widens primary write to that prefix for every role with primary write (TODO).
+- Open: everything AWS-side is unverified (M4m); the emulated `generated-root` probe timed out twice and was not compared against the previous commit; the bucket naming question stays with the owner.
+- Housekeeping note: ten `terraform-provider-aws` processes from an earlier mutation run (in a removed worktree, reparented to init) were found running and stopped.
