@@ -44,7 +44,7 @@ item should be resolved or removed once addressed. Milestone work itself is trac
 - [ ] M3h / security: review the pinned `aws4fetch` 1.0.20 signing dependency; it is small and WebCrypto-compatible but has not been independently audited. — *source: M3b review section B*
 
 - [x] M3 / M6: define and enforce portable BlobStore key rules, including empty and `.` / `..` segments. — *source: M3b; resolved in M3b2*
-- [ ] M3: replace the local S3 UTF-8 decoder patch when Winterbaume fixes the new percent-decoding gap upstream. — *source: M3b*
+- [x] M3: replace the local S3 UTF-8 decoder patch when Winterbaume fixes the percent-decoding gap upstream. Done: fixed in winterbaume-server v0.2.9 (#58); the patch and its separate build were removed with the pin bump (2026-11-25). — *source: M3b*
 - [x] M3a2: add the local real-provider generated-root harness with API assertions, named gap checks, repeat and change plans, and destroy inventories. — *source: M3a2 provider probe*
 - [ ] M4 spike: confirm DuckDB iceberg-extension appends through a REST catalog against Lakekeeper and S3 Tables, and what Cloudflare Workers can do against R2 Data Catalog. — *source: JOURNAL 2026-11-21 — Project bootstrap decisions*
 - [ ] M4 spike: determine which engines can write and honor Iceberg v3 deletion vectors through a REST catalog; decide whether the native committer is needed. — *source: JOURNAL 2026-11-21 — Project bootstrap decisions*
