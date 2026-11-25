@@ -51,6 +51,9 @@
     },
     {
       "path": "./packages/platforms/aws-lambda"
+    },
+    {
+      "path": "./packages/adapters/queue-pubsub"
     }
   ]
 }
