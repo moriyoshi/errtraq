@@ -1,0 +1,91 @@
+# Local archive environment (M4d): Postgres + Lakekeeper + winterbaume + a DuckDB runner.
+# Everything runs in containers on one compose network; nothing is installed on the host.
+# Usage (normally via `pnpm archive:smoke`, which sets the variables and tears down):
+#   WINTERBAUME_BINARY=<abs path to a linux/arm64 winterbaume-server> \
+#     docker compose -p errtraq-archive -f docker/archive/compose.yaml up -d --wait
+#
+# Platform: the pinned winterbaume binary is aarch64-unknown-linux-gnu, so every service is
+# pinned to linux/arm64 (Apple Silicon hosts run it natively). On an amd64 host, point
+# WINTERBAUME_BINARY at the x86_64 build and set ARCHIVE_PLATFORM=linux/amd64.
+name: errtraq-archive
+
+x-platform: &platform
+  platform: ${ARCHIVE_PLATFORM:-linux/arm64}
+
+x-lakekeeper-env: &lakekeeper-env
+  LAKEKEEPER__PG_ENCRYPTION_KEY: This-is-NOT-Secure!
+  LAKEKEEPER__PG_DATABASE_URL_READ: postgresql://postgres:postgres@db:5432/postgres
+  LAKEKEEPER__PG_DATABASE_URL_WRITE: postgresql://postgres:postgres@db:5432/postgres
+  LAKEKEEPER__AUTHZ_BACKEND: allowall
+
+services:
+  db:
+    <<: *platform
+    image: postgres:17.12
+    environment:
+      POSTGRES_PASSWORD: postgres
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d postgres"]
+      interval: 2s
+      timeout: 10s
+      retries: 30
+
+  winterbaume:
+    <<: *platform
+    image: debian:bookworm-slim
+    # Pre-downloaded, checksum-verified release binary, mounted read-only (no published image).
+    volumes:
+      - ${WINTERBAUME_BINARY:?set WINTERBAUME_BINARY to the linux winterbaume-server binary}:/usr/local/bin/winterbaume-server:ro
+    command: ["winterbaume-server", "--host", "0.0.0.0", "--port", "5555", "--region", "us-east-1"]
+    environment:
+      RUST_LOG: info
+    healthcheck:
+      # bookworm-slim has no curl; a bare TCP connect is enough.
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/5555"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+  migrate:
+    <<: *platform
+    image: quay.io/lakekeeper/catalog:v0.15.1
+    environment: *lakekeeper-env
+    command: ["migrate"]
+    restart: "no"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  lakekeeper:
+    <<: *platform
+    image: quay.io/lakekeeper/catalog:v0.15.1
+    environment: *lakekeeper-env
+    command: ["serve"]
+    healthcheck:
+      test: ["CMD", "/home/nonroot/lakekeeper", "healthcheck"]
+      interval: 2s
+      timeout: 10s
+      retries: 30
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      winterbaume:
+        condition: service_healthy
+
+  runner:
+    <<: *platform
+    build:
+      context: ./runner
+      args:
+        DUCKDB_NODE_API_VERSION: ${DUCKDB_NODE_API_VERSION:-2.0.1-r.1}
+    image: errtraq-archive-runner:local
+    volumes:
+      - ../../scripts/archive-local/container:/app/spike:ro
+    environment:
+      WINTERBAUME_URL: http://winterbaume:5555
+      LAKEKEEPER_URL: http://lakekeeper:8181
+    # Idle; the smoke command `exec`s the spike scripts here (one process, one extension cache).
+    command: ["sleep", "infinity"]
+    depends_on:
+      lakekeeper:
+        condition: service_healthy
