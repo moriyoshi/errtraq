@@ -65,6 +65,14 @@ export interface ProjectRepo {
   getProjectBySlug(orgId: OrgId, slug: string): Promise<Project | null>;
   put(project: Project): Promise<void>;
   list(cursor?: Cursor, limit?: number): Promise<Page<Project>>;
+  /** Projects of one organization, ascending by project ID. Cursors advance over examined index
+   * keys, so an adapter that filters a shared index may return a short page (even an empty one)
+   * with a cursor; callers page until `nextCursor` is null. */
+  listByOrg(
+    orgId: OrgId,
+    cursor?: Cursor,
+    limit?: number,
+  ): Promise<Page<Project>>;
   getKey(publicKey: string): Promise<ProjectKey | null>;
   putKey(key: ProjectKey): Promise<void>;
   /** Atomically return an existing active key for the project or create and return the supplied key. */
@@ -165,6 +173,12 @@ export interface ReleaseRepo {
     cursor?: Cursor,
     limit?: number,
   ): Promise<Page<Release>>;
+  /** Read one bundle in any state (pending, active, or claimed for cleanup); null when absent
+   * or being deleted. Read-after-write consistent. */
+  getBundle(
+    projectId: ProjectId,
+    bundleId: ArtifactBundle["id"],
+  ): Promise<ArtifactBundle | null>;
   /** Begin or retry an identical pending bundle; competing IDs are rejected. */
   beginBundle(bundle: ArtifactBundle, manifest: BundleManifest): Promise<void>;
   /** Claim at most 100 IDs from the verified immutable manifest. A debug ID has one owner per project. */

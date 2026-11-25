@@ -242,3 +242,21 @@ network behavior in a real account before relying on it.
 
 For AWS Lambda stacks, configure `awsLambda({ rateLimit: 1000 })` to allow 1,000 event items
 per minute for each DSN key. The default is 60; use `rateLimit: null` to disable the limit.
+
+## Upload sourcemaps with sentry-cli
+
+errtraq implements the artifact bundle flow of `sentry-cli` (debug IDs). Create an API token with the
+`event:write` scope (`errtraq dev` prints one; deployed stacks use `errtraq token`), then:
+
+```sh
+export SENTRY_URL=https://errtraq.example.com SENTRY_AUTH_TOKEN=<token> SENTRY_ORG=<org> SENTRY_PROJECT=<project>
+sentry-cli releases new "$VERSION"
+sentry-cli sourcemaps inject ./dist          # writes debug IDs into the files and maps
+sentry-cli sourcemaps upload --release "$VERSION" ./dist
+sentry-cli releases finalize "$VERSION"
+sentry-cli deploys new --release "$VERSION" -e production
+```
+
+Bundles must carry debug IDs (run `inject` first); legacy release-file uploads, commits and refs are
+rejected with a clear error. Bundles are limited to 32 MiB. Applying the maps to incoming events
+arrives with the symbolication slice (M5b).

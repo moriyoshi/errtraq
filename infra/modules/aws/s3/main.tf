@@ -76,6 +76,14 @@ resource "aws_s3_bucket_lifecycle_configuration" "this" {
       expiration { days = var.max_event_retention_days + var.overflow_orphan_margin_days }
     }
   }
+  # Uploaded sourcemap chunks (artifacts/chunks/<orgId>/<sha1>) are inputs to a synchronous
+  # assembly that deletes them on success; this only collects chunks of uploads never assembled.
+  rule {
+    id     = "abandoned-artifact-chunks"
+    status = "Enabled"
+    filter { prefix = "artifacts/chunks/" }
+    expiration { days = var.artifact_chunk_retention_days }
+  }
   rule {
     id     = "abandoned-archive-staging"
     status = "Enabled"

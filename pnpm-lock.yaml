@@ -464,6 +464,9 @@ importers:
 
   packages/core:
     dependencies:
+      fflate:
+        specifier: 0.8.2
+        version: 0.8.2
       zod:
         specifier: 4.6.7
         version: 4.6.7
@@ -545,6 +548,9 @@ importers:
       '@moriyoshi/errtraq-http':
         specifier: workspace:*
         version: link:../http
+      fflate:
+        specifier: 0.8.2
+        version: 0.8.2
 
 packages:
 

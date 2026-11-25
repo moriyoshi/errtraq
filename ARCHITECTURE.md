@@ -74,7 +74,7 @@ interface ActiveStore {
   // and creates or bumps its issue; a duplicate eventId changes nothing. SQL: transaction; D1: batch;
   // DynamoDB: TransactWriteItems with a condition on the event item; Firestore: transaction.
   recordEvent(o: Occurrence, e: StoredEvent): Promise<{ inserted: boolean; issue: Issue; isNew: boolean; isRegression: boolean }>;
-  projects: ProjectRepo;      // orgs, projects, DSN keys, API tokens; lookups by id and by slug
+  projects: ProjectRepo;      // orgs, projects (listByOrg), DSN keys, API tokens; lookups by id and by slug
   issues: IssueRepo;
   events: EventRepo;
   releases: ReleaseRepo;      // releases (by id and version), artifact bundles, debug-id index
@@ -100,6 +100,7 @@ interface EventRepo {
   deleteBySubject(...): Promise<{ deleted; hasMore; issueCounts; payloadBlobKeys }>; // always throws until M4
 }
 interface ReleaseRepo {
+  getBundle(projectId, bundleId): Promise<ArtifactBundle | null>; // any state; lets a retry adopt the stored row
   beginBundle(bundle, manifest): Promise<void>; // pending with an expiry and immutable manifest reference
   putBundleDebugIds(projectId, bundleId, ids, manifestIds): Promise<void>; // <=100 verified IDs, exclusive ownership
   verifyAndActivateBundle(projectId, bundleId, ids): Promise<void>;
@@ -222,6 +223,50 @@ CF Cron Triggers, Cloud Scheduler) or an in-process timer on the standalone plat
    check, chunk-upload, artifact bundle assemble, releases CRUD/finalize/deploys) plus
    issue/event list/get/update for a later UI.
 4. **Cron** — archival, retention of raw envelopes, release-artifact GC.
+
+### Release and sourcemap upload (M5a)
+
+The API app serves what `sentry-cli releases new|finalize|list`, `deploys new` and
+`sourcemaps upload` (debug-ID artifact bundles only) call, all behind the existing API-token
+middleware (`event:read` for GET, `event:write` for POST/PUT; no new scope):
+
+- `GET|POST /api/0/organizations/{org}/chunk-upload/`: the GET returns `url`, `chunkSize`,
+  `chunksPerRequest`, `maxRequestSize`, `maxFileSize`, `concurrency`, `hashAlgorithm: sha1`,
+  `compression: [gzip]`, `accept: [artifact_bundles]`. The POST takes multipart parts `file` or
+  `file_gzip` whose filename is the SHA-1 of the (decompressed) chunk; every chunk is verified,
+  gzip inflation is bounded by `chunkSize`, and the body by `maxRequestSize`. Defaults are 1 MiB
+  chunks, 3 per request and a 32 MiB bundle: a Lambda function URL accepts about 4.5 MiB of raw
+  request body, and one bundle is held in memory once while it is assembled.
+- `POST /api/0/organizations/{org}/artifactbundle/assemble/`: `{checksum, chunks, projects,
+  version?, dist?}` returns `{state, missingChunks, detail?}`. Assembly is synchronous inside the
+  request (it reads at most `maxFileSize` bytes, inflates only `manifest.json`, and issues one
+  store call per 100 debug IDs), so only `not_found` (with the missing chunks), `ok` and `error`
+  are returned. It is idempotent and resumable: the bundle id is the checksum, a retry adopts the
+  stored pending row (`getBundle`), and a finished assembly answers `ok` without its chunks.
+  Concurrent first attempts may each pick a manifest key; `beginBundle` lets one win, the loser
+  adopts the stored row and deletes its own manifest blob. A pending row past `pendingExpiresAt`
+  (or claimed by cleanup) is cleaned up inline with the existing cleanup protocol and the
+  assembly starts over. The release named by the request is created even when the bundle was
+  already active. A bundle needs at least one debug ID (`sentry-cli sourcemaps
+  inject`); re-uploading the same debug-ID set under another checksum is a no-op, while a partial
+  overlap with an active bundle is an `error` (ownership is exclusive per project). `dist` is
+  accepted and not stored.
+- Releases (organization and project routes): create (201, or 208 when it exists), get, list, PUT
+  with `dateReleased` to finalize (first finalize wins), deploys create/list. Releases are stored
+  per project; organization routes fan out over the named projects (`ProjectRepo.listByOrg`;
+  the DynamoDB adapter filters its shared project index one page per call) and list only after
+  reading every release, refusing past 1000 instead of truncating. Commits, refs and archiving
+  are refused with 400; legacy release-file, release-bundle assemble and DIF endpoints answer
+  400 with a pointer to the debug-ID flow. Deploys are kept as one JSON blob per release
+  (`TODO(M5)`: move to `ReleaseRepo` if concurrent deploys matter).
+- Blob layout, all under `artifacts/` (already granted to every role that holds blob access):
+  `chunks/<orgId>/<sha1>` (organization-scoped, deleted after assembly or a deterministic
+  failure, S3 lifecycle rule `abandoned-artifact-chunks` after 7 days),
+  `bundles/<projectId>/<checksum>`, `manifests/<projectId>/<checksum>/<pendingExpiresAt>`
+  (the expiry moves on with every new attempt, so a key is not reused for a new bundle row),
+  `deploys/<projectId>/<releaseId>.json`. Pending-bundle cleanup deletes the bundle and manifest
+  blobs. The API role already held store read/write/metadata-delete and blob
+  read/write/delete, so no grant changed.
 
 Stack-level `rateRejection` describes optional per-issue and new-issue fixed-window limits and
 an `onKvFailure` policy. Both limits are disabled by default; an explicit enabled limit is
@@ -601,7 +646,7 @@ need no further grants and the administrator credentials are used only for role 
 | **M2** | Completed: infra model, AWS HCL modules and generator; `validate/build/infra generate`, Lambda handler scaffolding and standalone container | The infra abstraction |
 | **M3** | AWS runtime adapters, postgres dialect, deployed secrets and real deployment | First cloud target |
 | **M4** | Archive: REST catalog client, DuckDB engine, archival job, federated query, erasure requests with v3 deletion vectors; Lakekeeper+winterbaume in compose; engine spike | Hot/cold tiering |
-| **M5** | Releases, chunk upload, artifact bundles, JS symbolication | sentry-cli compatibility |
+| **M5** | Releases, chunk upload, artifact bundles, JS symbolication. M5a (done): the sentry-cli upload path. M5b: symbolication, cleanup cron wiring, Cloudflare | sentry-cli compatibility |
 | **M6** | Cloudflare: Workers platform, d1 dialect, `queue-cf`, R2, R2 Data Catalog | Most constrained runtime |
 | **M7+** | Remaining adapters (mysql, turso, supabase, firestore, redis, nats, pubsub, cloud tasks, service bus, gcs, azure), Cloud Run/Vercel platforms, web UI, alerts | Breadth |
 

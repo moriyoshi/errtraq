@@ -734,6 +734,34 @@ export function activeStoreContract(
           ),
         ),
       ).toEqual(new Set(projects.map((p) => p.id)));
+      // Organization-scoped listing returns only that organization's projects across pages.
+      const other = { id: "org2" as OrgId, slug: "org2", name: "Other" };
+      await store.projects.putOrg(other);
+      const foreign: Project = {
+        id: "99" as ProjectId,
+        orgId: other.id,
+        slug: "theirs",
+        name: "Theirs",
+        retentionDays: 30,
+      };
+      await store.projects.put(foreign);
+      expect(
+        (await collect((cursor) => store.projects.listByOrg(org.id, cursor, 2)))
+          .map((p) => p.id)
+          .sort(),
+      ).toEqual(projects.map((p) => p.id).sort());
+      expect(
+        (
+          await collect((cursor) =>
+            store.projects.listByOrg(other.id, cursor, 2),
+          )
+        ).map((p) => p.id),
+      ).toEqual([foreign.id]);
+      expect(
+        await collect((cursor) =>
+          store.projects.listByOrg("none" as OrgId, cursor, 2),
+        ),
+      ).toEqual([]);
     });
     it("persists per-project rate limits through reads, updates and clearing", async () => {
       const store = await factory();
@@ -1156,8 +1184,13 @@ export function activeStoreContract(
         pendingExpiresAt: t(10),
         manifest,
       };
+      expect(await s.releases.getBundle(project, pending.id)).toBeNull();
       await s.releases.beginBundle(pending, manifest);
       await s.releases.beginBundle(pending, manifest);
+      expect(await s.releases.getBundle(project, pending.id)).toEqual(pending);
+      expect(
+        await s.releases.getBundle("other-project" as ProjectId, pending.id),
+      ).toBeNull();
       await expect(
         s.releases.putBundleDebugIds(
           project,
@@ -1212,6 +1245,9 @@ export function activeStoreContract(
       ).rejects.toBeInstanceOf(ConflictError);
       await s.releases.verifyAndActivateBundle(project, pending.id, ids);
       await s.releases.verifyAndActivateBundle(project, pending.id, ids);
+      expect((await s.releases.getBundle(project, pending.id))?.state).toBe(
+        "active",
+      );
       expect(
         (await s.releases.findBundleByDebugId(project, ids[1000] as string))
           ?.state,

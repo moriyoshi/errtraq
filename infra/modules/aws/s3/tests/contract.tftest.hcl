@@ -69,6 +69,10 @@ run "claim_and_overflow_lifecycle" {
     error_message = "Record claim checks must expire after 30 days by default under payloads/records/."
   }
   assert {
+    condition     = one([for rule in aws_s3_bucket_lifecycle_configuration.this.rule : rule.expiration[0].days if rule.id == "abandoned-artifact-chunks"]) == 7 && one([for rule in aws_s3_bucket_lifecycle_configuration.this.rule : one(rule.filter).prefix if rule.id == "abandoned-artifact-chunks"]) == "artifacts/chunks/"
+    error_message = "Unassembled artifact chunks must expire after 7 days under artifacts/chunks/."
+  }
+  assert {
     condition = length([for rule in aws_s3_bucket_lifecycle_configuration.this.rule : rule if startswith(rule.id, "orphaned-overflow-payloads-")]) == 10 && alltrue([
       for rule in aws_s3_bucket_lifecycle_configuration.this.rule : rule.expiration[0].days == 37 && length(one(rule.filter).prefix) == 10 && !startswith("payloads/records/", one(rule.filter).prefix) && !startswith(one(rule.filter).prefix, "payloads/records/")
       if startswith(rule.id, "orphaned-overflow-payloads-")

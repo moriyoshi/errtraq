@@ -197,6 +197,24 @@ export function projectRepository(driver: Driver): ProjectRepo {
         cursor,
         limit,
       ),
+    // The project index is shared by every organization, so this filters one global page per
+    // call; the cursor advances over examined keys and a page may be short or empty.
+    listByOrg: async (orgId, cursor, limit) => {
+      const page = await pageIndex<Project>(
+        driver,
+        "entity-list",
+        "GSI7PK",
+        "GSI7SK",
+        indexPartition("projects"),
+        "projects",
+        cursor,
+        limit,
+      );
+      return {
+        items: page.items.filter((p) => p.orgId === orgId),
+        nextCursor: page.nextCursor,
+      };
+    },
     getKey: async (publicKey) =>
       itemData<ProjectKey>(await get(driver, keyPk(publicKey))),
     putKey: (key) =>

@@ -1,11 +1,15 @@
 import {
   type ActiveStore,
   type ApiToken,
+  ArtifactBundleService,
   type BlobStore,
+  type ChunkUploadLimits,
   type Clock,
+  ConflictError,
   type Cursor,
   type EventId,
   hashApiToken,
+  type IdGen,
   InvalidCursorError,
   InvalidIdentifierError,
   type Issue,
@@ -21,13 +25,16 @@ import {
   type StoredEvent,
   UnsupportedQueryError,
   VersionConflictError,
+  WebCryptoIdGen,
 } from "@moriyoshi/errtraq-core/runtime";
 import { Hono } from "hono";
 import { HTTPException } from "hono/http-exception";
+import type { ApiEnv } from "./api-env.js";
 import { eventJson, issueJson } from "./api-mappers.js";
 import { logUnexpected } from "./errors.js";
+import { addReleaseRoutes } from "./release-routes.js";
 
-type Env = { Variables: { token: ApiToken } };
+type Env = ApiEnv;
 const statuses = ["unresolved", "resolved", "ignored"] as const;
 /** Minimal Sentry-compatible project and issue API; every resource is scoped to the token organization. */
 export function createApiApp(options: {
@@ -37,6 +44,9 @@ export function createApiApp(options: {
   kv?: KV;
   rateRejection?: RateRejectionConfig;
   logger?: Pick<Logger, "error">;
+  ids?: IdGen;
+  /** Chunk upload limits advertised to sentry-cli and enforced during assembly. */
+  chunkUpload?: Partial<ChunkUploadLimits>;
 }): Hono<Env> {
   const app = new Hono<Env>({ strict: false });
   const { store, clock } = options;
@@ -112,6 +122,8 @@ export function createApiApp(options: {
     if (error instanceof NotFoundError)
       return c.json({ detail: "Not found" }, 404);
     if (error instanceof VersionConflictError)
+      return c.json({ detail: "Conflict, please retry" }, 409);
+    if (error instanceof ConflictError)
       return c.json({ detail: "Conflict, please retry" }, 409);
     const requestId = logUnexpected(options.logger, error, c.req.raw);
     return c.json({ detail: "Internal server error", requestId }, 500);
@@ -358,6 +370,22 @@ export function createApiApp(options: {
     return issue
       ? c.json(await renderEvent(event, issue))
       : c.json({ detail: "Not found" }, 404);
+  });
+  const ids = options.ids ?? new WebCryptoIdGen();
+  addReleaseRoutes(app, {
+    store,
+    clock,
+    ids,
+    blobs: options.blobs,
+    bundles: options.blobs
+      ? new ArtifactBundleService({
+          releases: store.releases,
+          blobs: options.blobs,
+          clock,
+          ids,
+          limits: options.chunkUpload,
+        })
+      : undefined,
   });
   return app;
 }

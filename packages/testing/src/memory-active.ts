@@ -101,6 +101,16 @@ export class MemoryActiveStore implements ActiveStore {
         (p) => [p.id],
         "projects",
       ),
+    listByOrg: async (orgId, cursor, limit) =>
+      page(
+        [...this.projectRows.values()]
+          .filter((p) => p.orgId === orgId)
+          .sort((a, b) => compareKeys([a.id], [b.id])),
+        cursor,
+        limit,
+        (p) => [p.id],
+        JSON.stringify(["projects", orgId]),
+      ),
     getKey: async (key) => copy(this.keys.get(key) ?? null),
     putKey: async (key) => {
       const other = this.keys.get(key.publicKey);
@@ -417,6 +427,8 @@ export class MemoryActiveStore implements ActiveStore {
         (r) => [r.id],
         JSON.stringify(["releases", projectId]),
       ),
+    getBundle: async (projectId, bundleId) =>
+      copy(this.bundles.get(this.key(projectId, bundleId)) ?? null),
     beginBundle: async (bundle, manifest) => {
       if (
         bundle.state !== "pending" ||

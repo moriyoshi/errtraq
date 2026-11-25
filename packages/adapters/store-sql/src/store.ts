@@ -349,6 +349,8 @@ export function createSqlStore({ db, dialect }: SqlStoreOptions): ActiveStore {
           data: JSON.stringify(p),
         }),
       list: (cursor, limit) => list("projects", { cursor, limit }),
+      listByOrg: (orgId, cursor, limit) =>
+        list("projects", { scope: orgId, cursor, limit }),
       getKey: async (key) => {
         const r = await db
           .selectFrom("keys")
@@ -698,6 +700,14 @@ export function createSqlStore({ db, dialect }: SqlStoreOptions): ActiveStore {
       },
       list: (projectId, cursor, limit) =>
         list("releases", { projectId, cursor, limit }),
+      getBundle: async (projectId, bundleId) => {
+        const r = await db
+          .selectFrom("bundles")
+          .select("data")
+          .where("pk", "=", pk(projectId, bundleId))
+          .executeTakeFirst();
+        return r ? decode<ArtifactBundle>(r.data) : null;
+      },
       beginBundle: async (bundle, manifest) =>
         transaction(async (trx) => {
           await dialect.lock(trx, `bundles:${bundle.projectId}`);

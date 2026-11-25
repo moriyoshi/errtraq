@@ -227,6 +227,7 @@ export function bundleRepository(
   d: Driver,
 ): Pick<
   ReleaseRepo,
+  | "getBundle"
   | "beginBundle"
   | "putBundleDebugIds"
   | "verifyAndActivateBundle"
@@ -239,6 +240,10 @@ export function bundleRepository(
   | "findBundleByDebugId"
 > {
   return {
+    async getBundle(project, id) {
+      const found = await state(d, bundleKey(project, id));
+      return found && !found.item.deleting ? found.bundle : null;
+    },
     async beginBundle(bundle, manifest) {
       if (
         bundle.state !== "pending" ||

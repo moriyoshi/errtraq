@@ -1685,3 +1685,53 @@ once per command, not refreshed, which is fine for these short commands.
   `statement_timeout` as a startup option, and an `IAM_AUTH` proxy would refuse the master password
   anyway. Bootstrap must target the instance; the stack has one host for all roles, so a proxy
   deployment bootstraps before switching `host`/`resourceId` to the proxy (or a later per-role host).
+
+## 2026-11-25 — M5a: sentry-cli upload path (Claude)
+
+Verified against sentry-cli source (getsentry/sentry-cli master, 3.8.2 installed from npm for the
+opt-in test) and symbolic's `sourcebundle/mod.rs`:
+
+- The chunk part is named `file` or `file_gzip` and the multipart filename is the SHA-1 of the
+  uncompressed chunk (not the field name). `ChunkServerOptions` requires `url`, `chunksPerRequest`,
+  `maxRequestSize`, `chunkSize`, `concurrency`, `hashAlgorithm`; `accept` is not read by the CLI.
+- Assemble: after the first call sentry-cli uploads only `missingChunks`, then polls; `not_found` and
+  `error` are both fatal while polling, so a finished assembly must keep answering `ok` (here: via the
+  assembly record plus the active debug-ID owner, because chunks are deleted after success).
+- A source bundle is `SYSB` + version (8 bytes) followed by a ZIP with `manifest.json` and `files/...`.
+  Real bundles parse with fflate as is (the zip writer records absolute offsets); the parser also tries
+  the ZIP after the 8 bytes, and falls through when a candidate has no `manifest.json` (fflate does not
+  throw on shifted offsets).
+- `ReleaseRepo.beginBundle` retry is an exact-equality check including `pendingExpiresAt` and the
+  manifest key. See the review-fix entry below for how retries adopt the stored row.
+- sentry-cli re-uploads of an unchanged build get new checksums (attributes such as release differ) but
+  identical debug IDs; exclusive ownership would make that a conflict, so equal debug-ID digests are
+  treated as already registered. Partial overlap stays an error. Deletion/replacement semantics are open.
+- Lambda function URLs cap the request body at 6 MB (about 4.5 MB raw after base64), hence 1 MiB chunks, 3 per request.
+- Not done (M5b, see TODO(M5) markers): symbolication in the consumer, cleanup cron wiring (the
+  cleanup function already removes the assembly record), Cloudflare. `dist` and release `url` are
+  accepted but not stored; org-level release lists take no cursor and scan all projects.
+
+## 2026-11-25 — M5a review fixes: retries adopt the stored row (Claude)
+
+- **Assembly record removed, `ReleaseRepo.getBundle` added.** The first design pinned ids in a blob
+  written with an unconditional put, which two concurrent first attempts could overwrite with
+  different manifest keys. Now the bundle id is the checksum and the store row is the single source
+  of truth: an attempt reads the row, adopts it if pending, or creates it; if `beginBundle`
+  conflicts it re-reads, adopts the winner and deletes its own manifest blob.
+- **Manifest keys never reused:** the key embeds the attempt's `pendingExpiresAt`
+  (`manifests/<project>/<checksum>/<expiry>`). A new row only exists after cleanup finished
+  removing the previous one, and the expiry (now plus one hour, from the clock) differs per attempt,
+  so a later row never shares a key with an earlier one unless two attempts share a millisecond, in
+  which case the blob content is identical and the same attempt-race rule applies. Cleanup now also
+  deletes the bundle blob (it used to leave it).
+- **Expired pending attempts:** a retry past `pendingExpiresAt` (or one already claimed by cleanup)
+  runs `cleanupPendingBundle` itself. Claiming is atomic and resumable, so racing the cron is safe,
+  and then starts over with a fresh row.
+- **`ProjectRepo.listByOrg`:** SQL filters on the existing `scope` column. DynamoDB has one project
+  index partition shared by all organizations, so it filters one global page per call (examined-key
+  cursor, short pages allowed). This is O(all projects) across a full listing, which is accepted for
+  tens of projects; a per-organization index entry would need a second GSI row or a migration
+  (open: TODO).
+- **Other:** the release named by a request is ensured before any short-circuit; chunks are dropped
+  after deterministic failures (bad ZIP, checksum) and kept after transient ones; organization
+  release lists read everything and refuse beyond 1000 releases.

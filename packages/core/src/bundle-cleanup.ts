@@ -50,6 +50,8 @@ export async function cleanupPendingBundle(
       );
     }
   }
+  // The pending bundle blob is orphaned by cleanup; a later upload rewrites it.
+  await blobs.delete(bundle.blobKey);
   await blobs.delete(bundle.manifest.blobKey);
   await releases.finishPendingBundleCleanup(projectId, bundleId, cleanupId);
   return true;

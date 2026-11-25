@@ -40,6 +40,15 @@ variable "staging_retention_days" {
     error_message = "staging_retention_days must be a positive integer."
   }
 }
+variable "artifact_chunk_retention_days" {
+  type        = number
+  description = "Days before uploaded but never assembled sourcemap chunks under artifacts/chunks/ expire."
+  default     = 7
+  validation {
+    condition     = var.artifact_chunk_retention_days >= 1 && floor(var.artifact_chunk_retention_days) == var.artifact_chunk_retention_days
+    error_message = "artifact_chunk_retention_days must be a positive integer."
+  }
+}
 
 variable "record_claim_retention_days" {
   type        = number
