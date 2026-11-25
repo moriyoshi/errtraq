@@ -1,6 +1,6 @@
 /**
  * Declarative Firestore index configuration, the single source for both the Terraform module
- * (`infra/modules/gcp/firestore`, built in G6) and the offline coverage test. Single-field
+ * (`infra/modules/google/firestore`, built in G6) and the offline coverage test. Single-field
  * indexes are automatic; only the composite indexes below and the single-field exemptions are
  * declared. Collection scope: a per-project subcollection named `issues` is covered by an
  * index on the collection id `issues`.

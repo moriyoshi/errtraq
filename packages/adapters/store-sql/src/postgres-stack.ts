@@ -242,8 +242,8 @@ function cloudSqlSelection(input: CloudSqlIamConfig): AdapterSelection {
         authorizationScope:
           "IAM grants login to one PostgreSQL user; PostgreSQL privileges enforce read, write and delete.",
       },
-      // TODO(G5): requires a "gcp-credentials" environment feature once core knows it.
-      requires: [],
+      // The login token comes from the host's ambient credentials (metadata server on Cloud Run).
+      requires: ["ambient-credentials"],
     },
     infra: cloudSqlInfra(config, bindings) as InfraDescriptor<unknown>,
     runtimeModule: "@moriyoshi/errtraq-store-sql/postgres",

@@ -84,6 +84,11 @@ export const CRON_JOBS = [
   role: FunctionRole;
   archiveRole?: FunctionRole;
 }[]; // TODO(M4j): the erasure-worker handler.
+/** Cron jobs every function-compute stack schedules; the rest need the archive feature. */
+export const FUNCTION_CRON_JOBS: ReadonlySet<string> = new Set([
+  "staged-recovery",
+  "bundle-cleanup",
+]);
 /** The role that hosts a cron job: the archive role on a function platform with an archive. */
 export function cronJobRole(
   job: (typeof CRON_JOBS)[number],
@@ -97,6 +102,11 @@ export const ENVIRONMENT_FEATURES = [
   "long-lived-process",
   "shared-process-state",
   "aws-credentials",
+  /**
+   * Credentials delivered by the host without configuration (a metadata server, workload identity).
+   * Provider neutral; a platform that provides it says so in its manifest, and GCP platforms use it.
+   */
+  "ambient-credentials",
 ] as const;
 export type EnvironmentFeature = (typeof ENVIRONMENT_FEATURES)[number];
 export interface AdapterManifest<C = unknown> {
@@ -126,6 +136,25 @@ export interface PlatformManifest<C = unknown> extends AdapterManifest<C> {
   infrastructureConfigReferences?: Record<string, StackVariableType>;
   /** Exact names or prefixes ending in '*'. */
   reservedBindings: string[];
+  /**
+   * Queue adapter ids with which this platform defaults to grouped recording (`recordMode`); any
+   * other queue defaults to direct. Absent means direct for every queue.
+   */
+  groupedRecordQueues?: string[];
+  /**
+   * Smallest `dlq.maxReceiveCount` this platform accepts on an enabled queue DLQ, so the consumer
+   * can acknowledge a missing claim a few times before redrive. Absent means no floor.
+   */
+  minQueueDlqAttempts?: number;
+  /**
+   * The platform delivers config references (`env()`, `variable()` inside adapter config) to each
+   * function as `ERRTRAQ_CONFIG_*` environment bindings, resolved at runtime by the deployed plan.
+   */
+  deliversConfigBindings?: boolean;
+  /** The platform delivers `ERRTRAQ_INGEST_RATE_LIMIT` from its config `rateLimit` to the ingest role. */
+  deliversIngestRateLimit?: boolean;
+  /** False when the platform cannot host the archive tier yet; absent means it can. */
+  supportsArchive?: boolean;
 }
 export interface FunctionSettings {
   memoryMb?: number;
@@ -154,7 +183,7 @@ export interface OutputRef {
 }
 export interface StackRef {
   readonly [REF]: "stack";
-  readonly name: "name" | "region" | "tags" | "protection";
+  readonly name: "name" | "region" | "project" | "tags" | "protection";
   readonly provider?: string;
 }
 export interface EnvRef {
@@ -369,7 +398,10 @@ export interface TopicMapping {
 export interface QueueTriggerSettings {
   batchSize?: number;
   maxConcurrency?: number;
+  /** Visibility timeout (SQS) or push ack deadline (Pub/Sub): the same setting under both names. */
   visibilityTimeoutSec?: number;
+  /** Redelivery backoff of a push queue; absent where the queue has no such policy. */
+  retryBackoffSec?: { min: number; max: number };
   dlq?: { enabled: boolean; maxReceiveCount?: number };
 }
 export interface DeploymentFunction extends PhysicalFunction {
@@ -462,7 +494,7 @@ export interface StackConfig {
   name: string;
   /** Production protection is the default; disposable permits resource teardown. */
   protection?: "production" | "disposable";
-  /** Defaults to grouped for Lambda with SQS and direct otherwise. */
+  /** Defaults to grouped when the platform lists the selected queue in `groupedRecordQueues`, else direct. */
   recordMode?: "direct" | "grouped";
   /**
    * Bound on the total life of an archived event in days, counted from `receivedAt`; each project's
@@ -479,6 +511,8 @@ export interface StackConfig {
       source: string;
       version: string;
       region?: string;
+      /** The cloud project (GCP); required by `hashicorp/google`. */
+      project?: string;
       tags?: Record<string, string>;
     }
   >;

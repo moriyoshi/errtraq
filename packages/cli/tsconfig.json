@@ -24,6 +24,12 @@
       "path": "../platforms/aws-lambda"
     },
     {
+      "path": "../platforms/cloud-run"
+    },
+    {
+      "path": "../gcp-auth"
+    },
+    {
       "path": "../adapters/archive-iceberg"
     },
     {

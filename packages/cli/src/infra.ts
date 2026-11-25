@@ -27,6 +27,8 @@ import { DEFAULT_LAMBDA_RUNTIME } from "@moriyoshi/errtraq-platform-aws-lambda/s
 import type { BuildManifest } from "./build.js";
 import { terraformModulesPackage, vendorModules } from "./modules.js";
 
+/** What a Cloud Run build artifact records (the bundle is an ES module run with Node 22). */
+export const CLOUD_RUN_ARTIFACT = { handler: "index.mjs", runtime: "node22" };
 async function holds(directory: string, name: string): Promise<boolean> {
   try {
     await lstat(join(directory, name));
@@ -284,9 +286,16 @@ export async function generateInfra(
         bytes.byteLength,
         config.artifactBucket !== undefined,
       );
+    const expected =
+      stack.platform.manifest.id === "cloud-run"
+        ? CLOUD_RUN_ARTIFACT
+        : {
+            handler: config.handler ?? "index.handler",
+            runtime: config.runtime ?? DEFAULT_LAMBDA_RUNTIME,
+          };
     if (
-      artifact.handler !== (config.handler ?? "index.handler") ||
-      artifact.runtime !== (config.runtime ?? DEFAULT_LAMBDA_RUNTIME)
+      artifact.handler !== expected.handler ||
+      artifact.runtime !== expected.runtime
     )
       throw new Error(
         `Build artifact handler or runtime mismatch for ${fn.id}`,

@@ -110,7 +110,7 @@ export function create({
     throw new Error("Missing Firestore database binding");
   const endpoint = resolveEndpoint(config, environment);
   const accessToken = bindings.accessToken;
-  // TODO(G5): the platform wiring injects the gcp-auth token source as `accessToken`.
+  // The Cloud Run platform injects the gcp-auth token source as the `accessToken` host binding.
   if (!endpoint && typeof accessToken !== "function")
     throw new Error("Missing Firestore access token source");
   return new FirestoreStore({

@@ -62,6 +62,9 @@
       "path": "./packages/platforms/aws-lambda"
     },
     {
+      "path": "./packages/platforms/cloud-run"
+    },
+    {
       "path": "./packages/adapters/queue-pubsub"
     },
     {

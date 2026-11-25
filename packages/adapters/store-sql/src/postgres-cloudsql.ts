@@ -131,7 +131,7 @@ export interface CloudSqlPoolOptions {
   /**
    * Supplies a fresh login token. G0's token source caches with an expiry skew and is called
    * once per new connection; a token only matters at login, established connections outlive it.
-   * TODO(G5): the platform wires `@moriyoshi/errtraq-gcp-auth` here.
+   * The Cloud Run platform wires `@moriyoshi/errtraq-gcp-auth` here (scope `sqlservice.login`).
    */
   accessToken: () => Promise<string>;
   connection:
@@ -208,7 +208,7 @@ export function cloudSqlIamPoolConfig(
 /**
  * Infra for the selection: an IAM binding document module (`roles/cloudsql.instanceUser` for the
  * login, `roles/cloudsql.client` where the proxy socket is used), per capability like RDS.
- * TODO(G6): `infra/modules/gcp/cloudsql-iam-access` is not written; until then, pass `existing`
+ * TODO(G6): `infra/modules/google/cloudsql-iam-access` is not written; until then, pass `existing`
  * policies (`policies.<read|write|delete>.primary`) or expect validation to name the gap.
  */
 export function cloudSqlInfra(
@@ -217,7 +217,7 @@ export function cloudSqlInfra(
 ): InfraDescriptor<CloudSqlRuntimeConfig> {
   return {
     module: {
-      provider: "gcp",
+      provider: "google",
       component: "cloudsql-iam-access",
       outputs: { policies: { map: { map: "json-document" } } },
     },

@@ -131,7 +131,7 @@ describe("Firestore store deployment configuration", () => {
       deleteStrategy: "explicit",
     });
     expect(infra.module).toMatchObject({
-      provider: "gcp",
+      provider: "google",
       component: "firestore",
     });
     const inputs = infra.inputs(

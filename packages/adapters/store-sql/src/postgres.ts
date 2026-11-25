@@ -94,8 +94,8 @@ export async function create({
     };
     const instanceConnectionName = required(CS.instance),
       database = required(CS.database);
-    // The token source is injected, never fetched here (TODO(G5): the Cloud Run platform
-    // supplies it from the G0 package, with the Cloud SQL login scope).
+    // The token source is injected, never fetched here (the Cloud Run platform supplies it
+    // from the G0 package, with the Cloud SQL login scope, to verify in G8).
     const accessToken = bindings.accessToken;
     if (typeof accessToken !== "function")
       throw new Error("Cloud SQL IAM requires an access token source");

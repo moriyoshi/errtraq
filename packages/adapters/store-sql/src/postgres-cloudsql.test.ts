@@ -159,7 +159,7 @@ describe("Cloud SQL stack selection", () => {
     expect(binding(s, "ERRTRAQ_POSTGRES_SOCKET_DIR")).toBe("/cloudsql");
     expect(binding(s, "ERRTRAQ_POSTGRES_HOST")).toBeUndefined();
     expect(s.infra.module).toMatchObject({
-      provider: "gcp",
+      provider: "google",
       component: "cloudsql-iam-access",
     });
     expect(s.infra.capabilities["project-read"]).toEqual(
@@ -171,7 +171,7 @@ describe("Cloud SQL stack selection", () => {
       region: "europe-west1",
       database: "errtraq",
     });
-    expect(s.manifest.requires).toEqual([]);
+    expect(s.manifest.requires).toEqual(["ambient-credentials"]);
   });
   it("carries the TCP form and the admin secret to the bootstrap role only", () => {
     const s = postgres({
@@ -215,14 +215,23 @@ describe("Cloud SQL stack selection", () => {
       expect(() => postgres(bad as never)).toThrow();
   });
   it("validates against a stack once a provider of the module family exists", async () => {
-    // TODO(G5): core matches the provider source suffix to `module.provider` ("gcp"), which
-    // cannot be the real `hashicorp/google`; a placeholder source stands in until G5 maps it.
+    // The module family `google` matches the real `hashicorp/google` provider source.
     const { default: aws } = await import("../../../../stacks/aws-dynamodb.js");
     const store = postgres(base);
     const stack = (providers: object, selection = store) =>
       ({
         ...Object.fromEntries(Object.entries(aws)),
         store: selection,
+        platform: {
+          ...aws.platform,
+          manifest: {
+            ...aws.platform.manifest,
+            provides: [
+              ...aws.platform.manifest.provides,
+              "ambient-credentials",
+            ],
+          },
+        },
         providers,
       }) as never;
     expect(
@@ -230,10 +239,11 @@ describe("Cloud SQL stack selection", () => {
     ).toContain("Missing provider requirement");
     const providers = {
       ...aws.providers,
-      gcp: {
-        source: "example/gcp",
+      google: {
+        source: "hashicorp/google",
         version: "~> 8.0",
         region: "europe-west1",
+        project: "example-project",
       },
     };
     expect(validateStack(stack(providers))).toEqual([]);

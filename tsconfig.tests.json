@@ -76,6 +76,15 @@
       "@moriyoshi/errtraq-platform-aws-lambda/stack": [
         "packages/platforms/aws-lambda/src/stack.ts"
       ],
+      "@moriyoshi/errtraq-platform-cloud-run": [
+        "packages/platforms/cloud-run/src/index.ts"
+      ],
+      "@moriyoshi/errtraq-platform-cloud-run/handler": [
+        "packages/platforms/cloud-run/src/handler.ts"
+      ],
+      "@moriyoshi/errtraq-platform-cloud-run/stack": [
+        "packages/platforms/cloud-run/src/stack.ts"
+      ],
       "@moriyoshi/errtraq-aws-signing": ["packages/aws-signing/src/index.ts"],
       "@moriyoshi/errtraq-gcp-auth": ["packages/gcp-auth/src/index.ts"],
       "@moriyoshi/errtraq-blob-gcs": [
