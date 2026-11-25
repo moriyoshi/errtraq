@@ -12,6 +12,7 @@ export * from "./deployed-execution.js";
 export * from "./domain.js";
 export * from "./envelope.js";
 export * from "./errors.js";
+export * from "./event-query.js";
 export * from "./identifier-limits.js";
 export * from "./ids.js";
 export * from "./ingest.js";

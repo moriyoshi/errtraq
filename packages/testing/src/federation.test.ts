@@ -1,74 +1,50 @@
-import type {
-  Day,
-  EventPosition,
-  IssueId,
-  ProjectId,
-  StoredEvent,
-  Timestamp,
+import {
+  type EventId,
+  EventQueryService,
+  type IssueId,
+  type ProjectId,
+  type Timestamp,
 } from "@moriyoshi/errtraq-core";
-import { expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
+import { federationSuite } from "./federation.js";
 import { MemoryActiveStore } from "./memory-active.js";
-import { MemoryArchiveStore } from "./memory-other.js";
 
-it("merges keyset pages without dropping tails or duplicating overlapping events", async () => {
-  const projectId = "1" as ProjectId;
-  const issueId = "issue" as IssueId;
-  const active = new MemoryActiveStore();
-  const archive = new MemoryArchiveStore();
-  const rows: StoredEvent[] = [1, 2, 3, 4, 5, 6].map((n) => ({
-    projectId,
-    issueId,
-    eventId: `e${n}` as StoredEvent["eventId"],
-    receivedAt: `2024-01-01T00:00:0${Math.ceil(n / 2)}.000Z` as Timestamp,
-    timestamp: `2024-01-01T00:00:0${Math.ceil(n / 2)}.000Z` as Timestamp,
-    level: "error",
-    tags: {},
-    payload: {},
-  }));
-  for (const row of rows.filter((_, i) => [0, 2, 3, 5].includes(i)))
-    await active.recordEvent(
-      {
+federationSuite(async () => new MemoryActiveStore());
+
+describe("EventQueryService without an archive", () => {
+  it("is a pass-through: source cursors and results are untouched", async () => {
+    const store = new MemoryActiveStore();
+    const projectId = "1" as ProjectId;
+    for (let i = 0; i < 3; i++) {
+      const receivedAt = new Date(
+        Date.UTC(2024, 0, 1, 0, 0, i),
+      ).toISOString() as Timestamp;
+      const base = {
         projectId,
-        issueId,
-        eventId: row.eventId,
-        fingerprint: "fp",
-        timestamp: row.timestamp,
-        receivedAt: row.receivedAt,
-        title: "x",
-        culprit: "x",
-        level: "error",
-        type: "error",
-        metadata: {},
-      },
-      row,
+        issueId: "iss" as IssueId,
+        eventId: `e${i}` as EventId,
+        timestamp: receivedAt,
+        receivedAt,
+        level: "error" as const,
+      };
+      await store.recordEvent(
+        {
+          ...base,
+          fingerprint: "fp",
+          title: "t",
+          culprit: "",
+          type: "error",
+          metadata: {},
+        },
+        { ...base, tags: {}, payload: {} },
+      );
+    }
+    const service = new EventQueryService({ store });
+    const direct = await store.events.listByIssue({ projectId, limit: 2 });
+    expect(await service.listByIssue({ projectId, limit: 2 })).toEqual(direct);
+    expect((await service.getEvent(projectId, "e1" as EventId))?.eventId).toBe(
+      "e1",
     );
-  await archive.append({
-    batchId: "b",
-    dayRange: ["2024-01-01" as Day, "2024-01-01" as Day],
-    rows: rows.filter((_, i) => [1, 2, 4, 5].includes(i)),
+    expect(await service.getEvent(projectId, "zz" as EventId)).toBeNull();
   });
-  let after: EventPosition | undefined;
-  const result: string[] = [];
-  for (;;) {
-    const [a, b] = await Promise.all([
-      active.events.listByIssue({ projectId, after, limit: 2 }),
-      archive.query({ projectId, after, limit: 2 }),
-    ]);
-    const unique = new Map(
-      [...a.items, ...b.items].map((row) => [row.eventId, row]),
-    );
-    const merged = [...unique.values()]
-      .sort(
-        (x, y) =>
-          y.receivedAt.localeCompare(x.receivedAt) ||
-          y.eventId.localeCompare(x.eventId),
-      )
-      .slice(0, 2);
-    if (!merged.length) break;
-    result.push(...merged.map((row) => row.eventId));
-    const last = merged.at(-1);
-    if (!last) throw new Error("empty merge");
-    after = { receivedAt: last.receivedAt, eventId: last.eventId };
-  }
-  expect(result).toEqual(["e6", "e5", "e4", "e3", "e2", "e1"]);
 });

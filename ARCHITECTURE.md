@@ -203,6 +203,24 @@ interface ArchiveStore {
   rows, and resumes both sources from the last emitted key, so no row is skipped or repeated
   (opaque per-source cursors could not guarantee that). The watermark therefore only ever *skips the archive*, never the active store,
   so late or not-yet-deleted rows can't be missed. Details in "Archival job" below.
+  M4c settles these details:
+  - The public cursor (`v1.` form, scope `["fed", projectId, issueId, from, to, order]`) encodes
+    only the last emitted `[receivedAt, eventId]`. Per-source cursors never leave the service: each
+    source is queried with `after` and drained internally (a source page may be short or empty
+    while `hasMore` is true) until it holds `limit` rows or is exhausted. The cursor is scoped to
+    every filter and rejected on another query, and `cursor` together with `after` is rejected.
+    `hasMore` is exact: more than `limit` merged rows, or a source that still has rows.
+  - The cursor is a federation cursor whenever an archive is configured, even if a given request
+    reads the active store only, so it stays valid when the watermark moves between pages. With no
+    archive configured the service passes straight through and the source cursor format is used
+    unchanged (a cursor does not survive turning an archive on).
+  - `ArchiveState` is read once per list call and never cached across calls or requests (the
+    worker advances it at every MARK). The archive is skipped when `from >= archivedThrough` or
+    an ascending resume key is already at or past it; `getEvent` reads the active store, then
+    `archive.getEvent` with a hint such as `issue.lastEventReceivedAt`, without consulting the
+    watermark.
+  - `createApiApp` takes an optional `archive`; the events list, event detail, project event
+    detail and the issue latest-event lookup go through the service.
 
 ### Small ports
 `KV` (rate limits via atomic `increment`, DSN-key cache, erasure suppression list; memory /

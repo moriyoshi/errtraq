@@ -20,7 +20,7 @@ difference is called out as an owner decision (section 3). ARCHITECTURE.md is ca
 | TTL backstop | `eventBackstopEpoch()` computes DynamoDB TTL seconds; not wired into writes. | `store-dynamodb/src/ttl-backstop.ts` |
 | Archive contract suite | `archiveStoreContract` exists (append idempotency incl. concurrent append, `hasBatch`, keyset paging both orders, issue and half-open range filters, project isolation, `getEvent` with hint, `deleteWhere` by email and by event ids, `hardErase`, `expireSnapshots`). Runs only against the fake. | `testing/src/contracts.ts` (archiveStoreContract), `contracts.test.ts` |
 | Archive fake | `MemoryArchiveStore` (stages JSON arrays, not Parquet). | `testing/src/memory-other.ts` |
-| Federation | Only a test that merge-sorts two keyset pages by hand. There is no core `EventQueryService`; `packages/http/src/api.ts` reads `store.events` only, and no watermark is consulted. | `testing/src/federation.test.ts`, `http/src/api.ts` |
+| Federation | `EventQueryService` (M4c) and the shared `federationSuite`; the API takes an optional `archive`. No platform passes one yet (M4g). | `core/src/event-query.ts`, `testing/src/federation.ts`, `http/src/api.ts` |
 | Adapter package and infra | None. No `packages/adapters/archive-iceberg`, no `docker/` directory (ARCHITECTURE lists one), no Lakekeeper or archive Terraform modules, no `archive` function role (`FUNCTION_ROLES` is ingest, api, consumer, record, cron, bootstrap). winterbaume is installed by `scripts/aws-emulated/install.mjs` (pin v0.2.9). | repo tree |
 | Erasure | No suppression (`TODO(M4)` at `consumer.ts:382` and `record-handler.ts:195`), no `SubjectIndex`, no reducer, no ledger worker, no erasure API routes. | repo tree |
 
@@ -82,6 +82,7 @@ M4d -> M4e -> M4f -----/
 
 ### M4c. Federated `EventQueryService` (core) and API wiring
 
+- Status: implemented (2026-11-25). `core/src/event-query.ts`, shared `federationSuite` in `packages/testing`, wired into the API (`createApiApp({ archive })`); platform wiring of the archive into `createApiApp` is M4g.
 - Goal: one read path over both tiers, correct across the watermark.
 - Scope: `packages/core` (new `event-query.ts`), `packages/http/src/api.ts` (events list, event detail, issue `lastEventId` lookup), `packages/testing`.
 - Behavior: always query the active store; query the archive only when the range starts before `archivedThrough` (from `MetaRepo`, cached per request); merge-sort by `(receivedAt, eventId)` in the requested order, dedupe on `eventId`, emit `limit`, resume both sources from the last emitted key via `after`; independent source cursors stay internal. `getEvent` falls back to `archive.getEvent` with `hintTs`. When no archive is configured the service is a pass-through, so existing behavior is unchanged.

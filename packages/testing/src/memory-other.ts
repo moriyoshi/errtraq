@@ -386,6 +386,7 @@ export class MemoryArchiveStore implements ArchiveStore {
   async getEvent(
     projectId: Parameters<ArchiveStore["getEvent"]>[0],
     eventId: Parameters<ArchiveStore["getEvent"]>[1],
+    _hintTs?: Parameters<ArchiveStore["getEvent"]>[2],
   ) {
     return copy(
       this.rows().find(

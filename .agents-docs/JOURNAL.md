@@ -1914,3 +1914,12 @@ choice; no quota increase). Findings:
   and after, on memory and sqlite) is generated from a dry run's call counts, so new operations are
   covered automatically.
 
+
+## 2026-11-25 — M4c: federated EventQueryService
+
+- `EventQueryService` (core `event-query.ts`) merges the active store and the archive by `(receivedAt, eventId)`, dedupes on `eventId` and resumes both sources from the last emitted key. Its public cursor holds only that key (scope `["fed", project, issue, from, to, order]`). Source cursors stay internal: sources are paged with `after` and drained through their own cursors until they hold `limit` rows, because a source page may be empty or short with `hasMore` true (examined-key cursors).
+- `hasMore` needs no probe row: each drained source either is exhausted or holds at least `limit` rows, so `merged > limit || a source has more` is exact, including when every source row is a duplicate.
+- The cursor is federation-shaped whenever an archive is configured, so it survives the watermark moving mid-pagination; a source cursor is rejected as invalid. Without an archive the service is a pure pass-through, so API output is byte-identical.
+- Archive reachability: `from < archivedThrough` (or no `from`), and not an ascending resume at or past the watermark. Rows between COMMIT and MARK exceed the watermark but still live in the active store, which is always queried, so that skip is safe.
+- Test design: `federationSuite(factory)` in `packages/testing` (random placement over hot, cold and both tiers with tied timestamps, both orders, limits 1..100, issue and range filters, exact `hasMore`, empty-tier cases, archive-skip checks, cursor hygiene, and archival running between pages by crashing the M4b worker right after its first DELETE call so rows sit in both tiers). Mutation check: removing dedupe or the `more` flags fails the suite. Runs on MemoryActiveStore and sqlite (memory and file) with MemoryArchiveStore. `MemoryArchiveStore.getEvent` now accepts the hint argument.
+- Gap: no platform passes `archive` to `createApiApp` yet (standalone, Lambda); that is M4g and M4i.
