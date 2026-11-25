@@ -208,8 +208,9 @@ export function cloudSqlIamPoolConfig(
 /**
  * Infra for the selection: an IAM binding document module (`roles/cloudsql.instanceUser` for the
  * login, `roles/cloudsql.client` where the proxy socket is used), per capability like RDS.
- * TODO(G6): `infra/modules/google/cloudsql-iam-access` is not written; until then, pass `existing`
- * policies (`policies.<read|write|delete>.primary`) or expect validation to name the gap.
+ * The HCL module is `infra/modules/google/cloudsql-iam-access`. Its documents also carry
+ * `iam_database_user` on the login grant: the platform module then creates one IAM database user
+ * per function service account (omitted when `serviceAccountEmail` names an operator-managed user).
  */
 export function cloudSqlInfra(
   config: z.output<typeof cloudSqlIamSchema>,

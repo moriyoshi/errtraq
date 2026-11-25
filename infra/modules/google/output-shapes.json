@@ -1,0 +1,101 @@
+{
+  "artifact-registry": {
+    "repository_id": "string",
+    "repository_url": "string"
+  },
+  "cloud-run-app": {
+    "api_url": "string",
+    "bootstrap_url": "string",
+    "ingest_url": "string",
+    "service_account_emails": {
+      "api": "string",
+      "bootstrap": "string",
+      "consumer": "string",
+      "cron": "string",
+      "ingest": "string"
+    }
+  },
+  "cloudsql-iam-access": {
+    "policies": {
+      "delete": {
+        "primary": "json-document"
+      },
+      "read": {
+        "primary": "json-document"
+      },
+      "write": {
+        "primary": "json-document"
+      }
+    }
+  },
+  "firestore": {
+    "database_id": "string",
+    "policies": {
+      "delete": {
+        "primary": "json-document"
+      },
+      "metadata-delete": {
+        "primary": "json-document"
+      },
+      "read": {
+        "primary": "json-document"
+      },
+      "write": {
+        "primary": "json-document"
+      }
+    },
+    "project_id": "string"
+  },
+  "gcs": {
+    "bucket_id": "string",
+    "bucket_name": "string",
+    "policies": {
+      "delete": {
+        "primary": "json-document"
+      },
+      "list": {
+        "primary": "json-document"
+      },
+      "read": {
+        "primary": "json-document"
+      },
+      "write": {
+        "primary": "json-document"
+      }
+    }
+  },
+  "pubsub": {
+    "policies": {
+      "consume": {
+        "plain": "json-document",
+        "record": "json-document",
+        "shared": "json-document"
+      },
+      "produce": {
+        "plain": "json-document",
+        "record": "json-document",
+        "shared": "json-document"
+      }
+    },
+    "queues": {
+      "plain": {
+        "dlq_subscription": "string",
+        "dlq_topic": "string",
+        "subscription": "string",
+        "topic": "string"
+      },
+      "record": {
+        "dlq_subscription": "string",
+        "dlq_topic": "string",
+        "subscription": "string",
+        "topic": "string"
+      },
+      "shared": {
+        "dlq_subscription": "string",
+        "dlq_topic": "string",
+        "subscription": "string",
+        "topic": "string"
+      }
+    }
+  }
+}

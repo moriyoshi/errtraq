@@ -81,7 +81,7 @@ describe("Cloud Run build", () => {
     expect(bundle).toContain("ERRTRAQ_PUSH_SERVICE_ACCOUNT");
     expect(bundle).not.toContain("GOOGLE_APPLICATION_CREDENTIALS");
     // The infra generator accepts the recorded artifacts (hash, handler, runtime) without
-    // placeholders. TODO(G6): `terraform validate` waits for the google modules.
+    // placeholders. `pnpm infra:validate` runs `terraform validate` on the generated google roots.
     const summary = await generateInfra(
       loaded,
       repo,

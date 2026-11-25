@@ -74,10 +74,11 @@ for (const { manifest, file } of tarballs) {
   const problems = [];
   const expected =
     manifest.name === "@moriyoshi/errtraq-terraform-modules"
-      ? "package/aws/"
-      : "package/dist/";
-  if (!listing.some((entry) => entry.startsWith(expected)))
-    problems.push(`no ${expected}**`);
+      ? ["package/aws/", "package/google/"]
+      : ["package/dist/"];
+  for (const prefix of expected)
+    if (!listing.some((entry) => entry.startsWith(prefix)))
+      problems.push(`no ${prefix}**`);
   for (const entry of listing)
     if (
       /^package\/src\//.test(entry) ||

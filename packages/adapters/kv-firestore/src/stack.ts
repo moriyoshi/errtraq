@@ -39,8 +39,8 @@ const policy = (capability: string) => ({
   primary: out("policies", capability, "primary"),
 });
 /**
- * HCL module contract. TODO(G6): `infra/modules/google/firestore` does not exist yet; this is the
- * placeholder shape G6 implements (a database of its own for purpose `kv`, with the TTL policy).
+ * HCL module contract (`infra/modules/google/firestore`): a database of its own for purpose `kv`,
+ * with the TTL policy.
  */
 export const infra: InfraDescriptor<Config> = {
   module: {

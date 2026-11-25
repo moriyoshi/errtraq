@@ -240,14 +240,14 @@ const schedulerEmail = (config: Resolved) =>
 
 export const infra: InfraDescriptor<Config> = {
   module: {
-    // TODO(G6): infra/modules/google/cloud-run-app does not exist yet; this descriptor is the
-    // contract the HCL module must satisfy.
+    // The HCL module is infra/modules/google/cloud-run-app; this descriptor is its contract.
     provider: "google",
     component: "cloud-run-app",
     outputs: {
       ingest_url: "string",
       api_url: "string",
       bootstrap_url: "string",
+      service_account_emails: { map: "string" },
     },
   },
   inputs: (input, deployment): Record<string, InfraValue> => {
@@ -273,7 +273,7 @@ export const infra: InfraDescriptor<Config> = {
       // One push subscription per physical queue. The module creates it under exactly the
       // reserved `subscription` name (see queue-pubsub's resources), pushing to
       // `<service url>/_errtraq/push/<physical>` with an OIDC token of the push service account.
-      // TODO(G6): topic and dead-letter topic names follow the pubsub module's naming contract
+      // The topic and dead-letter topic names follow the pubsub module's naming contract
       // (`<stack>-<physical>` and `<stack>-<physical>-dlq`, derived from the subscription name).
       queue_triggers: Object.fromEntries(
         deployment.triggers

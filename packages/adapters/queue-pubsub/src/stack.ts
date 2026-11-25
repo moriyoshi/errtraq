@@ -135,9 +135,9 @@ function descriptor(config: ResolvedConfig): InfraDescriptor<Config> {
     ),
   };
   return {
-    // TODO(G6): infra/modules/google/pubsub does not exist yet; this descriptor is
-    // the contract the HCL module must satisfy. Subscriptions live in the
-    // platform module (GCP_PLAN 5.3), so the module outputs topics only.
+    // The HCL module is infra/modules/google/pubsub; this descriptor is its contract.
+    // Subscriptions live in the platform module (GCP_PLAN 5.3), so the module creates topics
+    // and only reserves the subscription names.
     module: {
       provider: "google",
       component: "pubsub",
