@@ -362,6 +362,22 @@ importers:
         specifier: workspace:*
         version: link:../../testing
 
+  packages/adapters/kv-firestore:
+    dependencies:
+      '@moriyoshi/errtraq-firestore-rest':
+        specifier: workspace:*
+        version: link:../../firestore-rest
+      zod:
+        specifier: 4.6.7
+        version: 4.6.7
+    devDependencies:
+      '@moriyoshi/errtraq-core':
+        specifier: workspace:*
+        version: link:../../core
+      '@moriyoshi/errtraq-testing':
+        specifier: workspace:*
+        version: link:../../testing
+
   packages/adapters/kv-memory:
     dependencies:
       zod:
@@ -422,6 +438,22 @@ importers:
       '@moriyoshi/errtraq-aws-signing':
         specifier: workspace:*
         version: link:../../aws-signing
+      zod:
+        specifier: 4.6.7
+        version: 4.6.7
+    devDependencies:
+      '@moriyoshi/errtraq-core':
+        specifier: workspace:*
+        version: link:../../core
+      '@moriyoshi/errtraq-testing':
+        specifier: workspace:*
+        version: link:../../testing
+
+  packages/adapters/store-firestore:
+    dependencies:
+      '@moriyoshi/errtraq-firestore-rest':
+        specifier: workspace:*
+        version: link:../../firestore-rest
       zod:
         specifier: 4.6.7
         version: 4.6.7
@@ -535,6 +567,8 @@ importers:
         version: 4.6.7
 
   packages/gcp-auth: {}
+
+  packages/firestore-rest: {}
 
   packages/http:
     dependencies:

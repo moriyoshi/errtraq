@@ -12,6 +12,7 @@
     "packages/platforms/*/src/**/*.ts",
     "stacks/**/*.ts",
     "packages/aws-signing/src/**/*.ts",
-    "packages/gcp-auth/src/**/*.ts"
+    "packages/gcp-auth/src/**/*.ts",
+    "packages/firestore-rest/src/**/*.ts"
   ]
 }
