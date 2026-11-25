@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import * as publicApi from "./index.js";
 import { create, infra, manifest } from "./index.js";
 import { ArchiveEngineNotWiredError } from "./runtime.js";
+import { rowDeleteModeFor } from "./stack.js";
 
 describe("archive-iceberg manifest", () => {
   it("is an archive adapter with catalog and engine children", () => {
@@ -63,6 +64,46 @@ describe("archive-iceberg manifest", () => {
     ).toBe(false);
   });
 
+  it("defaults the engine to format 3 and validates its options", () => {
+    const schema = manifest.configSchema;
+    const parsed = schema.parse({
+      catalog: { uri: "http://x.test", warehouse: "w" },
+    }) as {
+      engine: Record<string, unknown> & { s3: Record<string, unknown> };
+      catalog: { ignoreServerUri: boolean };
+    };
+    expect(parsed.engine).toMatchObject({
+      catalogType: "lakekeeper",
+      formatVersion: 3,
+      homeDirectory: "/tmp/errtraq-duckdb",
+      extensionMode: "runtime-install",
+      retry: { maxAttempts: 8, baseDelayMs: 100, maxDelayMs: 5000 },
+      s3: { urlStyle: "vhost", useSsl: true },
+    });
+    expect(parsed.catalog.ignoreServerUri).toBe(false);
+    const bad = (engine: unknown) =>
+      schema.safeParse({ catalog: { uri: "http://x.test" }, engine }).success;
+    expect(bad({ formatVersion: 3, threads: 2, memoryLimit: "768MB" })).toBe(
+      true,
+    );
+    expect(bad({ formatVersion: 1 })).toBe(false);
+    expect(bad({ memoryLimit: "lots" })).toBe(false);
+    expect(bad({ s3: { endpoint: "http://winterbaume:5555" } })).toBe(false);
+    expect(bad({ s3: { accessKeyId: "plain" } })).toBe(false);
+    expect(bad({ catalogType: "glue" })).toBe(false);
+    expect(
+      schema.safeParse({
+        catalog: { uri: "http://x.test" },
+        namespace: 'a"; drop',
+      }).success,
+    ).toBe(false);
+  });
+
+  it("derives the row delete mode from the format version", () => {
+    expect(rowDeleteModeFor({ formatVersion: 3 })).toBe("deletion-vector");
+    expect(rowDeleteModeFor({ formatVersion: 2 })).toBe("position-delete");
+  });
+
   it("describes no provisioned resources yet", () => {
     expect(infra.module.provider).toBe("local");
     expect(
@@ -81,7 +122,24 @@ describe("create", () => {
     ).rejects.toBeInstanceOf(ArchiveEngineNotWiredError);
     await expect(
       store.expireSnapshots("2026-01-01T00:00:00.000Z" as never),
-    ).rejects.toThrow(/TODO\(M4f\)/);
+    ).rejects.toThrow(/createEngine/);
+  });
+  it("delegates to a bound engine and keeps rowDelete truthful per format version", () => {
+    const engine = { marker: true } as never;
+    expect(
+      create({
+        config,
+        bindings: { createEngine: () => engine },
+        dependencies: {},
+      }),
+    ).toBe(engine);
+    expect(
+      create({
+        config: { ...config, engine: { formatVersion: 2 } },
+        bindings: {},
+        dependencies: {},
+      }).capabilities.rowDelete,
+    ).toBe("position-delete");
   });
   it("requires a secret source for secret-backed auth and credentials for sigv4", () => {
     const bearer = {

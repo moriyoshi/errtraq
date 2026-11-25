@@ -17,6 +17,11 @@
       "development": "./src/catalog/index.ts",
       "types": "./dist/catalog/index.d.ts",
       "import": "./dist/catalog/index.js"
+    },
+    "./duckdb": {
+      "development": "./src/duckdb/index.ts",
+      "types": "./dist/duckdb/index.d.ts",
+      "import": "./dist/duckdb/index.js"
     }
   },
   "publishConfig": {
@@ -33,6 +38,10 @@
       "./catalog": {
         "types": "./dist/catalog/index.d.ts",
         "import": "./dist/catalog/index.js"
+      },
+      "./duckdb": {
+        "types": "./dist/duckdb/index.d.ts",
+        "import": "./dist/duckdb/index.js"
       }
     }
   },
@@ -47,7 +56,8 @@
   },
   "dependencies": {
     "zod": "4.6.7",
-    "@moriyoshi/errtraq-aws-signing": "workspace:*"
+    "@moriyoshi/errtraq-aws-signing": "workspace:*",
+    "@duckdb/node-api": "2.0.1-r.1"
   },
   "peerDependencies": {
     "@moriyoshi/errtraq-core": "workspace:^"

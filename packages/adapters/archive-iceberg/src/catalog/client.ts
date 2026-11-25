@@ -35,6 +35,11 @@ export interface IcebergRestCatalogOptions {
   fetch?: typeof fetch;
   now?: () => number;
   requestTimeoutMs?: number;
+  /**
+   * Keep calling `uri` even when the server advertises a different `uri` in its config. Lakekeeper
+   * builds the advertised URI from the Host header, which breaks behind a proxy. Default false (spec).
+   */
+  ignoreServerUri?: boolean;
 }
 
 const DEFAULT_TIMEOUT_MS = 30_000;
@@ -225,7 +230,9 @@ export class IcebergRestCatalog {
     };
     const effective = { ...config.defaults, ...config.overrides };
     // An overridden `uri` replaces the base for later calls (spec: catalog config properties).
-    this.resolvedBase = (effective.uri ?? this.base).replace(/\/+$/, "");
+    this.resolvedBase = (
+      (this.options.ignoreServerUri ? undefined : effective.uri) ?? this.base
+    ).replace(/\/+$/, "");
     // The prefix is a server-supplied path segment, already encoded as the server wants it.
     this.resolvedPrefix = effective.prefix
       ? effective.prefix.replace(/^\/+|\/+$/g, "")

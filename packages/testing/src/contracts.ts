@@ -2319,6 +2319,11 @@ export function kvContract(
 export interface ArchiveContractOptions extends ContractOptions {
   /** The deletion mode the implementation declares and exercises. */
   rowDelete: ArchiveStore["capabilities"]["rowDelete"];
+  /**
+   * Run the erasure cases (`deleteWhere`, `hardErase`, `expireSnapshots`). An engine that has not
+   * implemented them yet passes `false`; the cases are skipped, not weakened.
+   */
+  erasure?: boolean;
 }
 
 export function archiveStoreContract(
@@ -2594,83 +2599,93 @@ export function archiveStoreContract(
         ).toEqual([...asc].reverse());
       }
     });
-    it("keeps deleteWhere inside its project and exercises the declared delete mode", async () => {
-      const a = await setup();
-      expect(a.capabilities.rowDelete).toBe(options.rowDelete);
-      await a.append(batch);
-      await a.append({
-        batchId: "foreign",
-        dayRange: [day, day],
-        rows: [
-          event("f1", 2, {
-            projectId: otherProject,
-            user: { email: "subject@example.org" },
-          }),
-        ],
-      });
-      const deleted = await a.deleteWhere({
-        erasureId: "isolated" as ErasureId,
-        projectId: project,
-        selector: { kind: "email", value: "subject@example.org" },
-      });
-      expect(deleted.rowsDeleted).toBe(2);
-      expect(
-        (await a.query({ projectId: otherProject })).items.map(
-          (e) => e.eventId,
-        ),
-      ).toEqual(["f1"]);
-      expect(await a.getEvent(otherProject, "f1" as EventId)).not.toBeNull();
-      const none = await a.deleteWhere({
-        erasureId: "nothing" as ErasureId,
-        projectId: project,
-        selector: { kind: "email", value: "nobody@example.org" },
-      });
-      expect(none).toMatchObject({ rowsDeleted: 0, snapshotId: null });
-      // repeating an erasure id does not delete or report differently
-      expect(
-        await a.deleteWhere({
+    it("declares the delete mode of the configuration", async () => {
+      expect((await setup()).capabilities.rowDelete).toBe(options.rowDelete);
+    });
+    const erasure = options.erasure ?? true;
+    it.skipIf(!erasure)(
+      "keeps deleteWhere inside its project and exercises the declared delete mode",
+      async () => {
+        const a = await setup();
+        expect(a.capabilities.rowDelete).toBe(options.rowDelete);
+        await a.append(batch);
+        await a.append({
+          batchId: "foreign",
+          dayRange: [day, day],
+          rows: [
+            event("f1", 2, {
+              projectId: otherProject,
+              user: { email: "subject@example.org" },
+            }),
+          ],
+        });
+        const deleted = await a.deleteWhere({
           erasureId: "isolated" as ErasureId,
           projectId: project,
           selector: { kind: "email", value: "subject@example.org" },
-        }),
-      ).toMatchObject({ rowsDeleted: 2 });
-    });
+        });
+        expect(deleted.rowsDeleted).toBe(2);
+        expect(
+          (await a.query({ projectId: otherProject })).items.map(
+            (e) => e.eventId,
+          ),
+        ).toEqual(["f1"]);
+        expect(await a.getEvent(otherProject, "f1" as EventId)).not.toBeNull();
+        const none = await a.deleteWhere({
+          erasureId: "nothing" as ErasureId,
+          projectId: project,
+          selector: { kind: "email", value: "nobody@example.org" },
+        });
+        expect(none).toMatchObject({ rowsDeleted: 0, snapshotId: null });
+        // repeating an erasure id does not delete or report differently
+        expect(
+          await a.deleteWhere({
+            erasureId: "isolated" as ErasureId,
+            projectId: project,
+            selector: { kind: "email", value: "subject@example.org" },
+          }),
+        ).toMatchObject({ rowsDeleted: 2 });
+      },
+    );
     for (const selector of [
       { kind: "email", value: "subject@example.org" },
       { kind: "eventIds", eventIds: ["a" as EventId, "b" as EventId] },
     ] satisfies SubjectSelector[]) {
-      it(`masks and hard-erases by ${selector.kind} while preserving other rows`, async () => {
-        const a = await setup();
-        await a.append(batch);
-        const deleted = await a.deleteWhere({
-          erasureId: "erasure" as ErasureId,
-          projectId: project,
-          selector,
-        });
-        expect(deleted.rowsDeleted).toBe(2);
-        expect(deleted.files.length).toBeGreaterThan(0);
-        expect(await a.getEvent(project, "a" as EventId)).toBeNull();
-        expect(
-          (
-            await collectEvents((after) =>
-              a.query({ projectId: project, after, limit: 1, order: "asc" }),
-            )
-          ).map((e) => e.eventId),
-        ).toEqual(["c", "d"]);
-        await a.hardErase({
-          erasureId: "erasure" as ErasureId,
-          files: deleted.files,
-        });
-        await a.expireSnapshots(t(5));
-        expect(
-          (
-            await collectEvents((after) =>
-              a.query({ projectId: project, after, limit: 1, order: "asc" }),
-            )
-          ).map((e) => e.eventId),
-        ).toEqual(["c", "d"]);
-        expect(await a.getEvent(project, "b" as EventId)).toBeNull();
-      });
+      it.skipIf(!erasure)(
+        `masks and hard-erases by ${selector.kind} while preserving other rows`,
+        async () => {
+          const a = await setup();
+          await a.append(batch);
+          const deleted = await a.deleteWhere({
+            erasureId: "erasure" as ErasureId,
+            projectId: project,
+            selector,
+          });
+          expect(deleted.rowsDeleted).toBe(2);
+          expect(deleted.files.length).toBeGreaterThan(0);
+          expect(await a.getEvent(project, "a" as EventId)).toBeNull();
+          expect(
+            (
+              await collectEvents((after) =>
+                a.query({ projectId: project, after, limit: 1, order: "asc" }),
+              )
+            ).map((e) => e.eventId),
+          ).toEqual(["c", "d"]);
+          await a.hardErase({
+            erasureId: "erasure" as ErasureId,
+            files: deleted.files,
+          });
+          await a.expireSnapshots(t(5));
+          expect(
+            (
+              await collectEvents((after) =>
+                a.query({ projectId: project, after, limit: 1, order: "asc" }),
+              )
+            ).map((e) => e.eventId),
+          ).toEqual(["c", "d"]);
+          expect(await a.getEvent(project, "b" as EventId)).toBeNull();
+        },
+      );
     }
   });
 }

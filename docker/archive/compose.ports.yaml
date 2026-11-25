@@ -5,3 +5,8 @@ services:
   lakekeeper:
     ports:
       - "127.0.0.1:18181:8181"
+  # winterbaume too, so a host-side DuckDB (the archive-iceberg engine test) can read and write
+  # the Parquet and metadata files Lakekeeper points at (path style, `127.0.0.1:15555`).
+  winterbaume:
+    ports:
+      - "127.0.0.1:15555:5555"

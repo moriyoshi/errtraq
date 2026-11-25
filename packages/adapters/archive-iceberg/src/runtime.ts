@@ -8,19 +8,24 @@ import {
   IcebergRestCatalog,
   type IcebergRestCatalogOptions,
 } from "./catalog/client.js";
-import { type Config, configSchema, type ParsedConfig } from "./stack.js";
+import {
+  type Config,
+  configSchema,
+  type ParsedConfig,
+  rowDeleteModeFor,
+} from "./stack.js";
 
-/** Thrown by every ArchiveStore operation until the DuckDB engine lands. */
+/** Thrown by every ArchiveStore operation of the main-entry `create` when no engine is bound. */
 export class ArchiveEngineNotWiredError extends Error {
   override name = "ArchiveEngineNotWiredError";
   constructor(operation: string) {
     super(
-      `archive-iceberg: ${operation} needs the query engine, which is not wired yet (TODO(M4f))`,
+      `archive-iceberg: ${operation} needs a query engine: bind "createEngine" from "@moriyoshi/errtraq-archive-iceberg/duckdb" (TODO(M4g): standalone wiring)`,
     );
   }
 }
 
-type AwsCredentials = {
+export type AwsCredentials = {
   accessKeyId: string;
   secretAccessKey: string;
   sessionToken?: string;
@@ -31,6 +36,13 @@ export interface ArchiveIcebergBindings {
   now?: () => number;
   /** Required for `sigv4` auth. */
   awsCredentials?: () => AwsCredentials | Promise<AwsCredentials>;
+  /**
+   * The ArchiveStore engine. The main entry never imports DuckDB, so Workers-bound bundles stay
+   * clean; Node platforms pass `create` from `@moriyoshi/errtraq-archive-iceberg/duckdb` here.
+   */
+  createEngine?: (
+    context: CreateContext<Config, ArchiveIcebergBindings>,
+  ) => ArchiveStore;
 }
 
 /** Build the catalog client a stack config describes. */
@@ -89,20 +101,24 @@ export function createCatalog(
     ...(catalog.requestTimeoutMs
       ? { requestTimeoutMs: catalog.requestTimeoutMs }
       : {}),
+    ...(catalog.ignoreServerUri ? { ignoreServerUri: true } : {}),
     ...(bindings.fetch ? { fetch: bindings.fetch } : {}),
     ...(bindings.now ? { now: bindings.now } : {}),
   };
   return new IcebergRestCatalog(clientOptions);
 }
 
-/** TODO(M4f): replace with the DuckDB-backed engine; the catalog client is already usable. */
-export function create({
-  config,
-  bindings,
-  secretSource,
-}: CreateContext<Config, ArchiveIcebergBindings>): ArchiveStore {
+/**
+ * The ArchiveStore a stack config describes. Without `bindings.createEngine` every operation
+ * rejects with `ArchiveEngineNotWiredError` (the catalog client is still validated).
+ */
+export function create(
+  context: CreateContext<Config, ArchiveIcebergBindings>,
+): ArchiveStore {
+  const { config, bindings, secretSource } = context;
   const parsed = configSchema.parse(config);
   createCatalog(parsed, { secretSource, bindings });
+  if (bindings?.createEngine) return bindings.createEngine(context);
   const fail = (operation: string) => (): Promise<never> =>
     Promise.reject(new ArchiveEngineNotWiredError(operation));
   return {
@@ -114,6 +130,6 @@ export function create({
     deleteWhere: fail("deleteWhere"),
     hardErase: fail("hardErase"),
     expireSnapshots: fail("expireSnapshots"),
-    capabilities: { rowDelete: "deletion-vector" },
+    capabilities: { rowDelete: rowDeleteModeFor(parsed.engine) },
   };
 }

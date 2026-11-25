@@ -86,6 +86,9 @@
       "@moriyoshi/errtraq-archive-iceberg/catalog": [
         "packages/adapters/archive-iceberg/src/catalog/index.ts"
       ],
+      "@moriyoshi/errtraq-archive-iceberg/duckdb": [
+        "packages/adapters/archive-iceberg/src/duckdb/index.ts"
+      ],
       "@moriyoshi/errtraq-blob-s3/runtime": [
         "packages/adapters/blob-s3/src/runtime.ts"
       ],

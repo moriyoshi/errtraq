@@ -113,6 +113,36 @@ describe("getConfig", () => {
     );
   });
 
+  it("follows a server-advertised uri unless ignoreServerUri is set", async () => {
+    const config = JSON.stringify({
+      defaults: {},
+      overrides: { uri: "http://internal-host:8181/catalog", prefix: "wh" },
+    });
+    const calls = async (ignoreServerUri: boolean) => {
+      const { fetch, requests } = fakeFetch([
+        route("GET", "/catalog/v1/config", () => json(config)),
+        route("GET", "/catalog/v1/wh/namespaces/ns/tables/events", () =>
+          json(fixture("load-table")),
+        ),
+      ]);
+      const catalog = new IcebergRestCatalog({
+        uri: "http://proxy.example.test/catalog",
+        fetch,
+        ...(ignoreServerUri ? { ignoreServerUri } : {}),
+      });
+      await catalog.loadTable(["ns"], "events");
+      return requests.map((r) => r.url.href);
+    };
+    expect(await calls(false)).toEqual([
+      "http://proxy.example.test/catalog/v1/config",
+      "http://internal-host:8181/catalog/v1/wh/namespaces/ns/tables/events",
+    ]);
+    expect(await calls(true)).toEqual([
+      "http://proxy.example.test/catalog/v1/config",
+      "http://proxy.example.test/catalog/v1/wh/namespaces/ns/tables/events",
+    ]);
+  });
+
   it("works without a prefix and retries the config after a failure", async () => {
     let fail = true;
     const { fetch } = fakeFetch([
