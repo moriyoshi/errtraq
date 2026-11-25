@@ -88,7 +88,7 @@ run "database_hardening" {
     error_message = "instance settings"
   }
   assert {
-    condition     = [for p in aws_db_parameter_group.this.parameter : p.value if p.name == "rds.force_ssl"] == ["1"]
+    condition     = [for p in aws_db_parameter_group.this.parameter : "${p.value}/${p.apply_method}" if p.name == "rds.force_ssl"] == ["1/pending-reboot"]
     error_message = "rds.force_ssl is on"
   }
   assert {

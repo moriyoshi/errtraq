@@ -203,8 +203,9 @@ resource "aws_db_parameter_group" "this" {
   description = "errtraq test fixture: TLS required"
   tags        = local.tags
   parameter {
-    name  = "rds.force_ssl"
-    value = "1"
+    name         = "rds.force_ssl"
+    value        = "1"
+    apply_method = "pending-reboot" # static parameter: RDS reports it this way, so "immediate" never converges
   }
   lifecycle {
     create_before_destroy = true

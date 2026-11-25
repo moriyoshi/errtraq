@@ -1583,3 +1583,40 @@ Built from `.agents-docs/M3H_RUN3_PLAN.md`; design in ARCHITECTURE.md "Deployed 
 - **No silent secret leaks:** the response is built from fixed fields; failures return `{ok:false, error:{code,message}}` where the message is either our own validation or an allowlisted prefix of the stack's own messages, otherwise fixed text; logs carry only the error class and a short code. The CLI rebuilds the response from validated fields, prints only `errorType` for function errors, and never prints provider text. Unknown request fields are refused by name only, so a smuggled secret is never echoed.
 - **Module quirks:** `data.aws_region.current.region` (not `.name`, deprecated in provider 6) with `count`-gated data sources so non-bootstrap stacks gain no data lookups; the module injects `ERRTRAQ_BOOTSTRAP_SECRET_NAME` itself (reserved binding name), so the generated-root `expected_env` adds it for the bootstrap function; root probe compares `jsondecode`d policies because Terraform re-serializes keys sorted. The old `lambda-extra-env` mutation anchor changed with the env merge.
 - **Not done:** retention is not a request field (the CLI has no retention flag; the stack's `bootstrapRetentionPolicy` is baked into the artifact); the module's inline-policy size precondition does not count the small bootstrap statement.
+
+## 2026-11-25 — M3h run 3 in progress: fixture and stack findings (Claude)
+
+Run log and state stay in the ignored `.agents-workspace/tmp/m3h3/run/`; account, VPC and resource ids
+are not recorded here. Findings so far, appended as the run produces them:
+
+- **Proxy auth (fixed before the run, adaae4d):** an RDS Proxy that only registers the master secret
+  cannot log in as an IAM-only database user, so the store's user would have failed through the proxy.
+  The proxy needs `default_auth_scheme = "IAM_AUTH"` and its own role needs `rds-db:connect` on the
+  instance's `dbuser:<db-id>/*`; with that, no per-user secret is registered.
+- **`rds.force_ssl` never converges with `apply_method = "immediate"`:** it is a static parameter, RDS
+  reports it back as `pending-reboot`, and every repeat plan showed an in-place update. The fixture
+  now sets `pending-reboot`. The parameter group is attached at instance creation, so TLS was enforced
+  from the start either way (and PostgreSQL 15+ on RDS defaults it to 1).
+- **PostgreSQL major `17` accepted** as `engine_version` on create (was an open question).
+- **Fixture apply** (created network): 31 resources, no internet gateway or NAT, repeat plan empty
+  after the fix above.
+- **Stack apply** (`aws-postgres`, direct variant): 98 resources; every function in the fixture subnets
+  with one security group; function URLs only on ingest and api; `rds-db:connect` is exactly
+  `dbuser:<db-id>/errtraq_app` on every role; the master secret readable only by the bootstrap role.
+  Repeat plan empty, and the record FIFO queue reads back `DeduplicationScope = messageGroup`,
+  `FifoThroughputLimit = perMessageGroupId` (the high-throughput readback check passes).
+- **Operator pitfall:** the generated root's `SUBNETS` / `SECURITY_GROUPS` / `ADMIN_SECRET_ARN`
+  variables come from `TF_VAR_*` exported by `env-from-fixture.mjs`; a repeat plan in a fresh shell
+  without them fails with "No value for required variable" rather than planning drift.
+- **Every Postgres Lambda function crashed at init:** `pg` is CommonJS and calls `require("events")`;
+  the Lambda bundle is ESM, so esbuild's `__require` shim threw `Dynamic require of "events" is not
+  supported` at module load. Run 2 only deployed DynamoDB stacks, which bundle no CommonJS code that
+  requires builtins. Fixed with an esbuild banner that defines `require` via `createRequire`. The
+  regression test imports each built bundle in a plain `node` child process: vitest's module runner
+  supplies `require()`, so importing the old bundle inside a test succeeded and hid the bug.
+- **`errtraq bootstrap --remote` with an SSO profile:** the CLI signs with `AWS_ACCESS_KEY_ID` /
+  `AWS_SECRET_ACCESS_KEY` / `AWS_SESSION_TOKEN` only (README "Bootstrap"), so a profile-only shell gets
+  `CredentialsUnavailable`; export the session first with `aws configure export-credentials --format env`.
+- **`infra generate` refuses an output directory holding `plan.bin`** ("files not owned by the
+  generator"); Terraform's own working files are allowed, saved plans are not. Keep plan files outside
+  the generated root.

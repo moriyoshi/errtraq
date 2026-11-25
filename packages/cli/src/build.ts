@@ -197,6 +197,11 @@ for(const signal of ["SIGTERM","SIGINT"]) process.on(signal,()=>{if(stopping){if
       bundle: true,
       platform: "node",
       format: "esm",
+      // CommonJS dependencies (pg) call require() for Node builtins; an ESM bundle has no
+      // require, so esbuild's shim throws "Dynamic require of ... is not supported" at load.
+      banner: {
+        js: 'import{createRequire as __errtraqCreateRequire}from"node:module";const require=__errtraqCreateRequire(import.meta.url);',
+      },
       target: "node22",
       minify: stack.platform.manifest.id === "aws-lambda",
       keepNames: true,

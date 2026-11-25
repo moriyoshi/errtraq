@@ -20,6 +20,7 @@ import {
   deriveDeployment,
   resolveStack,
 } from "@moriyoshi/errtraq-core";
+import { postgres } from "@moriyoshi/errtraq-store-sql/postgres/stack";
 import { MemoryActiveStore, MemoryKV } from "@moriyoshi/errtraq-testing";
 import { unzipSync } from "fflate";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
@@ -253,6 +254,44 @@ describe("built stacks", () => {
       vi.unstubAllEnvs();
       vi.unstubAllGlobals();
       Reflect.deleteProperty(globalThis, "__bootstrapFake");
+    }
+  }, 60000);
+  it("loads Postgres Lambda bundles whose CommonJS driver requires Node builtins", async () => {
+    // pg is CommonJS and calls require("events"); without the createRequire banner every
+    // Postgres function failed at init on Lambda (third real AWS run).
+    const stack = resolveStack({
+      ...Object.fromEntries(Object.entries(bootstrapStack)),
+      store: postgres({
+        mode: "iam",
+        host: "db.example.rds.amazonaws.com",
+        database: "errtraq",
+        user: "app_user",
+        region: "us-east-1",
+        resourceId: "db-ABC123",
+      }),
+    });
+    const output = join(temp, "postgres-lambda");
+    const manifest = await buildStack(
+      stack,
+      repo,
+      output,
+      resolve(repo, "stacks/aws-dynamodb-bootstrap.ts"),
+    );
+    for (const id of Object.keys(manifest.artifacts)) {
+      // A plain Node process, as on Lambda: vitest's module runner supplies require() and
+      // would hide the failure.
+      const url = pathToFileURL(join(output, id, "index.mjs")).href;
+      const loaded = spawnSync(
+        process.execPath,
+        [
+          "--input-type=module",
+          "-e",
+          `const m=await import(${JSON.stringify(url)});console.log(typeof m.handler);`,
+        ],
+        { encoding: "utf8" },
+      );
+      expect(loaded.stderr).toBe("");
+      expect(loaded.stdout.trim()).toBe("function");
     }
   }, 60000);
   it("carries disabled rate-rejection settings into generated Lambda entries", async () => {
