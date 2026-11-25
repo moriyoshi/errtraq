@@ -23,3 +23,4 @@ export * from "./rate-rejection.js";
 export * from "./record-handler.js";
 export * from "./recover-ingest.js";
 export * from "./stack-model.js";
+export * from "./symbolication.js";

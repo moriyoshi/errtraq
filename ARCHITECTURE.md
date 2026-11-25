@@ -268,6 +268,83 @@ middleware (`event:read` for GET, `event:write` for POST/PUT; no new scope):
   blobs. The API role already held store read/write/metadata-delete and blob
   read/write/delete, so no grant changed.
 
+### JavaScript symbolication and bundle cleanup (M5b)
+
+The consumer symbolicates before it normalizes, so grouping sees the original frames:
+
+- **Order.** parse payload, normalize it as sent for the suppression and (direct mode) duplicate
+  checks, then symbolicate in place, re-normalize (culprit, fingerprint, issue ID) and record. A
+  redelivered or suppressed event therefore never loads a bundle; neither check reads frames, so
+  grouping is unaffected. A stack whose map was missing at processing time is grouped by its
+  minified frames and is never re-symbolicated (events are immutable once stored). Events with no
+  matching `debug_meta` image are untouched, so fingerprints of events that never had a map do not
+  change. **Issue IDs change when a project starts uploading maps**: events before and after the
+  first upload land in different issues, and old events are not re-symbolicated (upload maps before
+  shipping the release).
+- **Stable grouping across attempts.** Only permanent outcomes fall back to raw frames (no bundle
+  owns the debug ID, unreadable or oversized bundle or map). A transient store or blob failure
+  always rejects the delivery so it is retried until the queue's DLQ policy takes over; it is never
+  recorded as a fallback, because a fallback on a late attempt would give one event a second issue
+  ID. A map activated between attempts can still change the grouping of a redelivered event
+  (attempt 1 recorded it raw, attempt 2 sees the map). That is safe because every record path is
+  idempotent on `(projectId, eventId)` independent of the issue it arrives under: direct mode
+  checks `events.get` before symbolicating and `recordEvent` skips a stored event ID; in grouped
+  mode the consumer holds no event read, so the same event may be sent to the record queue under
+  two issue groups, and the store's `recordEvent`/`recordEvents` find the stored event (the
+  event row is keyed by project and event ID only and is written in the same transaction as the
+  issue update), return `inserted: false` with the issue that owns it, and mutate nothing (no
+  second issue, no count). The `ActiveStore` contract suite pins this cross-issue duplicate
+  behaviour.
+- **Lookup.** `debug_meta.images` entries of type `sourcemap` (`debug_id`, `code_file`) are matched to
+  frames by `abs_path` (else `filename`) with query and fragment ignored. Each debug ID resolves
+  through `ReleaseRepo.findBundleByDebugId(projectId, debugId)` (active owner in that project only,
+  so another project's bundle is never used), the bundle blob is read once, and only
+  `manifest.json` plus the one source map are inflated: the `source_map` entry whose `debug-id`
+  header matches, else the one named by the matching `minified_source` entry's `sourcemap` header.
+- **Rewrite** (`@jridgewell/trace-mapping`, `originalPositionFor`; `colno` is 1-based in events and
+  0-based in maps): `abs_path`, `filename` (bundler prefixes such as `webpack://app/` removed),
+  `lineno`, `colno`, `context_line`/`pre_context`/`post_context` from `sourcesContent` (5 lines
+  each side, lines cut at 400 characters; stale minified context is removed when the map has no
+  content), `function` from the map name at the caller frame's call site (a token names the
+  identifier called, which is the next frame's function), `in_app: false` for `node_modules`
+  sources, and the stale `module` is dropped. The minified location is kept as `data.minified`
+  next to `data.symbolicated: true` and `data.sourcemap` (the debug ID).
+- **Failure never rejects the event.** Missing bundle or map is `js_no_source`, an unreadable or
+  oversized map or bundle is `js_invalid_source`, per-event caps are `js_symbolication_limit`
+  (all appended to `event.errors`, at most 10), and the raw frames are kept. Infrastructure
+  failures (store or blob I/O) retry the delivery (see stable grouping above).
+- **Bounds.** Per event: 8 distinct debug IDs and 250 frames. Per bundle: 32 MiB, source map 16 MiB
+  and manifest 8 MiB inflated. Context lines added to one event: 128 K characters, after which later frames get none
+  (`js_symbolication_limit`). Per invocation (one `handle` call): parsed maps and negative
+  results are cached by (project, debug ID), at most 8 maps and 64 MiB by weight (inflated map and
+  `sourcesContent` counted at UTF-16 size, evicting oldest first; a heavier map serves its event
+  and is dropped), sized for 512 MB functions that also hold one bundle (32 MiB) while parsing.
+  Debug IDs in events are public (public DSN), so anyone can make the consumer fetch the bundles of
+  a project that has uploaded them; the per-event caps, the per-invocation cache bound and the
+  bundle and map size limits are the mitigation, not authentication. The whole bundle is read (range
+  reads of the ZIP central directory are a possible later optimization); the overflowed payload
+  blob stores the rewritten payload.
+- **Grants.** The `release-read` store capability (DynamoDB: `GetItem` on `DEBUG|*` and `BUNDLE|*`
+  only) is derived for the grouped consumer; the direct consumer already holds `read`. The
+  consumer already holds blob `read`.
+
+`bundle-cleanup` is a cron job (`*/15 * * * *`, role `cron`, scheduled on every function-compute
+platform; standalone drives it from an in-process timer and on start). Per run it walks
+`ProjectRepo.list`, lists each project's expired pending bundles and runs the existing claim /
+clear markers / delete blobs / finish protocol on at most 25 bundles (10 per project), logging
+failures per bundle; remaining work waits for a later tick. With more projects than the per-run
+limit (1000), no cursor is persisted (the cron role holds no KV or blob write); each run examines
+a circular window of the project order starting at a hash of the run time, and the per-project cap
+keeps a busy project from taking the budget, so every project is reached by some run (with
+probability 1) whatever the early projects hold.
+The cron role therefore holds store `read` (project and pending-bundle listing), `write`
+(claim and marker transitions) and `metadata-delete` (`DEBUG|*`, `BUNDLE|*` items; the other
+namespaces of that policy are unused here) plus blob `delete`. Abandoned `artifacts/chunks/`
+expire through the S3 lifecycle rule; blob-fs has none, so it exposes `expireOlderThan(prefix,
+cutoff)` (file modification time; at most 2000 keys examined per call, resuming after the
+previous call's last key and wrapping at the end, so fresh keys never starve old ones) and the cleanup job removes chunks older
+than 7 days on stores that provide it.
+
 Stack-level `rateRejection` describes optional per-issue and new-issue fixed-window limits and
 an `onKvFailure` policy. Both limits are disabled by default; an explicit enabled limit is
 active when configured. The consumer checks per-issue limits after suppression in both modes,
@@ -646,7 +723,7 @@ need no further grants and the administrator credentials are used only for role 
 | **M2** | Completed: infra model, AWS HCL modules and generator; `validate/build/infra generate`, Lambda handler scaffolding and standalone container | The infra abstraction |
 | **M3** | AWS runtime adapters, postgres dialect, deployed secrets and real deployment | First cloud target |
 | **M4** | Archive: REST catalog client, DuckDB engine, archival job, federated query, erasure requests with v3 deletion vectors; Lakekeeper+winterbaume in compose; engine spike | Hot/cold tiering |
-| **M5** | Releases, chunk upload, artifact bundles, JS symbolication. M5a (done): the sentry-cli upload path. M5b: symbolication, cleanup cron wiring, Cloudflare | sentry-cli compatibility |
+| **M5** | Releases, chunk upload, artifact bundles, JS symbolication. M5a (done): the sentry-cli upload path. M5b (done): JS symbolication, bundle-cleanup cron. Cloudflare moves to M6 | sentry-cli compatibility |
 | **M6** | Cloudflare: Workers platform, d1 dialect, `queue-cf`, R2, R2 Data Catalog | Most constrained runtime |
 | **M7+** | Remaining adapters (mysql, turso, supabase, firestore, redis, nats, pubsub, cloud tasks, service bus, gcs, azure), Cloud Run/Vercel platforms, web UI, alerts | Breadth |
 

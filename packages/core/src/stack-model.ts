@@ -44,6 +44,7 @@ export type RoutedTopic = (typeof TOPICS)[number];
 export const QUEUE_VISIBILITY_FACTOR = 6;
 export const CRON_JOBS = [
   { name: "staged-recovery", schedule: "*/5 * * * *", role: "cron" },
+  { name: "bundle-cleanup", schedule: "*/15 * * * *", role: "cron" },
   { name: "archive-planner", schedule: "0 * * * *", role: "cron" },
   { name: "retention", schedule: "15 * * * *", role: "cron" },
   { name: "erasure-worker", schedule: "*/5 * * * *", role: "cron" },

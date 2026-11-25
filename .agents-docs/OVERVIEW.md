@@ -57,5 +57,5 @@ are in place. M3 is in progress: the AWS runtime adapters (DynamoDB store and KV
 RDS IAM authentication, SQS, S3), deployed secret sources, exact rate counting with per-project
 limits and the deployed bootstrap function (`errtraq bootstrap --remote`) are implemented, and real
 AWS deployments have passed; the remaining M3 verification is tracked in `TODO.md`. Packages publish
-to GitHub Packages as `@moriyoshi/errtraq-*`. Releases and sourcemaps (M5) are not implemented yet:
-the API serves issues and events only. See "Milestones" in ARCHITECTURE.md.
+to GitHub Packages as `@moriyoshi/errtraq-*`. The sentry-cli upload path (M5a) and JavaScript
+symbolication with pending-bundle cleanup (M5b) are implemented; Cloudflare (M6) is not. See "Milestones" in ARCHITECTURE.md.

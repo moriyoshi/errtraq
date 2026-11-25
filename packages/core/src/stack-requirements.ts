@@ -98,6 +98,25 @@ export const PORT_REQUIREMENTS: readonly PortRequirement[] = [
   // M3 deployed cron sweeps staged envelopes, including legacy keys that require reads.
   { kind: "blob", role: "cron", capability: "read", purpose: "primary" },
   { kind: "blob", role: "cron", capability: "list", purpose: "primary" },
+  // M5b: the consumer resolves debug IDs to artifact bundles (`release-read`: DEBUG and BUNDLE
+  // items only) and reads the bundle blobs it already may read. Direct mode already holds `read`.
+  {
+    kind: "store",
+    role: "consumer",
+    capability: "release-read",
+    purpose: "primary",
+    feature: "grouped",
+  },
+  // M5b: `bundle-cleanup` lists projects and pending bundles (read), moves the cleanup claim
+  // (write), removes ownership markers and the bundle row (metadata-delete), and deletes the
+  // bundle and manifest blobs.
+  ...(["read", "write", "metadata-delete"] as const).map((capability) => ({
+    kind: "store" as const,
+    role: "cron" as const,
+    capability,
+    purpose: "primary",
+  })),
+  { kind: "blob", role: "cron", capability: "delete", purpose: "primary" },
   { kind: "kv", role: "ingest", capability: "read", purpose: "primary" },
   { kind: "kv", role: "ingest", capability: "write", purpose: "primary" },
   {

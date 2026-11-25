@@ -73,6 +73,7 @@
     "node": "^22.18.0 || >=23.6.0"
   },
   "dependencies": {
+    "@jridgewell/trace-mapping": "0.3.31",
     "fflate": "0.8.2",
     "zod": "4.6.7"
   },

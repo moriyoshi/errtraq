@@ -7,7 +7,7 @@ description: Five layers, each depending only on the one below.
 | --- | --- |
 | L4 Entrypoints | Per-platform handlers (AWS Lambda, Node server), generated per stack |
 | L3 Apps | Hono apps: ingest, api, queue consumer, cron |
-| L2 Core services | Ingest, normalize, grouping, and (planned) symbolication, federated query, archival, erasure |
+| L2 Core services | Ingest, normalize, grouping, symbolication, and (planned) federated query, archival, erasure |
 | L1 Ports | `ActiveStore`, `Queue`, `BlobStore`, `KV`, and planned `ArchiveStore` and `Scheduler`; clock, id and logger |
 | L0 Adapters | Implementations of the ports for a given technology |
 

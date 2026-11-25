@@ -26,7 +26,6 @@ import type { BlobStore, Clock, IdGen, ReleaseRepo } from "./ports.js";
  *   new bundle row; racing attempts that choose different keys converge on the stored row.
  * - `artifacts/deploys/<projectId>/<releaseId>.json`: release deploys (see release routes).
  */
-// TODO(M5): M5b reads these bundles back for symbolication and schedules pending-bundle cleanup.
 export interface ChunkUploadLimits {
   /** Largest chunk, compressed or not, after decompression. */
   chunkSize: number;
@@ -151,6 +150,31 @@ function entries(value: unknown): Array<[string, unknown]> {
 }
 
 /**
+ * Inflate the members of a bundle ZIP that `filter` selects (it must select `manifest.json`). A source bundle may start with the
+ * 8-byte `SYSB` header that `symbolic` writes before the ZIP; the ZIP is first read as is (the
+ * writer records absolute offsets) and then without it. `zipped` is false when neither parses.
+ * The first candidate that contains a `manifest.json` wins.
+ */
+export function openBundleZip(
+  data: Uint8Array,
+  filter: (file: { name: string; originalSize: number }) => boolean,
+): { zipped: boolean; files: Record<string, Uint8Array> } {
+  let zipped = false;
+  let files: Record<string, Uint8Array> = {};
+  for (const candidate of [data, data.subarray(8)]) {
+    try {
+      const found = unzipSync(candidate, { filter });
+      zipped = true;
+      files = found;
+      if (found["manifest.json"]) break;
+    } catch (error) {
+      if (error instanceof BundleRejectedError) throw error;
+    }
+  }
+  return { zipped, files };
+}
+
+/**
  * Read the debug IDs from an artifact bundle. Only `manifest.json` is inflated (and size
  * checked before inflating), so a hostile archive cannot make assembly expand its other
  * members. A source bundle may start with the 8-byte `SYSB` header that `symbolic` writes before
@@ -166,18 +190,9 @@ export function parseArtifactBundle(
       throw new BundleRejectedError("Bundle manifest is too large");
     return true;
   };
-  let raw: Uint8Array | undefined;
-  let zipped = false;
-  for (const candidate of [data, data.subarray(8)]) {
-    try {
-      const files = unzipSync(candidate, { filter });
-      zipped = true;
-      raw = files["manifest.json"];
-      if (raw) break;
-    } catch (error) {
-      if (error instanceof BundleRejectedError) throw error;
-    }
-  }
+  const opened = openBundleZip(data, filter);
+  const zipped = opened.zipped;
+  const raw = opened.files["manifest.json"];
   if (!zipped)
     throw new BundleRejectedError("Bundle is not a valid ZIP archive");
   if (!raw) throw new BundleRejectedError("Bundle has no manifest.json");

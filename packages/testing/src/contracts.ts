@@ -380,6 +380,34 @@ export function activeStoreContract(
       expect(duplicate.issue.status).toBe("resolved");
       expect(duplicate.issue.lastSeen).toBe(t(1));
     });
+    it("treats an event ID already stored under another issue as a duplicate", async () => {
+      // Grouping can differ between attempts of one delivery (a source map uploaded in
+      // between), so the same event ID may arrive under a different issue: it must neither
+      // count twice nor create the second issue.
+      const s = await factory();
+      const first = occurrence("moved", 1, "fp-one");
+      expect((await record(s, first)).inserted).toBe(true);
+      const second = occurrence("moved", 1, "fp-two");
+      const again = await record(s, second);
+      expect(again.inserted).toBe(false);
+      expect(again.isNew).toBe(false);
+      expect(again.issue.id).toBe(first.issueId);
+      expect(await s.issues.get(project, second.issueId)).toBeNull();
+      expect((await s.issues.get(project, first.issueId))?.count).toBe(1);
+      expect((await s.events.get(project, first.eventId))?.issueId).toBe(
+        first.issueId,
+      );
+      if (s.capabilities.recordEvents) {
+        const input = {
+          occurrence: second,
+          event: event("moved", 1, { issueId: second.issueId }),
+        };
+        const [result] = await s.recordEvents([input]);
+        expect(result?.inserted).toBe(false);
+        expect(await s.issues.get(project, second.issueId)).toBeNull();
+        expect((await s.issues.get(project, first.issueId))?.count).toBe(1);
+      }
+    });
     it("lists issues sorted and paged without gaps and filters status/time", async () => {
       const s = await factory();
       for (let i = 0; i < 5; i++)

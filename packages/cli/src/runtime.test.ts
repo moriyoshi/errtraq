@@ -198,7 +198,8 @@ it("resolves only the bindings used by the requested runtime roles", () => {
       },
     },
   };
-  expect(resolveRoleBindings(stack, ["cron"], "store", {})).toEqual({});
+  // In direct mode the record role is never deployed and holds no store grant.
+  expect(resolveRoleBindings(stack, ["record"], "store", {})).toEqual({});
   expect(resolveRoleBindings(stack, ["ingest"], "store", { DB: "db" })).toEqual(
     { DB: "db" },
   );

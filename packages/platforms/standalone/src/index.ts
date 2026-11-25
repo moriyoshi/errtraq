@@ -16,6 +16,8 @@ import {
   type Queue,
   RecordHandler,
   recoverStagedEnvelopes,
+  releaseReader,
+  runBundleCleanup,
   toTimestamp,
   WebCryptoIdGen,
 } from "@moriyoshi/errtraq-core";
@@ -172,6 +174,7 @@ export function create({
                 : undefined,
             }
           : { store: bindings.store }),
+        releases: releaseReader(bindings.store),
         blobs: bindings.blob,
         kv: bindings.kv,
         queue: bindings.queue,
@@ -242,6 +245,24 @@ export function create({
         return result;
       };
       const running = bindings.queue.pull.run(dispatch, abort.signal);
+      // Standalone has no scheduler: it drives the bundle-cleanup job itself (also on start, to
+      // expire chunks and pending bundles left by an earlier run), so abandoned uploads on
+      // blob-fs, which has no lifecycle rules, do not accumulate.
+      const cleanupJob = () =>
+        runBundleCleanup(
+          {
+            projects: bindings.store.projects,
+            releases: bindings.store.releases,
+            blobs: bindings.blob,
+            logger,
+          },
+          clock.now(),
+        ).catch((error) =>
+          logger.error("Bundle cleanup failed", { error: String(error) }),
+        );
+      void cleanupJob();
+      const cleanupTimer = setInterval(() => void cleanupJob(), 15 * 60 * 1000);
+      cleanupTimer.unref();
       let minute = -1;
       const timer = setInterval(() => {
         const now = new Date();
@@ -261,6 +282,7 @@ export function create({
         if (!closePromise)
           closePromise = (async () => {
             clearInterval(timer);
+            clearInterval(cleanupTimer);
             const deadline = Date.now() + 5000;
             const force = setTimeout(() => {
               if ("closeAllConnections" in server) server.closeAllConnections();

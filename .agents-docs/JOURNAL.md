@@ -1775,3 +1775,64 @@ choice; no quota increase). Findings:
   CLI's cached role credentials still worked, so the remaining destroy ran with those credentials
   exported to the environment. Everything the run created is gone; the resource-tagging API kept
   stale entries for deleted EC2 endpoints, a NAT gateway and an event source mapping for a while.
+
+## 2026-11-25 — M5b: JS symbolication and bundle-cleanup wiring (Claude)
+
+- **Symbolicate before normalize.** `normalizeEvent` computes culprit, fingerprint and issue ID, and
+  the grouped consumer routes by issue ID, so frames must be rewritten before it. This matches
+  ARCHITECTURE ("symbolicate, then group") but changes the fingerprint of any minified-frame event
+  once its map exists; events without a matching `debug_meta` image group exactly as before. An event
+  processed before its map was uploaded is never re-symbolicated (no async re-processing exists).
+  The overflow blob must be rewritten too: `item.payload` (raw bytes) was what overflowed, so the
+  consumer re-serializes the payload when symbolication changed it.
+- **Function names come from the caller frame's token.** A source map token names the identifier at
+  the position; at a call site that is the callee, i.e. the function of the next (inner) frame, not
+  of the frame holding the position. Frames are oldest first, so frame i takes `name(i-1)`. The
+  outermost frame keeps its minified function. `colno` in events is 1-based; trace-mapping columns
+  are 0-based.
+- **`openBundleZip`.** fflate does not throw on shifted offsets, and the helper picks the candidate
+  (with or without the `SYSB` header) that contains `manifest.json`; a filter that excludes the
+  manifest therefore makes it fall through to the wrong candidate. Every filter passed to it must
+  select `manifest.json`.
+- **trace-mapping resolves `./` in sources** (`webpack://app/./src/a.ts` becomes
+  `webpack://app/src/a.ts`), so frame `abs_path` is the resolved form.
+- **New store capability `release-read`.** DynamoDB `GetItem` conditioned on `DEBUG|*` and `BUNDLE|*`
+  leading keys; the grouped consumer needs it because it has no store `read`. SQL maps it to the
+  runtime database policy. The direct consumer already has `read`, so the requirement row is
+  grouped-only. A new `ddb-release-read-unscoped` mutation guards the condition.
+- **Cron now has a store.** `bundle-cleanup` needs `ProjectRepo.list` plus the pending-bundle
+  protocol, so the cron role gained store `read`/`write`/`metadata-delete` and blob `delete`
+  (a seventh policy on the per-topic cron function, still below the inline budget) and therefore the
+  store environment binding and, for external Postgres, the secret read. Tests that asserted a
+  store-free cron (cold-start build test needs `AWS_REGION`) were updated deliberately.
+- **Standalone has no scheduler**, so the platform drives `bundle-cleanup` itself (on start and
+  every 15 minutes) instead of deriving cron triggers (those stay function-compute only for this
+  job, like `staged-recovery`). blob-fs gained `expireOlderThan(prefix, cutoff)` (mtime based)
+  because it has no lifecycle rules; core detects it structurally (`ExpiringBlobStore`).
+- **Not verified:** the opt-in sentry-cli e2e now also processes a minified event and reads it back
+  through the API, but could not be run here (no sentry-cli binary offline, installs denied). The
+  step computes the frame position from the injected file because `inject` shifts the map.
+
+## 2026-11-25 — M5b review fixes: stable grouping, fair cleanup, bounded memory
+
+- **Grouping must not depend on the attempt.** The first cut fell back to raw frames from the third
+  receive attempt on a transient bundle failure, which gave one event two issue IDs. Transient
+  failures now always retry (the DLQ policy is the backstop); only permanent outcomes
+  (`js_no_source`, `js_invalid_source`) keep the raw frames, and `js_symbolication_unavailable` is
+  gone. A map activated between attempts can still regroup a redelivered event, so the safety net is
+  the store: `recordEvent`/`recordEvents` are idempotent on `(projectId, eventId)` whatever the
+  issue (the event row is keyed by project and event ID and shares a transaction with the issue
+  update in DynamoDB; SQL and memory check the event first). The `ActiveStore` contract now pins
+  the cross-issue duplicate (no second issue, no count).
+- **Symbolication moved after the suppression and direct-mode duplicate checks.** Both read only
+  identity fields and the event ID, so grouping is unchanged; the event is normalized once as sent
+  and again only when frames were rewritten.
+- **bundle-cleanup fairness without state.** The cron role has no KV and no blob write, and a new
+  MetaRepo record would be a port change across three stores, so no cursor is persisted. Instead
+  each run counts the projects and visits a circular window starting at `fnv1a(now) % total`, with
+  at most 10 bundles per project. Every project is reached with probability 1; the cost is one extra
+  project listing per run. Revisit with a real cursor if the project count makes that listing hurt.
+- **blob-fs `expireOlderThan`** keeps an in-process cursor per prefix (resume after the last examined
+  key, wrap at the end) and an `scanLimit` option; a restart simply starts again from the front.
+- **Memory bounds:** parsed-map cache is now 8 maps / 64 MiB by weight (map plus `sourcesContent` at
+  UTF-16 size) and context lines are capped at 128 K characters per event.

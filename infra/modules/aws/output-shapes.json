@@ -13,6 +13,9 @@
       "project-read": {
         "primary": "json-document"
       },
+      "release-read": {
+        "primary": "json-document"
+      },
       "read": {
         "primary": "json-document"
       },

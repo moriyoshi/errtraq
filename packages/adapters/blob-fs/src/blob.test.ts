@@ -117,3 +117,54 @@ it("ignores a file removed between directory scan and opening it", async () => {
   expect((await reopened.list("")).items).toEqual([]);
   expect(log).not.toHaveBeenCalled();
 });
+it("expires only objects under the prefix that are older than the cutoff", async () => {
+  const root = join(directory, "expire");
+  const b = create({ root });
+  const bytes = new TextEncoder().encode("x");
+  await b.put("artifacts/chunks/org/old", bytes);
+  await b.put("artifacts/chunks/org/new", bytes);
+  await b.put("artifacts/bundles/1/old", bytes);
+  const { readdir } = await import("node:fs/promises");
+  const old = new Date(Date.now() - 10 * 86400000);
+  for (const name of await readdir(root)) {
+    // Age every object, then re-touch the one that must survive.
+    await utimes(join(root, name), old, old);
+  }
+  await b.put("artifacts/chunks/org/new", bytes);
+  const cutoff = new Date(Date.now() - 86400000).toISOString();
+  expect(await b.expireOlderThan("artifacts/chunks/", cutoff)).toBe(1);
+  expect(await b.head("artifacts/chunks/org/old")).toBeNull();
+  expect(await b.head("artifacts/chunks/org/new")).not.toBeNull();
+  expect(await b.head("artifacts/bundles/1/old")).not.toBeNull();
+  await expect(b.expireOlderThan("artifacts/", "nope")).rejects.toThrow(
+    RangeError,
+  );
+});
+it("reaches old objects that sort after many fresh ones across bounded calls", async () => {
+  const root = join(directory, "expire-paged");
+  const b = create({ root });
+  const bytes = new TextEncoder().encode("x");
+  await b.put("artifacts/chunks/z-old", bytes);
+  const { readdir } = await import("node:fs/promises");
+  const old = new Date(Date.now() - 10 * 86400000);
+  for (const name of await readdir(root))
+    await utimes(join(root, name), old, old);
+  for (let i = 0; i < 7; i++) await b.put(`artifacts/chunks/a${i}`, bytes);
+  const cutoff = new Date(Date.now() - 86400000).toISOString();
+  let removed = 0;
+  let calls = 0;
+  while (!removed && calls < 4) {
+    calls++;
+    removed = await b.expireOlderThan("artifacts/chunks/", cutoff, {
+      scanLimit: 3,
+    });
+  }
+  // 8 keys at 3 per call: the old key is the 8th, reached by the third call.
+  expect(calls).toBe(3);
+  expect(removed).toBe(1);
+  expect(await b.head("artifacts/chunks/z-old")).toBeNull();
+  expect(await b.head("artifacts/chunks/a0")).not.toBeNull();
+  await expect(
+    b.expireOlderThan("artifacts/chunks/", cutoff, { scanLimit: 0 }),
+  ).rejects.toThrow(RangeError);
+});

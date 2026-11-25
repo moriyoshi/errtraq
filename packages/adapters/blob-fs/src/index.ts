@@ -96,6 +96,7 @@ function missing(error: unknown) {
 export class FsBlobStore implements BlobStore {
   private root: Promise<string>;
   private readonly keys: string[] = [];
+  private readonly expiryCursors = new Map<string, string>();
   constructor(
     config: BlobConfig,
     logger: Pick<Logger, "warn"> = {
@@ -356,6 +357,57 @@ export class FsBlobStore implements BlobStore {
           ? encodeCursor(scope, [last])
           : null,
     };
+  }
+
+  /**
+   * Delete objects under `prefix` last written before `olderThan` (an ISO timestamp) and return
+   * how many were removed. blob-fs has no lifecycle rules, so the standalone `bundle-cleanup` job
+   * uses this to expire abandoned `artifacts/chunks/` uploads. Work per call is bounded: at most
+   * `scanLimit` keys are examined (default 2000), continuing after the last key of the previous
+   * call for the same prefix and wrapping to the start at the end, so fresh keys sorted first
+   * never starve older ones. The cursor lives in this process (the standalone platform is one).
+   */
+  async expireOlderThan(
+    prefix: string,
+    olderThan: string,
+    options: { scanLimit?: number } = {},
+  ): Promise<number> {
+    const cutoff = Date.parse(olderThan);
+    if (!Number.isFinite(cutoff)) throw new RangeError("Invalid expiry time");
+    const scanLimit = options.scanLimit ?? 2000;
+    if (!Number.isSafeInteger(scanLimit) || scanLimit < 1)
+      throw new RangeError("Invalid scan limit");
+    await this.root;
+    const after = this.expiryCursors.get(prefix);
+    let i = lowerBound(this.keys, after ?? prefix);
+    if (after !== undefined && this.keys[i] === after) i++;
+    const candidates: string[] = [];
+    let exhausted = true;
+    for (; i < this.keys.length; i++) {
+      const key = this.keys[i];
+      if (key === undefined || !key.startsWith(prefix)) break;
+      if (candidates.length >= scanLimit) {
+        exhausted = false;
+        break;
+      }
+      candidates.push(key);
+    }
+    const last = candidates.at(-1);
+    if (exhausted || last === undefined) this.expiryCursors.delete(prefix);
+    else this.expiryCursors.set(prefix, last);
+    let removed = 0;
+    for (const key of candidates) {
+      try {
+        const info = await stat(await this.path(key));
+        if (info.mtimeMs >= cutoff) continue;
+      } catch (error) {
+        if (missing(error)) continue;
+        throw error;
+      }
+      await this.delete(key);
+      removed++;
+    }
+    return removed;
   }
 
   async delete(key: string) {

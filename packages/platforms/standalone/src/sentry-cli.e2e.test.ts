@@ -8,6 +8,7 @@ import { serve } from "@hono/node-server";
 import {
   type ApiTokenId,
   bootstrapProject,
+  ConsumerService,
   hashApiToken,
   WebCryptoIdGen,
 } from "@moriyoshi/errtraq-core";
@@ -34,6 +35,7 @@ describe.skipIf(!cli)("sentry-cli against the API app", () => {
   let dir: string;
   let env: Record<string, string>;
   let projectId: string;
+  let publicApi: ReturnType<typeof createApiApp>;
 
   beforeAll(async () => {
     const clock = new FakeClock();
@@ -52,6 +54,7 @@ describe.skipIf(!cli)("sentry-cli against the API app", () => {
       scopes: ["event:read", "event:write"],
     });
     const app = createApiApp({ store, clock, blobs });
+    publicApi = app;
     server = serve({ fetch: app.fetch, hostname: "127.0.0.1", port: 0 });
     await new Promise<void>((resolve) => server.once("listening", resolve));
     dir = await mkdtemp(join(tmpdir(), "errtraq-sentry-cli-"));
@@ -106,9 +109,87 @@ describe.skipIf(!cli)("sentry-cli against the API app", () => {
     await sentry("deploys", "new", "--release", "v1", "-e", "production");
     const listed = await sentry("releases", "list");
     expect(listed.stdout).toContain("v1");
+    await symbolicates(debugId as string, injected);
     expect(
       (await store.releases.getReleaseByVersion(projectId as never, "v1"))
         ?.finalizedAt,
     ).toBeTruthy();
   });
+
+  /** A minified-stack event processed by the consumer comes back symbolicated through the API. */
+  async function symbolicates(debugId: string, injected: string) {
+    // `inject` prepends a snippet and shifts the map, so locate the original code in the file.
+    const lines = injected.split("\n");
+    const lineIndex = lines.findIndex((line) =>
+      line.includes("console.log('hi')"),
+    );
+    expect(lineIndex).toBeGreaterThanOrEqual(0);
+    const column = (lines[lineIndex] ?? "").indexOf("console.log('hi')");
+    const eventId = "0123456789abcdef0123456789abcdef";
+    const script = "https://example.com/dist/app.js";
+    const event = {
+      event_id: eventId,
+      platform: "javascript",
+      exception: {
+        values: [
+          {
+            type: "Error",
+            value: "boom",
+            stacktrace: {
+              frames: [
+                {
+                  abs_path: script,
+                  filename: "/dist/app.js",
+                  function: "?",
+                  lineno: lineIndex + 1,
+                  colno: column + 1,
+                  in_app: true,
+                },
+              ],
+            },
+          },
+        ],
+      },
+      debug_meta: {
+        images: [{ type: "sourcemap", code_file: script, debug_id: debugId }],
+      },
+    };
+    const blobKey = `envelopes/${projectId}/e2e`;
+    await blobs.put(
+      blobKey,
+      new TextEncoder().encode(
+        `${JSON.stringify({ event_id: eventId })}\n${JSON.stringify({ type: "event" })}\n${JSON.stringify(event)}\n`,
+      ),
+    );
+    const consumer = new ConsumerService({
+      store,
+      blobs,
+      logger: { debug() {}, info() {}, warn() {}, error() {} },
+    });
+    const result = await consumer.handle([
+      {
+        id: "e2e",
+        topic: "ingest",
+        attempt: 1,
+        message: {
+          key: eventId,
+          body: {
+            projectId,
+            blobKey,
+            receivedAt: new Date().toISOString(),
+          },
+        },
+      },
+    ]);
+    expect(result).toEqual([{ deliveryId: "e2e", action: "ack" }]);
+    const response = await publicApi.request(
+      `http://errtraq.test/api/0/projects/org/project/events/${eventId}`,
+      { headers: { authorization: "Bearer secret" } },
+    );
+    expect(response.status).toBe(200);
+    const body = JSON.stringify(await response.json());
+    expect(body).toContain("src/app.ts");
+    expect(body).toContain("console.log('hi');");
+    expect(body).toContain('"symbolicated":true');
+  }
 });

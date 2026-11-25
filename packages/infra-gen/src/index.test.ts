@@ -121,11 +121,12 @@ describe("Terraform generator", () => {
         "ERRTRAQ_CONFIG_VAR_PUBLIC",
       ]),
     );
+    // The cron role uses the store too (bundle-cleanup), so it receives the same reference.
     expect(
       deriveDeployment(stack)
         .functions.find((item) => item.id === "cron")
         ?.envBindings.map((item) => item.binding.name),
-    ).not.toContain("ERRTRAQ_CONFIG_ENV_STORE_PATH");
+    ).toContain("ERRTRAQ_CONFIG_ENV_STORE_PATH");
     const files = terraform(stack);
     expect(files["main.tf.json"]).toContain(
       "$" + "{var.errtraq_env_STORE_PATH}",

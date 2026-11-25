@@ -5,7 +5,7 @@ description: What errtraq accepts from Sentry SDKs, what it drops, and what is p
 
 ## Scope
 
-errtraq targets **error events** plus, later, **releases and sourcemaps**. It is not a full Sentry replacement.
+errtraq targets **error events** plus **releases and sourcemaps** (`sentry-cli` debug-ID uploads, applied to JavaScript events). It is not a full Sentry replacement.
 
 | Area | Status |
 | --- | --- |
@@ -15,7 +15,8 @@ errtraq targets **error events** plus, later, **releases and sourcemaps**. It is
 | Request body encodings gzip, deflate and br | Supported |
 | Transactions, replays, profiles, sessions | Accepted and dropped (not stored) |
 | Issue and event read and update API under `/api/0/` | Minimal subset, in progress |
-| Releases, chunk upload, artifact bundles, sourcemap symbolication | Planned (milestone M5), not yet available |
+| Releases, chunk upload, artifact bundles (`sentry-cli sourcemaps upload`, debug IDs) | Available |
+| JavaScript sourcemap symbolication (debug-ID artifact bundles) | Available |
 | Archiving old events to Iceberg, PII erasure | Planned (milestone M4), not yet available |
 | Notifications and alerts | Not implemented |
 

@@ -265,6 +265,22 @@ it("executes staged-envelope recovery through its delivered blob and queue adapt
   ]);
 });
 
+it("runs bundle-cleanup through the store and blob adapters of the cron role", async () => {
+  const store = new MemoryActiveStore();
+  const list = vi.spyOn(store.projects, "list");
+  const handler = createHandler({
+    roles: ["cron"],
+    http: [],
+    adapters: { store, blob: new MemoryBlobStore() },
+  });
+  await handler({ job: "bundle-cleanup" });
+  expect(list).toHaveBeenCalledTimes(1);
+  const bare = createHandler({ roles: ["cron"], http: [], adapters: {} });
+  await expect(bare({ job: "bundle-cleanup" })).rejects.toThrow(
+    "Bundle cleanup adapters are missing",
+  );
+});
+
 it("enforces the configured limit independently for each DSN key and can disable it", async () => {
   const store = new MemoryActiveStore();
   vi.spyOn(store.projects, "getKey").mockImplementation(async (key) => ({

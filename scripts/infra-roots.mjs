@@ -504,8 +504,8 @@ export function prepareRoot(parent, name, version) {
       )
         throw new Error(`Incorrect ${role} KV scope in ${name}`);
     }
-    // The grouped consumer reads project records (and nothing else in the store) only when a
-    // per-issue limit needs them; the direct consumer keeps its full store read and write.
+    // The grouped consumer reads debug-ID owners (symbolication) and, when a per-issue limit
+    // needs them, project records, and nothing else in the store; the direct consumer keeps its full store read and write.
     const consumer = view.functions.find((item) =>
       item.roles.includes("consumer"),
     );
@@ -513,8 +513,8 @@ export function prepareRoot(parent, name, version) {
       const wanted = name.startsWith("rate-direct-")
         ? ["read", "write"]
         : name === "rate-grouped-issue"
-          ? ["project-read"]
-          : [];
+          ? ["project-read", "release-read"]
+          : ["release-read"];
       const grants = consumer.policies
         .filter((item) => item.selection === "store")
         .map((item) => item.capability)

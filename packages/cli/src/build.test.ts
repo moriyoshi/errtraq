@@ -93,6 +93,8 @@ describe("built stacks", () => {
     if (!fn) throw new Error("missing cron function");
     for (const binding of fn.envBindings)
       vi.stubEnv(binding.binding.name, "configured");
+    // The cron role holds store access (bundle-cleanup), so its DynamoDB adapter is built too.
+    vi.stubEnv("AWS_REGION", "us-east-1");
     const warnings = vi.spyOn(console, "warn").mockImplementation(() => {});
     try {
       const state = { calls: 0, fail: true };

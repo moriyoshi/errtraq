@@ -28,6 +28,12 @@ exports[`Terraform generator > renders the full per-topic stack deterministicall
     },
     "platform": {
       "cron_triggers": {
+        "bundle-cleanup": {
+          "function_id": "cron",
+          "max_event_age_seconds": 86400,
+          "retry_attempts": 185,
+          "schedule": "*/15 * * * *"
+        },
         "staged-recovery": {
           "function_id": "cron",
           "max_event_age_seconds": 86400,
@@ -68,7 +74,8 @@ exports[`Terraform generator > renders the full per-topic stack deterministicall
           "environment": {
             "ERRTRAQ_BLOB_BUCKET": "\${module.blob.bucket_name}",
             "ERRTRAQ_QUEUE_RECORD_URL": "\${module.queue.queues[\\"record\\"][\\"url\\"]}",
-            "ERRTRAQ_QUEUE_SOURCE_INGEST": "\${module.queue.queues[\\"ingest\\"][\\"arn\\"]}"
+            "ERRTRAQ_QUEUE_SOURCE_INGEST": "\${module.queue.queues[\\"ingest\\"][\\"arn\\"]}",
+            "ERRTRAQ_STORE_TABLE": "\${module.store.table_name}"
           },
           "http": [],
           "memory_mb": 512,
@@ -76,6 +83,7 @@ exports[`Terraform generator > renders the full per-topic stack deterministicall
             "\${module.blob.policies[\\"read\\"][\\"primary\\"]}",
             "\${module.blob.policies[\\"write\\"][\\"primary\\"]}",
             "\${module.blob.policies[\\"delete\\"][\\"primary\\"]}",
+            "\${module.store.policies[\\"release-read\\"][\\"primary\\"]}",
             "\${module.queue.policies[\\"consume\\"][\\"ingest\\"]}",
             "\${module.queue.policies[\\"produce\\"][\\"record\\"]}"
           ],
@@ -92,13 +100,18 @@ exports[`Terraform generator > renders the full per-topic stack deterministicall
           "auth_type": "NONE",
           "environment": {
             "ERRTRAQ_BLOB_BUCKET": "\${module.blob.bucket_name}",
-            "ERRTRAQ_QUEUE_INGEST_URL": "\${module.queue.queues[\\"ingest\\"][\\"url\\"]}"
+            "ERRTRAQ_QUEUE_INGEST_URL": "\${module.queue.queues[\\"ingest\\"][\\"url\\"]}",
+            "ERRTRAQ_STORE_TABLE": "\${module.store.table_name}"
           },
           "http": [],
           "memory_mb": 512,
           "policies": [
             "\${module.blob.policies[\\"read\\"][\\"primary\\"]}",
             "\${module.blob.policies[\\"list\\"][\\"primary\\"]}",
+            "\${module.store.policies[\\"read\\"][\\"primary\\"]}",
+            "\${module.store.policies[\\"write\\"][\\"primary\\"]}",
+            "\${module.store.policies[\\"metadata-delete\\"][\\"primary\\"]}",
+            "\${module.blob.policies[\\"delete\\"][\\"primary\\"]}",
             "\${module.queue.policies[\\"produce\\"][\\"ingest\\"]}"
           ],
           "roles": [
@@ -299,6 +312,12 @@ exports[`Terraform generator > renders the full shared stack deterministically 1
     },
     "platform": {
       "cron_triggers": {
+        "bundle-cleanup": {
+          "function_id": "cron",
+          "max_event_age_seconds": 86400,
+          "retry_attempts": 185,
+          "schedule": "*/15 * * * *"
+        },
         "staged-recovery": {
           "function_id": "cron",
           "max_event_age_seconds": 86400,
@@ -339,7 +358,8 @@ exports[`Terraform generator > renders the full shared stack deterministically 1
           "environment": {
             "ERRTRAQ_BLOB_BUCKET": "\${module.blob.bucket_name}",
             "ERRTRAQ_QUEUE_RECORD_URL": "\${module.queue.queues[\\"record\\"][\\"url\\"]}",
-            "ERRTRAQ_QUEUE_SOURCE_SHARED": "\${module.queue.queues[\\"shared\\"][\\"arn\\"]}"
+            "ERRTRAQ_QUEUE_SOURCE_SHARED": "\${module.queue.queues[\\"shared\\"][\\"arn\\"]}",
+            "ERRTRAQ_STORE_TABLE": "\${module.store.table_name}"
           },
           "http": [],
           "memory_mb": 512,
@@ -347,6 +367,7 @@ exports[`Terraform generator > renders the full shared stack deterministically 1
             "\${module.blob.policies[\\"read\\"][\\"primary\\"]}",
             "\${module.blob.policies[\\"write\\"][\\"primary\\"]}",
             "\${module.blob.policies[\\"delete\\"][\\"primary\\"]}",
+            "\${module.store.policies[\\"release-read\\"][\\"primary\\"]}",
             "\${module.queue.policies[\\"consume\\"][\\"shared\\"]}",
             "\${module.queue.policies[\\"produce\\"][\\"record\\"]}"
           ],
@@ -363,13 +384,18 @@ exports[`Terraform generator > renders the full shared stack deterministically 1
           "auth_type": "NONE",
           "environment": {
             "ERRTRAQ_BLOB_BUCKET": "\${module.blob.bucket_name}",
-            "ERRTRAQ_QUEUE_SHARED_URL": "\${module.queue.queues[\\"shared\\"][\\"url\\"]}"
+            "ERRTRAQ_QUEUE_SHARED_URL": "\${module.queue.queues[\\"shared\\"][\\"url\\"]}",
+            "ERRTRAQ_STORE_TABLE": "\${module.store.table_name}"
           },
           "http": [],
           "memory_mb": 512,
           "policies": [
             "\${module.blob.policies[\\"read\\"][\\"primary\\"]}",
             "\${module.blob.policies[\\"list\\"][\\"primary\\"]}",
+            "\${module.store.policies[\\"read\\"][\\"primary\\"]}",
+            "\${module.store.policies[\\"write\\"][\\"primary\\"]}",
+            "\${module.store.policies[\\"metadata-delete\\"][\\"primary\\"]}",
+            "\${module.blob.policies[\\"delete\\"][\\"primary\\"]}",
             "\${module.queue.policies[\\"produce\\"][\\"shared\\"]}"
           ],
           "roles": [

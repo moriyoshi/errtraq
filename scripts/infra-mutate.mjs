@@ -212,10 +212,6 @@ try {
       case "rate-drop-store-binding":
         delete platform.functions.consumer.environment.ERRTRAQ_STORE_TABLE;
         break;
-      case "rate-add-store-to-consumer":
-        platform.functions.consumer.environment.ERRTRAQ_STORE_TABLE =
-          platform.functions.record.environment.ERRTRAQ_STORE_TABLE;
-        break;
       case "rate-add-record-store-policy-to-consumer":
         platform.functions.consumer.policies.push(
           ...platform.functions.record.policies.filter((p) =>

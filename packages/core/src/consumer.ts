@@ -17,8 +17,10 @@ import type {
   Logger,
   ProjectRepo,
   Queue,
+  ReleaseRepo,
 } from "./ports.js";
 import { type RateRejectionConfig, RateRejector } from "./rate-rejection.js";
+import { type SymbolicationLimits, Symbolicator } from "./symbolication.js";
 
 /** Narrow a project repository to the single read the grouped consumer is granted. */
 export function projectReader(
@@ -26,8 +28,24 @@ export function projectReader(
 ): Pick<ProjectRepo, "get"> {
   return { get: (id) => store.projects.get(id) };
 }
+/** Narrow a release repository to the one read symbolication is granted (`release-read`). */
+export function releaseReader(
+  store: Pick<ActiveStore, "releases">,
+): Pick<ReleaseRepo, "findBundleByDebugId"> {
+  return {
+    findBundleByDebugId: (projectId, debugId) =>
+      store.releases.findBundleByDebugId(projectId, debugId),
+  };
+}
 export interface ConsumerOptions {
   store?: ActiveStore;
+  /**
+   * Debug-ID lookup for JavaScript symbolication. The grouped consumer receives only this
+   * (never the store); direct mode falls back to `store.releases`. Without either, frames stay
+   * as sent.
+   */
+  releases?: Pick<ReleaseRepo, "findBundleByDebugId">;
+  symbolicationLimits?: Partial<SymbolicationLimits>;
   /**
    * Read-only project lookup for per-project issue limits. The grouped consumer receives only
    * this (never the store); direct mode falls back to `store.projects`.
@@ -103,6 +121,7 @@ export class ConsumerService {
   private readonly overflowBytes: number;
   private readonly maxEnvelopeBytes: number;
   private readonly rejector?: RateRejector;
+  private readonly symbolicator?: Symbolicator;
   constructor(private readonly options: ConsumerOptions) {
     if (options.recordMode === "grouped" ? !options.queue : !options.store)
       throw new Error("Missing consumer adapter for record mode");
@@ -119,6 +138,14 @@ export class ConsumerService {
         projects: options.projects ?? options.store?.projects,
       });
     }
+    const releases = options.releases ?? options.store?.releases;
+    if (releases)
+      this.symbolicator = new Symbolicator({
+        releases,
+        blobs: options.blobs,
+        logger: options.logger,
+        limits: options.symbolicationLimits,
+      });
     this.overflowBytes = options.overflowBytes ?? 200000;
     this.maxEnvelopeBytes = options.maxEnvelopeBytes ?? 1024 * 1024;
     if (
@@ -197,6 +224,8 @@ export class ConsumerService {
     hasKvFailures?: () => boolean,
   ) {
     const results: Awaited<ReturnType<BatchHandler>> = [];
+    // Parsed source maps are cached for this invocation only.
+    const symbolication = this.symbolicator?.session();
     const prepared: {
       resultIndex: number;
       deliveryId: string;
@@ -344,20 +373,46 @@ export class ConsumerService {
               : null) ??
             fallback;
           eventIndex++;
-          const normalized = await normalizeEvent(
+          let normalized = await normalizeEvent(
             claim.projectId,
             eventId as EventId,
             claim.receivedAt,
             payload,
           );
           // TODO(M4): consult erasure suppression records before storing queued events.
+          // Suppression and the direct-mode duplicate check come before symbolication so a
+          // redelivered or suppressed event never pays for bundle loads. Neither depends on the
+          // frames: suppression looks at identity fields and the duplicate check at the event ID.
           if (await this.options.shouldSuppress?.(normalized.event)) continue;
           if (
             this.options.recordMode !== "grouped" &&
             (await this.options.store?.events.get(claim.projectId, eventId))
           )
             continue;
-          const event = { item, eventId, normalized };
+          // Symbolicate before grouping so fingerprints use the original in-app frames. The
+          // payload that overflows to the blob store must carry the rewritten frames too. A
+          // transient failure rejects the delivery (it is retried) rather than falling back to
+          // raw frames, so every attempt of one delivery groups the event the same way.
+          let eventItem = item;
+          if (symbolication) {
+            const report = await symbolication.symbolicate(
+              claim.projectId,
+              payload,
+            );
+            if (report.mapped || report.errors) {
+              eventItem = {
+                ...item,
+                payload: new TextEncoder().encode(JSON.stringify(payload)),
+              };
+              normalized = await normalizeEvent(
+                claim.projectId,
+                eventId as EventId,
+                claim.receivedAt,
+                payload,
+              );
+            }
+          }
+          const event = { item: eventItem, eventId, normalized };
           if (this.rejector) pending.push(event);
           else await processEvents([event]);
         }

@@ -236,6 +236,7 @@ function exampleStack(mode: "shared" | "per-topic"): StackConfig {
     store: resource("store", [
       "key-read",
       "project-read",
+      "release-read",
       "read",
       "write",
       "delete",

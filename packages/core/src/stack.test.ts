@@ -94,6 +94,7 @@ const selection = (kind: PortKind): AdapterSelection => ({
           ? {
               "key-read": { primary: out("policy") },
               "project-read": { primary: out("policy") },
+              "release-read": { primary: out("policy") },
               read: { primary: out("policy") },
               write: { primary: out("policy") },
               delete: { primary: out("policy") },
@@ -225,11 +226,15 @@ it("derives grouped routes and rejects unsupported stores, queues and role mappi
       }),
     ]),
   );
+  // Only the debug-ID owner read for symbolication, never store read or write.
   expect(
-    grants.some(
-      (grant) => grant.functionId === "consumer" && grant.selection === "store",
-    ),
-  ).toBe(false);
+    grants
+      .filter(
+        (grant) =>
+          grant.functionId === "consumer" && grant.selection === "store",
+      )
+      .map((grant) => grant.capability),
+  ).toEqual(["release-read"]);
   expect(
     deriveTriggers(v).some(
       (trigger) =>
@@ -407,8 +412,9 @@ describe("conditional rate rejection access", () => {
               b.binding.name === "KV_TABLE",
           ),
         ).toBe(apiEnabled);
-        // Grouped consumers read project records, and only for the per-issue limit; they never
-        // hold store read or write grants. Direct consumers keep the full store grants.
+        // Grouped consumers read debug-ID owners for symbolication (`release-read`) and project
+        // records only for the per-issue limit; they never hold store read or write grants.
+        // Direct consumers keep the full store grants.
         const storeCaps = access.grants
           .filter((g) => g.functionId === "consumer" && g.selection === "store")
           .map((g) => g.capability)
@@ -419,8 +425,8 @@ describe("conditional rate rejection access", () => {
           mode === "direct"
             ? ["read", "write"]
             : wantsProjectRead
-              ? ["project-read"]
-              : [],
+              ? ["project-read", "release-read"]
+              : ["release-read"],
         );
         expect(
           access.bindings.some(
@@ -429,7 +435,7 @@ describe("conditional rate rejection access", () => {
               b.selection === "store" &&
               b.binding.name === "STORE_TABLE",
           ),
-        ).toBe(mode === "direct" || wantsProjectRead);
+        ).toBe(true);
         // No other role gains project-read.
         expect(
           access.grants.filter((g) => g.capability === "project-read").length,
@@ -854,7 +860,7 @@ describe("infrastructure model", () => {
     });
     expect(
       view.triggers.filter((trigger) => trigger.kind === "cron"),
-    ).toHaveLength(4);
+    ).toHaveLength(5);
     expect(
       view.triggers
         .filter((trigger) => trigger.kind === "cron")
@@ -1161,7 +1167,7 @@ describe("infrastructure model", () => {
     expect(resolved.blob.config).toEqual({ n: 5 });
     expect(resolveStack(resolved)).toBe(resolved);
     expect(constructionOrder(resolved)).toContain("blob");
-    expect(deriveTriggers(resolved)).toHaveLength(2);
+    expect(deriveTriggers(resolved)).toHaveLength(3);
     expect(validateStack(resolved)).toEqual([]);
     expect(Object.isFrozen(resolved)).toBe(true);
     expect(Object.isFrozen(resolved.blob.config)).toBe(true);
@@ -1372,9 +1378,10 @@ describe("infrastructure model", () => {
     expect(
       bindingsForRoles(v, ["ingest"]).some((x) => x.binding.name === "DB"),
     ).toBe(true);
+    // The cron role holds store access for bundle-cleanup.
     expect(
       bindingsForRoles(v, ["cron"]).some((x) => x.binding.name === "DB"),
-    ).toBe(false);
+    ).toBe(true);
     v.blob.infra.bindings = [
       { name: "DB", kind: "env", purpose: "primary", value: "blob" },
     ];
@@ -1455,6 +1462,7 @@ describe("infrastructure model", () => {
     expect(requirements.map((r) => r.functionId).sort()).toEqual([
       "api",
       "consumer",
+      "cron",
     ]);
     expect(requirements.every((r) => r.bindingName === "SECRET_ID")).toBe(true);
     expect(requirements[0]?.identifier).toEqual(variable("ID"));
@@ -1848,6 +1856,13 @@ describe("infrastructure model", () => {
         name: "staged-recovery",
         schedule: "*/5 * * * *",
       },
+      {
+        kind: "cron",
+        functionId: "cron",
+        role: "cron",
+        name: "bundle-cleanup",
+        schedule: "*/15 * * * *",
+      },
     ]);
     v.archive = selection("archive");
     v.archive.manifest.capabilities = { rowDelete: "copy-on-write" };
@@ -1859,12 +1874,12 @@ describe("infrastructure model", () => {
     const v = stack();
     expect(
       deriveTriggers(v).filter((trigger) => trigger.kind === "cron"),
-    ).toHaveLength(1);
+    ).toHaveLength(2);
     v.archive = selection("archive");
     v.archive.manifest.capabilities = { rowDelete: "copy-on-write" };
     expect(
       deriveTriggers(v).filter((trigger) => trigger.kind === "cron"),
-    ).toHaveLength(4);
+    ).toHaveLength(5);
     (v.platform.config as { roles: string[] }).roles = [
       "ingest",
       "api",

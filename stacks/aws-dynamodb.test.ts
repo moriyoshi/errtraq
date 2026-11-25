@@ -50,9 +50,11 @@ describe("AWS descriptor stacks", () => {
       expect(stack.recordMode).toBe("grouped");
       const consumer = view.functions.find((fn) => fn.id === "consumer");
       const record = view.functions.find((fn) => fn.id === "record");
-      expect(consumer?.policies.some((p) => p.selection === "store")).toBe(
-        false,
-      );
+      expect(
+        consumer?.policies
+          .filter((p) => p.selection === "store")
+          .map((p) => p.capability),
+      ).toEqual(["release-read"]);
       expect(
         consumer?.policies.some(
           (p) =>
@@ -92,9 +94,10 @@ describe("AWS descriptor stacks", () => {
       expect(view.functions.find((fn) => fn.id === id)?.secretReads).toEqual([
         expect.objectContaining({ bindingName: "ERRTRAQ_POSTGRES_SECRET" }),
       ]);
-    expect(view.functions.find((fn) => fn.id === "cron")?.secretReads).toEqual(
-      [],
-    );
+    // The cron role runs bundle-cleanup against the store, so it needs the secret as well.
+    expect(view.functions.find((fn) => fn.id === "cron")?.secretReads).toEqual([
+      expect.objectContaining({ bindingName: "ERRTRAQ_POSTGRES_SECRET" }),
+    ]);
     const missing = {
       ...stack,
       store: { ...selected, infra: { ...selected.infra, bindings: [] } },
@@ -176,19 +179,26 @@ describe("AWS descriptor stacks", () => {
           consumer?.policies
             .filter((p) => p.selection === "store")
             .map((p) => `${p.capability}:${p.purpose}`),
-        ).toEqual(granted ? ["project-read:primary"] : []);
-        expect(
-          consumer?.policies.find((p) => p.selection === "store")?.policyOutput,
         ).toEqual(
           granted
-            ? output("store", "policies", "project-read", "primary")
-            : undefined,
+            ? ["release-read:primary", "project-read:primary"]
+            : ["release-read:primary"],
+        );
+        // Symbolication always reads debug-ID owners; project records only for the limit.
+        expect(
+          consumer?.policies
+            .filter((p) => p.selection === "store")
+            .map((p) => p.policyOutput),
+        ).toEqual(
+          (granted ? ["release-read", "project-read"] : ["release-read"]).map(
+            (name) => output("store", "policies", name, "primary"),
+          ),
         );
         expect(
           names(
             consumer?.envBindings.filter((b) => b.selection === "store") ?? [],
           ),
-        ).toEqual(granted ? ["ERRTRAQ_STORE_TABLE"] : []);
+        ).toEqual(["ERRTRAQ_STORE_TABLE"]);
         // The record role and every other role keep their grants.
         for (const fn of view.functions.filter((f) => f.id !== "consumer"))
           expect(fn.policies.some((p) => p.capability === "project-read")).toBe(
@@ -250,6 +260,7 @@ describe("AWS descriptor stacks", () => {
     expect(names(byId.cron?.envBindings ?? [])).toEqual([
       "ERRTRAQ_BLOB_BUCKET",
       "ERRTRAQ_QUEUE_SHARED_URL",
+      "ERRTRAQ_STORE_TABLE",
     ]);
     expect(byId.ingest?.http).toEqual(["ingest"]);
     expect(byId.api?.http).toEqual(["api"]);
@@ -300,9 +311,13 @@ describe("AWS descriptor stacks", () => {
       "store:write:primary",
     ]);
     expect(policyKeys("cron")).toEqual([
+      "blob:delete:primary",
       "blob:list:primary",
       "blob:read:primary",
       "queue:produce:shared",
+      "store:metadata-delete:primary",
+      "store:read:primary",
+      "store:write:primary",
     ]);
     expect(view.triggers).toEqual([
       {
@@ -323,6 +338,12 @@ describe("AWS descriptor stacks", () => {
         functionId: "cron",
         name: "staged-recovery",
         schedule: "*/5 * * * *",
+      },
+      {
+        kind: "cron",
+        functionId: "cron",
+        name: "bundle-cleanup",
+        schedule: "*/15 * * * *",
       },
     ]);
     expect(
@@ -643,7 +664,7 @@ describe("AWS descriptor stacks", () => {
       // Each current generated policy is budgeted at 1024 characters and logging at 1024.
       expect((fn.policies.length + 1) * 1024).toBeLessThan(10240);
     }
-    expect(Math.max(...view.functions.map((fn) => fn.policies.length))).toBe(6);
+    expect(Math.max(...view.functions.map((fn) => fn.policies.length))).toBe(7);
   });
   it("keeps stack helpers free of runtime imports", async () => {
     for (const path of [

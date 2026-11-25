@@ -4,8 +4,8 @@ A Sentry-compatible issue tracker with pluggable storage, queues and compute. No
 is required. The local stack
 runs on Node and SQLite. On AWS, errtraq runs on Lambda with DynamoDB or RDS PostgreSQL, SQS, S3 and a
 DynamoDB key-value table: the stack file generates both the function bundles and the Terraform root, and
-the AWS runtime adapters have been verified in real deployments. The Iceberg archive (M4), releases and
-sourcemaps (M5) and Cloudflare (M6) are planned.
+the AWS runtime adapters have been verified in real deployments. Releases and sourcemap symbolication
+(`sentry-cli` debug-ID uploads, M5) are implemented; the Iceberg archive (M4) and Cloudflare (M6) are planned.
 
 ```sh
 pnpm install --frozen-lockfile
@@ -258,5 +258,16 @@ sentry-cli deploys new --release "$VERSION" -e production
 ```
 
 Bundles must carry debug IDs (run `inject` first); legacy release-file uploads, commits and refs are
-rejected with a clear error. Bundles are limited to 32 MiB. Applying the maps to incoming events
-arrives with the symbolication slice (M5b).
+rejected with a clear error. Bundles are limited to 32 MiB.
+
+Frames of incoming JavaScript events are symbolicated: the consumer reads the `sourcemap` entries of
+`debug_meta.images` (the SDK sends them when the build was injected), finds the bundle that owns each
+debug ID in the event's project, and rewrites matching frames to the original file, line, column,
+function name and source context (when the map carries `sourcesContent`). The minified location stays
+in each frame's `data.minified`. Grouping uses the symbolicated frames, so upload maps before the
+errors arrive: an event processed without its map is grouped by its minified frames and is not
+re-symbolicated later. Problems (no bundle, no map, unreadable map, per-event limits) are recorded in
+the event's `errors` and never reject the event.
+
+Pending uploads that were never assembled are cleaned by the `bundle-cleanup` job (every 15 minutes on
+AWS; standalone runs it itself and also expires abandoned `artifacts/chunks/` after 7 days).

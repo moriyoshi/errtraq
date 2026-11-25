@@ -94,6 +94,7 @@ locals {
     }, var.purpose == "store" ? {
     key-read        = { primary = jsonencode({ Version = "2012-10-17", Statement = [{ Effect = "Allow", Action = ["dynamodb:GetItem"], Resource = [aws_dynamodb_table.this.arn], Condition = { "ForAllValues:StringLike" = { "dynamodb:LeadingKeys" = ["KEY|*"] }, "Null" = { "dynamodb:LeadingKeys" = "false" } } }] }) }
     project-read    = { primary = jsonencode({ Version = "2012-10-17", Statement = [{ Effect = "Allow", Action = ["dynamodb:GetItem"], Resource = [aws_dynamodb_table.this.arn], Condition = { "ForAllValues:StringLike" = { "dynamodb:LeadingKeys" = ["PROJECT|*"] }, "Null" = { "dynamodb:LeadingKeys" = "false" } } }] }) }
+    release-read    = { primary = jsonencode({ Version = "2012-10-17", Statement = [{ Effect = "Allow", Action = ["dynamodb:GetItem"], Resource = [aws_dynamodb_table.this.arn], Condition = { "ForAllValues:StringLike" = { "dynamodb:LeadingKeys" = ["DEBUG|*", "BUNDLE|*"] }, "Null" = { "dynamodb:LeadingKeys" = "false" } } }] }) }
     metadata-delete = { primary = jsonencode({ Version = "2012-10-17", Statement = [{ Effect = "Allow", Action = ["dynamodb:DeleteItem"], Resource = [aws_dynamodb_table.this.arn], Condition = { "ForAllValues:StringLike" = { "dynamodb:LeadingKeys" = ["ORGSLUG|*", "PROJECTSLUG|*", "TOKEN|*", "RELEASE|*", "KEY|*", "KEYID|*", "DEBUG|*", "BUNDLE|*"] }, "Null" = { "dynamodb:LeadingKeys" = "false" } } }] }) }
   } : {})
 }

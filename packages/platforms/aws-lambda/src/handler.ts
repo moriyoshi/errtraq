@@ -23,6 +23,7 @@ import {
   type Queue,
   type RateRejectionConfig,
   RecordHandler,
+  releaseReader,
   toTimestamp,
 } from "@moriyoshi/errtraq-core/runtime";
 import { createApiApp, createIngestApp } from "@moriyoshi/errtraq-http";
@@ -137,6 +138,8 @@ export function createHandler(
                     : undefined,
               }
             : { store: adapters.store }),
+          // Symbolication reads debug-ID owners only (`release-read`), in both record modes.
+          releases: adapters.store ? releaseReader(adapters.store) : undefined,
           blobs: adapters.blob,
           recordMode: options.recordMode,
           rateRejection: options.rateRejection,
@@ -208,6 +211,13 @@ export function createHandler(
           log,
           adapters.blob && adapters.queue
             ? { blobs: adapters.blob, queue: adapters.queue.producer }
+            : undefined,
+          adapters.blob && adapters.store
+            ? {
+                projects: adapters.store.projects,
+                releases: adapters.store.releases,
+                blobs: adapters.blob,
+              }
             : undefined,
         )
       )(name, clock.now());

@@ -294,8 +294,8 @@
     "id": "ddb-metadata-broad-leadingkey",
     "module": "dynamodb",
     "file": "main.tf",
-    "find": "\"DEBUG|*\", \"BUNDLE|*\"",
-    "replace": "\"DEBUG|*\", \"BUNDLE|*\", \"EV|*\""
+    "find": "\"KEYID|*\", \"DEBUG|*\", \"BUNDLE|*\"",
+    "replace": "\"KEYID|*\", \"DEBUG|*\", \"BUNDLE|*\", \"EV|*\""
   },
   {
     "id": "ddb-shard-guard-disabled",
@@ -315,8 +315,8 @@
     "id": "ddb-metadata-missing-null-guard",
     "module": "dynamodb",
     "file": "main.tf",
-    "find": "\"DEBUG|*\", \"BUNDLE|*\"] }, \"Null\" = { \"dynamodb:LeadingKeys\" = \"false\" }",
-    "replace": "\"DEBUG|*\", \"BUNDLE|*\"] }"
+    "find": "\"KEYID|*\", \"DEBUG|*\", \"BUNDLE|*\"] }, \"Null\" = { \"dynamodb:LeadingKeys\" = \"false\" }",
+    "replace": "\"KEYID|*\", \"DEBUG|*\", \"BUNDLE|*\"] }"
   },
   {
     "id": "ddb-unversioned-store-name",
@@ -658,11 +658,6 @@
     "operation": "rate-drop-store-binding"
   },
   {
-    "id": "root-rate-extra-store-binding",
-    "root": "rate-grouped-new",
-    "operation": "rate-add-store-to-consumer"
-  },
-  {
     "id": "root-rate-extra-store-policy",
     "root": "rate-grouped-new",
     "operation": "rate-add-record-store-policy-to-consumer"
@@ -673,6 +668,13 @@
     "file": "main.tf",
     "find": "\"dynamodb:LeadingKeys\" = [\"PROJECT|*\"]",
     "replace": "\"dynamodb:LeadingKeys\" = [\"*\"]"
+  },
+  {
+    "id": "ddb-release-read-unscoped",
+    "module": "dynamodb",
+    "file": "main.tf",
+    "find": "\"dynamodb:LeadingKeys\" = [\"DEBUG|*\", \"BUNDLE|*\"] }, \"Null\" = { \"dynamodb:LeadingKeys\" = \"false\" } } }] }) }\n    metadata-delete",
+    "replace": "\"dynamodb:LeadingKeys\" = [\"*\"] }, \"Null\" = { \"dynamodb:LeadingKeys\" = \"false\" } } }] }) }\n    metadata-delete"
   },
   {
     "id": "root-rate-record-drop-kv-binding",

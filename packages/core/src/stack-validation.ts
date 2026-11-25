@@ -503,9 +503,9 @@ function deploymentFor(
   }
   for (const job of CRON_JOBS) {
     if (
-      (job.name === "staged-recovery" &&
+      (FUNCTION_CRON_JOBS.has(job.name) &&
         stack.platform.manifest.compute === "function") ||
-      (job.name !== "staged-recovery" && stack.archive)
+      (!FUNCTION_CRON_JOBS.has(job.name) && stack.archive)
     ) {
       const fn = functions.find((item) => item.roles.includes(job.role));
       if (fn)
@@ -519,6 +519,11 @@ function deploymentFor(
   }
   return view;
 }
+/** Cron jobs every function-compute stack schedules; the rest need the archive feature. */
+const FUNCTION_CRON_JOBS: ReadonlySet<string> = new Set([
+  "staged-recovery",
+  "bundle-cleanup",
+]);
 export function deriveDeployment(input: StackConfig): DeploymentView {
   const stack = resolveStack(input);
   const config = platformConfigSchema.parse(stack.platform.config);
@@ -561,6 +566,7 @@ const READ_ONLY_CAPABILITIES = new Set([
   "read",
   "key-read",
   "project-read",
+  "release-read",
   "list",
 ]);
 const WRITE_CAPABILITY_WORDS = new Set(["write", "delete", "produce"]);
