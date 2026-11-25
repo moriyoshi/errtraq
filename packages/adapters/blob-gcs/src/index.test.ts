@@ -498,7 +498,10 @@ describe("stack and create", () => {
   it("describes the gcs module with location passed through", () => {
     const selection = gcsBlob({ location: "loc-1" });
     expect(selection.runtimeModule).toBe("@moriyoshi/errtraq-blob-gcs/runtime");
-    expect(infra.module).toMatchObject({ provider: "gcp", component: "gcs" });
+    expect(infra.module).toMatchObject({
+      provider: "google",
+      component: "gcs",
+    });
     expect(infra.inputs({ location: "loc-1" }, {} as never)).toMatchObject({
       location: "loc-1",
     });

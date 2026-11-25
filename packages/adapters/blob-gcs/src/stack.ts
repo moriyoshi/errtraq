@@ -42,11 +42,11 @@ export const manifest: AdapterManifest = {
   requires: [],
   capabilities: {},
 };
-// TODO(G6): infra/modules/gcp/gcs does not exist yet; the descriptor fixes its interface. The S3 module's
+// TODO(G6): infra/modules/google/gcs does not exist yet; the descriptor fixes its interface. The S3 module's
 // lifecycle inputs (claim retention, event retention, orphan margin) are added when the module is written.
 export const infra: InfraDescriptor<Config> = {
   module: {
-    provider: "gcp",
+    provider: "google",
     component: "gcs",
     outputs: {
       bucket_name: "string",

@@ -86,6 +86,11 @@ export const platformSchema = manifestSchema.extend({
     .record(refName, z.enum(["string", "number", "bool", "string[]", "json"]))
     .optional(),
   reservedBindings: z.array(z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*\*?$/)),
+  groupedRecordQueues: z.array(z.string().min(1)).optional(),
+  minQueueDlqAttempts: z.number().int().positive().optional(),
+  deliversConfigBindings: z.boolean().optional(),
+  deliversIngestRateLimit: z.boolean().optional(),
+  supportsArchive: z.boolean().optional(),
 });
 const descriptorSchema = z.strictObject({
   module: z.strictObject({
@@ -192,6 +197,7 @@ export const rootSchema = z.strictObject({
         source: z.string().min(1),
         version: z.string().min(1),
         region: z.string().min(1).optional(),
+        project: z.string().min(1).optional(),
         tags: z.record(z.string(), z.string()).optional(),
       }),
     )

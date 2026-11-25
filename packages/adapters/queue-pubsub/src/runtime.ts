@@ -67,9 +67,9 @@ export interface PubsubOptions {
   bindings: Record<string, unknown>;
   /** Emulator or test endpoint; replaces both the global and the regional host. */
   endpoint?: string;
-  /** OAuth access token source for publishing; TODO(G5): the platform wires gcp-auth here. */
+  /** OAuth access token source for publishing; the Cloud Run platform wires gcp-auth here. */
   accessToken?: () => Promise<string>;
-  /** Push request authentication; TODO(G5): the platform wires the gcp-auth ID token verifier here. */
+  /** Push request authentication; the Cloud Run platform wires the gcp-auth ID token verifier here. */
   verifyPush?: (request: PubsubPushRequest) => Promise<boolean>;
   /** Accept pushes without verification. Tests and emulators only. */
   allowUnauthenticatedPush?: boolean;
@@ -174,7 +174,6 @@ export class PubsubQueue
       )
         throw new Error("Invalid Pub/Sub endpoint");
     } else if (!options.accessToken)
-      // TODO(G5): the platform supplies the gcp-auth token source.
       throw new Error("Pub/Sub publishing needs an accessToken source");
     this.sleep =
       options.sleep ??
@@ -484,9 +483,9 @@ export function create({
   logger,
 }: CreateContext<Config, Record<string, unknown>>): PubsubQueue {
   const emulator = environment.PUBSUB_EMULATOR_HOST;
-  // TODO(G5): accessToken and verifyPush come from gcp-auth through the platform.
-  const accessToken = dependencies?.accessToken;
-  const verifyPush = dependencies?.verifyPush;
+  // The Cloud Run platform injects `accessToken` and `verifyPush` (gcp-auth) as host bindings.
+  const accessToken = bindings.accessToken ?? dependencies?.accessToken;
+  const verifyPush = bindings.verifyPush ?? dependencies?.verifyPush;
   const pushAuth = config.pushAuth ?? "verifier";
   if (pushAuth === "none")
     logger?.warn("Pub/Sub push authentication disabled", {

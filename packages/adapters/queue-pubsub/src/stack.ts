@@ -65,6 +65,8 @@ export const manifest: AdapterManifest = {
     dlq: true,
     // A push subscription's ack deadline is the visibility analogue.
     visibilityTimeout: true,
+    // Largest push ack deadline (seconds); with the six-times rule a consumer timeout is at most 100 s.
+    maxVisibilityTimeoutSec: 600,
     grouping: "per-key-serial",
   },
 };
@@ -129,7 +131,7 @@ function descriptor(config: ResolvedConfig): InfraDescriptor<Config> {
     ),
   };
   return {
-    // TODO(G6): infra/modules/gcp/pubsub does not exist yet; this descriptor is
+    // TODO(G6): infra/modules/google/pubsub does not exist yet; this descriptor is
     // the contract the HCL module must satisfy. Subscriptions live in the
     // platform module (GCP_PLAN 5.3), so the module outputs topics only.
     module: {
@@ -164,8 +166,12 @@ function descriptor(config: ResolvedConfig): InfraDescriptor<Config> {
         ]),
       ),
     }),
-    // TODO(G5): the platform maps these to the push subscription resource
-    // names that arrive as the `subscription` field of push requests.
+    // The full push subscription resource names. The pubsub module only reserves the names
+    // (`projects/<project>/subscriptions/<stack>-<physical>`, no resource); the platform module
+    // creates the subscriptions under exactly these names, which avoids a module cycle (the
+    // subscription needs the function URL, the function needs the name). The platform delivers
+    // each name as the `ERRTRAQ_QUEUE_SOURCE_<PHYSICAL>` event-source binding, and a push body's
+    // `subscription` field is matched against it.
     resources: Object.fromEntries(
       keys.map((key) => [key, out("queues", key, "subscription")]),
     ),

@@ -97,6 +97,11 @@ export const ENVIRONMENT_FEATURES = [
   "long-lived-process",
   "shared-process-state",
   "aws-credentials",
+  /**
+   * Credentials delivered by the host without configuration (a metadata server, workload identity).
+   * Provider neutral; a platform that provides it says so in its manifest, and GCP platforms use it.
+   */
+  "ambient-credentials",
 ] as const;
 export type EnvironmentFeature = (typeof ENVIRONMENT_FEATURES)[number];
 export interface AdapterManifest<C = unknown> {
@@ -126,6 +131,25 @@ export interface PlatformManifest<C = unknown> extends AdapterManifest<C> {
   infrastructureConfigReferences?: Record<string, StackVariableType>;
   /** Exact names or prefixes ending in '*'. */
   reservedBindings: string[];
+  /**
+   * Queue adapter ids with which this platform defaults to grouped recording (`recordMode`); any
+   * other queue defaults to direct. Absent means direct for every queue.
+   */
+  groupedRecordQueues?: string[];
+  /**
+   * Smallest `dlq.maxReceiveCount` this platform accepts on an enabled queue DLQ, so the consumer
+   * can acknowledge a missing claim a few times before redrive. Absent means no floor.
+   */
+  minQueueDlqAttempts?: number;
+  /**
+   * The platform delivers config references (`env()`, `variable()` inside adapter config) to each
+   * function as `ERRTRAQ_CONFIG_*` environment bindings, resolved at runtime by the deployed plan.
+   */
+  deliversConfigBindings?: boolean;
+  /** The platform delivers `ERRTRAQ_INGEST_RATE_LIMIT` from its config `rateLimit` to the ingest role. */
+  deliversIngestRateLimit?: boolean;
+  /** False when the platform cannot host the archive tier yet; absent means it can. */
+  supportsArchive?: boolean;
 }
 export interface FunctionSettings {
   memoryMb?: number;
@@ -154,7 +178,7 @@ export interface OutputRef {
 }
 export interface StackRef {
   readonly [REF]: "stack";
-  readonly name: "name" | "region" | "tags" | "protection";
+  readonly name: "name" | "region" | "project" | "tags" | "protection";
   readonly provider?: string;
 }
 export interface EnvRef {
@@ -462,7 +486,7 @@ export interface StackConfig {
   name: string;
   /** Production protection is the default; disposable permits resource teardown. */
   protection?: "production" | "disposable";
-  /** Defaults to grouped for Lambda with SQS and direct otherwise. */
+  /** Defaults to grouped when the platform lists the selected queue in `groupedRecordQueues`, else direct. */
   recordMode?: "direct" | "grouped";
   /**
    * Bound on the total life of an archived event in days, counted from `receivedAt`; each project's
@@ -479,6 +503,8 @@ export interface StackConfig {
       source: string;
       version: string;
       region?: string;
+      /** The cloud project (GCP); required by `hashicorp/google`. */
+      project?: string;
       tags?: Record<string, string>;
     }
   >;

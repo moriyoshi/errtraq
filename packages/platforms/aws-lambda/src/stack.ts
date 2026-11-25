@@ -1,5 +1,6 @@
 import {
   ARCHIVE_ROLE_DEFAULTS,
+  CONSUMER_MAX_MISSING_ATTEMPTS,
   configReference,
   type DeploymentFunction,
   type InfraDescriptor,
@@ -171,6 +172,10 @@ export const manifest: PlatformManifest = {
   authorization: "iam",
   bindingKinds: ["env", "secret"],
   configReferenceKinds: ["env", "variable"],
+  deliversConfigBindings: true,
+  deliversIngestRateLimit: true,
+  groupedRecordQueues: ["queue-sqs"],
+  minQueueDlqAttempts: CONSUMER_MAX_MISSING_ATTEMPTS,
   infrastructureConfigReferences: {
     artifactBucket: "string",
     imageUri: "string",

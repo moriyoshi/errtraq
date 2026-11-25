@@ -1,5 +1,3 @@
-import { CONSUMER_MAX_MISSING_ATTEMPTS } from "./consumer-policy.js";
-
 function ownValue<T>(
   record: Record<string, T> | undefined,
   key: string,
@@ -56,6 +54,15 @@ import {
   rootSchema,
 } from "./stack-schema.js";
 
+/** Fields a Terraform provider block cannot do without, by provider source. */
+const REQUIRED_PROVIDER_FIELDS: Record<
+  string,
+  readonly ("region" | "project")[]
+> = { "hashicorp/aws": ["region"], "hashicorp/google": ["region", "project"] };
+const PROVIDER_LABELS: Record<string, string> = {
+  "hashicorp/aws": "AWS",
+  "hashicorp/google": "Google",
+};
 function outputTypeAt(
   type: OutputType | undefined,
   path: readonly string[] = [],
@@ -375,10 +382,13 @@ function deploymentFor(
     })),
     triggers: [],
   };
-  if (stack.platform.manifest.id === "aws-lambda") {
+  if (stack.platform.manifest.deliversConfigBindings) {
     const all = selections(stack);
     for (const fn of view.functions) {
-      if (fn.http.includes("ingest")) {
+      if (
+        stack.platform.manifest.deliversIngestRateLimit &&
+        fn.http.includes("ingest")
+      ) {
         const limit = (stack.platform.config as { rateLimit?: number | null })
           .rateLimit;
         fn.envBindings.push({
@@ -739,8 +749,9 @@ function inspect(input: unknown): {
   const stack = parsed.data as StackConfig;
   if (stack.recordMode === undefined) {
     const grouped =
-      stack.platform.manifest.id === "aws-lambda" &&
-      stack.queue.manifest.id === "queue-sqs";
+      stack.platform.manifest.groupedRecordQueues?.includes(
+        stack.queue.manifest.id,
+      ) ?? false;
     stack.recordMode = grouped ? "grouped" : "direct";
     if (
       grouped &&
@@ -804,11 +815,26 @@ function inspect(input: unknown): {
       `Stack name exceeds ${platform.maxStackNameLength} characters allowed by platform ${platform.id}`,
     );
   for (const [key, provider] of Object.entries(stack.providers ?? {}))
-    if (/(?:^|\/)hashicorp\/aws$/.test(provider.source) && !provider.region)
-      fail(
-        `providers.${key}.region`,
-        "Region is required for the AWS provider",
-      );
+    for (const [source, fields] of Object.entries(REQUIRED_PROVIDER_FIELDS))
+      if (new RegExp(`(?:^|/)${source}$`).test(provider.source))
+        for (const field of fields)
+          if (!provider[field])
+            fail(
+              `providers.${key}.${field}`,
+              `${field[0]?.toUpperCase()}${field.slice(1)} is required for the ${PROVIDER_LABELS[source] ?? source} provider`,
+            );
+  for (const [key, provider] of Object.entries(stack.providers ?? {}))
+    if (/(?:^|\/)hashicorp\/google$/.test(provider.source))
+      // Google default labels: lowercase keys and values of at most 63 characters.
+      for (const [label, value] of Object.entries(provider.tags ?? {}))
+        if (
+          !/^[a-z][a-z0-9_-]{0,62}$/.test(label) ||
+          !/^[a-z0-9_-]{0,63}$/.test(value)
+        )
+          fail(
+            `providers.${key}.tags.${label}`,
+            "Google labels need lowercase letters, digits, underscores and hyphens (keys start with a letter, at most 63 characters)",
+          );
   for (const [provider, entry] of Object.entries(stack.providers ?? {}))
     for (const key of Object.keys(entry.tags ?? {}))
       if (!/^[A-Za-z0-9_./:@+ -]+$/.test(key))
@@ -972,6 +998,9 @@ function inspect(input: unknown): {
       fail("platform.config.settings", `Unknown deployed role ${roleName}`);
   if (functions.roles.includes("archive") && !stack.archive)
     fail("platform.config.roles", "The archive role requires an archive");
+  if (stack.archive && platform.supportsArchive === false)
+    // TODO(G-archive): the archive tier on GCP is deferred (GCP_PLAN D14).
+    fail("archive", `Platform ${platform.id} does not support an archive yet`);
   if (
     stack.archiveRetentionDays !== undefined &&
     !stack.archive &&
@@ -1240,7 +1269,7 @@ function inspect(input: unknown): {
       } else if (
         isStackRef(value) &&
         keys.every((k) => ["name", "provider"].includes(k)) &&
-        ["name", "region", "tags", "protection"].includes(value.name)
+        ["name", "region", "project", "tags", "protection"].includes(value.name)
       ) {
         if (
           (value.name === "name" || value.name === "protection") &&
@@ -1258,6 +1287,8 @@ function inspect(input: unknown): {
           if (!entry) fail(path, `Unknown provider ${provider ?? ""}`);
           else if (value.name === "region" && !entry.region)
             fail(path, `Provider ${provider} region is missing`);
+          else if (value.name === "project" && !entry.project)
+            fail(path, `Provider ${provider} project is missing`);
         }
       } else if (
         isVariableRef(value) &&
@@ -1592,14 +1623,14 @@ function inspect(input: unknown): {
     }
     const setting = trigger.settings;
     if (
-      platform.id === "aws-lambda" &&
+      platform.minQueueDlqAttempts !== undefined &&
       setting.dlq?.enabled &&
       (setting.dlq.maxReceiveCount === undefined ||
-        setting.dlq.maxReceiveCount < CONSUMER_MAX_MISSING_ATTEMPTS)
+        setting.dlq.maxReceiveCount < platform.minQueueDlqAttempts)
     )
       fail(
         `queue.infra.topics.settings.${trigger.physical}.dlq.maxReceiveCount`,
-        `Lambda queue DLQ maxReceiveCount must be at least ${CONSUMER_MAX_MISSING_ATTEMPTS}, so the consumer can acknowledge missing claims before redrive`,
+        `Queue DLQ maxReceiveCount on platform ${platform.id} must be at least ${platform.minQueueDlqAttempts}, so the consumer can acknowledge missing claims before redrive`,
       );
     if (setting.dlq?.enabled && !stack.queue.manifest.capabilities.dlq)
       fail(
@@ -1648,11 +1679,30 @@ function inspect(input: unknown): {
           `queue.infra.topics.settings.${trigger.physical}.visibilityTimeoutSec`,
           "Consumer timeout is required to validate queue visibility",
         );
-      else if (setting.visibilityTimeoutSec < timeout * QUEUE_VISIBILITY_FACTOR)
-        fail(
-          `queue.infra.topics.settings.${trigger.physical}.visibilityTimeoutSec`,
-          "Visibility timeout must be at least six times the consumer timeout",
-        );
+      else {
+        // The queue states the longest visibility (ack deadline) it can express; a consumer
+        // whose timeout would need more cannot be hosted on it (Pub/Sub: 600 s, so at most 100 s).
+        const maxVisibility =
+          stack.queue.manifest.capabilities.maxVisibilityTimeoutSec;
+        const path = `queue.infra.topics.settings.${trigger.physical}.visibilityTimeoutSec`;
+        if (
+          typeof maxVisibility === "number" &&
+          (setting.visibilityTimeoutSec > maxVisibility ||
+            timeout * QUEUE_VISIBILITY_FACTOR > maxVisibility)
+        )
+          fail(
+            path,
+            `Visibility timeout cannot exceed ${maxVisibility} seconds on this queue, so the consumer timeout must be at most ${Math.floor(maxVisibility / QUEUE_VISIBILITY_FACTOR)} seconds`,
+          );
+        else if (
+          setting.visibilityTimeoutSec <
+          timeout * QUEUE_VISIBILITY_FACTOR
+        )
+          fail(
+            path,
+            "Visibility timeout must be at least six times the consumer timeout",
+          );
+      }
     }
   }
   if (

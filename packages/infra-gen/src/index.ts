@@ -244,6 +244,11 @@ export function renderInfraValue(
           throw new Error(`Provider ${provider} region is missing`);
         return escapeTerraformLiteral(entry.region);
       }
+      if (current.name === "project") {
+        if (!entry.project)
+          throw new Error(`Provider ${provider} project is missing`);
+        return escapeTerraformLiteral(entry.project);
+      }
       return Object.fromEntries(
         Object.entries(entry.tags ?? {}).map(([key, val]) => [
           escapeTerraformLiteral(key),
@@ -284,6 +289,12 @@ export function renderInfraValue(
 }
 
 const MIN_AWS = ">= 6.32.1, < 7.0";
+/**
+ * Provisional floor for `hashicorp/google` (GCP_PLAN D11: recommend the 8.x line, GA at the time of
+ * writing). TODO(G6): confirm against the 8.0 upgrade guide while writing the modules; never
+ * `google-beta`.
+ */
+export const MIN_GOOGLE = ">= 8.0.0, < 9.0";
 const REQUIRED_VERSION = ">= 1.9.0, < 2.0.0";
 const MODULE_META = new Set([
   "source",
@@ -320,12 +331,16 @@ function providerConfig(stack: ResolvedStack): {
       throw new Error(`Provider family ${name} has conflicting sources`);
     group.versions.add(provider.version);
     if (name === "aws") group.versions.add(MIN_AWS);
+    if (name === "google") group.versions.add(MIN_GOOGLE);
     if (
       name !== "aws" &&
-      (provider.region || Object.keys(provider.tags ?? {}).length)
+      name !== "google" &&
+      (provider.region ||
+        provider.project ||
+        Object.keys(provider.tags ?? {}).length)
     )
       throw new Error(
-        `Provider ${name} region and tags mapping is not implemented`,
+        `Provider ${name} region, project and tags mapping is not implemented`,
       );
     const tags = Object.fromEntries(
       Object.entries(provider.tags ?? {}).map(([tag, value]) => [
@@ -338,7 +353,15 @@ function providerConfig(stack: ResolvedStack): {
       ...(provider.region
         ? { region: escapeTerraformLiteral(provider.region) }
         : {}),
-      ...(Object.keys(tags).length ? { default_tags: { tags } } : {}),
+      ...(name === "google" && provider.project
+        ? { project: escapeTerraformLiteral(provider.project) }
+        : {}),
+      // The AWS provider calls provider-wide metadata default tags, Google calls them labels.
+      ...(Object.keys(tags).length
+        ? name === "google"
+          ? { default_labels: tags }
+          : { default_tags: { tags } }
+        : {}),
     });
   }
   const required: Record<string, Json> = Object.create(null);
