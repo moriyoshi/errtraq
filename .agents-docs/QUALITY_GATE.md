@@ -72,8 +72,7 @@ and [RDS Proxy certificate guidance](https://docs.aws.amazon.com/AmazonRDS/lates
 AWS emulator probes and the namespace lifecycle are opt-in:
 
 ```sh
-pnpm aws-emulator:install              # build the verified, unmodified pinned server
-pnpm aws-emulator:install-s3-patched   # build the verified local UTF-8 patch for S3 contracts
+pnpm aws-emulator:install              # install the checksum-verified pinned release (prebuilt where pinned, else built from source)
 pnpm test:aws-emulated                 # probes and adapter contracts; skips absent builds
 pnpm test:workers-smoke                # runs S3, SQS producer / delayed push and KV against local fakes in workerd
 ```
@@ -92,8 +91,9 @@ use fake HTTP responses in local tests and still require an M3h real-AWS check.
 To populate the cache explicitly, pull
 `amazon/dynamodb-local@sha256:6ada631ec7aa5fc83446855eb17233e3dad184fec47477e8140c6c569cfe0c86`.
 
-The installer keeps its source, Cargo cache and build under `.agents-workspace/tmp`. The
-first build needs network access and substantial disk space; subsequent runs are offline.
+The installer keeps its download, binary and any source build under `.agents-workspace/tmp`. The
+first install needs network access (a source build also needs substantial disk space); subsequent
+runs are offline.
 Tests bind a free loopback port, derive their DynamoDB and SQS shapes from the HCL modules,
 and never use AWS credentials. See [M3_EMULATOR_SUPPORT.md](./M3_EMULATOR_SUPPORT.md)
 for the probed operations and limitations. Other service contracts use the relevant local

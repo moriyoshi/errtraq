@@ -1836,3 +1836,20 @@ choice; no quota increase). Findings:
   key, wrap at the end) and an `scanLimit` option; a restart simply starts again from the front.
 - **Memory bounds:** parsed-map cache is now 8 maps / 64 MiB by weight (map plus `sourcesContent` at
   UTF-16 size) and context lines are capped at 128 K characters per event.
+
+## 2026-11-25 — Emulator pin moved to winterbaume-server v0.2.9
+
+- **Pin:** the emulator is now the release `winterbaume-server-v0.2.9` (commit `70006139231c1d0569a6ec303a671e53b8d6e6c3`),
+  not source revision `79c452d`. `scripts/aws-emulated/emulator-binary.mjs` holds the tag, commit, SHA-256 of the
+  `aarch64-apple-darwin` prebuilt asset and of `source.tar.gz`; `install.mjs` installs the prebuilt asset for pinned
+  hosts and otherwise builds the pinned source as before. Other platforms' asset checksums were not available and are not
+  pinned (they fall back to a source build). `ERRTRAQ_WINTERBAUME_BINARY` still overrides everything.
+- **Fixed in v0.2.9 (exceptions removed):** #50 ownership-control deletion, #51 to #54 tag readback (DynamoDB, IAM, S3,
+  Lambda mapping), #58 S3 UTF-8 keys (the local patch, its installer and the dedicated S3 contract runner are gone; the
+  BlobStore contract now runs inside `run.mjs` on the plain binary). Lambda permission conditions (#44), the mapping
+  `FunctionName` filter (#46) and `ScalingConfig` (#45) were also found fixed by direct probes; they had no exceptions
+  in the harness.
+- **Still reproducing:** #48, #49, #61 (19 of 100 rounds with more than one winner), #62, #64 to #66, #67, #68, #69.
+  See the status table in `WINTERBAUME_GAPS.md`.
+- **Harness note:** the repeat-plan "gap no longer reproduces" checks in `apply-emulated.mjs` now collect every vanished
+  gap before failing, so one run lists all removable exceptions instead of one per five-minute run.

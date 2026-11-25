@@ -3,15 +3,15 @@ import { assertRepeatPlan } from "./plan-check.mjs";
 
 describe("repeat-plan gap filtering", () => {
   const gaps = {
-    "tags-dynamodb": {},
+    "tags-eventbridge": {},
   };
   it("permits only documented differing fields", () => {
     const plan = {
       resource_changes: [
         {
-          address: "module.store.aws_dynamodb_table.this",
+          address: "module.platform.aws_cloudwatch_event_rule.this",
           mode: "managed",
-          type: "aws_dynamodb_table",
+          type: "aws_cloudwatch_event_rule",
           change: {
             actions: ["update"],
             before: { id: "x", tags_all: {} },
@@ -24,7 +24,7 @@ describe("repeat-plan gap filtering", () => {
       ],
     };
     expect([...assertRepeatPlan(plan, gaps, { app: "errtraq" })]).toEqual([
-      "tags-dynamodb",
+      "tags-eventbridge",
     ]);
     plan.resource_changes[0].change.after.id = "changed";
     expect(() => assertRepeatPlan(plan, gaps)).toThrow();
@@ -127,9 +127,9 @@ it("does not hide unrelated tag changes behind a known gap", () => {
   const plan = {
     resource_changes: [
       {
-        address: "module.store.aws_dynamodb_table.this",
+        address: "module.platform.aws_cloudwatch_event_rule.this",
         mode: "managed",
-        type: "aws_dynamodb_table",
+        type: "aws_cloudwatch_event_rule",
         change: {
           actions: ["update"],
           before: { id: "x", tags_all: {} },
@@ -139,8 +139,35 @@ it("does not hide unrelated tag changes behind a known gap", () => {
     ],
   };
   expect(() =>
-    assertRepeatPlan(plan, { "tags-dynamodb": {} }, { app: "errtraq" }),
+    assertRepeatPlan(plan, { "tags-eventbridge": {} }, { app: "errtraq" }),
   ).toThrow();
+});
+
+it("no longer tolerates tag readback drift on resources whose gaps were fixed", () => {
+  for (const type of [
+    "aws_dynamodb_table",
+    "aws_iam_role",
+    "aws_s3_bucket",
+    "aws_lambda_event_source_mapping",
+  ]) {
+    const plan = {
+      resource_changes: [
+        {
+          address: `x.${type}`,
+          mode: "managed",
+          type,
+          change: {
+            actions: ["update"],
+            before: { tags_all: {} },
+            after: { tags_all: { app: "errtraq" } },
+          },
+        },
+      ],
+    };
+    expect(() =>
+      assertRepeatPlan(plan, { "tags-eventbridge": {} }, { app: "errtraq" }),
+    ).toThrow("unexpected repeat-plan difference");
+  }
 });
 
 describe("CloudWatch alarm readback exception", () => {

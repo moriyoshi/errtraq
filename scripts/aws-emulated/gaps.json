@@ -1,29 +1,4 @@
 {
-  "tags-dynamodb": {
-    "heading": "Resource tag readback is incomplete",
-    "effect": "exclude DynamoDB tags_all drift from repeat-plan comparison",
-    "issues": ["https://github.com/moriyoshi/winterbaume/issues/51"]
-  },
-  "tags-iam": {
-    "heading": "Resource tag readback is incomplete",
-    "effect": "exclude IAM role tags_all drift from repeat-plan comparison",
-    "issues": ["https://github.com/moriyoshi/winterbaume/issues/52"]
-  },
-  "tags-s3": {
-    "heading": "Resource tag readback is incomplete",
-    "effect": "exclude S3 bucket tags_all drift from repeat-plan comparison",
-    "issues": ["https://github.com/moriyoshi/winterbaume/issues/53"]
-  },
-  "tags-lambda-mapping": {
-    "heading": "Resource tag readback is incomplete",
-    "effect": "exclude event mapping tags_all drift from repeat-plan comparison",
-    "issues": ["https://github.com/moriyoshi/winterbaume/issues/54"]
-  },
-  "s3-ownership-delete": {
-    "heading": "S3 ownership-control deletion is ignored",
-    "effect": "exclude ownership controls from emulator apply so destroy can complete",
-    "issues": ["https://github.com/moriyoshi/winterbaume/issues/50"]
-  },
   "lambda-vpc-readback": {
     "heading": "Lambda VPC configuration is discarded",
     "effect": "omit the Lambda VPC block only in the copied emulator module after verifying the gap",

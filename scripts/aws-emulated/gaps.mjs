@@ -7,13 +7,8 @@ export function loadGaps() {
   );
   const doc = readFileSync(resolve(".agents-docs/WINTERBAUME_GAPS.md"), "utf8");
   const expected = [
-    "s3-ownership-delete",
     "dynamodb-conditional-atomicity",
     "sqs-fifo",
-    "tags-dynamodb",
-    "tags-iam",
-    "tags-s3",
-    "tags-lambda-mapping",
     "tags-eventbridge",
     "lambda-vpc-readback",
     "cloudwatch-alarm-readback",

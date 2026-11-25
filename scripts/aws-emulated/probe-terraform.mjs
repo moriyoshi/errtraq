@@ -9,15 +9,12 @@ import {
 import { createServer } from "node:net";
 import { resolve } from "node:path";
 import { client, element } from "./client.mjs";
+import { defaultBinary } from "./emulator-binary.mjs";
 import { providerOverride, terraformEnvironment } from "./terraform-config.mjs";
 
 const root = resolve(".");
 const scratch = resolve(".agents-workspace/tmp");
-const revision = "79c452d2bb2844abf771cfa4a497275c24b46489";
-const binary = resolve(
-  scratch,
-  `winterbaume-${revision}/target/debug/winterbaume-server`,
-);
+const binary = defaultBinary();
 const cache = resolve(scratch, "terraform-plugin-cache");
 if (!existsSync(binary)) {
   console.log(

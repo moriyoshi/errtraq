@@ -11,6 +11,7 @@ import {
 import { createServer } from "node:net";
 import { resolve } from "node:path";
 import { client, element } from "./client.mjs";
+import { defaultBinary } from "./emulator-binary.mjs";
 import { applyFifo } from "./fifo-apply.mjs";
 import {
   assertPartialBatchSupport,
@@ -35,10 +36,7 @@ const groupedOnly = process.argv.includes("--grouped-only");
 const fifoOnlyComplete = Symbol("fifo-only complete");
 const root = resolve(".");
 const scratch = resolve(".agents-workspace/tmp");
-const revision = "79c452d2bb2844abf771cfa4a497275c24b46489";
-const binary =
-  process.env.ERRTRAQ_WINTERBAUME_BINARY ??
-  resolve(scratch, `winterbaume-${revision}/target/debug/winterbaume-server`);
+const binary = defaultBinary();
 const cache = resolve(scratch, "terraform-plugin-cache");
 if (!existsSync(binary)) {
   console.log(
@@ -67,10 +65,6 @@ const gaps = loadGaps();
 const temp = mkdtempSync(resolve(scratch, "m3a2-apply-"));
 const modules = resolve(temp, "modules");
 cpSync(resolve(root, "infra/modules"), modules, { recursive: true });
-writeFileSync(
-  resolve(modules, "aws/s3/emulator_override.tf"),
-  'resource "aws_s3_bucket_ownership_controls" "this" { count = 0 }\n',
-);
 const socket = createServer();
 await new Promise((yes, no) => {
   socket.once("error", no);
@@ -135,7 +129,6 @@ try {
     throw fifoOnlyComplete;
   }
   await checkStandaloneGaps(c);
-  skipped(gaps, "s3-ownership-delete");
   await checkConditionalUpdateGap(c);
   skipped(gaps, "dynamodb-conditional-atomicity");
   run("pnpm", ["build"], root);
@@ -246,20 +239,15 @@ try {
       run("terraform", ["show", "-json", "-no-color", "repeat.tfplan"], dir),
     );
     const exceptions = assertRepeatPlan(repeat, gaps, stack.providers.aws.tags);
-    for (const id of [
-      "tags-dynamodb",
-      "tags-iam",
-      "tags-s3",
-      "tags-lambda-mapping",
-      "tags-eventbridge",
-      "cloudwatch-alarm-readback",
-    ]) {
-      if (!exceptions.has(id))
-        throw new Error(
-          `Emulator gap ${id} no longer reproduces; remove the exception`,
-        );
-      skipped(gaps, id);
+    const gone = [];
+    for (const id of ["tags-eventbridge", "cloudwatch-alarm-readback"]) {
+      if (exceptions.has(id)) skipped(gaps, id);
+      else gone.push(id);
     }
+    if (gone.length)
+      throw new Error(
+        `Emulator gaps no longer reproduce; remove the exceptions: ${gone.join(", ")}`,
+      );
     console.log("PASS shared-stack repeat plan after named gap exclusions");
     tf(dir, "apply", "-auto-approve", "-input=false");
     await verifyDeployment(c, stack, view, account);
@@ -413,18 +401,15 @@ try {
       gaps,
       second.providers.aws.tags,
     );
-    for (const id of [
-      "tags-dynamodb",
-      "tags-iam",
-      "tags-s3",
-      "tags-lambda-mapping",
-      "tags-eventbridge",
-      "cloudwatch-alarm-readback",
-    ]) {
-      if (!secondExceptions.has(id))
-        throw new Error(`Emulator gap ${id} no longer reproduces`);
-      skipped(gaps, id);
+    const secondGone = [];
+    for (const id of ["tags-eventbridge", "cloudwatch-alarm-readback"]) {
+      if (secondExceptions.has(id)) skipped(gaps, id);
+      else secondGone.push(id);
     }
+    if (secondGone.length)
+      throw new Error(
+        `Emulator gaps no longer reproduce; remove the exceptions: ${secondGone.join(", ")}`,
+      );
     console.log(
       "PASS per-topic API assertions and repeat plan after named gap exclusions",
     );

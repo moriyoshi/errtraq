@@ -17,11 +17,7 @@ export function assertRepeatPlan(plan, gaps, expectedTags = {}) {
     const before = { ...change.change.before },
       after = { ...change.change.after };
     const fieldsByType = {
-      aws_dynamodb_table: [["tags_all", "tags-dynamodb"]],
       aws_cloudwatch_event_rule: [["tags_all", "tags-eventbridge"]],
-      aws_lambda_event_source_mapping: [["tags_all", "tags-lambda-mapping"]],
-      aws_s3_bucket: [["tags_all", "tags-s3"]],
-      aws_iam_role: [["tags_all", "tags-iam"]],
     };
     if (
       change.type === "aws_cloudwatch_metric_alarm" &&

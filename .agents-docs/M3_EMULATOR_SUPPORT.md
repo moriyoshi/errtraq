@@ -1,10 +1,12 @@
 # M3 AWS emulator probes
 
-The baseline is Winterbaume source revision `79c452d2bb2844abf771cfa4a497275c24b46489`
-(server 0.2.8). Its source archive is SHA-256 verified by `pnpm aws-emulator:install`;
-the source, Cargo cache, build output and executable stay under `.agents-workspace/tmp`.
-The first source build needs Rust and network access and is substantial (a debug build can
-occupy tens of gigabytes); later test runs need neither network nor AWS credentials.
+The baseline is the Winterbaume server release `winterbaume-server-v0.2.9` (commit
+`70006139231c1d0569a6ec303a671e53b8d6e6c3`). `pnpm aws-emulator:install` installs the prebuilt release
+binary for the host after verifying its pinned SHA-256; hosts without a pinned prebuilt asset build the
+checksum-pinned `source.tar.gz` instead. Downloads, the extracted binary and any build output stay under
+`.agents-workspace/tmp`. A source build needs Rust and network access and is substantial (a debug build
+can occupy tens of gigabytes); later test runs need neither network nor AWS credentials.
+Set `ERRTRAQ_WINTERBAUME_BINARY` to use another binary.
 
 The following observations are from `pnpm test:aws-emulated`, using separate isolated
 resources and a local in-memory server. They are behavioral smoke probes, not a guarantee
@@ -41,10 +43,8 @@ SSE and TLS-only policies are Terraform concerns and are not exercised by HTTP e
 probes. TTL registration does not prove an asynchronous TTL sweeper. The namespace helper
 is exported by `@moriyoshi/errtraq-testing`; callers must always close it in a `finally` block.
 
-The unmodified pinned server corrupts percent-encoded UTF-8 S3 keys; see
-[WINTERBAUME_GAPS.md](./WINTERBAUME_GAPS.md). The S3 contract runs against a separate,
-checksum-verified local source patch for that decoder. Other probes and Terraform integration
-continue to use the unmodified pinned binary.
+The S3 BlobStore contract runs against the unmodified pinned binary; the UTF-8 key decoder gap
+(issue #58) is fixed at v0.2.9 and its local patch was removed.
 
 The latest server release binary tested, 0.2.6, returned the entire object with HTTP 200
 for a range request. A separately signed AWS CLI request reproduced this. The pinned
@@ -77,10 +77,6 @@ The adapter applies a 10-second per-attempt timeout, a 25-second overall deadlin
 `overallTimeoutMs` and `bodyIdleTimeoutMs` (1 to 300,000 milliseconds). Retries use full jitter with a 500 ms base and honor `Retry-After`; an expired
 token is retried once with refreshed credentials. Runtime list and key operations are limited to
 the prefixes of the delivered primary and staging bindings; recovery lists `envelopes/`.
-
-The unmodified emulator still runs all other probes. The separate patched build is only for
-the S3 contract; installation requires Rust, network access, and substantial disk space,
-even when the unmodified server has already been built.
 
 ## Terraform control-plane inventory
 

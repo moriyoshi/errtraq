@@ -1,10 +1,10 @@
 import { spawn } from "node:child_process";
 import { access } from "node:fs/promises";
 import { createServer } from "node:net";
-import { fileURLToPath } from "node:url";
 import { createAwsTestNamespace } from "../../packages/testing/src/aws-emulator.ts";
 import { client } from "./client.mjs";
 import { testDynamoConcurrency } from "./dynamodb-local.mjs";
+import { defaultBinary } from "./emulator-binary.mjs";
 import { checkConditionalUpdateGap } from "./gap-checks.mjs";
 import { loadGaps, skipped } from "./gaps.mjs";
 import { probeControl } from "./probe-control.mjs";
@@ -14,14 +14,7 @@ import { probeS3 } from "./probe-s3.mjs";
 import { probeSqs } from "./probe-sqs.mjs";
 import { moduleShapes } from "./shapes.mjs";
 
-const binary =
-  process.env.ERRTRAQ_WINTERBAUME_BINARY ??
-  fileURLToPath(
-    new URL(
-      "../../.agents-workspace/tmp/winterbaume-79c452d2bb2844abf771cfa4a497275c24b46489/target/debug/winterbaume-server",
-      import.meta.url,
-    ),
-  );
+const binary = defaultBinary();
 try {
   await access(binary);
 } catch {
@@ -76,18 +69,6 @@ try {
   let failed = false;
   for (const [service, checks] of Object.entries(results))
     for (const [name, result] of Object.entries(checks)) {
-      if (service === "s3" && name === "utf8-key-list") {
-        if (result.supported)
-          throw new Error(
-            "Winterbaume UTF-8 key gap no longer reproduces; remove the local patch",
-          );
-        if (result.detail !== "S3_UTF8_PERCENT_DECODER_GAP")
-          throw new Error(`Unexpected UTF-8 probe failure: ${result.detail}`);
-        console.log(
-          "KNOWN GAP s3 utf8-key-list: pinned emulator corrupts percent-encoded UTF-8 keys",
-        );
-        continue;
-      }
       console.log(
         `${result.supported ? "PASS" : "FAIL"} ${service} ${name}${result.detail ? `: ${result.detail}` : ""}`,
       );
@@ -265,17 +246,26 @@ try {
   });
   if (sqsStatus !== 0)
     throw new Error(`SQS contract runner failed (${sqsStatus})`);
-  const contract = spawn(
-    process.execPath,
-    ["scripts/aws-emulated/run-s3-contract.mjs"],
-    { stdio: "inherit" },
+  console.log("Running S3 BlobStore contract against the unmodified emulator");
+  const s3Contract = spawn(
+    "pnpm",
+    [
+      "exec",
+      "vitest",
+      "run",
+      "packages/adapters/blob-s3/src/contract.emulated.test.ts",
+    ],
+    {
+      stdio: "inherit",
+      env: { ...process.env, ERRTRAQ_S3_EMULATOR: endpoint },
+    },
   );
-  const contractStatus = await new Promise((resolve, reject) => {
-    contract.once("error", reject);
-    contract.once("exit", resolve);
+  const s3Status = await new Promise((resolve, reject) => {
+    s3Contract.once("error", reject);
+    s3Contract.once("exit", resolve);
   });
-  if (contractStatus !== 0)
-    throw new Error(`S3 contract runner failed (${contractStatus})`);
+  if (s3Status !== 0)
+    throw new Error(`S3 contract runner failed (${s3Status})`);
   if (failed) process.exitCode = 1;
 } finally {
   processHandle.kill("SIGTERM");

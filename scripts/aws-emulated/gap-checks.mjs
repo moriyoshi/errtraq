@@ -83,20 +83,10 @@ export async function checkStandaloneGaps(c) {
       body: "<OwnershipControls><Rule><ObjectOwnership>BucketOwnerEnforced</ObjectOwnership></Rule></OwnershipControls>",
     });
     await c.request("s3", `/${name}?ownershipControls`, { method: "DELETE" });
-    let ownership;
-    try {
-      ownership = await c.request("s3", `/${name}?ownershipControls`);
-    } catch (error) {
-      if (/s3 404:/.test(String(error)))
-        throw new Error(
-          "s3-ownership-delete gap no longer reproduces; remove the exception",
-        );
-      throw error;
-    }
-    assert.match(
-      ownership.text,
-      /<ObjectOwnership>BucketOwnerEnforced<\/ObjectOwnership>/,
-      "s3-ownership-delete gap no longer reproduces; remove the exception",
+    await assert.rejects(
+      () => c.request("s3", `/${name}?ownershipControls`),
+      /s3 404:/,
+      "S3 ownership controls must be gone after deletion",
     );
     await c.dynamo("CreateTable", {
       TableName: name,

@@ -41,10 +41,7 @@ export async function probeS3(endpoint) {
         `${base}?list-type=2&prefix=utf8%2F`,
       );
       const actual = element(result.text, "Key");
-      if (actual === key) return;
-      const corrupted = `utf8/${Array.from(new TextEncoder().encode("～"), (byte) => String.fromCharCode(byte)).join("")}`;
-      assert.equal(actual, corrupted, "Unexpected UTF-8 probe failure");
-      throw new Error("S3_UTF8_PERCENT_DECODER_GAP");
+      assert.equal(actual, key);
     });
     await check(results, "conditional-put", async () => {
       await c.request("s3", `${base}/conditional`, {
