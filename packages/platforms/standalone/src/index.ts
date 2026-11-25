@@ -113,6 +113,7 @@ export function create({
   cronJobs = [],
   recordMode = "direct",
   rateRejection,
+  archiveRetentionDays,
 }: CreateContext<StandaloneConfig, Partial<Bindings>, Bindings>) {
   const bindings = { ...dependencies, ...runtimeBindings };
   const cfg = configSchema.parse(config);
@@ -320,8 +321,12 @@ export function create({
                     blobs: bindings.blob,
                     archive: bindings.archive,
                     worker: archival,
-                    ...(cfg.archiveRetentionDays
-                      ? { archiveRetentionDays: cfg.archiveRetentionDays }
+                    // The stack-level value wins; the platform key is the older spelling.
+                    ...((archiveRetentionDays ?? cfg.archiveRetentionDays)
+                      ? {
+                          archiveRetentionDays:
+                            archiveRetentionDays ?? cfg.archiveRetentionDays,
+                        }
                       : {}),
                     // TODO(M4l): snapshotExpiryDays once the engine has a verified expiry path.
                   }

@@ -84,16 +84,11 @@ resource "aws_s3_bucket_lifecycle_configuration" "this" {
     filter { prefix = "artifacts/chunks/" }
     expiration { days = var.artifact_chunk_retention_days }
   }
-  rule {
-    id     = "abandoned-archive-staging"
-    status = "Enabled"
-    filter { prefix = var.staging_prefix }
-    expiration { days = var.staging_retention_days }
-  }
 }
 locals {
-  # Keep primary grants out of the separate staging prefix.
-  prefixes = { primary = ["envelopes/", "payloads/", "artifacts/"], staging = [var.staging_prefix] }
+  # `archive-overflow/` holds the archive worker's batch manifests (swept by archive housekeeping);
+  # the staging prefix was dropped with write-ahead staging (D5).
+  prefixes = { primary = ["envelopes/", "payloads/", "artifacts/", "archive-overflow/"] }
   policies = {
     for capability, actions in {
       read   = ["s3:GetObject"]

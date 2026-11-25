@@ -11,18 +11,17 @@ import {
 } from "@moriyoshi/errtraq-core";
 import { describe, expect, it } from "vitest";
 import { generate } from "../packages/infra-gen/src/index.js";
-import perTopic from "./aws-dynamodb-per-topic.js";
+import archiveStack from "./aws-dynamodb-archive.js";
 
-const base = Object.fromEntries(Object.entries(perTopic)) as StackConfig;
+const base = Object.fromEntries(Object.entries(archiveStack)) as StackConfig;
 const options = {
   outputDirectory: "infra/generated/example",
   modulesDirectory: "infra/modules",
   generationEnv: {},
   artifactPaths: Object.fromEntries(
-    ["ingest", "api", "consumer", "record", "cron", "shared"].map((id) => [
-      id,
-      `build/${id}.zip`,
-    ]),
+    ["ingest", "api", "consumer", "record", "cron", "archive", "shared"].map(
+      (id) => [id, `build/${id}.zip`],
+    ),
   ),
 };
 function generated(archive: StackConfig["archive"]): Record<string, unknown> {
@@ -48,7 +47,7 @@ describe("AWS stack with the S3 Tables archive", () => {
       "tags",
     ]);
   });
-  it("grants read to the API and read, write and delete to the roles that run the archive", () => {
+  it("grants read to the API and read, write and delete to the archive role only", () => {
     const stack = resolveStack({
       ...base,
       archive: s3TablesArchive({ region: "us-east-1" }),
@@ -59,9 +58,9 @@ describe("AWS stack with the S3 Tables archive", () => {
         for (const role of fn.roles)
           grants.set(role, [...(grants.get(role) ?? []), grant.capability]);
     expect(grants.get("api")?.sort()).toEqual(["read"]);
-    expect(grants.get("consumer")?.sort()).toEqual(["delete", "read", "write"]);
-    expect(grants.get("cron")?.sort()).toEqual(["delete", "read", "write"]);
-    expect(grants.has("ingest")).toBe(false);
+    expect(grants.get("archive")?.sort()).toEqual(["delete", "read", "write"]);
+    for (const role of ["consumer", "cron", "ingest", "record"])
+      expect(grants.has(role)).toBe(false);
   });
   it("declares exactly the HCL module's outputs, variables and policy leaves", () => {
     const directory = resolve("infra/modules/aws/s3tables");

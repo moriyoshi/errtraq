@@ -510,7 +510,8 @@ and stores as different as Postgres and DynamoDB.
 
 **Shape: planner → per-project worker, both on existing ports**
 
-- A cron job fires the **planner** (hourly/daily). It pages through projects and sends one
+- A cron job fires the **planner** (hourly/daily; on a function platform this runs on the `archive`
+  role, see "Archive role and container image on AWS"). It pages through projects and sends one
   `archive.project {projectId}` message per project on the `Queue` port. Cross-project
   parallelism = queue consumer concurrency, which is also the throttle on active-store load.
 - The **worker** handles one project per message, serially, under a lease. It loops over
@@ -591,9 +592,9 @@ a redelivered message, or a lease takeover all converge on the same path.
   loses data — so the planner alarms on lag.
 - Later optimization for Postgres/MySQL: day-partitioned event table and `DROP PARTITION`.
 
-**Archive-side housekeeping** (the `retention` cron job when an archive is selected; catalog-dependent; every mutation runs under the project's archive lease, after any in-flight batch was driven to completion)
+**Archive-side housekeeping** (the `retention` cron job when an archive is selected, on the `archive` role on a function platform; catalog-dependent; every mutation runs under the project's archive lease, after any in-flight batch was driven to completion)
 
-- Hard retention: `archive.deleteOlderThan(projectId, now − archiveRetentionDays)` (`received_at < cutoff`; deletion vectors on v3, so the bytes remain until compaction and snapshot expiry). `archiveRetentionDays` is a stack-wide option that must exceed every project's `retentionDays`.
+- Hard retention: `archive.deleteOlderThan(projectId, now − archiveRetentionDays)` (`received_at < cutoff`; deletion vectors on v3, so the bytes remain until compaction and snapshot expiry). `archiveRetentionDays` is a stack-wide option (`StackConfig.archiveRetentionDays`, valid only with an archive) that must exceed every project's `retentionDays`.
 - Project deletion: `archive.deleteProject(projectId)` (`purgeProjectArchive`, called by a future project-delete flow; no such flow exists yet).
 - End-user erasure requests: row-level, via deletion vectors — see next section.
 - Small-file compaction (must keep one project per file or sort by `project_id`), snapshot
@@ -718,7 +719,7 @@ Bootstrap (migrations, the first organization, project, DSN key and API token, a
 secret holding the DSN and token) has two paths that share one idempotent implementation in core
 (`bootstrapDeployed`). The direct path runs `errtraq bootstrap` from the operator's machine with
 the operator's AWS credentials (environment keys first, otherwise the SDK profile chain: `AWS_PROFILE`, SSO, `credential_process`, assume-role; resolved in the CLI only, never in Lambda bundles); it needs network access to the store. When the store is reachable
-only inside the VPC, the AWS Lambda platform offers an optional sixth function role, `bootstrap`
+only inside the VPC, the AWS Lambda platform offers an optional function role, `bootstrap`
 (`awsLambda({ roles: [..., "bootstrap"], bootstrapSecretName })`), and `errtraq bootstrap --remote`
 invokes it synchronously through the Lambda Invoke API (signed with `aws-signing`, no SDK).
 
@@ -750,6 +751,57 @@ as the administrator over verified TLS, idempotently creates the IAM user (`CREA
 `GRANT rds_iam`, connect, schema and existing-table privileges, identifiers quoted), then migrates
 as the IAM user. Migrating as the IAM user makes it the owner of the tables, so later migrations
 need no further grants and the administrator credentials are used only for role administration.
+
+### Archive role and container image on AWS (M4i, D6)
+
+Selecting an archive on a function platform adds a seventh, always-split function role, `archive`
+(validation adds it to the platform's roles the way grouped recording adds `record`; naming it
+without an archive is an error). It runs the per-project archival worker, the archive planner and
+the archive-side housekeeping (and later, `TODO(M4j)`, erasure), because the DuckDB engine, the
+per-project lease and every archive write grant belong in one place. Core routes accordingly, only
+on function platforms (the single-process platform keeps hosting everything in one process):
+
+- `archive.project` is produced and consumed by `archive` instead of `consumer`. A physical queue
+  has one event-source mapping, so validation rejects a queue that carries `archive.project`
+  together with a topic of another function: the SQS queue must be per-topic. The SQS descriptor
+  gives the `archive_project` queue batch size 1, maximum concurrency 5 and a 1800 s visibility
+  timeout (six times the archive role's 300 s timeout; the worker stops starting batches at 60% of
+  its timeout and continues through a message to itself).
+- The `archive-planner` and `retention` cron jobs run on `archive` (the `retention` job's
+  housekeeping needs the lease and the engine); `retention` without an archive stays on `cron` and,
+  as before, is not scheduled on function platforms. `erasure-worker` is not scheduled on function
+  platforms until its handler exists (`TODO(M4j)`).
+- Requirement rows: `archive` gets store `read`, `write`, `delete`, primary blob `read`, `write`,
+  `delete`, `list` (overflow payloads and the `archive-overflow/` batch manifests) and archive
+  `read`, `write`, `delete`; `api` gets archive `read` (federated queries); `consumer` and `cron`
+  hold no archive grant. The staging blob purpose and the archive KV rows are gone (staging was
+  dropped, D5; the worker uses no KV).
+- `archiveRetentionDays` is a stack-level option reaching the housekeeping job through the deployed
+  plan.
+
+The `archive` role, and the `api` role when an archive is selected (it reads through the same
+engine), run from a Lambda container image instead of a ZIP; every other role stays a ZIP. With an
+archive the `api` role must be split into its own function so the image never carries ingest.
+`errtraq build` writes one `Dockerfile` for the stack: the Lambda Node base image for the
+configured runtime (`--platform linux/arm64` by default, `imageArchitecture` in the platform
+config), the pinned `@duckdb/node-api` binding, the `httpfs`, `avro` and `iceberg` extensions
+installed through DuckDB itself into one directory (so they match the binding's DuckDB version and
+platform) and then loaded once with autoinstall and autoload off, and each image function's bundle
+at `<function id>/index.mjs`. Each function's image command (`<id>/index.handler`) selects its
+bundle. The engine runs with `extensionMode: "preinstalled"`, that extension directory, a
+`home_directory` under `/tmp`, DuckDB `memory_limit` 704 MB and two threads (`s3TablesArchive`
+sets these); image function defaults are 1024 MB memory and 2048 MB `/tmp`
+(`ephemeralStorageMb`), plus a 300 s timeout for the archive role. The S3 credentials come from the
+Lambda execution role through the platform's credential provider (`awsCredentials` binding, which
+carries `expiration` when the environment names one). ZIP packaging with bundled or run-time
+installed extensions is rejected by design (init timeouts, egress to the extension host).
+
+The `lambda-app` module creates the ECR repository (immutable tags, scan on push, a repository
+policy that lets only this stack's functions pull) when a function is an image function, and takes
+the pushed image as `image_uri` (platform config `imageUri`, normally a stack variable). Images
+cannot exist before the repository: apply the repository first (`-target`), push, then apply the
+rest. Nothing is built or pushed by Terraform. The S3 Tables table bucket and namespace come from
+the `s3tables` module (`s3TablesArchive`); the engine creates the `events` table.
 
 ## Milestones
 

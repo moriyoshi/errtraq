@@ -163,8 +163,8 @@ function stack(): StackConfig {
         reservedBindings: [],
         configSchema: z
           .object({
-            roles: z.array(z.enum(roles)),
-            split: z.array(z.enum(roles)),
+            roles: z.array(z.enum([...roles, "archive"])),
+            split: z.array(z.enum([...roles, "archive"])),
           })
           .passthrough(),
       },
@@ -264,16 +264,61 @@ it("derives grouped routes and rejects unsupported stores, queues and role mappi
     ),
   ).toBe(true);
 });
+/**
+ * An archive on the function-platform fixture: the archive role is added by validation, and its
+ * topic needs a queue of its own (one event-source mapping serves one function).
+ */
+function withArchive(v: StackConfig): StackConfig {
+  v.archive = selection("archive");
+  v.archive.manifest.capabilities = { rowDelete: "copy-on-write" };
+  const queue = v.queue.infra;
+  for (const key of ["archive_project", "notifications"]) {
+    queue.resources[key] = out("arn");
+    queue.capabilities.produce = {
+      ...queue.capabilities.produce,
+      [key]: out("policy"),
+    };
+    queue.capabilities.consume = {
+      ...queue.capabilities.consume,
+      [key]: out("policy"),
+    };
+    queue.bindings.push({
+      name: `Q_${key.toUpperCase()}`,
+      kind: "env",
+      purpose: key,
+      value: out("arn"),
+    });
+  }
+  const mapping = queue.topics;
+  if (!mapping) throw new Error("Missing topic mapping");
+  mapping.mode = "per-topic";
+  mapping.routes["archive.project"] = {
+    physical: "archive_project",
+    producerBinding: "Q_ARCHIVE_PROJECT",
+  };
+  mapping.routes.notifications = {
+    physical: "notifications",
+    producerBinding: "Q_NOTIFICATIONS",
+  };
+  // Six times the archive role's default 300 s timeout.
+  mapping.settings = {
+    ...mapping.settings,
+    archive_project: { visibilityTimeoutSec: 1800 },
+  };
+  return v;
+}
 function topics(v: StackConfig) {
   const value = v.queue.infra.topics;
   if (!value) throw new Error("Missing topic mapping");
   return value;
 }
-function keyedQueue(mode: "shared" | "per-topic"): StackConfig {
+function keyedQueue(
+  mode: "shared" | "per-topic",
+  withArchiveSelected = true,
+): StackConfig {
   const v = stack();
   v.features = { notifications: true };
-  v.archive = selection("archive");
-  v.archive.manifest.capabilities = { rowDelete: "copy-on-write" };
+  if (withArchiveSelected) withArchive(v);
   const keys =
     mode === "shared" ? ["shared"] : ["events", "archive", "notifications"];
   const physical = mode === "shared" ? ["shared", "shared", "shared"] : keys;
@@ -318,6 +363,10 @@ function keyedQueue(mode: "shared" | "per-topic"): StackConfig {
         producerBinding: `Q_${notifications.toUpperCase()}`,
       },
     },
+    // Six times the archive role's default 300 s timeout.
+    ...(withArchiveSelected && mode === "per-topic"
+      ? { settings: { [archive]: { visibilityTimeoutSec: 1800 } } }
+      : {}),
   };
   return v;
 }
@@ -792,7 +841,7 @@ describe("infrastructure model", () => {
     ).toBe(true);
   });
   it("passes the derived deployment view to platform inputs", () => {
-    const v = keyedQueue("shared");
+    const v = keyedQueue("shared", false);
     v.platform.config = {
       roles: [...roles],
       split: [...roles],
@@ -860,7 +909,7 @@ describe("infrastructure model", () => {
     });
     expect(
       view.triggers.filter((trigger) => trigger.kind === "cron"),
-    ).toHaveLength(5);
+    ).toHaveLength(2);
     expect(
       view.triggers
         .filter((trigger) => trigger.kind === "cron")
@@ -1064,36 +1113,47 @@ describe("infrastructure model", () => {
         .map((g) => g.policyOutput),
     ).toEqual([
       out("policies", "consume", "events"),
-      out("policies", "consume", "archive"),
       out("policies", "consume", "notifications"),
     ]);
-    const shared = keyedQueue("shared");
+    // The archive role consumes (and, for the planner and continuations, produces) archive.project.
+    expect(
+      grants
+        .filter((g) => g.functionId === "archive")
+        .map((g) => [g.capability, g.purpose]),
+    ).toEqual([
+      ["produce", "archive"],
+      ["consume", "archive"],
+    ]);
+    const shared = keyedQueue("shared", false);
     expect(validateStack(shared)).toEqual([]);
     expect(
       deriveTriggers(shared).filter((t) => t.kind === "queue"),
     ).toHaveLength(1);
   });
-  it("uses the staging policy for cron staging writes, preserving primary erasure access", () => {
-    const v = keyedQueue("shared");
+  it("rejects a shared queue that carries archive.project on a function platform", () => {
+    expect(validateStack(keyedQueue("shared"))).toContainEqual({
+      path: "queue.infra.topics",
+      message:
+        "Queue shared carries topics consumed by different functions; use a per-topic queue",
+    });
+  });
+  it("grants the cron role one primary blob write for its cursor and none of the archive grants", () => {
+    const v = keyedQueue("shared", false);
     v.blob.infra.module.outputs.policies = { map: { map: "json-document" } };
     for (const [capability, policies] of Object.entries(
       v.blob.infra.capabilities,
     )) {
       policies.primary = out("policies", capability, "primary");
-      policies.staging = out("policies", capability, "staging");
+      delete policies.staging;
     }
     const grants = deriveAccess(v).grants.filter(
       (g) => g.selection === "blob" && g.functionId === "cron",
     );
-    // Staging writes use the staging policy; the bundle-cleanup cursor needs one primary write.
     expect(
       grants
         .filter((g) => g.capability === "write")
         .map((g) => [g.purpose, g.policyOutput]),
-    ).toEqual([
-      ["primary", out("policies", "write", "primary")],
-      ["staging", out("policies", "write", "staging")],
-    ]);
+    ).toEqual([["primary", out("policies", "write", "primary")]]);
     expect(
       grants.some(
         (g) =>
@@ -1571,8 +1631,7 @@ describe("infrastructure model", () => {
       purpose: "primary",
     });
     const v = stack();
-    v.archive = selection("archive");
-    v.archive.manifest.capabilities = { rowDelete: "copy-on-write" };
+    withArchive(v);
     const grants = deriveAccess(v).grants;
     expect(
       grants.some(
@@ -1591,52 +1650,89 @@ describe("infrastructure model", () => {
       ),
     ).toBe(false);
   });
-  it("scopes archive staging and erasure access only when archive is selected", () => {
+  it("moves the archive grants to the archive role and keeps them off consumer and cron", () => {
     const v = stack();
-    v.blob.infra.bindings = [
-      { name: "DATA", kind: "env", purpose: "primary", value: "data" },
-      { name: "STAGING", kind: "env", purpose: "staging", value: "stage" },
-    ];
-    expect(
-      bindingsForRoles(v, ["cron"])
-        .map((item) => item.binding.name)
-        .sort(),
-    ).toEqual(["DATA", "QUEUE_URL"]);
-    v.archive = selection("archive");
-    v.archive.manifest.capabilities = { rowDelete: "copy-on-write" };
+    expect(deriveAccess(v).grants.some((g) => g.selection === "archive")).toBe(
+      false,
+    );
+    withArchive(v);
+    expect(validateStack(v)).toEqual([]);
     const access = deriveAccess(v);
-    for (const capability of ["write", "list"]) {
-      expect(access.grants).toContainEqual({
-        functionId: "cron",
-        selection: "blob",
-        capability,
-        purpose: "staging",
-        policyOutput: out("policy"),
-      });
-    }
-    expect(access.grants).toContainEqual({
-      functionId: "consumer",
-      selection: "blob",
-      capability: "write",
-      purpose: "staging",
-      policyOutput: out("policy"),
-    });
-    expect(
-      bindingsForRoles(v, ["cron"]).some(
-        (item) => item.binding.name === "STAGING",
-      ),
-    ).toBe(true);
-    expect(
-      bindingsForRoles(v, ["ingest"]).some(
-        (item) => item.binding.name === "STAGING",
-      ),
-    ).toBe(false);
+    const byFunction = (id: string) =>
+      access.grants
+        .filter((g) => g.functionId === id)
+        .map((g) => `${g.selection}:${g.capability}:${g.purpose}`);
+    expect(byFunction("archive").sort()).toEqual(
+      [
+        ...["read", "write", "delete"].flatMap((capability) => [
+          `store:${capability}:primary`,
+          `archive:${capability}:primary`,
+        ]),
+        ...["read", "write", "delete", "list"].map(
+          (capability) => `blob:${capability}:primary`,
+        ),
+        "queue:produce:archive_project",
+        "queue:consume:archive_project",
+      ].sort(),
+    );
+    expect(byFunction("api")).toContain("archive:read:primary");
+    expect(byFunction("api")).not.toContain("archive:write:primary");
+    for (const id of ["consumer", "cron", "ingest"])
+      expect(byFunction(id).some((g) => g.startsWith("archive:"))).toBe(false);
+    // No staging purpose and no KV access for the archive any more (D5).
+    expect(access.grants.some((g) => g.purpose === "staging")).toBe(false);
+    expect(byFunction("archive").some((g) => g.startsWith("kv:"))).toBe(false);
+    // The planner produces on the archive role; the consumer neither produces nor consumes it.
+    expect(byFunction("consumer")).not.toContain(
+      "queue:produce:archive_project",
+    );
+    expect(byFunction("cron")).not.toContain("queue:produce:archive_project");
     delete v.blob.infra.capabilities.list;
     expect(
       validateStack(v).some((issue) =>
-        issue.message.includes("Role cron requires blob capability list"),
+        issue.message.includes("Role archive requires blob capability list"),
       ),
     ).toBe(true);
+  });
+  it("adds the archive role with its defaults and rejects it without an archive", () => {
+    const v = withArchive(stack());
+    const resolved = resolveStack(v);
+    expect(
+      physicalFunctions(resolved.platform.config).find(
+        (fn) => fn.id === "archive",
+      ),
+    ).toEqual({
+      id: "archive",
+      roles: ["archive"],
+      settings: { timeoutSec: 300, memoryMb: 1024 },
+    });
+    const w = stack();
+    (w.platform.config as { roles: string[] }).roles.push("archive");
+    expect(validateStack(w)).toContainEqual({
+      path: "platform.config.roles",
+      message: "The archive role requires an archive",
+    });
+  });
+  it("requires the api role to be split from shared functions when an archive is selected", () => {
+    const v = withArchive(stack());
+    (v.platform.config as { split: string[] }).split = ["ingest", "consumer"];
+    expect(validateStack(v)).toContainEqual({
+      path: "platform.config.split",
+      message:
+        "With an archive the api role must be split into its own function",
+    });
+  });
+  it("accepts archiveRetentionDays only with an archive and carries it into the deployed plan", () => {
+    const v = stack();
+    v.archiveRetentionDays = 365;
+    expect(validateStack(v)).toContainEqual({
+      path: "archiveRetentionDays",
+      message: "archiveRetentionDays requires an archive",
+    });
+    const w = withArchive(stack());
+    w.archiveRetentionDays = 365;
+    expect(validateStack(w)).toEqual([]);
+    expect(deployedPlan(w, "archive").archiveRetentionDays).toBe(365);
   });
   it("merges shared-function grants and requires an IAM policy when appropriate", () => {
     const v = stack();
@@ -1870,22 +1966,40 @@ describe("infrastructure model", () => {
         schedule: "*/15 * * * *",
       },
     ]);
-    v.archive = selection("archive");
-    v.archive.manifest.capabilities = { rowDelete: "copy-on-write" };
-    expect(deriveTriggers(v)[0]).toMatchObject({
-      topics: ["ingest", "archive.project"],
-    });
+    withArchive(v);
+    const queues = deriveTriggers(v).filter((t) => t.kind === "queue");
+    expect(queues).toMatchObject([
+      { topics: ["ingest"], functionId: "consumer", role: "consumer" },
+      {
+        topics: ["archive.project"],
+        physical: "archive_project",
+        functionId: "archive",
+        role: "archive",
+      },
+    ]);
   });
   it("derives all core cron jobs when the archive and cron role are selected", () => {
     const v = stack();
     expect(
       deriveTriggers(v).filter((trigger) => trigger.kind === "cron"),
     ).toHaveLength(2);
-    v.archive = selection("archive");
-    v.archive.manifest.capabilities = { rowDelete: "copy-on-write" };
+    withArchive(v);
     expect(
       deriveTriggers(v).filter((trigger) => trigger.kind === "cron"),
-    ).toHaveLength(5);
+    ).toHaveLength(4);
+    // D6: the archive jobs run on the archive role; retention and recovery stay put without one.
+    expect(
+      Object.fromEntries(
+        deriveTriggers(v)
+          .filter((trigger) => trigger.kind === "cron")
+          .map((trigger) => [trigger.name, trigger.functionId]),
+      ),
+    ).toEqual({
+      "staged-recovery": "cron",
+      "bundle-cleanup": "cron",
+      "archive-planner": "archive",
+      retention: "archive",
+    });
     (v.platform.config as { roles: string[] }).roles = [
       "ingest",
       "api",
@@ -2042,9 +2156,10 @@ describe("infrastructure model", () => {
   });
   it("delivers archive child bindings, secrets and capability grants to parent users", () => {
     const v = stack();
-    v.archive = selection("archive");
-    v.archive.manifest.capabilities = { rowDelete: "copy-on-write" };
-    v.archive.manifest.childKinds = { catalog: "catalog", engine: "engine" };
+    withArchive(v);
+    const archive = v.archive;
+    if (!archive) throw new Error("Missing archive");
+    archive.manifest.childKinds = { catalog: "catalog", engine: "engine" };
     const catalog = selection("catalog");
     catalog.infra.module.outputs.secret = "secret-ref";
     catalog.infra.resources = { primary: out("arn") };
@@ -2078,11 +2193,11 @@ describe("infrastructure model", () => {
         value: out("arn"),
       },
     ];
-    v.archive.children = { catalog, engine };
+    archive.children = { catalog, engine };
     expect(validateStack(v)).toEqual([]);
     const view = deriveDeployment(v);
     const api = view.functions.find((fn) => fn.id === "api");
-    const consumer = view.functions.find((fn) => fn.id === "consumer");
+    const consumer = view.functions.find((fn) => fn.id === "archive");
     expect(api?.envBindings.map((item) => item.binding.name)).toContain(
       "CATALOG_ENDPOINT",
     );
@@ -2132,16 +2247,17 @@ describe("infrastructure model", () => {
   });
   it("traverses nested adapters and orders dependencies", () => {
     const v = stack();
-    v.archive = selection("archive");
-    v.archive.manifest.capabilities = { rowDelete: "copy-on-write" };
-    v.archive.manifest.childKinds = { catalog: "catalog", engine: "engine" };
-    v.archive.children = {
+    withArchive(v);
+    const archive = v.archive;
+    if (!archive) throw new Error("Missing archive");
+    archive.manifest.childKinds = { catalog: "catalog", engine: "engine" };
+    archive.children = {
       catalog: selection("catalog"),
       engine: selection("engine"),
     };
-    for (const child of Object.values(v.archive.children))
+    for (const child of Object.values(archive.children))
       child.infra.resources = {};
-    v.archive.dependsOn = { catalog: "archive.catalog", blob: "blob" };
+    archive.dependsOn = { catalog: "archive.catalog", blob: "blob" };
     expect([...selections(v).keys()]).toContain("archive.catalog");
     const order = constructionOrder(v);
     expect(order.indexOf("archive.catalog")).toBeLessThan(

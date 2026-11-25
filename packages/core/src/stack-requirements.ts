@@ -170,61 +170,41 @@ export const PORT_REQUIREMENTS: readonly PortRequirement[] = [
     purpose: "primary",
     feature: "store-admin",
   },
-  // TODO(M4): archive workers, erasure suppression, and archive-aware queries.
-  ...(["consumer", "cron"] as const).flatMap((role) => [
-    ...(["read", "write", "delete"] as const).map((capability) => ({
-      kind: "store" as const,
-      role,
-      capability,
-      purpose: "primary",
-      feature: "archive" as const,
-      milestone: "M4" as const,
-    })),
-    ...(["read", "write", "delete", "list"] as const).map((capability) => ({
-      kind: "blob" as const,
-      role,
-      capability,
-      purpose: "staging",
-      feature: "archive" as const,
-      milestone: "M4" as const,
-    })),
-    ...(["read", "delete"] as const).map((capability) => ({
-      kind: "blob" as const,
-      role,
-      capability,
-      purpose: "primary",
-      feature: "archive" as const,
-      milestone: "M4" as const,
-    })),
-    ...(["read", "write", "delete"] as const).map((capability) => ({
-      kind: "archive" as const,
-      role,
-      capability,
-      purpose: "primary",
-      feature: "archive" as const,
-      milestone: "M4" as const,
-    })),
-  ]),
+  // D6: the archive role (worker, housekeeping, later erasure) holds every archive grant; on a
+  // function platform it is the only role that writes the archive. Where no `archive` role exists
+  // (standalone, one process) the rows do not apply and no IAM is derived. TODO(M4j): erasure
+  // suppression rows.
+  ...(["read", "write", "delete"] as const).map((capability) => ({
+    kind: "store" as const,
+    role: "archive" as const,
+    capability,
+    purpose: "primary",
+    feature: "archive" as const,
+    milestone: "M4" as const,
+  })),
+  // Overflow payloads (read, delete) and the `archive-overflow/` batch manifests (write, list,
+  // delete) live in the primary bucket; the staging purpose was dropped (D5).
+  ...(["read", "write", "delete", "list"] as const).map((capability) => ({
+    kind: "blob" as const,
+    role: "archive" as const,
+    capability,
+    purpose: "primary",
+    feature: "archive" as const,
+    milestone: "M4" as const,
+  })),
+  ...(["read", "write", "delete"] as const).map((capability) => ({
+    kind: "archive" as const,
+    role: "archive" as const,
+    capability,
+    purpose: "primary",
+    feature: "archive" as const,
+    milestone: "M4" as const,
+  })),
+  // Federated queries: the API reads the archive and never writes it.
   {
     kind: "archive",
     role: "api",
     capability: "read",
-    purpose: "primary",
-    feature: "archive",
-    milestone: "M4",
-  },
-  {
-    kind: "kv",
-    role: "consumer",
-    capability: "read",
-    purpose: "primary",
-    feature: "archive",
-    milestone: "M4",
-  },
-  {
-    kind: "kv",
-    role: "cron",
-    capability: "write",
     purpose: "primary",
     feature: "archive",
     milestone: "M4",
@@ -240,6 +220,14 @@ export const TOPIC_ROUTES: Readonly<
       consumer: FunctionRole;
       milestone?: "M4";
       feature?: "archive" | "notifications" | "direct" | "grouped";
+      /**
+       * Routing on a function platform (separate functions per role). The single-process
+       * platform keeps `producers` and `consumer`, which it hosts in the one process.
+       */
+      deployed?: {
+        producers: readonly FunctionRole[];
+        consumer: FunctionRole;
+      };
     }
   >
 > = {
@@ -250,6 +238,9 @@ export const TOPIC_ROUTES: Readonly<
     consumer: "consumer",
     milestone: "M4",
     feature: "archive",
+    // D6: the planner (a cron job on the archive role) and the worker's own continuation
+    // messages produce; the archive role consumes.
+    deployed: { producers: ["archive"], consumer: "archive" },
   },
   notifications: {
     producers: ["consumer"],
@@ -258,3 +249,11 @@ export const TOPIC_ROUTES: Readonly<
     feature: "notifications",
   },
 };
+/** The producers and consumer of a topic for this stack's platform. */
+export function topicRoute(
+  topic: RoutedTopic,
+  compute: "function" | "long-lived",
+): { producers: readonly FunctionRole[]; consumer: FunctionRole } {
+  const route = TOPIC_ROUTES[topic];
+  return compute === "function" && route.deployed ? route.deployed : route;
+}

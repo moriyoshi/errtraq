@@ -14,14 +14,6 @@ variable "tags" {
     error_message = "Tag keys must be nonempty, at most 128 characters, and not start with aws:."
   }
 }
-variable "staging_prefix" {
-  type        = string
-  description = "Prefix for temporary archival write-ahead objects."
-  validation {
-    condition     = can(regex("^[a-zA-Z0-9_-]+/$", var.staging_prefix)) && !contains(["envelopes/", "payloads/", "artifacts/"], var.staging_prefix)
-    error_message = "staging_prefix must be a distinct simple prefix ending in /."
-  }
-}
 variable "raw_retention_days" {
   type        = number
   description = "Days before abandoned raw envelopes expire; size this for the maximum recovery window."
@@ -29,15 +21,6 @@ variable "raw_retention_days" {
   validation {
     condition     = var.raw_retention_days >= 1 && floor(var.raw_retention_days) == var.raw_retention_days
     error_message = "raw_retention_days must be a positive integer."
-  }
-}
-variable "staging_retention_days" {
-  type        = number
-  description = "Days before abandoned archive staging objects expire."
-  default     = 7
-  validation {
-    condition     = var.staging_retention_days >= 1 && floor(var.staging_retention_days) == var.staging_retention_days
-    error_message = "staging_retention_days must be a positive integer."
   }
 }
 variable "artifact_chunk_retention_days" {

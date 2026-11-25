@@ -14,6 +14,20 @@ export const ARCHIVE_CATALOG_URI_BINDING = "ERRTRAQ_ARCHIVE_CATALOG_URI";
 export const ARCHIVE_REGION_BINDING = "ERRTRAQ_ARCHIVE_REGION";
 
 /**
+ * Where the AWS container image bakes the DuckDB extensions (`<dir>/<duckdb version>/<platform>/`),
+ * and where the engine loads them from with autoinstall and autoload off (`extensionMode:
+ * "preinstalled"`). The CLI image build and `s3TablesArchive` share this one path (D6).
+ */
+/** DuckDB extensions the engine loads; the image bakes exactly these. */
+export const DUCKDB_EXTENSIONS = ["httpfs", "avro", "iceberg"] as const;
+export const IMAGE_EXTENSION_DIRECTORY = "/opt/errtraq/duckdb-extensions";
+/**
+ * DuckDB `memory_limit` of the AWS image functions: the archive function has 1024 MB, a 50k-row
+ * batch needed about 440 MB in the Lambda spike, and the default (80 percent) leaves Node too little.
+ */
+export const IMAGE_MEMORY_LIMIT = "704MB";
+
+/**
  * Catalog authentication. Secrets are identifiers resolved through the host secret source when
  * the first request needs them; the stack config never holds a secret value.
  */
@@ -164,8 +178,8 @@ export const manifest: AdapterManifest<Config> = {
  * create the `events` table: the engine's `ensureTable` sets the format version, partition spec and
  * sort order, which a Terraform table cannot express. The warehouse (table bucket ARN), catalog URI
  * and region are delivered as environment bindings that override the config at run time.
- * TODO(M4i): the `archive` function role; grants are keyed by capability only, so the later slice
- * adds the role without touching this descriptor.
+ * Grants are keyed by capability only; the stack's requirement rows give them to the `archive`
+ * role (read, write, delete) and the `api` role (read), both of which run from the container image.
  */
 export const infra: InfraDescriptor<Config> = {
   module: {
@@ -300,7 +314,16 @@ export function s3TablesArchive(
     },
     ...(options.namespace ? { namespace: options.namespace } : {}),
     ...(options.s3Tables ? { s3Tables: options.s3Tables } : {}),
-    engine: { ...options.engine, catalogType: "s3_tables" },
+    // The AWS functions run from the container image (D6): extensions are baked in, never
+    // installed at run time, and the two threads the spike measured stay.
+    engine: {
+      extensionMode: "preinstalled",
+      extensionDirectory: IMAGE_EXTENSION_DIRECTORY,
+      memoryLimit: IMAGE_MEMORY_LIMIT,
+      threads: 2,
+      ...options.engine,
+      catalogType: "s3_tables",
+    },
   };
   return {
     manifest,

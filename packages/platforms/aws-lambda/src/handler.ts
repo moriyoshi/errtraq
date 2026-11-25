@@ -4,11 +4,14 @@ export {
   createBootstrapHandler,
 } from "./bootstrap-handler.js";
 export { awsBootstrapVault } from "./bootstrap-vault.js";
+export { type LambdaCredentials, lambdaAwsCredentials } from "./credentials.js";
 export { createSecretsManagerSource, SecretReadError } from "./secrets.js";
 
 import {
   type ActiveStore,
+  ARCHIVE_PROJECT_TOPIC,
   type ArchiveStore,
+  ArchiveWorker,
   type BatchHandler,
   type BlobStore,
   type Clock,
@@ -16,6 +19,7 @@ import {
   CRON_JOBS,
   type CronHandler,
   createCronHandler,
+  cronJobRole,
   type FunctionRole,
   IngestService,
   type KV,
@@ -42,9 +46,16 @@ export interface HandlerOptions {
     blob?: BlobStore;
     queue?: Queue;
     kv?: KV;
-    /** Selected archive; only the cron side (planner, retention) uses it before M4i. */
+    /**
+     * Selected archive. The `archive` role runs the worker, the planner and housekeeping with it;
+     * the `api` role reads it for federated queries.
+     */
     archive?: ArchiveStore;
   };
+  /** Stack-wide bound on the life of an archived event, in days (D12); housekeeping only. */
+  archiveRetentionDays?: number;
+  /** The archive function's timeout: the worker stops starting batches at 60% of it. */
+  archiveInvocationTimeoutMs?: number;
   clock?: Clock;
   logger?: Logger;
   cronHandler?: CronHandler;
@@ -118,10 +129,39 @@ export function createHandler(
         rateRejection: options.rateRejection,
         clock,
         logger: log,
+        archive: adapters.archive,
       }),
     );
   }
   const http = handle(app);
+  // D6: the archive role hosts the per-project worker, which also feeds the planner's and the
+  // housekeeping job's lease discipline.
+  const archival =
+    roles.includes("archive") &&
+    adapters.archive &&
+    adapters.store &&
+    adapters.blob &&
+    adapters.queue
+      ? new ArchiveWorker({
+          store: adapters.store,
+          blobs: adapters.blob,
+          archive: adapters.archive,
+          queue: adapters.queue.producer,
+          logger: log,
+          clock,
+          ...(options.archiveInvocationTimeoutMs === undefined
+            ? {}
+            : { invocationTimeoutMs: options.archiveInvocationTimeoutMs }),
+        })
+      : undefined;
+  if (roles.includes("archive") && !archival)
+    throw new Error("Archive adapters are missing");
+  const hostsCron = roles.includes("cron") || roles.includes("archive");
+  const hostedJobs = new Set<string>(
+    CRON_JOBS.filter((job) =>
+      roles.includes(cronJobRole(job, roles.includes("archive"))),
+    ).map((job) => job.name),
+  );
   const grouped = options.recordMode === "grouped";
   // The grouped consumer gets project reads only, and only when a per-issue limit needs them.
   if (
@@ -168,10 +208,15 @@ export function createHandler(
       : undefined;
   const dispatch: BatchHandler = async (batch) => {
     const results: Awaited<ReturnType<BatchHandler>> = [];
-    for (const topic of ["ingest", "record"]) {
+    for (const topic of ["ingest", "record", ARCHIVE_PROJECT_TOPIC]) {
       const selected = batch.filter((delivery) => delivery.topic === topic);
       if (!selected.length) continue;
-      const handler = topic === "ingest" ? consumer?.handle : record?.handle;
+      const handler =
+        topic === "ingest"
+          ? consumer?.handle
+          : topic === "record"
+            ? record?.handle
+            : archival?.handle;
       if (!handler)
         results.push(
           ...selected.map((delivery) => ({
@@ -182,34 +227,35 @@ export function createHandler(
       else results.push(...(await handler(selected)));
     }
     for (const delivery of batch)
-      if (delivery.topic !== "ingest" && delivery.topic !== "record")
+      if (
+        delivery.topic !== "ingest" &&
+        delivery.topic !== "record" &&
+        delivery.topic !== ARCHIVE_PROJECT_TOPIC
+      )
         results.push({ deliveryId: delivery.id, action: "retry" });
     return results;
   };
   return async (event: unknown) => {
     if (!event || typeof event !== "object") {
-      if (roles.includes("cron")) {
+      if (hostsCron) {
         log.error("Unknown or missing cron job");
         return;
       }
       throw new Error("Invalid Lambda event");
     }
     if ("Records" in event) {
-      if ((!consumer && !record) || !adapters.queue?.push)
+      if ((!consumer && !record && !archival) || !adapters.queue?.push)
         throw new Error("Queue consumer is unavailable");
       return adapters.queue.push.handle(event, dispatch);
     }
-    if (
-      "job" in event ||
-      (!("requestContext" in event) && roles.includes("cron"))
-    ) {
-      if (!roles.includes("cron")) {
+    if ("job" in event || (!("requestContext" in event) && hostsCron)) {
+      if (!hostsCron) {
         log.error("Unknown or missing cron job");
         return;
       }
       const name =
         "job" in event && typeof event.job === "string" ? event.job : "";
-      if (!CRON_JOBS.some((job) => job.name === name)) {
+      if (!hostedJobs.has(name)) {
         log.error("Unknown or missing cron job");
         return;
       }
@@ -227,9 +273,9 @@ export function createHandler(
                 blobs: adapters.blob,
               }
             : undefined,
-          // TODO(M4i): the dedicated `archive` role hosts the `archive.project` worker; until
-          // then the planner only runs where an archive is selected and a queue exists.
-          adapters.archive && adapters.store && adapters.queue
+          // The archive role runs the planner on the queue it consumes from (a continuation is a
+          // message to itself).
+          archival && adapters.store && adapters.queue
             ? {
                 projects: adapters.store.projects,
                 queue: adapters.queue.producer,
@@ -239,7 +285,24 @@ export function createHandler(
             ? {
                 store: adapters.store,
                 blobs: adapters.blob,
-                archived: !!adapters.archive,
+                archived: !!archival,
+                // The lease and the engine live here, so housekeeping runs on this role (D6).
+                housekeeping:
+                  archival && adapters.archive
+                    ? {
+                        store: adapters.store,
+                        blobs: adapters.blob,
+                        archive: adapters.archive,
+                        worker: archival,
+                        ...(options.archiveRetentionDays === undefined
+                          ? {}
+                          : {
+                              archiveRetentionDays:
+                                options.archiveRetentionDays,
+                            }),
+                        // TODO(M4l): snapshotExpiryDays once the engine has a verified expiry path.
+                      }
+                    : undefined,
               }
             : undefined,
         )

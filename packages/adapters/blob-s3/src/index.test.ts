@@ -368,7 +368,7 @@ describe("S3 error handling and streaming", () => {
       (await store(async () => new Response(response)).list("p/")).items,
     ).toEqual(["p/a b", "p/a+b"]);
   });
-  it("limits operations to delivered primary and staging purposes", async () => {
+  it("limits operations to the delivered purpose prefixes", async () => {
     const calls: string[] = [];
     vi.stubGlobal("fetch", async (url: unknown) => {
       calls.push(String(url));
@@ -389,57 +389,20 @@ describe("S3 error handling and streaming", () => {
       await expect(primary.list("")).rejects.toBeInstanceOf(
         BlobAccessDeniedError,
       );
+      // The staging prefix was dropped (D5): it is not a delivered purpose any more.
       await expect(primary.delete("archive-staging/a")).rejects.toBeInstanceOf(
         BlobAccessDeniedError,
       );
-      await primary.list("envelopes/");
-      const staging = create({
-        ...base,
-        bindings: {
-          ERRTRAQ_STAGING_BUCKET: "bucket",
-          ERRTRAQ_STAGING_PREFIX: "archive-staging/",
-        },
-      });
-      await expect(staging.list("envelopes/")).rejects.toBeInstanceOf(
-        BlobAccessDeniedError,
-      );
       await expect(
-        staging.delete("archive-staging-evil/a"),
+        primary.delete("archive-overflow-evil/a"),
       ).rejects.toBeInstanceOf(BlobAccessDeniedError);
-      await staging.list("archive-staging/");
-      await staging.put("archive-staging/item", new Uint8Array([1]));
-      const both = create({
-        ...base,
-        bindings: {
-          ERRTRAQ_BLOB_BUCKET: "bucket",
-          ERRTRAQ_STAGING_BUCKET: "bucket",
-          ERRTRAQ_STAGING_PREFIX: "archive-staging/",
-        },
-      });
-      await both.list("archive-staging/");
-      expect(calls).toHaveLength(4);
+      await primary.list("envelopes/");
+      // The archive worker's batch manifests live under archive-overflow/.
+      await primary.list("archive-overflow/");
+      expect(calls).toHaveLength(2);
       expect(() =>
         create({ ...base, bindings: { ERRTRAQ_STAGING_BUCKET: "bucket" } }),
-      ).toThrow("prefix");
-      expect(() =>
-        create({
-          ...base,
-          bindings: {
-            ERRTRAQ_STAGING_BUCKET: "bucket",
-            ERRTRAQ_STAGING_PREFIX: "archive-staging",
-          },
-        }),
-      ).toThrow("prefix");
-      expect(() =>
-        create({
-          ...base,
-          bindings: {
-            ERRTRAQ_BLOB_BUCKET: "one",
-            ERRTRAQ_STAGING_BUCKET: "two",
-            ERRTRAQ_STAGING_PREFIX: "archive-staging/",
-          },
-        }),
-      ).toThrow("same bucket");
+      ).toThrow("bucket");
     } finally {
       vi.unstubAllGlobals();
     }

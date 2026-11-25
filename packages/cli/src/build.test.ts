@@ -25,11 +25,17 @@ import { MemoryActiveStore, MemoryKV } from "@moriyoshi/errtraq-testing";
 import { unzipSync } from "fflate";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import shared from "../../../stacks/aws-dynamodb.js";
+import archiveStack from "../../../stacks/aws-dynamodb-archive.js";
 import bootstrapStack from "../../../stacks/aws-dynamodb-bootstrap.js";
 import perTopic from "../../../stacks/aws-dynamodb-per-topic.js";
 import local from "../../../stacks/local.js";
 import localArchive from "../../../stacks/local-archive.js";
-import { buildStack, DUCKDB_NODE_API_VERSION } from "./build.js";
+import {
+  buildStack,
+  DUCKDB_NODE_API_VERSION,
+  extensionScript,
+  lambdaDockerfile,
+} from "./build.js";
 import { generateInfra, validateLambdaArtifactSize } from "./infra.js";
 import { resolveRuntimeValue } from "./runtime.js";
 import { formatValidation } from "./validation.js";
@@ -668,6 +674,116 @@ describe("built stacks", () => {
       await readFile(join(plainOutput, "shared/index.mjs"), "utf8"),
     ).not.toContain("@duckdb");
   }, 60000);
+  it("builds the archive and api roles into one arm64 container image and the rest as ZIPs (D6)", async () => {
+    const output = join(temp, "aws-archive");
+    const manifest = await buildStack(
+      archiveStack,
+      repo,
+      output,
+      resolve(repo, "stacks/aws-dynamodb-archive.ts"),
+    );
+    await assertNoLocalPaths(output);
+    expect(
+      Object.fromEntries(
+        Object.entries(manifest.artifacts).map(([id, artifact]) => [
+          id,
+          artifact.packaging ?? "zip",
+        ]),
+      ),
+    ).toEqual({
+      ingest: "zip",
+      api: "image",
+      consumer: "zip",
+      record: "zip",
+      cron: "zip",
+      archive: "image",
+    });
+    expect(manifest.dockerfile).toBe("Dockerfile");
+    const dockerfile = await readFile(join(output, "Dockerfile"), "utf8");
+    expect(dockerfile).toContain(
+      "FROM --platform=linux/arm64 public.ecr.aws/lambda/nodejs:26",
+    );
+    expect(dockerfile).toContain(`@duckdb/node-api@${DUCKDB_NODE_API_VERSION}`);
+    expect(dockerfile).toContain(
+      "COPY api/index.mjs $" + "{LAMBDA_TASK_ROOT}/api/index.mjs",
+    );
+    expect(dockerfile).toContain(
+      "COPY archive/index.mjs $" + "{LAMBDA_TASK_ROOT}/archive/index.mjs",
+    );
+    expect(dockerfile).not.toContain("COPY ingest/");
+    expect(dockerfile).toContain(
+      "node duckdb-extensions.mjs install && node duckdb-extensions.mjs load",
+    );
+    const script = await readFile(
+      join(output, "duckdb-extensions.mjs"),
+      "utf8",
+    );
+    expect(script).toBe(extensionScript());
+    expect(script).toContain('["httpfs","avro","iceberg"]');
+    expect(script).toContain("/opt/errtraq/duckdb-extensions");
+    expect(script).toContain('autoinstall_known_extensions: "false"');
+    // Only the image functions import the engine, and they never bundle the native binding.
+    for (const id of ["archive", "api"]) {
+      const bundle = await readFile(join(output, id, "index.mjs"), "utf8");
+      expect(bundle).toContain('from"@duckdb/node-api"');
+      await expect(
+        readFile(join(output, id, "bundle.zip")),
+      ).rejects.toMatchObject({ code: "ENOENT" });
+    }
+    for (const id of ["ingest", "consumer", "record", "cron"])
+      expect(
+        await readFile(join(output, id, "index.mjs"), "utf8"),
+      ).not.toContain("@duckdb");
+    // The infra generator accepts the image artifacts and the stack variable for the image URI.
+    const generated = join(temp, "aws-archive-infra");
+    await generateInfra(
+      resolveStack(archiveStack),
+      repo,
+      generated,
+      output,
+      false,
+    );
+    const root = await readFile(join(generated, "main.tf.json"), "utf8");
+    expect(root).toContain(`"image_uri": "$${"{"}var.image_uri}"`);
+    expect(root).toContain('"package_type": "Image"');
+  }, 120000);
+  it("rebuilds without leaving an image behind when the archive is removed", async () => {
+    const output = join(temp, "aws-archive-removed");
+    const file = resolve(repo, "stacks/aws-dynamodb-archive.ts");
+    await buildStack(archiveStack, repo, output, file);
+    expect(await readdir(output)).toEqual(
+      expect.arrayContaining([
+        "Dockerfile",
+        "duckdb-extensions.mjs",
+        "archive",
+      ]),
+    );
+    const manifest = await buildStack(
+      resolveStack({
+        ...Object.fromEntries(Object.entries(perTopic)),
+        name: archiveStack.name,
+      } as typeof perTopic),
+      repo,
+      output,
+      file,
+    );
+    const entries = await readdir(output);
+    expect(entries).not.toContain("Dockerfile");
+    expect(entries).not.toContain("duckdb-extensions.mjs");
+    expect(entries).not.toContain("archive");
+    expect(manifest.dockerfile).toBeUndefined();
+    expect(await readdir(join(output, "api"))).toContain("bundle.zip");
+  }, 120000);
+  it("renders the image build for the configured runtime and architecture", () => {
+    const text = lambdaDockerfile({
+      functionIds: ["archive"],
+      runtime: "nodejs22.x",
+      architecture: "x86_64",
+    });
+    expect(text).toContain(
+      "FROM --platform=linux/amd64 public.ecr.aws/lambda/nodejs:22",
+    );
+  });
   it("builds a standalone Node bundle without AWS adapters", async () => {
     const output = join(temp, "local");
     await buildStack(local, repo, output, resolve(repo, "stacks/local.ts"));

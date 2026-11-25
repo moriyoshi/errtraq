@@ -278,10 +278,12 @@ export async function generateInfra(
       runtime?: string;
       artifactBucket?: unknown;
     };
-    validateLambdaArtifactSize(
-      bytes.byteLength,
-      config.artifactBucket !== undefined,
-    );
+    // A container-image bundle is copied into the image, so the ZIP upload limit does not apply.
+    if (artifact.packaging !== "image")
+      validateLambdaArtifactSize(
+        bytes.byteLength,
+        config.artifactBucket !== undefined,
+      );
     if (
       artifact.handler !== (config.handler ?? "index.handler") ||
       artifact.runtime !== (config.runtime ?? DEFAULT_LAMBDA_RUNTIME)

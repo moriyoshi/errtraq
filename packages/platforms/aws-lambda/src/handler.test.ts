@@ -3,6 +3,7 @@ import {
   DeterministicIdGen,
   FakeClock,
   MemoryActiveStore,
+  MemoryArchiveStore,
   MemoryBlobStore,
   MemoryKV,
   MemoryQueue,
@@ -479,4 +480,100 @@ it("gives the grouped consumer project reads only, and only for a per-issue limi
   await expect(groupedConsumerRun(issue, { withStore: false })).rejects.toThrow(
     "project read access",
   );
+});
+
+it("hosts the archive worker, the planner and housekeeping on the archive role (D6)", async () => {
+  const memory = new MemoryQueue();
+  const store = new MemoryActiveStore();
+  const archive = new MemoryArchiveStore();
+  const logger = {
+    debug: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+  };
+  const send = vi.spyOn(memory.producer, "send");
+  const push = vi.fn(
+    async (
+      _event: unknown,
+      handler: import("@moriyoshi/errtraq-core").BatchHandler,
+    ) =>
+      handler([
+        {
+          id: "a",
+          topic: "archive.project",
+          attempt: 1,
+          // An unknown project is acknowledged by the worker without touching the archive.
+          message: { key: "k", body: { projectId: "404" } },
+        },
+        {
+          id: "b",
+          topic: "ingest",
+          attempt: 1,
+          message: { key: "i", body: {} },
+        },
+      ]),
+  );
+  const handler = createHandler({
+    roles: ["archive"],
+    http: [],
+    adapters: {
+      store,
+      blob: new MemoryBlobStore(),
+      queue: { ...memory, producer: memory.producer, push: { handle: push } },
+      archive,
+    },
+    archiveRetentionDays: 365,
+    archiveInvocationTimeoutMs: 300_000,
+    logger,
+  });
+  // The archive role takes archive.project and never the ingest topic.
+  expect(await handler({ Records: [] })).toEqual(
+    expect.arrayContaining([
+      { deliveryId: "a", action: "ack" },
+      { deliveryId: "b", action: "retry" },
+    ]),
+  );
+  await store.projects.putOrg({ id: "o" as never, slug: "o", name: "o" });
+  await store.projects.put({
+    id: "1" as never,
+    orgId: "o" as never,
+    slug: "p",
+    name: "p",
+    retentionDays: 30,
+  });
+  await handler({ job: "archive-planner" });
+  expect(send).toHaveBeenCalledWith("archive.project", [
+    expect.objectContaining({ body: { projectId: "1" } }),
+  ]);
+  // Housekeeping runs from the retention job on this role.
+  await handler({ job: "retention" });
+  expect(logger.warn).not.toHaveBeenCalledWith("Cron job not implemented", {
+    job: "retention",
+  });
+  // Jobs of the cron role are not hosted here.
+  await handler({ job: "staged-recovery" });
+  expect(logger.error).toHaveBeenCalledWith("Unknown or missing cron job");
+  await expect(handler("invalid")).resolves.toBeUndefined();
+});
+
+it("requires the archive adapters for the archive role and gives the API the archive for federation", () => {
+  expect(() =>
+    createHandler({
+      roles: ["archive"],
+      http: [],
+      adapters: { store: new MemoryActiveStore() },
+    }),
+  ).toThrow("Archive adapters are missing");
+  expect(() =>
+    createHandler({
+      roles: ["api"],
+      http: ["api"],
+      adapters: {
+        store: new MemoryActiveStore(),
+        blob: new MemoryBlobStore(),
+        archive: new MemoryArchiveStore(),
+      },
+    }),
+  ).not.toThrow();
 });

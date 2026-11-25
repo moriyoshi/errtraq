@@ -13,10 +13,10 @@
       "project-read": {
         "primary": "json-document"
       },
-      "release-read": {
+      "read": {
         "primary": "json-document"
       },
-      "read": {
+      "release-read": {
         "primary": "json-document"
       },
       "write": {
@@ -30,6 +30,7 @@
     "api_url": "string",
     "bootstrap_function_arn": "string",
     "bootstrap_function_name": "string",
+    "image_repository_url": "string",
     "ingest_url": "string"
   },
   "rds-iam-access": {
@@ -50,23 +51,18 @@
     "bucket_name": "string",
     "policies": {
       "delete": {
-        "primary": "json-document",
-        "staging": "json-document"
+        "primary": "json-document"
       },
       "list": {
-        "primary": "json-document",
-        "staging": "json-document"
+        "primary": "json-document"
       },
       "read": {
-        "primary": "json-document",
-        "staging": "json-document"
+        "primary": "json-document"
       },
       "write": {
-        "primary": "json-document",
-        "staging": "json-document"
+        "primary": "json-document"
       }
-    },
-    "staging_arn": "string"
+    }
   },
   "s3tables": {
     "catalog_uri": "string",

@@ -417,3 +417,144 @@ run "runtime_rejects_unsupported" {
   }
   expect_failures = [var.runtime]
 }
+
+# D6: the archive role and the archive-reading API run from one container image; the function's
+# image command picks its bundle, and the module creates the ECR repository the image goes to.
+run "container_image_functions" {
+  command = apply
+  variables {
+    name      = "example"
+    tags      = {}
+    image_uri = "123456789012.dkr.ecr.us-east-1.amazonaws.com/example@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    functions = {
+      api = {
+        roles                = ["api"]
+        http                 = ["api"]
+        artifact             = "tests/artifact.txt"
+        package_type         = "Image"
+        memory_mb            = 1024
+        timeout_sec          = 30
+        architecture         = "arm64"
+        ephemeral_storage_mb = 1024
+        environment          = {}
+        secrets              = {}
+        secret_reads         = []
+        policies             = []
+      }
+      archive = {
+        roles                = ["archive"]
+        http                 = []
+        artifact             = "tests/artifact.txt"
+        package_type         = "Image"
+        memory_mb            = 1024
+        timeout_sec          = 300
+        architecture         = "arm64"
+        ephemeral_storage_mb = 2048
+        environment          = {}
+        secrets              = {}
+        secret_reads         = []
+        policies             = []
+      }
+      consumer = {
+        roles        = ["consumer"]
+        http         = []
+        artifact     = "tests/artifact.txt"
+        memory_mb    = 512
+        timeout_sec  = 30
+        architecture = "x86_64"
+        environment  = {}
+        secrets      = {}
+        secret_reads = []
+        policies     = []
+      }
+    }
+    queue_triggers = {
+      archive_project = { function_id = "archive", resource = "arn:aws:sqs:us-east-1:000000000000:archive", topics = ["archive.project"], batch_size = 1, max_concurrency = 5, visibility_timeout_sec = 1800 }
+    }
+    cron_triggers = {
+      archive-planner = { function_id = "archive", schedule = "0 * * * *" }
+      retention       = { function_id = "archive", schedule = "15 * * * *" }
+    }
+  }
+  assert {
+    condition     = alltrue([for id in ["api", "archive"] : aws_lambda_function.function[id].package_type == "Image" && aws_lambda_function.function[id].image_uri == var.image_uri && jsonencode(one(aws_lambda_function.function[id].image_config).command) == jsonencode(["${id}/index.handler"]) && jsonencode(aws_lambda_function.function[id].architectures) == jsonencode(["arm64"])])
+    error_message = "Image functions use the image, their own bundle command and no ZIP settings."
+  }
+  assert {
+    condition     = one(aws_lambda_function.function["archive"].ephemeral_storage).size == 2048 && one(aws_lambda_function.function["api"].ephemeral_storage).size == 1024 && one(aws_lambda_function.function["consumer"].ephemeral_storage).size == 512 && aws_lambda_function.function["archive"].memory_size == 1024 && aws_lambda_function.function["archive"].timeout == 300
+    error_message = "The archive function gets its /tmp, memory and timeout sizing; ZIP functions keep the default /tmp."
+  }
+  assert {
+    condition     = aws_lambda_function.function["consumer"].package_type == "Zip" && aws_lambda_function.function["consumer"].runtime == "nodejs26.x" && length(aws_lambda_function.function["consumer"].image_config) == 0
+    error_message = "ZIP functions are unchanged beside image functions."
+  }
+  assert {
+    condition     = aws_ecr_repository.image[0].image_tag_mutability == "IMMUTABLE" && one(aws_ecr_repository.image[0].image_scanning_configuration).scan_on_push && one(aws_ecr_repository.image[0].encryption_configuration).encryption_type == "AES256" && aws_ecr_repository.image[0].name == "example" && length(aws_ecr_repository.image) == 1
+    error_message = "The ECR repository must have immutable tags, scanning on push and encryption."
+  }
+  assert {
+    condition     = jsondecode(aws_ecr_repository_policy.image[0].policy).Statement[0].Principal.Service == "lambda.amazonaws.com" && jsonencode(jsondecode(aws_ecr_repository_policy.image[0].policy).Statement[0].Action) == jsonencode(["ecr:BatchGetImage", "ecr:GetDownloadUrlForLayer"]) && jsondecode(aws_ecr_repository_policy.image[0].policy).Statement[0].Condition.StringLike["aws:sourceArn"] == "arn:aws:lambda:us-east-1:000000000000:function:example-*"
+    error_message = "Only this stack's Lambda functions may pull the image, and only to read it."
+  }
+  assert {
+    condition     = aws_lambda_event_source_mapping.queue["archive_project"].batch_size == 1 && one(aws_lambda_event_source_mapping.queue["archive_project"].scaling_config).maximum_concurrency == 5 && length(aws_lambda_permission.cron) == 2 && aws_cloudwatch_event_target.cron["retention"].arn == aws_lambda_function.function["archive"].arn
+    error_message = "The archive queue and its schedules must target the archive function."
+  }
+  assert {
+    condition     = length(aws_s3_object.artifact) == 0
+    error_message = "Image functions have no ZIP upload."
+  }
+}
+
+run "no_repository_without_image_functions" {
+  command = plan
+  variables {
+    name           = "example"
+    tags           = {}
+    functions      = { ingest = { roles = ["ingest"], http = [], artifact = "tests/artifact.txt", memory_mb = 512, timeout_sec = 30, architecture = "arm64", environment = {}, secrets = {}, secret_reads = [], policies = [] } }
+    queue_triggers = {}
+    cron_triggers  = {}
+  }
+  assert {
+    condition     = length(aws_ecr_repository.image) == 0
+    error_message = "No repository without an image function."
+  }
+}
+
+run "image_uri_required_with_image_functions" {
+  command = plan
+  variables {
+    name           = "example"
+    tags           = {}
+    functions      = { archive = { roles = ["archive"], http = [], artifact = "tests/artifact.txt", package_type = "Image", memory_mb = 1024, timeout_sec = 300, architecture = "arm64", environment = {}, secrets = {}, secret_reads = [], policies = [] } }
+    queue_triggers = {}
+    cron_triggers  = {}
+  }
+  expect_failures = [var.image_uri]
+}
+
+run "image_uri_must_be_an_ecr_reference" {
+  command = plan
+  variables {
+    name           = "example"
+    tags           = {}
+    image_uri      = "docker.io/library/app:latest"
+    functions      = { archive = { roles = ["archive"], http = [], artifact = "tests/artifact.txt", package_type = "Image", memory_mb = 1024, timeout_sec = 300, architecture = "arm64", environment = {}, secrets = {}, secret_reads = [], policies = [] } }
+    queue_triggers = {}
+    cron_triggers  = {}
+  }
+  expect_failures = [var.image_uri]
+}
+
+run "archive_role_is_an_unexposed_image_function" {
+  command = plan
+  variables {
+    name           = "example"
+    tags           = {}
+    image_uri      = "123456789012.dkr.ecr.us-east-1.amazonaws.com/example:v1"
+    functions      = { archive = { roles = ["archive"], http = [], artifact = "tests/artifact.txt", memory_mb = 1024, timeout_sec = 300, architecture = "arm64", environment = {}, secrets = {}, secret_reads = [], policies = [] } }
+    queue_triggers = {}
+    cron_triggers  = {}
+  }
+  expect_failures = [var.functions]
+}

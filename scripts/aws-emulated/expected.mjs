@@ -117,10 +117,8 @@ export function capabilityPolicy(grant, resources) {
     const arn = resources.blob;
     const prefixes =
       purpose === "primary"
-        ? ["envelopes/", "payloads/", "artifacts/"]
-        : purpose === "staging"
-          ? ["archive-staging/"]
-          : undefined;
+        ? ["envelopes/", "payloads/", "artifacts/", "archive-overflow/"]
+        : undefined;
     const actions = {
       read: ["s3:GetObject"],
       write: ["s3:PutObject", "s3:AbortMultipartUpload"],

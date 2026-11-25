@@ -18,9 +18,16 @@ import {
 } from "../packages/infra-gen/dist/index.js";
 import { awsLambda } from "../packages/platforms/aws-lambda/dist/stack.js";
 import shared from "../stacks/aws-dynamodb.ts";
+import archiveExample from "../stacks/aws-dynamodb-archive.ts";
 import perTopic from "../stacks/aws-dynamodb-per-topic.ts";
 
 const policy = JSON.stringify({ Version: "2012-10-17", Statement: [] });
+// The archive and api roles run from the container image (D6), so an archive stack needs its URI.
+const imagePlatform = awsLambda({
+  roles: ["ingest", "api", "consumer", "record", "cron"],
+  split: ["ingest", "api", "consumer", "record", "cron"],
+  imageUri: `123456789012.dkr.ecr.us-east-1.amazonaws.com/example@sha256:${"a".repeat(64)}`,
+});
 const literal = "https://example.test/$" + "{literal}";
 function variant(base, changes) {
   return resolveStack({
@@ -243,6 +250,7 @@ export const fixtures = {
   }),
   disposable: variant(shared, { protection: "disposable" }),
   archive: variant(perTopic, {
+    platform: imagePlatform,
     archive: {
       manifest: {
         id: "fixture-archive",
@@ -292,7 +300,19 @@ export const fixtures = {
     },
   }),
   "s3tables-archive": variant(perTopic, {
+    platform: imagePlatform,
     archive: s3TablesArchive({ region: "us-east-1" }),
+  }),
+  // The documented example: S3 Tables archive, the image URI as a stack variable, and the
+  // stack-wide archive retention.
+  "dynamodb-archive": variant(archiveExample, {
+    variables: {
+      image_uri: {
+        type: "string",
+        sensitive: false,
+        default: `123456789012.dkr.ecr.us-east-1.amazonaws.com/example:v1`,
+      },
+    },
   }),
   variables: variant(shared, {
     variables: {
