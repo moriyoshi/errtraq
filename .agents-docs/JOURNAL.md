@@ -1679,3 +1679,9 @@ once per command, not refreshed, which is fine for these short commands.
   auth failure; 30 concurrent requests hit the sandbox account's 10-concurrency limit (10 ok, 20
   throttled), so the concurrency half ran at 10. The visibility race fired on the second try (40
   receives for 10 events) and the count stayed exactly 10.
+- **A10 result:** after the two proxy fixes, events are stored and read through the proxy with every
+  role's `rds-db:connect` scoped to the `prx-` id only. The bootstrap function pointed at the proxy fails
+  with `PostgresProvisionError` / `0A000`: the admin client (`postgres-admin.ts`) also sends
+  `statement_timeout` as a startup option, and an `IAM_AUTH` proxy would refuse the master password
+  anyway. Bootstrap must target the instance; the stack has one host for all roles, so a proxy
+  deployment bootstraps before switching `host`/`resourceId` to the proxy (or a later per-role host).
