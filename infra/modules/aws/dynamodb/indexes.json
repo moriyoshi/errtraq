@@ -42,5 +42,9 @@
   "erasure-project-state": {
     "hash": "GSI11PK",
     "range": "GSI11SK"
+  },
+  "project-org": {
+    "hash": "GSI12PK",
+    "range": "GSI12SK"
   }
 }

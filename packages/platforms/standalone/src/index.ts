@@ -285,6 +285,7 @@ export function create({
             releases: bindings.store.releases,
             blobs: bindings.blob,
             logger,
+            persistCursor: true,
           },
           clock.now(),
         ).catch((error) =>

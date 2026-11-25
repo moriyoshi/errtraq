@@ -36,7 +36,7 @@ describe("derived capability policy expectations", () => {
     expect(read.Statement[0].Resource).toContain(
       "table/index/event-issue-time",
     );
-    expect(read.Statement[0].Resource).toHaveLength(12);
+    expect(read.Statement[0].Resource).toHaveLength(13);
   });
   it("limits ingest reads to project key rows", () => {
     expect(

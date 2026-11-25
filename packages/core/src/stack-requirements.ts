@@ -117,6 +117,10 @@ export const PORT_REQUIREMENTS: readonly PortRequirement[] = [
     purpose: "primary",
   })),
   { kind: "blob", role: "cron", capability: "delete", purpose: "primary" },
+  // `bundle-cleanup` persists its project cursor as one small blob (`cron/bundle-cleanup-cursor`).
+  // Blob write rather than KV read and write: one policy instead of two, which keeps the
+  // per-topic cron role under the inline policy budget.
+  { kind: "blob", role: "cron", capability: "write", purpose: "primary" },
   { kind: "kv", role: "ingest", capability: "read", purpose: "primary" },
   { kind: "kv", role: "ingest", capability: "write", purpose: "primary" },
   {

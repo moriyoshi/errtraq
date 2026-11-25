@@ -96,13 +96,14 @@ real load tests justify changing list semantics.
 | `issue-id` | `issueId`, `projectId`; pending bundles use a separate namespaced project key and expiry / bundle ID sort key | Eventual cross-project issue index and pending-bundle expiry queries; the strong issue pointer prevents a false not-found while this index catches up. |
 | `issue-last`, `issue-first`, `issue-count` | `project|status`, respective descending-sort/ascending-ID composite | One per sort, `KEYS_ONLY`; status-less list merges the three status partitions. |
 | `entity-list` | `entityKind|scope`, entity-ID key | Projects, keys, releases and bundles by project and release; `KEYS_ONLY`; sparse, scope per operation. |
+| `project-org` | `ENTITY|projects-by-org|orgId`, project-ID key | Projects of one organization: `ProjectRepo.listByOrg` is one eventual Query plus strong hydration, `KEYS_ONLY`, sparse, written by `projects.put` next to the `entity-list` pair. Projects written before this index exist need `DynamoStore.backfillProjectOrgIndexes()` (no scan: it pages the global project index and conditionally adds the two attributes; idempotent). |
 | `erasure-all`, `erasure-project`, `erasure-state`, `erasure-project-state` | applicable global/project/state PK, project/erasure-ID SK | Four `KEYS_ONLY` sparse indexes, one chosen for each metadata filter combination. |
 
 The issue-ID GSI is retained as requested alongside the strong pointer. `getById` uses the
 strong pointer as its authoritative path; the GSI is redundant for this operation but is
 available for index parity and backfill validation. Its extra write/storage cost is deliberate
 and a future simplification can remove it only with a reviewed schema migration. These are
-**11 GSIs**, within the default table quota of 20; no count-refresh GSI. Verify quota and
+**12 GSIs**, within the default table quota of 20; no count-refresh GSI. Verify quota and
 provider replacement behavior. All index attributes are `S`; no multi-attribute GSI key is
 required. A `KEYS_ONLY` entry includes table/GSI keys but not event payload or mutable entity
 data. Each GSI Query is eventual; BGet in chunks <=100 with `ConsistentRead:true`, retry
@@ -264,6 +265,7 @@ capacity. User-visible pages may be eventually incomplete even after hydration.
 | `getKey` | G `KEY|publicKey`: ~1 RRU on ingest. |
 | `putOrg`, `projects.put`, `putKey`, `putToken` | G existing entity; TX conditional entity + natural markers, and old marker delete on rename. ~1 RRU + 4..8 WRU plus entity-list GSI changes; API role needs metadata delete permission. |
 | `getOrCreateActiveKey` | G active guard and current key; TX guarded guard/direct key/markers; retry loser. ~2 RRU + >=6 WRU. |
+| `projects.listByOrg` | Q `project-org` partition of the organization and B candidates; one Query per page, no cross-organization filtering. |
 | `projects.list`, `listKeys` | Q `entity-list` global project / project-key scope and B candidates; listKeys drains pages. Page cost = eventual Q + one strong item read per candidate. |
 | `issues.get` | G project/issue: ~1 RRU. |
 | `issues.getById` | P `ISSUEID|issueId`, then B issues and check IDs. ~1 strong Query + 1 RRU/candidate; no GSI lag. |
@@ -332,7 +334,7 @@ changes are reread and retried. It reports updated, unchanged, missing and delet
 It requires table `GetItem` and `UpdateItem` permissions. Incomplete inventories leave rows
 unindexed and must not be mistaken for a complete migration.
 
-The module defines the 11 string-key schemas listed above with `KEYS_ONLY` projections, uses
+The module defines the 12 string-key schemas listed above with `KEYS_ONLY` projections, uses
 purpose-specific TTL and records shard count in a protected table metadata item. It versions the
 redesigned store name as `<stack>-store-v2` so the old table is not reinterpreted in place. Descriptor declares
 `textSearch:false`, `lastSeenRangeOnOtherSort:false`, `deleteStrategy:explicit`, and stage 1

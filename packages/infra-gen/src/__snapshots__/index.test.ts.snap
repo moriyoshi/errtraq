@@ -112,6 +112,7 @@ exports[`Terraform generator > renders the full per-topic stack deterministicall
             "\${module.store.policies[\\"write\\"][\\"primary\\"]}",
             "\${module.store.policies[\\"metadata-delete\\"][\\"primary\\"]}",
             "\${module.blob.policies[\\"delete\\"][\\"primary\\"]}",
+            "\${module.blob.policies[\\"write\\"][\\"primary\\"]}",
             "\${module.queue.policies[\\"produce\\"][\\"ingest\\"]}"
           ],
           "roles": [
@@ -396,6 +397,7 @@ exports[`Terraform generator > renders the full shared stack deterministically 1
             "\${module.store.policies[\\"write\\"][\\"primary\\"]}",
             "\${module.store.policies[\\"metadata-delete\\"][\\"primary\\"]}",
             "\${module.blob.policies[\\"delete\\"][\\"primary\\"]}",
+            "\${module.blob.policies[\\"write\\"][\\"primary\\"]}",
             "\${module.queue.policies[\\"produce\\"][\\"shared\\"]}"
           ],
           "roles": [

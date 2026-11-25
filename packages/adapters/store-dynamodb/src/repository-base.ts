@@ -57,12 +57,15 @@ export function dataItem<T>(
   PK: string,
   value: T,
   index?: { partition: string; sort: string },
+  /** Further sparse index attributes (for example the project-by-organization GSI12 pair). */
+  extra?: Item,
 ): Item {
   return {
     ...primary(PK),
     data: s(JSON.stringify(value)),
     revision: s(crypto.randomUUID()),
     ...(index ? { GSI7PK: s(index.partition), GSI7SK: s(index.sort) } : {}),
+    ...extra,
   };
 }
 export function conditionFor(item: Item | undefined) {

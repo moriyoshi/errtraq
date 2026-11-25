@@ -1085,9 +1085,15 @@ describe("infrastructure model", () => {
     const grants = deriveAccess(v).grants.filter(
       (g) => g.selection === "blob" && g.functionId === "cron",
     );
+    // Staging writes use the staging policy; the bundle-cleanup cursor needs one primary write.
     expect(
-      grants.filter((g) => g.capability === "write").map((g) => g.policyOutput),
-    ).toEqual([out("policies", "write", "staging")]);
+      grants
+        .filter((g) => g.capability === "write")
+        .map((g) => [g.purpose, g.policyOutput]),
+    ).toEqual([
+      ["primary", out("policies", "write", "primary")],
+      ["staging", out("policies", "write", "staging")],
+    ]);
     expect(
       grants.some(
         (g) =>

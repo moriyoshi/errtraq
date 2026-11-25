@@ -17,7 +17,7 @@ import {
 import { eventRepository } from "./events.js";
 import { issueRepository } from "./issues.js";
 import { metaRepository } from "./meta.js";
-import { projectRepository } from "./projects.js";
+import { backfillProjectOrgIndexes, projectRepository } from "./projects.js";
 import { recordEvent, recordEvents } from "./record-event.js";
 import { releaseRepository } from "./releases.js";
 import type { Config } from "./stack.js";
@@ -215,6 +215,14 @@ export class DynamoStore implements ActiveStore {
     inventory: readonly { projectId: string; bundleId: string }[],
   ) {
     return backfillBundleIndexes(this, inventory);
+  }
+  /**
+   * Add the `project-org` index attributes to projects written before that index existed (needed
+   * once per existing table; `listByOrg` lists only indexed projects). Pages the global project
+   * index, no table scan. Idempotent.
+   */
+  backfillProjectOrgIndexes() {
+    return backfillProjectOrgIndexes(this, this.projects);
   }
   /** The persisted count is available after migrate has verified the table. */
   get indexShards(): number | undefined {

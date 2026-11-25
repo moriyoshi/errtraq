@@ -275,7 +275,7 @@ middleware (`event:read` for GET, `event:write` for POST/PUT; no new scope):
 - Releases (organization and project routes): create (201, or 208 when it exists), get, list, PUT
   with `dateReleased` to finalize (first finalize wins), deploys create/list. Releases are stored
   per project; organization routes fan out over the named projects (`ProjectRepo.listByOrg`;
-  the DynamoDB adapter filters its shared project index one page per call) and list only after
+  DynamoDB serves it from the sparse `project-org` GSI, one Query per page) and list only after
   reading every release, refusing past 1000 instead of truncating. Commits, refs and archiving
   are refused with 400; legacy release-file, release-bundle assemble and DIF endpoints answer
   400 with a pointer to the debug-ID flow. Deploys are kept as one JSON blob per release

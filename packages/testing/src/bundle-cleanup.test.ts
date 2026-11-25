@@ -1,6 +1,7 @@
 import {
   type ArtifactBundle,
   type ArtifactBundleId,
+  BUNDLE_CLEANUP_CURSOR_KEY,
   bootstrapProject,
   bundleDebugIdsDigest,
   createCronHandler,
@@ -179,6 +180,90 @@ describe("pending bundle cleanup cron", () => {
       );
     }
     expect(target).toBeNull();
+  });
+
+  it("rotates round-robin over many projects with a persisted cursor", async () => {
+    const t = await setup();
+    const ids = [...t.projects];
+    const boot = new DeterministicIdGen();
+    for (let n = 0; n < 17; n++) {
+      const b = await bootstrapProject({
+        store: t.store,
+        kv: new MemoryKV(t.clock),
+        ids: boot,
+        orgSlug: `bulk-org-${n}`,
+        projectSlug: `bulk-${n}`,
+      });
+      ids.push(b.project.id);
+    }
+    const limits = {
+      maxBundles: 100,
+      maxProjects: 3,
+      maxBundlesPerProject: 10,
+      pageSize: 4,
+    };
+    for (const [i, id] of ids.entries())
+      await t.pending(id, `p${i}`, pad(i + 1), 1000);
+    t.clock.advance(2000);
+    const run = () =>
+      runBundleCleanup(
+        { ...t.deps(), persistCursor: true },
+        t.clock.now(),
+        limits,
+      );
+    let total = 0;
+    for (let tick = 0; tick < 7; tick++) {
+      const cleaned = await run();
+      expect(cleaned).toBeLessThanOrEqual(3);
+      total += cleaned;
+    }
+    // 20 projects at 3 per run: exactly 7 runs reach all of them, in order, with no repeats.
+    expect(total).toBe(20);
+    expect(await t.blobs.head(BUNDLE_CLEANUP_CURSOR_KEY)).toBeNull();
+  });
+
+  it("resumes after the project that hit the bundle limit and ignores a corrupt cursor", async () => {
+    const t = await setup();
+    const [one, two, three] = t.projects as [ProjectId, ProjectId, ProjectId];
+    await t.pending(one, "a1", pad(1), 1000);
+    await t.pending(two, "b1", pad(2), 1000);
+    await t.pending(three, "c1", pad(3), 1000);
+    t.clock.advance(2000);
+    const limits = {
+      maxBundles: 1,
+      maxProjects: 10,
+      maxBundlesPerProject: 10,
+      pageSize: 2,
+    };
+    const run = () =>
+      runBundleCleanup(
+        { ...t.deps(), persistCursor: true },
+        t.clock.now(),
+        limits,
+      );
+    expect(await run()).toBe(1);
+    expect(
+      await t.store.releases.getBundle(one, "a1" as ArtifactBundleId),
+    ).toBeNull();
+    expect(await run()).toBe(1);
+    expect(
+      await t.store.releases.getBundle(two, "b1" as ArtifactBundleId),
+    ).toBeNull();
+    expect(
+      await t.store.releases.getBundle(three, "c1" as ArtifactBundleId),
+    ).not.toBeNull();
+    await t.blobs.put(
+      BUNDLE_CLEANUP_CURSOR_KEY,
+      new TextEncoder().encode("not json"),
+    );
+    expect(await run()).toBe(1);
+    await t.blobs.put(
+      BUNDLE_CLEANUP_CURSOR_KEY,
+      new TextEncoder().encode(JSON.stringify({ c: "stale!", s: 0, l: 2 })),
+    );
+    await t.pending(one, "a2", pad(11), 1000);
+    t.clock.advance(2000);
+    expect(await run()).toBe(1);
   });
 
   it("logs one failing bundle and continues with the others", async () => {

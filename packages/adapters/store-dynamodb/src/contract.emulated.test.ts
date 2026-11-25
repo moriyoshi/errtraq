@@ -136,6 +136,37 @@ describe.skipIf(!endpoint)("DynamoDB store emulator", () => {
     expect(result.Item.GSI7PK.S).toContain("ENTITY|");
     expect(result.Item.GSI3SK.S).toMatch(/^2025-01-01/);
   });
+  it("backfills the project-org index of projects written before it existed", async () => {
+    const store = await makeStore();
+    await store.projects.putOrg({ id: "o1", slug: "o1", name: "O1" } as never);
+    const project = {
+      id: "7",
+      orgId: "o1",
+      slug: "legacy",
+      name: "Legacy",
+      retentionDays: 30,
+    };
+    await store.projects.put(project as never);
+    await store.projects.put({ ...project, id: "8", slug: "other" } as never);
+    // Simulate a pre-index row: drop the GSI12 attributes of project 7.
+    await api("UpdateItem", {
+      TableName: store.table,
+      Key: { PK: { S: partition("PROJECT", "7") }, SK: { S: "DATA" } },
+      UpdateExpression: "REMOVE GSI12PK, GSI12SK",
+    });
+    const ids = async () =>
+      (await store.projects.listByOrg("o1" as never)).items.map((p) => p.id);
+    expect(await ids()).toEqual(["8"]);
+    expect(await store.backfillProjectOrgIndexes()).toEqual({
+      updated: 1,
+      unchanged: 1,
+    });
+    expect((await ids()).sort()).toEqual(["7", "8"]);
+    expect(await store.backfillProjectOrgIndexes()).toEqual({
+      updated: 0,
+      unchanged: 2,
+    });
+  });
   it("revokes a token created before the org index and backfills it on rewrite", async () => {
     const store = await makeStore();
     const token = {
