@@ -114,6 +114,6 @@ export function create({
     deleteWhere: fail("deleteWhere"),
     hardErase: fail("hardErase"),
     expireSnapshots: fail("expireSnapshots"),
-    capabilities: { rowDelete: "position-delete" },
+    capabilities: { rowDelete: "deletion-vector" },
   };
 }

@@ -57,13 +57,19 @@ export class Long {
     this.digits = digits;
   }
   toJSON(): string {
-    return `__long__${this.digits}`;
+    return `${LONG_SENTINEL}${this.digits}`;
   }
 }
 
+/**
+ * Marks a `Long` in the intermediate JSON. It starts with U+0000, which `JSON.stringify` always
+ * escapes as `\u0000`, so no ordinary string value (a table property, say) can collide with it.
+ */
+const LONG_SENTINEL = "\u0000errtraq-long:";
+
 /** `JSON.stringify` that writes `Long` values as bare integer literals. */
 export function stringifyWithLongs(value: unknown): string {
-  return JSON.stringify(value).replace(/"__long__(-?\d+)"/g, "$1");
+  return JSON.stringify(value).replace(/"\\u0000errtraq-long:(-?\d+)"/g, "$1");
 }
 
 /** Normalise an id that arrived as a number or a string to its decimal string. */

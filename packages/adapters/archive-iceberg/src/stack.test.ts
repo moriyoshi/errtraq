@@ -10,7 +10,7 @@ describe("archive-iceberg manifest", () => {
       catalog: "catalog",
       engine: "engine",
     });
-    expect(manifest.capabilities).toEqual({ rowDelete: "position-delete" });
+    expect(manifest.capabilities).toEqual({ rowDelete: "deletion-vector" });
     expect(Object.keys(publicApi).sort()).toEqual([
       "create",
       "infra",
@@ -75,7 +75,7 @@ describe("create", () => {
   const config = { catalog: { uri: "http://localhost:8181/catalog" } };
   it("returns an ArchiveStore whose operations report the engine is not wired", async () => {
     const store = create({ config, bindings: {}, dependencies: {} });
-    expect(store.capabilities.rowDelete).toBe("position-delete");
+    expect(store.capabilities.rowDelete).toBe("deletion-vector");
     await expect(
       store.hasBatch("b", ["2026-01-01", "2026-01-01"] as never),
     ).rejects.toBeInstanceOf(ArchiveEngineNotWiredError);

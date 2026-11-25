@@ -33,6 +33,16 @@ describe("long-safe JSON", () => {
     });
     expect(text).toBe('{"ids":[9223372036854775807,5,3]}');
   });
+  it("leaves string values that look like a marker untouched", () => {
+    const text = stringifyWithLongs({
+      properties: { a: "__long__5", b: "errtraq-long:7" },
+      id: new Long(9),
+    });
+    expect(JSON.parse(text)).toEqual({
+      properties: { a: "__long__5", b: "errtraq-long:7" },
+      id: 9,
+    });
+  });
   it("rejects unsafe numbers and non-integers", () => {
     expect(() => new Long(2 ** 60)).toThrow(TypeError);
     expect(() => new Long("1.5")).toThrow(TypeError);

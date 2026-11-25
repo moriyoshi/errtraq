@@ -1949,3 +1949,9 @@ choice; no quota increase). Findings:
 - Lakekeeper v0.15.1 (M4d stack) against the client: config, createNamespace (409 on repeat), createTable v2, loadTable (404 before create), commit `set-properties`, and a failed `assert-ref-snapshot-id` requirement returns 409 (`CommitFailedException`) all behave per spec. `GET /v1/config?warehouse=<unknown>` returns 404 `NoSuchWarehouseException`. `remove-snapshots` and `set-snapshot-ref` are covered by request-shape tests only (no engine to create snapshots yet).
 - The opt-in test needs Lakekeeper published on the host: `docker/archive/compose.ports.yaml` maps `127.0.0.1:18181`; run steps are in the header of `lakekeeper.opt-in.test.ts`.
 
+
+## 2026-11-25 — M4e review: rowDelete follows the owner's D3, Long sentinel hardened
+
+- The M4e skeleton declared `rowDelete: "position-delete"` from the D3 recommendation (v2), but the owner chose format v3 from the start, so the manifest and the skeleton store now declare `deletion-vector`. M4f must keep it truthful once the engine creates the table.
+- `stringifyWithLongs` used the marker string `__long__<digits>`, so an ordinary string value equal to that marker (a table property) would have been written as a bare number. The marker now starts with U+0000, which `JSON.stringify` always escapes, so no string value can collide; regression test added.
+- Reviewed by Claude Opus; implemented by Claude Sonnet.

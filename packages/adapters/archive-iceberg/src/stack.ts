@@ -49,8 +49,9 @@ export const manifest: AdapterManifest<Config> = {
   configSchema,
   runtimes: ["node"],
   requires: [],
-  // TODO(M4f): derive from the configured table format version (D3: v2 position deletes by default).
-  capabilities: { rowDelete: "position-delete" },
+  // D3 (owner decision 2026-11-25): format v3 from the start, so row deletes are deletion vectors.
+  // TODO(M4f): keep this truthful once the engine creates the table with the configured version.
+  capabilities: { rowDelete: "deletion-vector" },
   childKinds: { catalog: "catalog", engine: "engine" },
 };
 
