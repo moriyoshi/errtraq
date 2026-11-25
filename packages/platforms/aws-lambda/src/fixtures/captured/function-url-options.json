@@ -1,0 +1,41 @@
+{
+  "version": "2.0",
+  "routeKey": "$default",
+  "rawPath": "/api/1/envelope/",
+  "rawQueryString": "",
+  "headers": {
+    "sec-fetch-mode": "cors",
+    "x-amzn-tls-version": "TLSv1.3",
+    "accept-language": "*",
+    "x-forwarded-proto": "https",
+    "origin": "https://app.example.test",
+    "x-forwarded-port": "443",
+    "x-forwarded-for": "203.0.113.10",
+    "access-control-request-method": "POST",
+    "accept": "*/*",
+    "x-amzn-tls-cipher-suite": "TLS_AES_128_GCM_SHA256",
+    "x-amzn-trace-id": "Root=1-00000000-000000000000000000000000",
+    "host": "example.lambda-url.us-east-1.on.aws",
+    "accept-encoding": "br, gzip, deflate",
+    "user-agent": "node"
+  },
+  "requestContext": {
+    "accountId": "123456789012",
+    "apiId": "example",
+    "domainName": "example.lambda-url.us-east-1.on.aws",
+    "domainPrefix": "example",
+    "http": {
+      "method": "OPTIONS",
+      "path": "/api/1/envelope",
+      "protocol": "HTTP/1.1",
+      "sourceIp": "203.0.113.10",
+      "userAgent": "example-agent/1.0"
+    },
+    "requestId": "00000000-0000-4000-8000-0000000000aa",
+    "routeKey": "$default",
+    "stage": "$default",
+    "time": "25/Nov/2026:09:24:42 +0000",
+    "timeEpoch": 1795598682863
+  },
+  "isBase64Encoded": false
+}

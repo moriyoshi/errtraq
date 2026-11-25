@@ -1,0 +1,20 @@
+{
+  "Records": [
+    {
+      "messageId": "00000000-0000-4000-8000-000000000100",
+      "receiptHandle": "AQEBexampleReceiptHandle==",
+      "body": "{\"topic\":\"ingest\",\"message\":{\"n\":1}}",
+      "attributes": {
+        "ApproximateReceiveCount": "1",
+        "SentTimestamp": "1795598680266",
+        "SenderId": "AIDAEXAMPLEEXAMPLE",
+        "ApproximateFirstReceiveTimestamp": "1795598694174"
+      },
+      "messageAttributes": {},
+      "md5OfBody": "00000000000000000000000000000000",
+      "eventSource": "aws:sqs",
+      "eventSourceARN": "arn:aws:sqs:us-east-1:123456789012:errtraq-example-standard",
+      "awsRegion": "us-east-1"
+    }
+  ]
+}

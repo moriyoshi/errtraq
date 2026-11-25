@@ -1,7 +1,9 @@
 // Documentation-shaped AWS event fixtures. Only placeholder identifiers from the AWS
 // documentation are used (account 123456789012, example ARNs, documentation IDs).
 // Message bodies are errtraq's own queue envelopes, not the documentation's "Test message.".
-// The orchestrator replaces these with scrubbed real captures in M3h.
+// The builders were checked against scrubbed real captures taken in the third real AWS run
+// (2026-11-25); the captures live in ./fixtures/captured/ (see its README.md) and
+// aws-captures.test.ts asserts key-set and field-format parity between them and these builders.
 import { createHash } from "node:crypto";
 
 export const STANDARD_QUEUE_ARN = "arn:aws:sqs:us-east-2:123456789012:my-queue";
@@ -103,11 +105,12 @@ export function sqsFifoRecord(
 /**
  * Function URL request, payload format 2.0, following "Request payload format":
  * https://docs.aws.amazon.com/lambda/latest/dg/urls-invocation.html#urls-request-payload
- * (version, routeKey "$default", rawPath, rawQueryString, cookies, headers, requestContext with
- * http / domainName / requestId / stage / time / timeEpoch, null pathParameters and
- * stageVariables). The page states that a binary content type arrives base64-encoded with
+ * (version, routeKey "$default", rawPath, rawQueryString, headers, queryStringParameters,
+ * requestContext with http / domainName / requestId / stage / time / timeEpoch). Real captures
+ * omit the documented-but-optional cookies, pathParameters, stageVariables, authentication and
+ * authorizer keys for an unauthenticated URL, so the builder omits them too. The page states that a binary content type arrives base64-encoded with
  * isBase64Encoded true. The documented `<url-id>` placeholder becomes a syntactically valid
- * host label; authorizer is null as for the NONE auth type.
+ * host label.
  */
 export function functionUrlEvent(options: {
   method: string;
@@ -118,24 +121,46 @@ export function functionUrlEvent(options: {
   isBase64Encoded?: boolean;
 }) {
   const host = "urlid.lambda-url.us-west-2.on.aws";
+  const rawQueryString = options.rawQueryString ?? "";
+  const queryStringParameters = Object.fromEntries(
+    new URLSearchParams(rawQueryString),
+  );
+  // The real service reports requestContext.http.path without the trailing slash of rawPath.
+  const path =
+    options.rawPath.length > 1 && options.rawPath.endsWith("/")
+      ? options.rawPath.slice(0, -1)
+      : options.rawPath;
   return {
     version: "2.0",
     routeKey: "$default",
     rawPath: options.rawPath,
-    rawQueryString: options.rawQueryString ?? "",
-    headers: { host, ...options.headers },
+    rawQueryString,
+    // Real events carry lower-cased header names plus the headers the service adds.
+    headers: {
+      "x-forwarded-proto": "https",
+      "x-forwarded-port": "443",
+      "x-forwarded-for": "203.0.113.10",
+      "x-amzn-tls-version": "TLSv1.3",
+      "x-amzn-tls-cipher-suite": "TLS_AES_128_GCM_SHA256",
+      "x-amzn-trace-id": "Root=1-00000000-000000000000000000000000",
+      host,
+      ...options.headers,
+    },
+    // Present only when the query string is non-empty; there is no `cookies`,
+    // `pathParameters`, `stageVariables`, `authentication` or `authorizer` for auth type NONE.
+    ...(Object.keys(queryStringParameters).length > 0
+      ? { queryStringParameters }
+      : {}),
     requestContext: {
       accountId: "123456789012",
       apiId: "urlid",
-      authentication: null,
-      authorizer: null,
       domainName: host,
       domainPrefix: "urlid",
       http: {
         method: options.method,
-        path: options.rawPath,
+        path,
         protocol: "HTTP/1.1",
-        sourceIp: "123.123.123.123",
+        sourceIp: "203.0.113.10",
         userAgent: "agent",
       },
       requestId: "e1506fd5-9e7b-434f-bd42-4f8fa224b599",
@@ -145,9 +170,7 @@ export function functionUrlEvent(options: {
       timeEpoch: 1583348638390,
     },
     ...(options.body === undefined ? {} : { body: options.body }),
-    pathParameters: null,
     isBase64Encoded: options.isBase64Encoded ?? false,
-    stageVariables: null,
   };
 }
 

@@ -1,0 +1,61 @@
+{
+  "Records": [
+    {
+      "messageId": "00000000-0000-4000-8000-000000000101",
+      "receiptHandle": "AQEBexampleReceiptHandle==",
+      "body": "{\"topic\":\"ingest\",\"message\":{\"n\":0}}",
+      "attributes": {
+        "ApproximateReceiveCount": "1",
+        "SentTimestamp": "1795598681847",
+        "SequenceNumber": "18906417336262383872",
+        "MessageGroupId": "group-a",
+        "SenderId": "AIDAEXAMPLEEXAMPLE",
+        "MessageDeduplicationId": "d0",
+        "ApproximateFirstReceiveTimestamp": "1795598694153"
+      },
+      "messageAttributes": {},
+      "md5OfBody": "00000000000000000000000000000000",
+      "eventSource": "aws:sqs",
+      "eventSourceARN": "arn:aws:sqs:us-east-1:123456789012:errtraq-example-fifo.fifo",
+      "awsRegion": "us-east-1"
+    },
+    {
+      "messageId": "00000000-0000-4000-8000-000000000102",
+      "receiptHandle": "AQEBexampleReceiptHandle==",
+      "body": "{\"topic\":\"ingest\",\"message\":{\"n\":1}}",
+      "attributes": {
+        "ApproximateReceiveCount": "1",
+        "SentTimestamp": "1795598682118",
+        "SequenceNumber": "18906417336331759616",
+        "MessageGroupId": "group-a",
+        "SenderId": "AIDAEXAMPLEEXAMPLE",
+        "MessageDeduplicationId": "d1",
+        "ApproximateFirstReceiveTimestamp": "1795598694153"
+      },
+      "messageAttributes": {},
+      "md5OfBody": "00000000000000000000000000000000",
+      "eventSource": "aws:sqs",
+      "eventSourceARN": "arn:aws:sqs:us-east-1:123456789012:errtraq-example-fifo.fifo",
+      "awsRegion": "us-east-1"
+    },
+    {
+      "messageId": "00000000-0000-4000-8000-000000000103",
+      "receiptHandle": "AQEBexampleReceiptHandle==",
+      "body": "{\"topic\":\"ingest\",\"message\":{\"n\":2}}",
+      "attributes": {
+        "ApproximateReceiveCount": "1",
+        "SentTimestamp": "1795598682384",
+        "SequenceNumber": "18906417336399855616",
+        "MessageGroupId": "group-a",
+        "SenderId": "AIDAEXAMPLEEXAMPLE",
+        "MessageDeduplicationId": "d2",
+        "ApproximateFirstReceiveTimestamp": "1795598694153"
+      },
+      "messageAttributes": {},
+      "md5OfBody": "00000000000000000000000000000000",
+      "eventSource": "aws:sqs",
+      "eventSourceARN": "arn:aws:sqs:us-east-1:123456789012:errtraq-example-fifo.fifo",
+      "awsRegion": "us-east-1"
+    }
+  ]
+}
