@@ -9,6 +9,7 @@ import {
   instanceOptions,
   s3SecretSql,
 } from "./attach.js";
+import { expiryMs, redactCredentials } from "./recovery.js";
 import type {
   EngineSession,
   EngineSettings,
@@ -48,11 +49,30 @@ export async function openDuckDbSession(
     );
     return reader.getRowObjectsJson() as Record<string, unknown>[];
   };
+  let expiresAt: number | undefined;
+  // Creates (or replaces) the S3 secret from freshly resolved credentials. DuckDB may echo the
+  // statement in its error, so a failure is rethrown with the credential values removed.
+  const applySecret = async () => {
+    const credentials = await options.credentials();
+    expiresAt = expiryMs(credentials?.expiration);
+    try {
+      await all(s3SecretSql(engine, options.region, credentials));
+    } catch (error) {
+      throw new Error(
+        `archive-iceberg: creating the S3 secret failed: ${redactCredentials(
+          error instanceof Error ? error.message : String(error),
+          credentials,
+        )}`,
+      );
+    }
+  };
   const session: EngineSession = {
     all,
     async run(sql, params) {
       await all(sql, params);
     },
+    credentialsExpireAt: () => expiresAt,
+    refreshCredentials: applySecret,
     close() {
       connection.closeSync();
       instance.closeSync();
@@ -62,9 +82,7 @@ export async function openDuckDbSession(
     if (engine.extensionMode === "runtime-install")
       for (const name of EXTENSIONS) await session.run(`INSTALL ${name}`);
     for (const name of EXTENSIONS) await session.run(`LOAD ${name}`);
-    await session.run(
-      s3SecretSql(engine, options.region, await options.credentials()),
-    );
+    await applySecret();
     await session.run(attach);
     // Without this a session does not see its own commits (S3 Tables spike).
     await session.run("SET iceberg_use_metadata_log = false");

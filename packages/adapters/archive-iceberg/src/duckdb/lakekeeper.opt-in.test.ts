@@ -91,15 +91,26 @@ describe.skipIf(!enabled)("DuckDB engine against Lakekeeper", () => {
     const metadata = table.metadata as {
       "format-version": number;
       properties: Record<string, string>;
-      "partition-specs": { fields: { name: string; transform: string }[] }[];
-      "sort-orders": { fields: { transform: string }[] }[];
+      "default-spec-id": number;
+      "default-sort-order-id": number;
+      "partition-specs": {
+        "spec-id": number;
+        fields: { name: string; transform: string }[];
+      }[];
+      "sort-orders": { "order-id": number; fields: { transform: string }[] }[];
     };
+    // Lakekeeper lists specs and sort orders in no particular order (the unpartitioned spec 0 and
+    // the empty order 0 can come last), so select the default ones by id, never by position.
+    const spec = metadata["partition-specs"].find(
+      (s) => s["spec-id"] === metadata["default-spec-id"],
+    );
+    const order = metadata["sort-orders"].find(
+      (o) => o["order-id"] === metadata["default-sort-order-id"],
+    );
     expect(metadata["format-version"]).toBe(3);
     expect(metadata.properties["write.delete.mode"]).toBe("merge-on-read");
-    expect(
-      metadata["partition-specs"].at(-1)?.fields.map((f) => f.transform),
-    ).toEqual(["day"]);
-    expect(metadata["sort-orders"].at(-1)?.fields).toHaveLength(3);
+    expect(spec?.fields.map((f) => f.transform)).toEqual(["day"]);
+    expect(order?.fields).toHaveLength(3);
   });
 
   it("sees batches committed by another session and survives concurrent writers", async () => {
@@ -145,5 +156,33 @@ describe.skipIf(!enabled)("DuckDB engine against Lakekeeper", () => {
       "w2",
       "w3",
     ]);
+  });
+
+  it("renews the S3 secret of a session whose credentials are about to expire", async () => {
+    const namespace = unique();
+    await open(namespace).ensureTable();
+    let resolved = 0;
+    const store = create({
+      config: config(namespace),
+      bindings: {
+        awsCredentials: () => {
+          resolved++;
+          return {
+            accessKeyId: "test",
+            secretAccessKey: "test",
+            expiration: new Date(Date.now() + 60_000), // inside the refresh skew
+          };
+        },
+      },
+      dependencies: {},
+      environment: {},
+    });
+    stores.push(store);
+    const day = ["2024-03-01", "2024-03-01"] as never;
+    expect(await store.hasBatch("none", day)).toBe(false);
+    const afterOpen = resolved;
+    expect(await store.hasBatch("none", day)).toBe(false);
+    expect(await store.hasBatch("none", day)).toBe(false);
+    expect(resolved).toBe(afterOpen + 2);
   });
 });

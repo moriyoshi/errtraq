@@ -15,6 +15,13 @@ export interface EngineSession {
   /** Run a statement and discard its rows. */
   run(sql: string, params?: readonly unknown[]): Promise<void>;
   close(): void;
+  /**
+   * Epoch milliseconds at which the S3 credentials of this session expire, when the credentials
+   * source says so. The store refreshes the secret ahead of it.
+   */
+  credentialsExpireAt?(): number | undefined;
+  /** Recreate the S3 secret from freshly resolved credentials. Never logs them. */
+  refreshCredentials?(): Promise<void>;
 }
 
 /** Opens a fresh session (a new DuckDB instance). `ensureTable` uses one of its own. */
@@ -24,6 +31,8 @@ export interface S3Credentials {
   accessKeyId: string;
   secretAccessKey: string;
   sessionToken?: string;
+  /** When these (temporary) credentials stop working: a Date, an ISO-8601 string or epoch ms. */
+  expiration?: Date | string | number;
 }
 
 export class EngineConfigurationError extends Error {

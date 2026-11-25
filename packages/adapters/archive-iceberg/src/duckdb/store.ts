@@ -16,6 +16,7 @@ import {
   UnsupportedQueryError,
 } from "@moriyoshi/errtraq-core";
 import { rowDeleteModeFor } from "../stack.js";
+import { CREDENTIAL_REFRESH_SKEW_MS, isS3AuthFailure } from "./recovery.js";
 import type {
   EngineSession,
   EngineSettings,
@@ -51,6 +52,8 @@ export interface StoreOptions {
   /** Injectable for tests. */
   sleep?: (ms: number) => Promise<void>;
   random?: () => number;
+  /** Injectable for tests; defaults to `Date.now`. */
+  now?: () => number;
 }
 
 /** Full-jitter exponential backoff. */
@@ -69,6 +72,7 @@ export class DuckDbArchiveStore implements ArchiveStore {
   private tail: Promise<unknown> = Promise.resolve();
   private readonly sleep: (ms: number) => Promise<void>;
   private readonly random: () => number;
+  private readonly now: () => number;
 
   constructor(private readonly options: StoreOptions) {
     this.capabilities = { rowDelete: rowDeleteModeFor(options.engine) };
@@ -76,24 +80,83 @@ export class DuckDbArchiveStore implements ArchiveStore {
       options.sleep ??
       ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
     this.random = options.random ?? Math.random;
+    this.now = options.now ?? Date.now;
   }
 
   private get namespace(): string {
     return this.options.namespace;
   }
 
-  /** Operations share one connection and run one at a time. */
-  private exclusive<T>(fn: (session: EngineSession) => Promise<T>): Promise<T> {
+  /**
+   * Operations share one connection and run one at a time. The S3 secret is renewed ahead of the
+   * credentials' expiry. With `repeatable` (reads, `hasBatch`, `append`: safe to run again), an S3
+   * authentication failure renews the secret and runs the operation once more. A failure after
+   * which the connection no longer answers discards the session so the next operation opens a
+   * fresh one; the original error is always the one thrown.
+   */
+  private exclusive<T>(
+    fn: (session: EngineSession) => Promise<T>,
+    repeatable = false,
+  ): Promise<T> {
     const run = async () => {
       this.session ??= this.options.openSession().catch((error: unknown) => {
         this.session = undefined;
         throw error;
       });
-      return fn(await this.session);
+      const opened = this.session;
+      const session = await opened;
+      try {
+        const expiresAt = session.credentialsExpireAt?.();
+        if (
+          expiresAt !== undefined &&
+          this.now() >= expiresAt - CREDENTIAL_REFRESH_SKEW_MS
+        )
+          await session.refreshCredentials?.();
+        try {
+          return await fn(session);
+        } catch (error) {
+          if (
+            !repeatable ||
+            !session.refreshCredentials ||
+            !isS3AuthFailure(error)
+          )
+            throw error;
+          await session.refreshCredentials();
+          return await fn(session);
+        }
+      } catch (error) {
+        await this.discardIfDead(opened, session);
+        throw error;
+      }
     };
     const result = this.tail.then(run, run);
     this.tail = result.catch(() => undefined);
     return result;
+  }
+
+  private repeatable<T>(
+    fn: (session: EngineSession) => Promise<T>,
+  ): Promise<T> {
+    return this.exclusive(fn, true);
+  }
+
+  /** After a failure: drop the cached session when the connection no longer answers a probe. */
+  private async discardIfDead(
+    opened: Promise<EngineSession>,
+    session: EngineSession,
+  ): Promise<void> {
+    try {
+      await session.all("SELECT 1");
+      return;
+    } catch {
+      // The connection is unusable (for example the DuckDB instance was invalidated by a fatal error).
+    }
+    if (this.session === opened) this.session = undefined;
+    try {
+      session.close();
+    } catch {
+      // Already closed or broken beyond closing.
+    }
   }
 
   /**
@@ -187,7 +250,7 @@ export class DuckDbArchiveStore implements ArchiveStore {
     const { batchId, dayRange, rows } = batch;
     if (!batchId) return Promise.reject(new Error("Missing batch id"));
     if (rows.length === 0) return Promise.reject(new Error("Empty batch"));
-    return this.exclusive(async (session) => {
+    return this.repeatable(async (session) => {
       // Statement construction validates the day range and encodes the rows before any commit.
       const insert = appendStatement(this.namespace, batchId, rows);
       for (let attempt = 0; ; attempt++) {
@@ -217,7 +280,7 @@ export class DuckDbArchiveStore implements ArchiveStore {
   }
 
   hasBatch(batchId: string, dayRange: [Day, Day]): Promise<boolean> {
-    return this.exclusive((session) => this.probe(session, batchId, dayRange));
+    return this.repeatable((session) => this.probe(session, batchId, dayRange));
   }
 
   batchEventIds(
@@ -225,7 +288,7 @@ export class DuckDbArchiveStore implements ArchiveStore {
     batchId: string,
     dayRange: [Day, Day],
   ): Promise<EventId[]> {
-    return this.exclusive(async (session) => {
+    return this.repeatable(async (session) => {
       const statement = batchEventIdsStatement(
         this.namespace,
         projectId,
@@ -252,7 +315,7 @@ export class DuckDbArchiveStore implements ArchiveStore {
       : query.after;
     const limit = pageLimit(query.limit);
     const statement = queryStatement(this.namespace, query, boundary, limit);
-    return this.exclusive(async (session) => {
+    return this.repeatable(async (session) => {
       const rows = await session.all(statement.sql, statement.params);
       const items = rows
         .slice(0, limit)
@@ -274,7 +337,7 @@ export class DuckDbArchiveStore implements ArchiveStore {
     eventId: EventId,
     hintTs?: Timestamp,
   ): Promise<StoredEvent | null> {
-    return this.exclusive(async (session) => {
+    return this.repeatable(async (session) => {
       const lookup = async (hint?: Day) => {
         const statement = getEventStatement(
           this.namespace,

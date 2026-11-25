@@ -29,6 +29,8 @@ export type AwsCredentials = {
   accessKeyId: string;
   secretAccessKey: string;
   sessionToken?: string;
+  /** Set for temporary credentials; the DuckDB engine renews its S3 secret ahead of it. */
+  expiration?: Date | string | number;
 };
 export interface ArchiveIcebergBindings {
   /** Override for tests; defaults to the global `fetch`. */
