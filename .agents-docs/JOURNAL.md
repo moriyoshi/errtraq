@@ -2014,3 +2014,9 @@ choice; no quota increase). Findings:
 - Not done / for M4i: AWS scheduling (the `retention` job on the cron role has neither the archive binding nor the lease path there), `archiveRetentionDays` in the stack schema, an operator-visible metric. Project deletion has no caller yet (`purgeProjectArchive` is the hook for the future flow).
 - Implemented by Claude Sonnet; review by Claude Opus pending.
 
+
+## 2026-11-25 — Review of M4h and the M4f follow-ups
+
+- Reviewed by Claude Opus; both implemented by Claude Sonnet in parallel worktrees and merged on main (the opt-in test file, TODO and JOURNAL conflicted only by additions on both sides).
+- M4f follow-ups accepted: proactive secret renewal inside a 5 minute skew, one repeat after an S3 auth failure only for operations that are safe to repeat (`append` re-probes `hasBatch`), a `SELECT 1` liveness probe deciding whether to drop the cached session, credential values redacted from rethrown CREATE SECRET errors. The flake was a test bug (array position instead of `default-spec-id` / `default-sort-order-id`). The real 403 path is unverified because winterbaume does not validate credentials.
+- M4h accepted: housekeeping inside the `retention` job (no new cron name, so no schedule churn before M4i), every archive mutation under the project's lease after any in-flight batch is driven to completion, per-project `deleteOlderThan` / `deleteProject` with contract cases first. Operator-visible consequence worth keeping in mind: retention and project deletion on the archive are logical only (deletion vectors) until M4l provides snapshot expiry and a physical rewrite path.
