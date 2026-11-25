@@ -833,25 +833,9 @@ export function create({
   environment = {},
   secretSource,
 }: CreateContext<Config, Record<string, unknown>>): GcsBlobStore {
-  const bucket =
-    bindings.ERRTRAQ_BLOB_BUCKET ?? bindings.ERRTRAQ_STAGING_BUCKET;
+  const bucket = bindings.ERRTRAQ_BLOB_BUCKET;
   if (typeof bucket !== "string" || !bucket)
     throw new Error("Missing GCS bucket binding");
-  if (
-    typeof bindings.ERRTRAQ_BLOB_BUCKET === "string" &&
-    typeof bindings.ERRTRAQ_STAGING_BUCKET === "string" &&
-    bindings.ERRTRAQ_BLOB_BUCKET !== bindings.ERRTRAQ_STAGING_BUCKET
-  )
-    throw new Error("GCS purpose bindings must share the same bucket");
-  if (
-    typeof bindings.ERRTRAQ_STAGING_BUCKET === "string" &&
-    (typeof bindings.ERRTRAQ_STAGING_PREFIX !== "string" ||
-      !/^[a-zA-Z0-9_-]+\/$/.test(bindings.ERRTRAQ_STAGING_PREFIX) ||
-      ["envelopes/", "payloads/", "artifacts/"].includes(
-        bindings.ERRTRAQ_STAGING_PREFIX,
-      ))
-  )
-    throw new Error("Invalid GCS staging prefix binding");
   const auth = config.auth ?? { mode: "metadata" as const };
   if (auth.mode === "none" && !config.endpoint)
     throw new Error("GCS auth mode none requires an endpoint override");
@@ -865,14 +849,13 @@ export function create({
       : { signer: lazy.signer }),
     requestTimeoutMs: config.requestTimeoutMs,
     overallTimeoutMs: config.overallTimeoutMs,
+    // Same prefixes as blob-s3: `archive-overflow/` holds the archive worker's batch manifests
+    // (the staging purpose was dropped in M4b).
     allowedPrefixes: [
-      ...(typeof bindings.ERRTRAQ_BLOB_BUCKET === "string"
-        ? ["envelopes/", "payloads/", "artifacts/"]
-        : []),
-      ...(typeof bindings.ERRTRAQ_STAGING_BUCKET === "string" &&
-      typeof bindings.ERRTRAQ_STAGING_PREFIX === "string"
-        ? [bindings.ERRTRAQ_STAGING_PREFIX]
-        : []),
+      "envelopes/",
+      "payloads/",
+      "artifacts/",
+      "archive-overflow/",
     ],
   });
 }

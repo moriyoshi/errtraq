@@ -501,19 +501,17 @@ describe("stack and create", () => {
     expect(infra.module).toMatchObject({ provider: "gcp", component: "gcs" });
     expect(infra.inputs({ location: "loc-1" }, {} as never)).toMatchObject({
       location: "loc-1",
-      staging_prefix: "archive-staging/",
     });
+    expect(infra.inputs({ location: "loc-1" }, {} as never)).not.toHaveProperty(
+      "staging_prefix",
+    );
     expect(Object.keys(infra.capabilities)).toEqual([
       "read",
       "write",
       "delete",
       "list",
     ]);
-    expect(infra.bindings.map((b) => b.name)).toEqual([
-      "ERRTRAQ_BLOB_BUCKET",
-      "ERRTRAQ_STAGING_BUCKET",
-      "ERRTRAQ_STAGING_PREFIX",
-    ]);
+    expect(infra.bindings.map((b) => b.name)).toEqual(["ERRTRAQ_BLOB_BUCKET"]);
   });
   it("creates a store from bindings and refuses unsafe or incomplete setups", () => {
     const config = configSchema.parse({ location: "l" });
@@ -530,27 +528,6 @@ describe("stack and create", () => {
         dependencies: {},
       }),
     ).toThrow(/endpoint/);
-    expect(() =>
-      create({
-        config,
-        bindings: {
-          ERRTRAQ_BLOB_BUCKET: "a",
-          ERRTRAQ_STAGING_BUCKET: "b",
-          ERRTRAQ_STAGING_PREFIX: "s/",
-        },
-        dependencies: {},
-      }),
-    ).toThrow(/same bucket/);
-    expect(() =>
-      create({
-        config,
-        bindings: {
-          ERRTRAQ_STAGING_BUCKET: "b",
-          ERRTRAQ_STAGING_PREFIX: "payloads/",
-        },
-        dependencies: {},
-      }),
-    ).toThrow(/staging prefix/);
   });
   it("reads a service account key from the secret source only when first used", async () => {
     const reads: string[] = [];

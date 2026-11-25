@@ -2084,3 +2084,10 @@ choice; no quota increase). Findings:
 - Verified: `pnpm typecheck`, `pnpm lint` (layering, exports, Workers bundle of `gcp-auth` and `blob-gcs/runtime`), `pnpm test` offline, and the emulated suite above.
 - Implemented by Claude Sonnet; review by Claude Opus pending.
 
+
+## 2026-11-26 — Review of G0/G1 (gcp-auth, blob-gcs)
+
+- Reviewed by Claude Opus; implemented by Claude Sonnet. Accepted: token sources with a shared cache contract, RS256-only Google ID token verification with a JWKS cache, local and `signBlob` V4 signing, resumable uploads with offset recovery, crc32c verification on whole-object reads, no default location (D7).
+- Changed in review: `blob-gcs` had copied blob-s3's `staging` purpose (bindings, module inputs and outputs, prefix checks). M4 dropped staging, and M4i removed it from blob-s3, so it is gone here too; the runtime allow-list now matches blob-s3 (`envelopes/`, `payloads/`, `artifacts/`, `archive-overflow/`).
+- Open: `pnpm test:gcs-emulated` itself was never run end to end (Docker went down; the emulated tests ran by hand through a tunnel into the Colima VM, which the orchestrator then asked agents not to repeat). Run it once when Docker is back.
+- Open for G5: core requires a module's provider source to end in `/<module.provider>`, so modules under `infra/modules/gcp` cannot validate against `hashicorp/google` (found in G4). Either map the provider family in core or name the module directory `google`.
