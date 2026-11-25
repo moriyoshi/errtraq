@@ -1,0 +1,33 @@
+---
+title: Sentry compatibility
+description: What errtraq accepts from Sentry SDKs, what it drops, and what is planned.
+---
+
+## Scope
+
+errtraq targets **error events** plus, later, **releases and sourcemaps**. It is not a full Sentry replacement.
+
+| Area | Status |
+| --- | --- |
+| Error events (envelope endpoint `POST /api/:projectId/envelope/`) | Accepted |
+| Legacy store endpoint (`/store/`) | Accepted |
+| DSN key authentication (`X-Sentry-Auth` or `sentry_key` query parameter) | Supported |
+| Request body encodings gzip, deflate and br | Supported |
+| Transactions, replays, profiles, sessions | Accepted and dropped (not stored) |
+| Issue and event read and update API under `/api/0/` | Minimal subset, in progress |
+| Releases, chunk upload, artifact bundles, sourcemap symbolication | Planned (milestone M5), not yet available |
+| Archiving old events to Iceberg, PII erasure | Planned (milestone M4), not yet available |
+| Notifications and alerts | Not implemented |
+
+## What "accepted and dropped" means
+
+The ingest endpoint returns success for envelopes that contain unsupported item types so SDKs do not retry or log
+errors, but only `event` items are processed and stored. Unsupported item types are discarded and counted in the
+server log. Session-only envelopes are discarded quietly.
+
+## Grouping
+
+Events are grouped into issues by a fingerprint: the client-supplied `fingerprint` if present, otherwise the exception
+type and in-app frames, falling back to the message.
+
+{/* TODO(docs): document the issue and event API endpoints once the surface stabilizes. */}

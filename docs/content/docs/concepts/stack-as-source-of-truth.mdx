@@ -1,0 +1,22 @@
+---
+title: Stack config as source of truth
+description: One typed file drives both the runtime wiring and the Terraform.
+---
+
+A stack file is a TypeScript module with a default export from `defineStack({...})`. It selects a platform and one
+adapter per port. The `errtraq` CLI then does three things with it:
+
+1. **validate** checks that the combination is coherent: supported capabilities, reference types, queue timing,
+   binding scopes and role requirements.
+2. **build** bundles only the selected adapters into per-role artifacts (Lambda ZIPs, or a standalone container context).
+3. **infra generate** writes a Terraform root (`main.tf.json` plus tfvars) that composes hand-written HCL modules.
+
+Terraform supplies the deployed function's environment from module outputs, and the runtime constructs each adapter
+from those named bindings. Because both sides read the same config, the application cannot disagree with the
+infrastructure about table names, queue URLs or permissions.
+
+Permissions are derived, not hand-written: each function receives only the grants its role needs (for example, the
+ingest function can write blobs and enqueue, but cannot read the store).
+
+Terraform itself, its state and its provider credentials remain your responsibility. errtraq never runs
+`terraform apply`.

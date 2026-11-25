@@ -1,0 +1,36 @@
+---
+title: Tokens and project limits
+description: Operator commands for API tokens and per-project rate limits.
+---
+
+These commands talk to the deployed store directly, using the same environment and credentials as
+[bootstrap](/docs/aws/bootstrap). There is no HTTP endpoint for token administration or project settings yet.
+
+## API tokens
+
+Tokens are stored only as hashes, so plaintext cannot be recovered or listed.
+
+```sh
+pnpm exec errtraq token list --stack stacks/aws-dynamodb.ts --org my-org
+pnpm exec errtraq token revoke --stack stacks/aws-dynamodb.ts --org my-org --id <token-id> [--force]
+```
+
+`list` prints id, state, label, scopes and creation time. `revoke` is idempotent and takes effect on the next request.
+It refuses to revoke the last active token of the organization unless you pass `--force`, because every API client
+would be locked out. Revoking the bootstrap token makes a later `errtraq bootstrap` rerun fail with a "revoked"
+conflict.
+
+For the standalone stack, `errtraq token rotate --stack <file>` prints a fresh API token.
+
+## Per-project rate limits
+
+When the stack enables [`rateRejection`](/docs/concepts/rate-rejection), a project can use a lower limit than the stack.
+
+```sh
+pnpm exec errtraq project rate-limits --stack stacks/aws-dynamodb.ts \
+  --org my-org --project my-project [--issue-events <n|none>] [--new-issues <n|none>]
+```
+
+Without flags it prints the current limits. Omitted flags keep their value and `none` clears an override. A new project
+can also get limits at bootstrap with `--issue-events` and `--new-issues`; a rerun against a project with different
+limits fails, so use this command to change them.

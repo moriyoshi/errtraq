@@ -1,0 +1,32 @@
+---
+title: What is errtraq
+description: A Sentry-compatible, serverless-first issue tracker with pluggable storage, queues and compute.
+---
+
+errtraq is an issue tracker written in TypeScript, in the spirit of GlitchTip and Bugsink. Existing Sentry SDKs
+point at an errtraq DSN unchanged. It is designed to run on serverless platforms, and it also runs locally as one
+standalone Node.js process.
+
+## What it does
+
+- **Ingest.** Accepts Sentry envelopes (and the legacy store endpoint), stages the raw payload in a blob store and
+  enqueues a small reference to it.
+- **Process.** A queue consumer normalizes the event, computes a grouping fingerprint and atomically creates or bumps
+  an issue.
+- **Serve.** A Sentry-compatible API subset gives access to issues and events.
+
+Every backing service (active store, queue, blob store, key-value store, compute platform) is a pluggable adapter
+behind a port. The same stack file that wires the adapters at runtime also generates the Terraform that provisions
+them, so the application and its infrastructure cannot drift.
+
+## Status
+
+errtraq is under active development. The local standalone stack and the AWS stack (Lambda, DynamoDB or PostgreSQL,
+SQS, S3) are implemented. Archiving to Iceberg, releases and sourcemap symbolication, and Cloudflare Workers are
+planned. Each page marks what is not yet available, and the [adapter table](/docs/adapters) lists what exists today.
+
+## Where to go next
+
+- New here: [run it locally](/docs/getting-started/local) and [send your first event](/docs/getting-started/send-an-event).
+- Operating errtraq in production: read the [concepts](/docs/concepts) and then [deploy to AWS](/docs/aws).
+- Looking something up: the [stack reference](/docs/stack-config) and the [CLI reference](/docs/cli).

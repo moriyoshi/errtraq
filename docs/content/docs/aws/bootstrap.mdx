@@ -1,0 +1,75 @@
+---
+title: Bootstrap
+description: Run migrations and create the first organization, project, DSN and API token.
+---
+
+After `terraform apply`, bootstrap runs migrations and creates the first organization, project, DSN key and API token.
+The DSN and token are written to an AWS Secrets Manager secret, created by the command and outside Terraform state and
+outputs. There are two paths that share one idempotent implementation.
+
+## Direct bootstrap
+
+Runs on your machine and needs network access to the store. Provide the deployed binding names in the environment (for
+the DynamoDB example, `ERRTRAQ_STORE_TABLE` and `ERRTRAQ_KV_TABLE`) and AWS credentials as described in
+[plan and apply](/docs/aws/apply). `errtraq validate` lists the binding names.
+
+```sh
+pnpm exec errtraq bootstrap --stack stacks/aws-dynamodb.ts \
+  --secret-name errtraq/bootstrap/example \
+  --ingest-url https://<ingest-function-url>/ \
+  --org my-org --project my-project
+```
+
+The command prints only the secret ARN. Read the secret's `SecretString` through Secrets Manager to get the DSN and first
+API token. Treat the value as a credential. If interrupted, rerun with the same arguments.
+
+For PostgreSQL in secret mode, supply the full existing database-secret ARN in `ERRTRAQ_POSTGRES_SECRET`. Postgres
+migrations need schema-management privileges.
+
+IAM permissions needed by the operator: the store and KV operations of the selected adapters, plus Secrets Manager
+`CreateSecret`, `DescribeSecret` and `GetSecretValue` on the chosen secret.
+
+## Remote bootstrap (`--remote`)
+
+When the database is reachable only inside the VPC, enable the optional `bootstrap` role. It is its own Lambda function
+with no URL, queue trigger or schedule, shares the stack's VPC placement and may write exactly one secret.
+
+```ts
+platform: awsLambda({
+  roles: ["ingest", "api", "consumer", "cron", "bootstrap"],
+  bootstrapSecretName: "errtraq/bootstrap/example",
+  vpcSubnetIds: variable("SUBNETS"),
+  vpcSecurityGroupIds: variable("SECURITY_GROUPS"),
+}),
+```
+
+After `terraform apply`, from any machine with AWS credentials and a region:
+
+```sh
+pnpm exec errtraq bootstrap --remote --stack stacks/aws-dynamodb-bootstrap.ts \
+  --ingest-url https://<ingest-function-url>/ --org my-org --project my-project
+```
+
+The command invokes the function synchronously and prints ids, slugs and whether each record was created or already
+existed. The DSN and token go to the `bootstrapSecretName` secret and are never returned or logged. The secret name is
+fixed by the deployment, so `--secret-name` is rejected with `--remote`. The function name defaults to
+`<stack name>-bootstrap` (the Terraform output `bootstrap_function_name`); override it with `--function-name`.
+
+You need only `lambda:InvokeFunction` on that function, plus `secretsmanager:GetSecretValue` on the secret to read the
+result. No network path to the database is needed. The function timeout defaults to 120 seconds
+(`settings: { bootstrap: { timeoutSec } }`). In a private network the function needs a route to Secrets Manager (a NAT or
+an interface endpoint).
+
+Failures print an error code and, for stack validation messages, their text. Provider messages are never printed; look
+at the function's CloudWatch log group for the error class.
+
+## Flags
+
+| Flag | Direct | Remote |
+| --- | --- | --- |
+| `--stack` | required | required |
+| `--ingest-url` | required | required |
+| `--org`, `--project` | required | required |
+| `--secret-name` | required | not accepted |
+| `--function-name` | not accepted | optional |
+| `--issue-events`, `--new-issues` | optional | optional |

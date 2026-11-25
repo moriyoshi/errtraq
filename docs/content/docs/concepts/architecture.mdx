@@ -1,0 +1,24 @@
+---
+title: Architecture layers
+description: Five layers, each depending only on the one below.
+---
+
+| Layer | Contents |
+| --- | --- |
+| L4 Entrypoints | Per-platform handlers (AWS Lambda, Node server), generated per stack |
+| L3 Apps | Hono apps: ingest, api, queue consumer, cron |
+| L2 Core services | Ingest, normalize, grouping, and (planned) symbolication, federated query, archival, erasure |
+| L1 Ports | `ActiveStore`, `Queue`, `BlobStore`, `KV`, and planned `ArchiveStore` and `Scheduler`; clock, id and logger |
+| L0 Adapters | Implementations of the ports for a given technology |
+
+`@moriyoshi/errtraq-core` and the HTTP package use only Web-standard APIs (fetch, WebCrypto, streams, URL). They contain
+no Node.js imports and no cloud SDKs, so they bundle for edge runtimes such as Cloudflare Workers.
+
+Adapters depend on core and never on each other. Platforms compose adapters, and nothing imports from a platform.
+
+## Semantics that matter to operators
+
+- Queue handlers are at-least-once and idempotent on the event ID, so a redelivered message changes nothing.
+- Recording an event is idempotent on the project and event ID.
+- Creating or bumping an issue is a single atomic store operation.
+- If a store cannot serve a query, the stack is rejected at validation instead of silently scanning the table.

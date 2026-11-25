@@ -1,0 +1,20 @@
+---
+title: Record modes
+description: Direct versus grouped recording of events into issues.
+---
+
+The `recordMode` field of the stack controls how normalized events become issues.
+
+| Mode | Behavior |
+| --- | --- |
+| `direct` | The consumer calls the store's atomic record operation itself. |
+| `grouped` | The consumer hands normalized records to a separate, issue-keyed `record` stage, so all events of one issue are applied in order by one writer. |
+
+If you omit `recordMode`, errtraq chooses `grouped` for an AWS Lambda platform with an SQS queue, and `direct`
+otherwise.
+
+In grouped mode the consumer has no store grants except a read-only project-read capability, derived only when the
+per-issue rate limit is enabled. The `record` role is added automatically for grouped stacks. The bootstrap example
+stack pins `recordMode: "direct"` with an explicit role list.
+
+{/* TODO(docs): describe when to prefer each mode, with throughput and cost trade-offs. */}

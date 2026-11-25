@@ -1,0 +1,36 @@
+---
+title: Rate rejection
+description: Capping noisy issues and new-issue floods.
+---
+
+Separate from the per-DSN ingest limit, a stack can reject events that are too frequent. Both limits are **disabled by
+default**.
+
+```ts
+export default defineStack({
+  // ...
+  rateRejection: {
+    issueRateLimit: { events: 1000, windowSec: 60 }, // per issue
+    newIssueCap: { issues: 100, windowSec: 60 },     // per project
+    onKvFailure: "allow",                             // or "retry"
+  },
+});
+```
+
+- `issueRateLimit` caps events per issue in a fixed window.
+- `newIssueCap` caps how many new issues a project can create in a fixed window.
+- `onKvFailure` decides what happens when the KV is unavailable. `allow` (the default) admits the event, `retry`
+  leaves it on the queue to be retried.
+
+Rejected events are acknowledged without being recorded. Issue list and detail responses include
+`approximateDropped` for the current window when limits are enabled.
+
+## Per-project overrides
+
+A project may use a lower limit than the stack, never a higher one, and cannot enable a limit the stack leaves off.
+Windows stay stack-wide. See [tokens and limits](/docs/aws/tokens-and-limits).
+
+## Ingest rate limit
+
+Independently, `awsLambda({ rateLimit: 1000 })` allows 1,000 event items per minute for each DSN key (default 60,
+`null` disables). The standalone platform takes the same option.

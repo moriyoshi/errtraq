@@ -22,7 +22,9 @@
     "aws-emulator:install-s3-patched": "node scripts/aws-emulated/install-s3-patched.mjs",
     "test:workers-smoke": "node scripts/workers-smoke.mjs",
     "test:postgres": "node scripts/test-postgres.mjs",
-    "verify:packaging": "node scripts/verify-packaging.mjs"
+    "verify:packaging": "node scripts/verify-packaging.mjs",
+    "docs:dev": "pnpm --filter @moriyoshi/errtraq-docs dev",
+    "docs:build": "pnpm --filter @moriyoshi/errtraq-docs build"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.15",

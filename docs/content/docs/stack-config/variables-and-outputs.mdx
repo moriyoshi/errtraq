@@ -1,0 +1,36 @@
+---
+title: Variables, environment and outputs
+description: References that resolve at generation, deployment or runtime.
+---
+
+Stack values can be literals or typed references. The reference kind decides when a value is resolved.
+
+| Helper | Resolved | Use |
+| --- | --- | --- |
+| `env("NAME", { defaultValue, suffix, valueType })` | At runtime, from the process environment | Ports, data directories, anything the operator sets per deployment. |
+| `generationEnv("NAME")` | When `infra generate` runs | Values needed to render Terraform. |
+| `variable("NAME")` | By Terraform, from a declared input variable | Subnet IDs, secret ARNs and other per-environment inputs. |
+| `output("selection", "name")` | By Terraform, from a module output | Stack `outputs` such as URLs. |
+
+## Variables
+
+Declare Terraform input variables in the stack and reference them with `variable()`:
+
+```ts
+variables: {
+  SUBNETS: { type: "string[]", sensitive: false },
+  ADMIN_SECRET: { type: "string", sensitive: true },
+},
+platform: awsLambda({
+  vpcSubnetIds: variable("SUBNETS"),
+  vpcSecurityGroupIds: variable("SECURITY_GROUPS"),
+}),
+```
+
+Supported types are `string`, `number`, `bool`, `string[]` and `json`. Variables may carry a `default`. Set values in
+the generated tfvars or with `TF_VAR_*` as usual.
+
+## Outputs
+
+`outputs` maps an output name to a module output. The AWS examples expose `ingest_url` and `api_url`; the bootstrap
+example adds `bootstrap_function_name`. After `terraform apply`, `terraform output` prints them.

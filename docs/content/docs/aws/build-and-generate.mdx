@@ -1,0 +1,32 @@
+---
+title: Build and generate
+description: Produce Lambda artifacts and a Terraform root from a stack.
+---
+
+```sh
+pnpm exec errtraq validate --stack stacks/aws-dynamodb.ts
+pnpm exec errtraq build --stack stacks/aws-dynamodb.ts
+pnpm exec errtraq infra generate --stack stacks/aws-dynamodb.ts
+```
+
+## build
+
+Writes role-scoped Lambda ZIPs and a manifest to `dist/<stack name>` under the project root. Each ZIP contains only the
+adapters its role needs.
+
+## infra generate
+
+Writes a Terraform root to `infra/generated/<stack name>`. Both directories are meant to be git-ignored. Generation
+requires the build output unless you pass `--allow-missing-artifacts`. Regeneration preserves Terraform working
+directories, lock files, state, plans and crash logs.
+
+| Flag | Meaning |
+| --- | --- |
+| `--out <dir>` | Output directory. |
+| `--build-dir <dir>` | Where to find a build written elsewhere. |
+| `--root <dir>` | Project root. Defaults to the nearest directory above the stack file with a `pnpm-workspace.yaml`, then a `package.json`. Outputs stay inside it. |
+| `--module-source vendor` | Copy the Terraform modules the stack uses into `<out>/modules`. The default outside the errtraq repository. |
+| `--module-source relative` | Point at `infra/modules` in the errtraq repository. |
+| `--module-source remote` | Point at a tagged repository. Requires `--module-base`. |
+| `--module-base <prefix>` | Git source prefix for `remote`, for example `git::https://github.com/moriyoshi/errtraq.git//infra/modules`. |
+| `--allow-missing-artifacts` | Generate without a build. |

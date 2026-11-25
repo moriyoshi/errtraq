@@ -1,0 +1,57 @@
+---
+title: CLI reference
+description: Commands and flags of the errtraq CLI.
+---
+
+```text
+errtraq <dev|validate|build|bootstrap [--remote]|infra generate|token rotate|token list|token revoke|project rate-limits> --stack <file> [--out dir]
+```
+
+`--stack <file>` is required for every command. Each flag may be given once. Errors print with the project root and
+home directory scrubbed from paths.
+
+## Commands
+
+| Command | Purpose |
+| --- | --- |
+| `dev` | Run a standalone stack in one process and print the DSN and API token. |
+| `validate` | Check the stack and print its resolved bindings and grants. |
+| `build` | Bundle role-scoped artifacts to `dist/<stack name>`, or a container context for standalone stacks. |
+| `infra generate` | Write a Terraform root to `infra/generated/<stack name>`. |
+| `bootstrap` | Migrate and create the first organization, project, DSN and token on a deployed stack. |
+| `token rotate` | Print a fresh API token for a standalone stack. |
+| `token list` | List an organization's API tokens. |
+| `token revoke` | Revoke one API token. |
+| `project rate-limits` | Show or tighten a project's rate limits. |
+
+## Flags
+
+| Flag | Applies to | Description |
+| --- | --- | --- |
+| `--stack <file>` | all | The stack file. |
+| `--out <dir>` | `build`, `infra generate` | Output directory. |
+| `--root <dir>` | `build`, `infra generate` | Project root. |
+| `--build-dir <dir>` | `infra generate` | Location of the build output. |
+| `--module-source <relative, vendor or remote>` | `infra generate` | How generated Terraform references the modules. |
+| `--module-base <prefix>` | `infra generate` | Git source prefix for `remote`. |
+| `--allow-missing-artifacts` | `infra generate` | Generate without a build. |
+| `--remote` | `bootstrap` | Invoke the in-network bootstrap function instead of connecting directly. |
+| `--secret-name <name>` | `bootstrap` | Secrets Manager name for the DSN and token. Not accepted with `--remote`. |
+| `--ingest-url <url>` | `bootstrap` | Deployed ingest URL, without a DSN key. |
+| `--org <slug>` | `bootstrap`, `token list`, `token revoke`, `project rate-limits` | Organization slug. |
+| `--project <slug>` | `bootstrap`, `project rate-limits` | Project slug. |
+| `--issue-events <n>` | `bootstrap`, `project rate-limits` | Per-issue event limit. `none` clears it (`project rate-limits` only). |
+| `--new-issues <n>` | `bootstrap`, `project rate-limits` | New-issue cap. `none` clears it (`project rate-limits` only). |
+| `--function-name <name>` | `bootstrap --remote` | Override the bootstrap function name. |
+| `--id <token-id>` | `token revoke` | Token to revoke. |
+| `--force` | `token revoke` | Allow revoking the last active token. |
+
+## Environment
+
+| Variable | Used by | Purpose |
+| --- | --- | --- |
+| `ERRTRAQ_HOST`, `ERRTRAQ_PORT`, `ERRTRAQ_DATA_DIR` | `dev` | Listen address and data location of the local stack. |
+| `AWS_PROFILE`, `AWS_REGION`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN` | AWS operator commands | Operator credentials. See [plan and apply](/docs/aws/apply). |
+| `ERRTRAQ_STORE_TABLE`, `ERRTRAQ_KV_TABLE`, `ERRTRAQ_POSTGRES_SECRET` | direct operator commands | Deployed binding names. `validate` lists the ones a stack needs. |
+
+The CLI requires Node.js `^22.18.0` or `>=23.6.0`.

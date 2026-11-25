@@ -1,0 +1,20 @@
+---
+title: Ingest, queue, consumer
+description: How an event travels from an SDK to an issue.
+---
+
+1. **Ingest.** Authenticates the DSN key, enforces size limits and the per-key rate limit (backed by the KV), decodes
+   gzip, deflate or br, writes the raw envelope to the blob store and enqueues a small reference
+   (project, blob key, receive time). It returns the event ID to the SDK.
+2. **Consumer.** Reads the envelope back, drops item types that are not events, normalizes the event, computes the
+   grouping fingerprint and records it. A redelivered event is detected by its ID and dropped.
+3. **API.** Serves issues and events to clients under `/api/0/`.
+4. **Cron.** Housekeeping, such as retention of raw envelopes.
+
+Staging the payload in the blob store and enqueueing only a reference (a claim-check) keeps queue messages small and
+lets queues with strict size limits work.
+
+On AWS the roles ingest, api, consumer, cron and, optionally, record and bootstrap map to Lambda functions. By default
+the four main roles are separate functions. See [AWS overview](/docs/aws).
+
+{/* TODO(docs): add a sequence diagram of the pipeline. */}

@@ -1,0 +1,40 @@
+---
+title: Adapters
+description: What exists today and what is planned.
+---
+
+All packages are named `@moriyoshi/errtraq-<name>`. Selection helpers come from the `/stack` export of each package.
+
+## Available now
+
+| Port | Adapter | Package | Helper |
+| --- | --- | --- | --- |
+| Active store | SQLite | `store-sql` | `sqlite` |
+| Active store | PostgreSQL (password secret or RDS IAM) | `store-sql` | `postgres` from `store-sql/postgres/stack` |
+| Active store | DynamoDB | `store-dynamodb` | `dynamoStore` |
+| Queue | In-memory | `queue-memory` | `memoryQueue` |
+| Queue | Amazon SQS | `queue-sqs` | `sqsQueue` |
+| Blob store | Filesystem | `blob-fs` | `fsBlob` |
+| Blob store | Amazon S3 | `blob-s3` | `s3Blob` |
+| KV | In-memory | `kv-memory` | `memoryKv` |
+| KV | DynamoDB | `kv-dynamodb` | `dynamoKv` |
+| Platform | Standalone Node.js | `platform-standalone` | `standalone` |
+| Platform | AWS Lambda | `platform-aws-lambda` | `awsLambda` |
+
+Supporting packages: `core` (ports, domain, stack validation), `http` (Hono apps), `cli` (the `errtraq` command),
+`infra-gen` (Terraform generator) and `aws-signing`.
+
+## Planned
+
+| Area | Planned | Milestone |
+| --- | --- | --- |
+| Archive | Iceberg via the REST catalog protocol, federated query, PII erasure with deletion vectors | M4 |
+| Sourcemaps and releases | Chunk upload, artifact bundles, JavaScript symbolication | M5 |
+| Cloudflare | Workers platform, D1 store, Cloudflare Queues, R2 | M6 |
+| Further stores | MySQL, libSQL (Turso), Supabase, Firestore | M7 and later |
+| Further queues | Redis, NATS, Pub/Sub, Cloud Tasks, Service Bus | M7 and later |
+| Further blobs | GCS, Azure Blob | M7 and later |
+| Further platforms | Cloud Run, Vercel | M7 and later |
+
+Planned items have no package yet, and the dates are not committed. The authoritative list is the Milestones section of
+ARCHITECTURE.md in the repository.

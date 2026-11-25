@@ -1,0 +1,19 @@
+{
+  "title": "errtraq",
+  "pages": [
+    "---Introduction---",
+    "index",
+    "compatibility",
+    "---Getting started---",
+    "getting-started",
+    "---Concepts---",
+    "concepts",
+    "---Stack configuration---",
+    "stack-config",
+    "---Deploying---",
+    "aws",
+    "---Reference---",
+    "adapters",
+    "cli"
+  ]
+}

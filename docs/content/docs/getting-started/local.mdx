@@ -1,0 +1,82 @@
+---
+title: Run locally
+description: Start a standalone errtraq with SQLite on your machine.
+---
+
+The local stack runs ingest, the queue consumer, the API and a cron timer in one Node.js process. It uses SQLite for
+the store, an in-memory queue, filesystem blobs and an in-memory key-value store. Node.js `^22.18.0` or `>=23.6.0` is
+required.
+
+## Start the server
+
+From a project that has [installed the packages](/docs/getting-started/installing) and a stack file such as
+`stacks/local.ts`:
+
+```sh
+pnpm exec errtraq validate --stack stacks/local.ts
+pnpm exec errtraq dev --stack stacks/local.ts
+```
+
+`validate` checks the stack and lists the bindings it needs. `dev` prints something like this and keeps running until
+you press Ctrl+C:
+
+```text
+DSN: http://<public-key>@127.0.0.1:8787/<project-id>
+API token: <token>
+Listening: http://127.0.0.1:8787
+```
+
+Data lives in `.errtraq/` by default. Override the location with `ERRTRAQ_DATA_DIR`, the host with `ERRTRAQ_HOST`
+and the port with `ERRTRAQ_PORT`. To get a fresh API token, run `errtraq token rotate --stack stacks/local.ts`.
+
+## The local stack file
+
+```ts
+import { fsBlob } from "@moriyoshi/errtraq-blob-fs/stack";
+import { defineStack, env } from "@moriyoshi/errtraq-core";
+import { memoryKv } from "@moriyoshi/errtraq-kv-memory/stack";
+import { standalone } from "@moriyoshi/errtraq-platform-standalone/stack";
+import { memoryQueue } from "@moriyoshi/errtraq-queue-memory/stack";
+import { sqlite } from "@moriyoshi/errtraq-store-sql/stack";
+
+export default defineStack({
+  name: "local",
+  providers: {},
+  platform: standalone({
+    host: env("ERRTRAQ_HOST", { defaultValue: "127.0.0.1" }),
+    port: env("ERRTRAQ_PORT", { defaultValue: "8787", valueType: "number" }),
+    tokenDirectory: env("ERRTRAQ_DATA_DIR", { defaultValue: ".errtraq" }),
+    rateLimit: 10000,
+    roles: ["ingest", "api", "consumer", "cron"],
+    split: [],
+    http: ["ingest", "api"],
+  }),
+  store: sqlite({
+    path: env("ERRTRAQ_DATA_DIR", { defaultValue: ".errtraq", suffix: "/events.sqlite" }),
+  }),
+  queue: memoryQueue(),
+  blob: fsBlob({
+    root: env("ERRTRAQ_DATA_DIR", { defaultValue: ".errtraq", suffix: "/blobs" }),
+  }),
+  kv: memoryKv(),
+});
+```
+
+## As a container
+
+`errtraq build` produces a Docker build context for the standalone stack:
+
+```sh
+pnpm exec errtraq build --stack stacks/local.ts
+docker build -t errtraq-local dist/local
+docker run --rm -p 127.0.0.1:8787:8787 -v errtraq-data:/data errtraq-local
+```
+
+The image sets `ERRTRAQ_HOST=0.0.0.0` for container networking, stores data in `/data` and serves an unauthenticated
+`/health` endpoint. A bind-mounted data directory must be writable by the container user. Set the standalone
+`publicUrl` option to the externally reachable origin so the printed DSN is usable by remote clients; otherwise a
+wildcard listener prints a localhost DSN with a note.
+
+<Callout type="warn">
+The in-memory queue and key-value store do not survive a restart. The local stack is for development and evaluation.
+</Callout>

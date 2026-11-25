@@ -1,0 +1,26 @@
+---
+title: Ports and adapters
+description: How storage, queues, blobs and compute are swapped.
+---
+
+A **port** is an interface owned by core. An **adapter** implements it for one technology. A stack selects one adapter
+per port.
+
+| Port | Role | Example adapters |
+| --- | --- | --- |
+| Active store | Issues, events, projects, tokens | SQLite, PostgreSQL, DynamoDB |
+| Queue | Hands ingested events to the consumer | In-memory, SQS |
+| Blob store | Raw envelopes (claim-check) | Filesystem, S3 |
+| KV | Counters and flags, such as rate limits | In-memory, DynamoDB |
+| Platform | Where the code runs | Standalone Node process, AWS Lambda |
+
+Every adapter package exports exactly three things:
+
+- `manifest`, which states what the adapter is and which capabilities it offers;
+- `create(config, bindings)`, the runtime factory;
+- `infra`, a declarative descriptor of the cloud resources it needs.
+
+The stack helpers you call in a stack file (for example `dynamoStore()`) come from each package's `/stack` export. See
+[adapters](/docs/adapters) for the current list.
+
+Adapters are verified by shared contract test suites, so swapping one for another does not change behavior.

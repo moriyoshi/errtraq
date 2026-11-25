@@ -1,0 +1,27 @@
+---
+title: Send an event
+description: Point a Sentry SDK at errtraq and see the issue appear.
+---
+
+Use the DSN printed by `errtraq dev` (or produced by [bootstrap](/docs/aws/bootstrap) on AWS). Any Sentry SDK works
+without changes. With the Node.js SDK:
+
+```ts
+import * as Sentry from "@sentry/node";
+
+Sentry.init({ dsn: "http://<public-key>@127.0.0.1:8787/<project-id>" });
+Sentry.captureException(new Error("hello errtraq"));
+await Sentry.flush(2000);
+```
+
+The envelope is staged in the blob store and queued; the consumer then groups it into an issue. Read it back through
+the API with the API token printed at startup (or created by bootstrap):
+
+```sh
+curl -H "Authorization: Bearer <token>" \
+  http://127.0.0.1:8787/api/0/projects/<org>/<project>/issues
+```
+
+Sending the same event ID twice records it once: ingest and processing are idempotent on the event ID.
+
+{/* TODO(docs): add Python and browser SDK snippets, and a worked example of the issue and event API responses. */}

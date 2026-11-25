@@ -1,0 +1,43 @@
+---
+title: Plan and apply
+description: Run Terraform on the generated root.
+---
+
+errtraq generates the Terraform; you run it.
+
+```sh
+cd infra/generated/aws-dynamodb
+terraform init
+terraform plan
+terraform apply
+terraform output
+```
+
+Use your own backend and state handling. You can set one in the stack with `backend`, or configure it outside the
+generated files. Terraform state, plans and provider credentials are your responsibility, and generated state stays
+out of version control.
+
+The outputs you declared (typically `ingest_url` and `api_url`) are the addresses you need for
+[bootstrap](/docs/aws/bootstrap). The ingest URL is the base of your DSN host. Do not include a DSN key in it.
+
+## Credentials
+
+Terraform uses its own AWS provider credentials. The errtraq CLI, for the operator commands that sign requests, uses the
+credential sources below.
+
+## Operator credentials for the CLI
+
+The `bootstrap`, `token` and `project` commands run on your machine and resolve AWS credentials in this order:
+
+1. `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` (plus `AWS_SESSION_TOKEN` for temporary credentials), which take
+   precedence.
+2. Any profile the AWS SDK for JavaScript resolves: `AWS_PROFILE`, shared config and credentials files, SSO sessions
+   (after `aws sso login`), `credential_process` and assume-role profiles.
+
+`AWS_REGION` falls back to the profile's `region`. Credential resolution happens only in the CLI, never in the deployed
+functions, which use their execution roles.
+
+```sh
+export AWS_PROFILE=<your-profile>
+aws sso login   # if the profile uses SSO
+```

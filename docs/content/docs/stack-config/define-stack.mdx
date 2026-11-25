@@ -1,0 +1,52 @@
+---
+title: defineStack reference
+description: Every top-level field of a stack.
+---
+
+```ts
+import { defineStack, output } from "@moriyoshi/errtraq-core";
+import { awsLambda } from "@moriyoshi/errtraq-platform-aws-lambda/stack";
+import { dynamoStore } from "@moriyoshi/errtraq-store-dynamodb/stack";
+// ...
+
+export default defineStack({
+  name: "aws-dynamodb",
+  providers: { aws: { source: "hashicorp/aws", version: ">= 6.32.1, < 7.0", region: "us-east-1" } },
+  platform: awsLambda(),
+  store: dynamoStore(),
+  queue: sqsQueue({ mode: "shared" }),
+  blob: s3Blob(),
+  kv: dynamoKv(),
+  outputs: { ingest_url: output("platform", "ingest_url") },
+});
+```
+
+| Field | Required | Description |
+| --- | --- | --- |
+| `name` | yes | Lowercase letters, digits and single hyphens. Names the build directory (`dist/<name>`) and the generated Terraform (`infra/generated/<name>`). |
+| `platform` | yes | Where the code runs: [`standalone`](/docs/stack-config/platforms) or `awsLambda`. |
+| `store` | yes | Active store adapter: `sqlite`, `postgres` or `dynamoStore`. |
+| `queue` | yes | `memoryQueue` or `sqsQueue({ mode: "shared" or "per-topic" })`. |
+| `blob` | yes | `fsBlob` or `s3Blob`. |
+| `kv` | yes | `memoryKv` or `dynamoKv`. |
+| `archive` | no | Reserved for the planned Iceberg archive (milestone M4); no adapter exists yet. |
+| `providers` | for cloud | Terraform providers: `source`, `version`, optional `region` and `tags`. |
+| `backend` | no | Terraform backend: `{ type, config }`. |
+| `variables` | no | Terraform input variables (see [variables](/docs/stack-config/variables-and-outputs)). |
+| `outputs` | no | Terraform outputs, built with `output(selection, name)`. |
+| `recordMode` | no | `direct` or `grouped`. See [record modes](/docs/concepts/record-modes). |
+| `rateRejection` | no | Per-issue and new-issue limits. See [rate rejection](/docs/concepts/rate-rejection). |
+| `protection` | no | `production` (default) or `disposable`. |
+| `features` | no | `{ notifications?: boolean }`. |
+
+The schema is strict: unknown fields are rejected. Run `errtraq validate --stack <file>` for precise error paths and a
+summary of the resolved bindings.
+
+## Choosing a store
+
+- **SQLite** (`sqlite({ path })`): local and single-process use.
+- **PostgreSQL** (`postgres(...)` from `@moriyoshi/errtraq-store-sql/postgres/stack`): password-secret mode, or RDS IAM
+  mode with `mode: "iam"` and optional `adminSecret`. See [private database](/docs/aws/private-database).
+- **DynamoDB** (`dynamoStore()`): the default for the AWS example stacks.
+
+{/* TODO(docs): per-adapter option tables for sqlite, postgres, dynamoStore, sqsQueue, s3Blob and dynamoKv. */}

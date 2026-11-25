@@ -1,0 +1,39 @@
+---
+title: Platforms
+description: standalone and awsLambda options.
+---
+
+## standalone
+
+Runs everything in one Node.js process.
+
+| Option | Description |
+| --- | --- |
+| `host`, `port` | Listen address. Usually `env("ERRTRAQ_HOST", ...)` and `env("ERRTRAQ_PORT", ...)`. |
+| `tokenDirectory` | Where the dev token is kept. |
+| `rateLimit` | Event items per minute per DSN key. |
+| `roles`, `split`, `http` | Role grouping and which roles expose HTTP. For one process use all four roles, `split: []` and `http: ["ingest", "api"]`. |
+| `publicUrl` | Externally reachable origin, used for the printed DSN. |
+
+## awsLambda
+
+Roles are `ingest`, `api`, `consumer`, `record`, `cron` and `bootstrap`. The defaults are the first four of those minus
+`record`, each as its own function.
+
+| Option | Default | Description |
+| --- | --- | --- |
+| `roles` | ingest, api, consumer, cron | Roles to deploy. Add `bootstrap` for [remote bootstrap](/docs/aws/bootstrap). |
+| `split` | the same four | Roles that get their own function. Roles not listed share one function. |
+| `http` | ingest, api | Roles exposed through a function URL. |
+| `settings` | `{}` | Per-role `memoryMb` (128 to 10240, default 512), `timeoutSec` (1 to 900, default 30), `architecture` (`x86_64` or `arm64`), `urlAuth` (`NONE` or `AWS_IAM`) and `reservedConcurrency`. |
+| `rateLimit` | `60` | Event items per minute per DSN key; `null` disables. |
+| `runtime` | `nodejs22.x` | Lambda runtime. |
+| `vpcSubnetIds`, `vpcSecurityGroupIds` | none | Place functions in an existing VPC. Set both. Accepts literals or `variable()` references. |
+| `artifactBucket` | none | Existing same-region S3 bucket for content-addressed ZIPs, uploaded by Terraform. Without it ZIPs upload directly and the CLI rejects ZIPs above 50 MB. |
+| `bootstrapSecretName` | none | Required with the `bootstrap` role, invalid without it. |
+| `alarmTopicArn` | none | Existing SNS topic notified by function alarms. |
+
+errtraq creates no VPC, subnets, security groups, NAT gateway or endpoints; it only attaches functions to the ones you
+name.
+
+{/* TODO(docs): document cron retry options, the lambda-app alarms, and per-role queue trigger settings. */}

@@ -1,0 +1,36 @@
+---
+title: Installing packages
+description: Install errtraq from GitHub Packages.
+---
+
+errtraq is published to GitHub Packages under the `@moriyoshi` scope. Map the scope to that registry in your project's
+`.npmrc`:
+
+```ini
+@moriyoshi:registry=https://npm.pkg.github.com
+```
+
+GitHub Packages also requires a token with the `read:packages` scope to install. Provide it through your usual
+mechanism, for example an `_authToken` entry for `npm.pkg.github.com` supplied from an environment variable.
+
+Install the CLI, `@moriyoshi/errtraq-core` (a peer dependency of every other errtraq package) and the adapters your
+stack uses:
+
+```sh
+pnpm add @moriyoshi/errtraq-cli @moriyoshi/errtraq-core
+pnpm add @moriyoshi/errtraq-store-dynamodb @moriyoshi/errtraq-queue-sqs \
+  @moriyoshi/errtraq-blob-s3 @moriyoshi/errtraq-kv-dynamodb \
+  @moriyoshi/errtraq-platform-aws-lambda
+```
+
+<Callout type="warn">
+Keep exactly one copy of `@moriyoshi/errtraq-core` in `node_modules`. If the stack file loads a different copy than the
+CLI, the CLI refuses it with an explanatory error.
+</Callout>
+
+The [adapter table](/docs/adapters) lists the package for each adapter.
+
+## Terraform modules
+
+`errtraq infra generate` references the Terraform modules the stack uses. Outside this repository the default
+`--module-source vendor` copies them into the generated output. See [infra generate](/docs/aws/build-and-generate).

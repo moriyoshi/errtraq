@@ -1,0 +1,43 @@
+---
+title: Deploying to AWS
+description: Overview of the AWS stack and the deployment flow.
+---
+
+The AWS stack runs on Lambda with function URLs, SQS for the queue, S3 for raw envelopes and either DynamoDB or
+PostgreSQL (for example RDS, Aurora or RDS Proxy) for the store. The shipped example is `stacks/aws-dynamodb.ts`.
+
+<Callout type="warn">
+The AWS runtime adapters are implemented and have passed a real deployment, but errtraq is pre-release software.
+Test your own configuration in a non-production account first.
+</Callout>
+
+## The flow
+
+<Steps>
+<Step>
+### Write or copy a stack file
+
+See [defineStack](/docs/stack-config/define-stack).
+</Step>
+<Step>
+### Build and generate Terraform
+
+`errtraq build` then `errtraq infra generate`. See [build and generate](/docs/aws/build-and-generate).
+</Step>
+<Step>
+### Plan and apply
+
+Run Terraform yourself. See [plan and apply](/docs/aws/apply).
+</Step>
+<Step>
+### Bootstrap
+
+Create the first organization, project, DSN and API token. See [bootstrap](/docs/aws/bootstrap).
+</Step>
+</Steps>
+
+## Prerequisites
+
+- Terraform and an AWS account you control, with credentials for the Terraform principal.
+- Node.js `^22.18.0` or `>=23.6.0` on the machine that runs the CLI.
+- For a private database, existing VPC subnets and security groups.

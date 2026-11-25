@@ -1,0 +1,46 @@
+---
+title: Private PostgreSQL
+description: Bring your own RDS PostgreSQL with IAM authentication inside a VPC.
+---
+
+The Postgres helper supports RDS IAM authentication:
+
+```ts
+import { postgres } from "@moriyoshi/errtraq-store-sql/postgres/stack";
+
+store: postgres({
+  mode: "iam",
+  host: "<rds-or-proxy-endpoint>",
+  port: 5432,
+  database: "<database>",
+  user: "<iam-database-user>",
+  region: "<region>",
+  resourceId: "<db-, cluster- or prx- resource id>",
+  adminSecret: variable("ADMIN_SECRET_ARN"), // optional
+}),
+```
+
+- Use the real RDS, Aurora or RDS Proxy endpoint as `host`, and the resource ID, not the display name.
+- A fresh 15-minute token is generated for each new connection. RDS Proxy is recommended to limit connection fan-in.
+- TLS verifies the certificate and hostname. The Lambda runtime CA bundle is the default; set `sslRootCert` for another
+  bundle.
+- IAM mode uses **one database user** for all store capabilities. The read, write and delete grants each allow only
+  `rds-db:connect` for that user, so SQL privileges, not IAM, control what each function can do. Any function holding the
+  connect grant inherits the privileges of that user. `errtraq validate` prints this scope.
+
+## adminSecret
+
+The database user must exist with the `rds_iam` role before IAM logins work. Pass `adminSecret` (the ARN of a secret
+holding `username` and `password`, such as the RDS-managed master secret) and the bootstrap function creates the user,
+grants `rds_iam`, connect and schema privileges, and then runs migrations as the IAM user, which therefore owns the
+tables. Only the bootstrap function receives the secret. The administrator must be allowed to create roles.
+
+## Networking
+
+Set `vpcSubnetIds` and `vpcSecurityGroupIds` together on `awsLambda`. errtraq creates no VPC, subnets, security groups,
+NAT gateway or endpoints. Functions attached to a VPC need a NAT or suitable VPC endpoints, DNS, routes and
+security-group rules for their HTTPS calls to SQS, S3, DynamoDB and Secrets Manager. Gateway endpoints (S3, DynamoDB)
+and interface endpoints (SQS, Secrets Manager) have different routing and DNS requirements. Execution roles receive EC2
+network-interface permissions on `*`, as Lambda requires. See the AWS documentation on Lambda VPC configuration.
+
+Test the actual IAM, TLS and network behavior in a real account before relying on it.
