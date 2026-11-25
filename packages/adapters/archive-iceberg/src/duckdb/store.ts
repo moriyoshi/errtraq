@@ -25,10 +25,13 @@ import type {
 import {
   appendStatement,
   batchEventIdsStatement,
+  deleteOlderThanStatement,
+  deleteProjectStatement,
   ensureTableStatements,
   getEventStatement,
   hasBatchStatement,
   queryStatement,
+  type Statement,
   snapshotsStatement,
   tableExistsStatement,
 } from "./sql.js";
@@ -356,6 +359,29 @@ export class DuckDbArchiveStore implements ArchiveStore {
       }
       return lookup();
     });
+  }
+
+  /** DELETE under commit-conflict retry; the statement's single row carries the affected count. */
+  private deleteRows(statement: Statement): Promise<{ rowsDeleted: number }> {
+    return this.exclusive(async (session) => {
+      const rows = await this.withRetry(() =>
+        session.all(statement.sql, statement.params),
+      );
+      return { rowsDeleted: Number(rows[0]?.Count ?? 0) };
+    });
+  }
+
+  deleteOlderThan(
+    projectId: ProjectId,
+    cutoff: Timestamp,
+  ): Promise<{ rowsDeleted: number }> {
+    return this.deleteRows(
+      deleteOlderThanStatement(this.namespace, projectId, cutoff),
+    );
+  }
+
+  deleteProject(projectId: ProjectId): Promise<{ rowsDeleted: number }> {
+    return this.deleteRows(deleteProjectStatement(this.namespace, projectId));
   }
 
   // TODO(M4l): row-level erasure (deletion vectors), physical erasure and snapshot expiry.

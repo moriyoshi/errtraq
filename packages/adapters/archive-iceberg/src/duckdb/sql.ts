@@ -232,3 +232,29 @@ export function getEventStatement(
   }
   return { sql: `${sql} LIMIT 1`, params };
 }
+
+/**
+ * Housekeeping retention: one project's rows strictly older than the cutoff. DuckDB answers a
+ * DELETE with one row holding the affected count (`Count`).
+ */
+export function deleteOlderThanStatement(
+  namespace: string,
+  projectId: ProjectId,
+  cutoff: Timestamp,
+): Statement {
+  return {
+    sql: `DELETE FROM ${tableRef(namespace)} WHERE project_id = ? AND received_at < CAST(? AS TIMESTAMPTZ)`,
+    params: [projectId, cutoff],
+  };
+}
+
+/** Housekeeping project deletion: every row of one project. */
+export function deleteProjectStatement(
+  namespace: string,
+  projectId: ProjectId,
+): Statement {
+  return {
+    sql: `DELETE FROM ${tableRef(namespace)} WHERE project_id = ?`,
+    params: [projectId],
+  };
+}

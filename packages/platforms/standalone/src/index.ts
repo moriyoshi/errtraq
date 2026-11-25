@@ -312,6 +312,19 @@ export function create({
             store: bindings.store,
             blobs: bindings.blob,
             archived: !!bindings.archive,
+            housekeeping:
+              bindings.archive && archival
+                ? {
+                    store: bindings.store,
+                    blobs: bindings.blob,
+                    archive: bindings.archive,
+                    worker: archival,
+                    ...(cfg.archiveRetentionDays
+                      ? { archiveRetentionDays: cfg.archiveRetentionDays }
+                      : {}),
+                    // TODO(M4l): snapshotExpiryDays once the engine has a verified expiry path.
+                  }
+                : undefined,
           },
         );
       const scheduled = jobs.filter(

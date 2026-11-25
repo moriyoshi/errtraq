@@ -434,4 +434,28 @@ export class MemoryArchiveStore implements ArchiveStore {
   ) {
     /* The fake retains no historical snapshots. */
   }
+  private removeRows(drop: (row: StoredEvent) => boolean): number {
+    let rowsDeleted = 0;
+    for (const batch of this.batches.values()) {
+      const kept = batch.rows.filter((row) => !drop(row));
+      rowsDeleted += batch.rows.length - kept.length;
+      batch.rows = kept;
+    }
+    return rowsDeleted;
+  }
+  async deleteOlderThan(
+    projectId: Parameters<ArchiveStore["deleteOlderThan"]>[0],
+    cutoff: Parameters<ArchiveStore["deleteOlderThan"]>[1],
+  ) {
+    return {
+      rowsDeleted: this.removeRows(
+        (row) => row.projectId === projectId && row.receivedAt < cutoff,
+      ),
+    };
+  }
+  async deleteProject(projectId: Parameters<ArchiveStore["deleteProject"]>[0]) {
+    return {
+      rowsDeleted: this.removeRows((row) => row.projectId === projectId),
+    };
+  }
 }

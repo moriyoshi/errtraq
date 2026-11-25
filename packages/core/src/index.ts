@@ -1,4 +1,5 @@
 export * from "./archival.js";
+export * from "./archive-housekeeping.js";
 export * from "./archive-planner.js";
 export * from "./archive-rows.js";
 export * from "./artifact-bundles.js";

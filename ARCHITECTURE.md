@@ -539,7 +539,7 @@ interface ArchiveState {
 | 2 COMMIT | CAS `batch = {state:'committing', id, dayRange, maxReceivedAt, rowCount}` (the fence: a stale holder fails here, before it can append), then `archive.append({batchId, dayRange, rows})` — one Iceberg snapshot, rows tagged `archive_batch = batchId`, split by day partition. Catalog 409s (concurrent commits from other projects) are retried inside the adapter. There is no write-ahead object: the rows are in memory and still in the active store. | State `committing`: retry calls `archive.hasBatch(batchId, dayRange)`; if true go to MARK; if false the batch never committed and nothing durable existed, so the worker clears `batch` (CAS) and rescans, rebuilding the batch under the same `batchId`. This is what makes the commit exactly-once. |
 | 3 MARK | CAS `batch.state = 'committed'`, `archivedThrough = max(old, maxReceivedAt)`. | Covered by the `hasBatch` probe above. |
 | 4 DELETE | The id list comes from the archive itself: `archive.batchEventIds(projectId, batchId, dayRange)` (partition-pruned, filtered on `archive_batch`), never a rescan of the active store; `events.deleteBatch` in store-sized chunks (DynamoDB 25, D1 ≤100 bound params, pg/mysql ~1000); delete overflow blobs (their keys come from a small nonce-keyed manifest named by `batch.overflowKey`, written before the COMMIT CAS). Idempotent. | State `committed`: retry redoes the reads and deletes. Readers see duplicates meanwhile, removed by eventId dedupe. |
-| 5 CLEAR | CAS `batch = undefined`, `seq += 1`; delete the overflow manifest. Next batch. | Manifest leaks (keys only) → swept by housekeeping (TODO M4h). |
+| 5 CLEAR | CAS `batch = undefined`, `seq += 1`; delete the overflow manifest. Next batch. | Manifest leaks (keys only) → swept by archive housekeeping (M4h, under the project lease). |
 
 The committed snapshot, rows tagged with `archive_batch`, is the record the DELETE step reads, so the
 archive is the write-ahead record. Cost: one archive read per batch. Staging the batch as an object
@@ -591,10 +591,10 @@ a redelivered message, or a lease takeover all converge on the same path.
   loses data — so the planner alarms on lag.
 - Later optimization for Postgres/MySQL: day-partitioned event table and `DROP PARTITION`.
 
-**Archive-side housekeeping** (separate cron job, catalog-dependent)
+**Archive-side housekeeping** (the `retention` cron job when an archive is selected; catalog-dependent; every mutation runs under the project's archive lease, after any in-flight batch was driven to completion)
 
-- Hard retention: `DELETE WHERE received_at < now − archiveRetention` → whole-partition, metadata-only.
-- Project deletion: `DELETE WHERE project_id = ?` drops whole files (single-project files).
+- Hard retention: `archive.deleteOlderThan(projectId, now − archiveRetentionDays)` (`received_at < cutoff`; deletion vectors on v3, so the bytes remain until compaction and snapshot expiry). `archiveRetentionDays` is a stack-wide option that must exceed every project's `retentionDays`.
+- Project deletion: `archive.deleteProject(projectId)` (`purgeProjectArchive`, called by a future project-delete flow; no such flow exists yet).
 - End-user erasure requests: row-level, via deletion vectors — see next section.
 - Small-file compaction (must keep one project per file or sort by `project_id`), snapshot
   expiry and orphan-file cleanup: automatic on S3 Tables and R2 Data Catalog; run via the engine for Lakekeeper.

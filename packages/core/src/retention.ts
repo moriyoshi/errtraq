@@ -35,8 +35,7 @@ export const ownsOverflowBlob = (projectId: ProjectId, key: string) =>
  *
  * This sweep runs only for stacks without an archive. With an archive selected, the archival
  * worker deletes events after commit and owns the overflow blobs (see archival.ts); the `retention`
- * cron job then leaves events alone.
- * TODO(M4h): hard-retention hooks (archive-side retention) for stacks with an archive.
+ * cron job then leaves events alone and runs archive housekeeping instead (archive-housekeeping.ts).
  * TODO(M4j): hand blob keys to the subject-erasure hook.
  */
 export async function deleteExpiredEvents(
