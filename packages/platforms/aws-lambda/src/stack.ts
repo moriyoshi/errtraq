@@ -11,6 +11,15 @@ import {
   BOOTSTRAP_SECRET_NAME,
 } from "./bootstrap-constants.js";
 
+/** Lambda Node.js runtimes the builder and the lambda-app module are verified against. */
+export const LAMBDA_RUNTIMES = ["nodejs22.x", "nodejs26.x"] as const;
+export type LambdaRuntime = (typeof LAMBDA_RUNTIMES)[number];
+export const DEFAULT_LAMBDA_RUNTIME: LambdaRuntime = "nodejs26.x";
+/** esbuild target matching a Lambda runtime's Node major. */
+export function lambdaEsbuildTarget(runtime: LambdaRuntime): string {
+  return runtime === "nodejs22.x" ? "node22" : "node26";
+}
+
 const role = z.enum([
   "ingest",
   "api",
@@ -38,7 +47,11 @@ export const configSchema = z
     vpcSecurityGroupIds: configReference(
       z.array(z.string().regex(/^sg-[a-f0-9]{8}(?:[a-f0-9]{9})?$/)).max(5),
     ).default([]),
-    runtime: z.string().min(1).default("nodejs22.x"),
+    runtime: z
+      .enum(LAMBDA_RUNTIMES, {
+        error: `runtime must be one of ${LAMBDA_RUNTIMES.join(", ")}`,
+      })
+      .default(DEFAULT_LAMBDA_RUNTIME),
     handler: z.string().min(1).default("index.handler"),
     rateLimit: z.number().int().positive().safe().nullable().default(60),
     artifactBucket: configReference(
@@ -158,7 +171,7 @@ export const infra: InfraDescriptor<Config> = {
       : {}),
     vpc_subnet_ids: config.vpcSubnetIds ?? [],
     vpc_security_group_ids: config.vpcSecurityGroupIds ?? [],
-    runtime: config.runtime ?? "nodejs22.x",
+    runtime: config.runtime ?? DEFAULT_LAMBDA_RUNTIME,
     handler: config.handler ?? "index.handler",
     functions: Object.fromEntries(
       deployment.functions.map((fn) => [

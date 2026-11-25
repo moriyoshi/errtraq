@@ -157,14 +157,14 @@ M2c supplies a build manifest keyed by physical function id. Core exports its en
 interface BuildArtifact {
   path: string;        // ZIP file for Lambda
   handler: string;     // Lambda currently requires index.handler
-  runtime: string;     // Lambda module currently requires nodejs22.x
+  runtime: string;     // Lambda module accepts nodejs26.x (default) or nodejs22.x
   contentHash: string; // base64 SHA-256 of the ZIP bytes
 }
 ```
 
 `artifact(functionId)` references that entry; the current Lambda descriptor's `artifact` input
 is the `path` string. The HCL accepts handler and runtime inputs and computes
-`filebase64sha256(path)` itself; the current builder requires `index.handler` and `nodejs22.x`
+`filebase64sha256(path)` itself; the current builder requires `index.handler` and `nodejs26.x` (default) or `nodejs22.x`
 and the CLI checks that the manifest agrees. A non-sensitive stack
 variable may declare a type-checked literal `default`. M2b emits those defaults in
 `terraform.tfvars.json` (JSON defaults encoded as JSON text because their Terraform type is

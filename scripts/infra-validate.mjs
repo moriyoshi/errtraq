@@ -73,7 +73,21 @@ try {
       withFileTypes: true,
     }).filter((entry) => entry.isDirectory())) {
       const name = `${provider.name}/${component.name}`;
-      for (const version of ["6.32.1", "6.73.0"]) {
+      // A module may raise its provider floor (lambda-app needs a provider whose runtime enum
+      // includes nodejs26.x); the tested versions are the pinned ones at or above that floor.
+      const floor =
+        readFileSync(
+          resolve(providerRoot, component.name, "versions.tf"),
+          "utf8",
+        ).match(/version = ">= (\d+\.\d+\.\d+), < 7\.0"/)?.[1] ?? "6.32.1";
+      const atLeastFloor = (version) => {
+        const a = version.split(".").map(Number);
+        const b = floor.split(".").map(Number);
+        for (let i = 0; i < 3; i += 1)
+          if (a[i] !== b[i]) return (a[i] ?? 0) > (b[i] ?? 0);
+        return true;
+      };
+      for (const version of ["6.32.1", "6.73.0"].filter(atLeastFloor)) {
         const target = resolve(
           temporary,
           version,
@@ -86,14 +100,12 @@ try {
         });
         const versions = resolve(target, "versions.tf");
         const source = readFileSync(versions, "utf8");
-        if (!source.includes('version = ">= 6.32.1, < 7.0"'))
+        const constraint = `version = ">= ${floor}, < 7.0"`;
+        if (!source.includes(constraint))
           throw new Error(`Unexpected provider constraint in ${name}`);
         writeFileSync(
           versions,
-          source.replace(
-            'version = ">= 6.32.1, < 7.0"',
-            `version = "= ${version}"`,
-          ),
+          source.replace(constraint, `version = "= ${version}"`),
         );
         console.log(`\nValidating ${name} with AWS provider ${version}`);
         const platform = `${process.platform === "win32" ? "windows" : process.platform}_${process.arch === "x64" ? "amd64" : process.arch}`;
@@ -198,7 +210,15 @@ try {
   }
   if (process.env.UPDATE_INFRA_SHAPES === "1")
     writeFileSync(snapshotPath, `${JSON.stringify(observed, null, 2)}\n`);
-  for (const version of ["6.32.1", "6.73.0"]) {
+  // Every generated root contains the lambda-app module, so the minimum provider version tested
+  // here is the lambda-app floor.
+  const lambdaFloor = readFileSync(
+    resolve(root, "aws/lambda-app/versions.tf"),
+    "utf8",
+  ).match(/version = ">= (\d+\.\d+\.\d+), < 7\.0"/)?.[1];
+  for (const version of ["6.32.1", "6.73.0"].filter(
+    (candidate) => lambdaFloor !== undefined && candidate >= lambdaFloor,
+  )) {
     for (const name of Object.keys(fixtures)) {
       const target = prepareRoot(
         resolve(temporary, `roots-${version}`),

@@ -23,6 +23,7 @@ import {
   validateModuleBase,
   vendorModuleDirectory,
 } from "@moriyoshi/errtraq-infra-gen";
+import { DEFAULT_LAMBDA_RUNTIME } from "@moriyoshi/errtraq-platform-aws-lambda/stack";
 import type { BuildManifest } from "./build.js";
 import { terraformModulesPackage, vendorModules } from "./modules.js";
 
@@ -283,7 +284,7 @@ export async function generateInfra(
     );
     if (
       artifact.handler !== (config.handler ?? "index.handler") ||
-      artifact.runtime !== (config.runtime ?? "nodejs22.x")
+      artifact.runtime !== (config.runtime ?? DEFAULT_LAMBDA_RUNTIME)
     )
       throw new Error(
         `Build artifact handler or runtime mismatch for ${fn.id}`,

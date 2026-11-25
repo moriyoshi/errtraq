@@ -181,7 +181,7 @@ export async function runStandalone({
           .text,
       ).Configuration;
       assert.deepEqual(Object.keys(fn.Environment.Variables), ["EXAMPLE"]);
-      assert.equal(fn.Runtime, "nodejs22.x");
+      assert.equal(fn.Runtime, "nodejs26.x");
       assert.equal(fn.Handler, "index.handler");
       assert.equal(fn.MemorySize, 256);
       assert.equal(fn.Timeout, 30);

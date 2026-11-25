@@ -27,7 +27,7 @@ Roles are `ingest`, `api`, `consumer`, `record`, `cron` and `bootstrap`. The def
 | `http` | ingest, api | Roles exposed through a function URL. |
 | `settings` | `{}` | Per-role `memoryMb` (128 to 10240, default 512), `timeoutSec` (1 to 900, default 30), `architecture` (`x86_64` or `arm64`), `urlAuth` (`NONE` or `AWS_IAM`) and `reservedConcurrency`. |
 | `rateLimit` | `60` | Event items per minute per DSN key; `null` disables. |
-| `runtime` | `nodejs22.x` | Lambda runtime. |
+| `runtime` | `nodejs26.x` | Lambda runtime: `nodejs26.x` or `nodejs22.x`. Keep `nodejs22.x` only for existing deployments (22 is deprecated 2027-05-30, 26 on 2029-04-30). Bundles target the matching Node major. |
 | `vpcSubnetIds`, `vpcSecurityGroupIds` | none | Place functions in an existing VPC. Set both. Accepts literals or `variable()` references. |
 | `artifactBucket` | none | Existing same-region S3 bucket for content-addressed ZIPs, uploaded by Terraform. Without it ZIPs upload directly and the CLI rejects ZIPs above 50 MB. |
 | `bootstrapSecretName` | none | Required with the `bootstrap` role, invalid without it. |

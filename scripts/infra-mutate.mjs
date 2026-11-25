@@ -60,11 +60,12 @@ function prepare(component, label) {
   cpSync(resolve(root, component), target, { recursive: true });
   const versions = resolve(target, "versions.tf");
   const source = readFileSync(versions, "utf8");
-  if (!source.includes('version = ">= 6.32.1, < 7.0"'))
+  const constraint = /version = ">= \d+\.\d+\.\d+, < 7\.0"/;
+  if (!constraint.test(source))
     throw new Error(`Unexpected provider constraint for ${component}`);
   writeFileSync(
     versions,
-    source.replace('version = ">= 6.32.1, < 7.0"', `version = "= ${version}"`),
+    source.replace(constraint, `version = "= ${version}"`),
   );
   const init = terraform(
     [

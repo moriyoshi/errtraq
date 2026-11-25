@@ -66,7 +66,7 @@ run "functions_triggers_and_urls" {
       record = { function_id = "shared", resource = "arn:aws:sqs:us-east-1:000000000000:record.fifo", topics = ["record"], batch_size = 10, visibility_timeout_sec = 180 }
     }
     cron_triggers = { retention = { function_id = "worker", schedule = "0 * * * *", retry_attempts = 4, max_event_age_seconds = 3600, dlq_arn = "arn:aws:sqs:us-east-1:000000000000:cron-dlq" } }
-    runtime       = "nodejs20.x"
+    runtime       = "nodejs22.x"
     handler       = "app.handle"
   }
   assert {
@@ -102,7 +102,7 @@ run "functions_triggers_and_urls" {
     error_message = "The logging policy must fit the 1024-character sizing budget."
   }
   assert {
-    condition     = aws_lambda_function.function["shared"].runtime == "nodejs20.x" && aws_lambda_function.function["shared"].handler == "app.handle" && aws_lambda_function.function["shared"].reserved_concurrent_executions == 12 && aws_lambda_function_url.http["shared"].authorization_type == "NONE" && toset(aws_lambda_function_url.http["shared"].cors[0].allow_origins) == toset(["*"]) && contains(aws_lambda_function_url.http["shared"].cors[0].allow_headers, "x-sentry-auth")
+    condition     = aws_lambda_function.function["shared"].runtime == "nodejs22.x" && aws_lambda_function.function["shared"].handler == "app.handle" && aws_lambda_function.function["shared"].reserved_concurrent_executions == 12 && aws_lambda_function_url.http["shared"].authorization_type == "NONE" && toset(aws_lambda_function_url.http["shared"].cors[0].allow_origins) == toset(["*"]) && contains(aws_lambda_function_url.http["shared"].cors[0].allow_headers, "x-sentry-auth")
     error_message = "Runtime, handler, concurrency, public auth and ingest CORS must match inputs."
   }
   assert {
@@ -388,4 +388,32 @@ run "bootstrap_has_no_triggers" {
     cron_triggers         = { retention = { function_id = "bootstrap", schedule = "0 * * * *" } }
   }
   expect_failures = [var.cron_triggers]
+}
+
+run "runtime_defaults_to_nodejs26_and_rejects_unsupported" {
+  command = plan
+  variables {
+    name           = "example"
+    tags           = {}
+    functions      = { ingest = { roles = ["ingest"], http = [], artifact = "tests/artifact.txt", memory_mb = 512, timeout_sec = 30, architecture = "arm64", environment = {}, secrets = {}, secret_reads = [], policies = [] } }
+    queue_triggers = {}
+    cron_triggers  = {}
+  }
+  assert {
+    condition     = aws_lambda_function.function["ingest"].runtime == "nodejs26.x"
+    error_message = "runtime must default to nodejs26.x."
+  }
+}
+
+run "runtime_rejects_unsupported" {
+  command = plan
+  variables {
+    name           = "example"
+    tags           = {}
+    runtime        = "nodejs20.x"
+    functions      = { ingest = { roles = ["ingest"], http = [], artifact = "tests/artifact.txt", memory_mb = 512, timeout_sec = 30, architecture = "arm64", environment = {}, secrets = {}, secret_reads = [], policies = [] } }
+    queue_triggers = {}
+    cron_triggers  = {}
+  }
+  expect_failures = [var.runtime]
 }

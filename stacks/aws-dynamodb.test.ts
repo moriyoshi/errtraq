@@ -638,7 +638,7 @@ describe("AWS descriptor stacks", () => {
     const v = {
       ...copyStack(shared),
       platform: awsLambda({
-        runtime: "nodejs20.x",
+        runtime: "nodejs22.x",
         handler: "app.handle",
         settings: { ingest: { urlAuth: "AWS_IAM", reservedConcurrency: 5 } },
       }),
@@ -646,7 +646,7 @@ describe("AWS descriptor stacks", () => {
     expect(validateStack(v)).toEqual([]);
     const view = deriveDeployment(v);
     expect(v.platform.infra.inputs(v.platform.config, view)).toMatchObject({
-      runtime: "nodejs20.x",
+      runtime: "nodejs22.x",
       handler: "app.handle",
       functions: {
         ingest: { auth_type: "AWS_IAM", reserved_concurrency: 5 },

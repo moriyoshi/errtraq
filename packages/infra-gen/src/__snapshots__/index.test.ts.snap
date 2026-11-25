@@ -199,7 +199,7 @@ exports[`Terraform generator > renders the full per-topic stack deterministicall
           "visibility_timeout_sec": 180
         }
       },
-      "runtime": "nodejs22.x",
+      "runtime": "nodejs26.x",
       "source": "../../modules/aws/lambda-app",
       "tags": {
         "app": "errtraq"
@@ -483,7 +483,7 @@ exports[`Terraform generator > renders the full shared stack deterministically 1
           "visibility_timeout_sec": 180
         }
       },
-      "runtime": "nodejs22.x",
+      "runtime": "nodejs26.x",
       "source": "../../modules/aws/lambda-app",
       "tags": {
         "app": "errtraq"

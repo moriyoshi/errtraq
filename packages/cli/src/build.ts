@@ -21,6 +21,12 @@ import {
   type StackConfig,
   selections,
 } from "@moriyoshi/errtraq-core";
+import {
+  DEFAULT_LAMBDA_RUNTIME,
+  LAMBDA_RUNTIMES,
+  type LambdaRuntime,
+  lambdaEsbuildTarget,
+} from "@moriyoshi/errtraq-platform-aws-lambda/stack";
 import { build } from "esbuild";
 import { strToU8, zipSync } from "fflate";
 import { isErrtraqWorkspace, safeDirectory } from "./infra.js";
@@ -64,10 +70,12 @@ export async function buildStack(
     };
     if (
       (config.handler ?? "index.handler") !== "index.handler" ||
-      (config.runtime ?? "nodejs22.x") !== "nodejs22.x"
+      !(LAMBDA_RUNTIMES as readonly string[]).includes(
+        config.runtime ?? DEFAULT_LAMBDA_RUNTIME,
+      )
     )
       throw new Error(
-        "Lambda build requires handler index.handler and runtime nodejs22.x",
+        `Lambda build requires handler index.handler and runtime ${LAMBDA_RUNTIMES.join(" or ")}`,
       );
   }
   output = await safeDirectory(repo, output);
@@ -187,6 +195,13 @@ for(const signal of ["SIGTERM","SIGINT"]) process.on(signal,()=>{if(stopping){if
       throw new Error(
         `Build is not supported for platform ${stack.platform.manifest.id}`,
       );
+    const esbuildTarget =
+      stack.platform.manifest.id === "aws-lambda"
+        ? lambdaEsbuildTarget(
+            ((stack.platform.config as { runtime?: string }).runtime ??
+              DEFAULT_LAMBDA_RUNTIME) as LambdaRuntime,
+          )
+        : "node22";
     const result = await build({
       stdin: {
         contents: entry,
@@ -202,7 +217,7 @@ for(const signal of ["SIGTERM","SIGINT"]) process.on(signal,()=>{if(stopping){if
       banner: {
         js: 'import{createRequire as __errtraqCreateRequire}from"node:module";const require=__errtraqCreateRequire(import.meta.url);',
       },
-      target: "node22",
+      target: esbuildTarget,
       minify: stack.platform.manifest.id === "aws-lambda",
       keepNames: true,
       conditions,
@@ -249,7 +264,7 @@ for(const signal of ["SIGTERM","SIGINT"]) process.on(signal,()=>{if(stopping){if
       manifest.artifacts[fn.id] = {
         path: relative(repo, artifactPath).split(sep).join("/"),
         handler: platformConfig.handler ?? "index.handler",
-        runtime: platformConfig.runtime ?? "nodejs22.x",
+        runtime: platformConfig.runtime ?? DEFAULT_LAMBDA_RUNTIME,
         contentHash: createHash("sha256").update(bytes).digest("base64"),
       };
       await writeFile(

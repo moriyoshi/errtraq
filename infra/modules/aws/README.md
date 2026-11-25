@@ -2,8 +2,8 @@
 
 These modules are declarative infrastructure, not implemented AWS runtime adapters. Lambda
 artifacts are ZIP files; `filename` is resolved relative to the generated Terraform root.
-`runtime` and `handler` default to `nodejs22.x` and `index.handler`, and the builder must match
-them. Direct Lambda ZIP uploads have a size limit; an S3 deployment path is M3 work.
+`runtime` and `handler` default to `nodejs26.x` and `index.handler`, and the builder must match
+them. The module requires AWS provider 6.73.0 or newer (6.32.1 rejects `nodejs26.x` in its runtime enum). `runtime` accepts exactly `nodejs26.x` and `nodejs22.x` (kept for existing deployments). Direct Lambda ZIP uploads have a size limit; an S3 deployment path is M3 work.
 
 Each HTTP function explicitly selects `NONE` or `AWS_IAM` authorization. The default is `NONE`
 for both ingest and API: the URL is public, while errtraq checks DSN keys or API bearer tokens.

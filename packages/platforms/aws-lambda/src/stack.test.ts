@@ -1,8 +1,25 @@
 import { resolveStack, validateStack, variable } from "@moriyoshi/errtraq-core";
 import { expect, it } from "vitest";
 import shared from "../../../../stacks/aws-dynamodb.js";
-import { awsLambda } from "./stack.js";
+import { awsLambda, lambdaEsbuildTarget } from "./stack.js";
 
+it("defaults to nodejs26.x, keeps nodejs22.x selectable and rejects other runtimes", () => {
+  const view = { functions: [], triggers: [] } as never;
+  expect(awsLambda().config).toMatchObject({ runtime: "nodejs26.x" });
+  const defaulted = awsLambda();
+  expect(defaulted.infra.inputs(defaulted.config, view)).toMatchObject({
+    runtime: "nodejs26.x",
+  });
+  expect(awsLambda({ runtime: "nodejs22.x" }).config).toMatchObject({
+    runtime: "nodejs22.x",
+  });
+  for (const bad of ["nodejs20.x", "nodejs24.x", "python3.13", ""])
+    expect(() => awsLambda({ runtime: bad as never })).toThrow(
+      /nodejs22\.x, nodejs26\.x/,
+    );
+  expect(lambdaEsbuildTarget("nodejs22.x")).toBe("node22");
+  expect(lambdaEsbuildTarget("nodejs26.x")).toBe("node26");
+});
 it("requires subnet and security group IDs together", () => {
   expect(() => awsLambda({ vpcSubnetIds: ["subnet-12345678"] })).toThrow();
   expect(() => awsLambda({ vpcSecurityGroupIds: ["sg-12345678"] })).toThrow();

@@ -505,7 +505,7 @@ try {
   const vpcProbe = "m3f2-vpc-probe";
   const probeBody = {
     FunctionName: vpcProbe,
-    Runtime: "nodejs22.x",
+    Runtime: "nodejs26.x",
     Role: `arn:aws:iam::${account}:role/test`,
     Handler: "index.handler",
     Code: { ZipFile: "UEsFBgAAAAAAAAAAAAAAAAAAAAAAAA==" },

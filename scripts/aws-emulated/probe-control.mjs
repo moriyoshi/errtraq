@@ -57,7 +57,7 @@ export async function probeControl(endpoint) {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           FunctionName: name,
-          Runtime: "nodejs22.x",
+          Runtime: "nodejs26.x",
           Role: roleArn,
           Handler: "index.handler",
           Code: { ZipFile: "UEsFBgAAAAAAAAAAAAAAAAAAAAAAAA==" },

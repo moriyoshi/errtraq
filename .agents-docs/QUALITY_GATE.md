@@ -151,7 +151,7 @@ pnpm infra:mutate
 This checks module formatting, initializes each module in an ignored temporary directory with a
 plugin cache under `.agents-workspace/tmp`, validates it, and runs Terraform mock-provider tests
 without credentials. AWS provider versions 6.32.1 and 6.73.0 are pinned for the minimum and
-recorded latest-tested runs; any deprecation warning fails the check. On a cache hit, init uses
+recorded latest-tested runs (the `lambda-app` module and the generated roots, which contain it, need at least 6.73.0 because 6.32.1 rejects `nodejs26.x`, so they run on 6.73.0 only); any deprecation warning fails the check. On a cache hit, init uses
 the cache as a filesystem mirror and does not contact the registry. A cache miss downloads the
 pinned version. Mock output values are reduced to shapes and compared with the committed
 `infra/modules/aws/output-shapes.json`; the default test compares the snapshot with descriptor

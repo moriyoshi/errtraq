@@ -130,10 +130,10 @@ variable "cron_triggers" {
 variable "runtime" {
   type        = string
   description = "Lambda runtime compatible with the built handler."
-  default     = "nodejs22.x"
+  default     = "nodejs26.x"
   validation {
-    condition     = can(regex("^[a-zA-Z0-9.]+$", var.runtime))
-    error_message = "runtime must be a Lambda runtime identifier."
+    condition     = contains(["nodejs22.x", "nodejs26.x"], var.runtime)
+    error_message = "runtime must be nodejs22.x or nodejs26.x."
   }
 }
 variable "handler" {

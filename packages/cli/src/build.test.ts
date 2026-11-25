@@ -296,6 +296,31 @@ describe("built stacks", () => {
       expect(loaded.stdout.trim()).toBe("function");
     }
   }, 60000);
+  it("builds nodejs26.x by default and nodejs22.x on request with matching esbuild targets", async () => {
+    const stackFile = resolve(repo, "stacks/aws-dynamodb.ts");
+    const defaulted = join(temp, "runtime-default");
+    const manifest = await buildStack(shared, repo, defaulted, stackFile);
+    for (const artifact of Object.values(manifest.artifacts))
+      expect(artifact.runtime).toBe("nodejs26.x");
+    const legacy = join(temp, "runtime-22");
+    const legacyManifest = await buildStack(
+      resolveStack({
+        ...Object.fromEntries(Object.entries(shared)),
+        platform: {
+          ...shared.platform,
+          config: {
+            ...(shared.platform.config as object),
+            runtime: "nodejs22.x",
+          },
+        },
+      }),
+      repo,
+      legacy,
+      stackFile,
+    );
+    for (const artifact of Object.values(legacyManifest.artifacts))
+      expect(artifact.runtime).toBe("nodejs22.x");
+  }, 60000);
   it("carries disabled rate-rejection settings into generated Lambda entries", async () => {
     const stack = resolveStack({
       ...Object.fromEntries(Object.entries(shared)),
