@@ -470,12 +470,6 @@ importers:
       fflate:
         specifier: 0.8.2
         version: 0.8.2
-      hyparquet:
-        specifier: 1.32.0
-        version: 1.32.0
-      hyparquet-writer:
-        specifier: 0.18.0
-        version: 0.18.0
       zod:
         specifier: 4.6.7
         version: 4.6.7
@@ -2651,12 +2645,6 @@ packages:
 
   html-void-elements@3.0.0:
     resolution: {integrity: sha512-bEqo66MRXsUGxWHV5IP0PUiAWwoEjba4VCzg0LjFJBpchPaTfyfCKTG6bc5F8ucKec3q5y6qOdGyYTSBEvhCrg==}
-
-  hyparquet-writer@0.18.0:
-    resolution: {integrity: sha512-1vDuEneasjp2yuk/OnLqli5aArzHQw8NYVbJD7ytpHZ3outmJaHHRcNbA7BiiFxonWGhwgPPWnVSsREv6LxE4A==}
-
-  hyparquet@1.32.0:
-    resolution: {integrity: sha512-SpkvdfgQjcdCJA+MTzo0WSreLLy/aLRYs3xetk1SsuFvq8vF+J/97OaRnZhf+p5Nx3J27i9FhSC0bJ5eQZG/7Q==}
 
   inline-style-parser@0.2.7:
     resolution: {integrity: sha512-Nb2ctOyNR8DqQoR0OwRG95uNWIC0C1lCgf5Naz5H6Ji72KZ8OcFZLz2P5sNgwlyoJ8Yif11oMuYs5pBQa86csA==}
@@ -5351,12 +5339,6 @@ snapshots:
   hono@4.13.19: {}
 
   html-void-elements@3.0.0: {}
-
-  hyparquet-writer@0.18.0:
-    dependencies:
-      hyparquet: 1.32.0
-
-  hyparquet@1.32.0: {}
 
   inline-style-parser@0.2.7: {}
 

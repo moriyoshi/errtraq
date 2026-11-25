@@ -1,4 +1,3 @@
-import { encodeStagedBatch } from "@moriyoshi/errtraq-core";
 import {
   activeStoreContract,
   archiveStoreContract,
@@ -38,14 +37,4 @@ queueContract(() => new MemoryQueue(clock), {
 });
 archiveStoreContract(() => new MemoryArchiveStore(), {
   rowDelete: "deletion-vector",
-  stage: async (store, key, events, batchId) => {
-    if (!(store instanceof MemoryArchiveStore))
-      throw new Error("Expected memory archive");
-    await store.blobs.put(key, encodeStagedBatch(batchId, events).bytes);
-  },
-  stageUnreadable: async (store, key) => {
-    if (!(store instanceof MemoryArchiveStore))
-      throw new Error("Expected memory archive");
-    await store.blobs.put(key, new TextEncoder().encode("not parquet"));
-  },
 });

@@ -55,10 +55,6 @@ export function findLayeringViolations(
           specifier === "hono" ||
           specifier.startsWith("hono/") ||
           specifier === "@moriyoshi/errtraq-core" ||
-          // Pure-JS Parquet codec; only the node-free entry points, never the package roots (their
-          // default export condition resolves to a node:fs entry).
-          specifier === "hyparquet/src/index.js" ||
-          specifier === "hyparquet-writer/src/index.js" ||
           (!coreRestricted &&
             options.workers &&
             (specifier.startsWith("@moriyoshi/errtraq-core/") ||

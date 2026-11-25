@@ -2317,15 +2317,6 @@ export function kvContract(
 }
 
 export interface ArchiveContractOptions extends ContractOptions {
-  /** Writes a staged batch in the codec format (encodeStagedBatch) that the store's append reads. */
-  stage: (
-    store: ArchiveStore,
-    key: string,
-    events: StoredEvent[],
-    batchId: string,
-  ) => Promise<void>;
-  /** Writes an object at key that the store cannot read as a staged batch. */
-  stageUnreadable: (store: ArchiveStore, key: string) => Promise<void>;
   /** The deletion mode the implementation declares and exercises. */
   rowDelete: ArchiveStore["capabilities"]["rowDelete"];
 }
@@ -2337,19 +2328,16 @@ export function archiveStoreContract(
   describe("ArchiveStore contract", () => {
     const batch = {
       batchId: "batch",
-      stagedKey: "stage",
       dayRange: [day, day] as [Day, Day],
-    };
-    async function setup() {
-      const store = await factory();
-      const data = [
+      rows: [
         event("b", 2, { user: { email: "subject@example.org" } }),
         event("a", 2, { user: { email: "subject@example.org" } }),
         event("c", 3, { issueId: "other-issue" as IssueId }),
         event("d", 4),
-      ];
-      await options.stage(store, batch.stagedKey, data, batch.batchId);
-      return store;
+      ],
+    };
+    async function setup() {
+      return factory();
     }
     it("probes and safely repeats the same append", async () => {
       const a = await setup();
@@ -2381,18 +2369,11 @@ export function archiveStoreContract(
     it("filters issue and half-open time ranges and isolates projects", async () => {
       const a = await setup();
       await a.append(batch);
-      const otherBatch = {
+      await a.append({
         batchId: "other",
-        stagedKey: "other-stage",
-        dayRange: [day, day] as [Day, Day],
-      };
-      await options.stage(
-        a,
-        otherBatch.stagedKey,
-        [event("foreign", 2, { projectId: otherProject })],
-        otherBatch.batchId,
-      );
-      await a.append(otherBatch);
+        dayRange: [day, day],
+        rows: [event("foreign", 2, { projectId: otherProject })],
+      });
       const rows = await collectEvents((after) =>
         a.query({
           projectId: project,
@@ -2419,22 +2400,68 @@ export function archiveStoreContract(
 
     const at = (iso: string): Timestamp => iso as Timestamp;
     const days = (a: string, b: string): [Day, Day] => [a as Day, b as Day];
-    it("rejects an unknown or unreadable staged object and appends nothing", async () => {
+    it("rejects an empty batch and appends nothing", async () => {
       const a = await setup();
-      const missing = { ...batch, batchId: "missing", stagedKey: "nope" };
-      await expect(a.append(missing)).rejects.toThrow();
-      await options.stageUnreadable(a, "garbage");
-      const garbage = { ...batch, batchId: "garbage", stagedKey: "garbage" };
-      await expect(a.append(garbage)).rejects.toThrow();
-      for (const id of ["missing", "garbage"])
-        expect(await a.hasBatch(id, batch.dayRange)).toBe(false);
+      await expect(
+        a.append({ batchId: "empty", dayRange: batch.dayRange, rows: [] }),
+      ).rejects.toThrow();
+      expect(await a.hasBatch("empty", batch.dayRange)).toBe(false);
       expect(await a.query({ projectId: project })).toEqual({
         items: [],
         hasMore: false,
         nextCursor: null,
       });
-      // the failed attempts leave the store usable and the real batch appendable
       expect((await a.append(batch)).rowCount).toBe(4);
+    });
+    it("lists the event ids of one batch, pruned by day range and scoped by project", async () => {
+      const a = await factory();
+      const rows = [
+        event("d1", 1, { receivedAt: at("2024-03-01T10:00:00.000Z") }),
+        event("d2", 1, { receivedAt: at("2024-03-02T10:00:00.000Z") }),
+        event("x1", 1, {
+          projectId: otherProject,
+          receivedAt: at("2024-03-02T11:00:00.000Z"),
+        }),
+      ];
+      await a.append({
+        batchId: "ids",
+        dayRange: days("2024-03-01", "2024-03-02"),
+        rows,
+      });
+      await a.append({
+        batchId: "ids-other",
+        dayRange: days("2024-03-01", "2024-03-01"),
+        rows: [event("o1", 1, { receivedAt: at("2024-03-01T12:00:00.000Z") })],
+      });
+      const ids = async (p: ProjectId, b: string, r: [Day, Day]) =>
+        [...(await a.batchEventIds(p, b, r))].sort();
+      expect(
+        await ids(project, "ids", days("2024-03-01", "2024-03-02")),
+      ).toEqual(["d1", "d2"]);
+      expect(
+        await ids(otherProject, "ids", days("2024-03-01", "2024-03-02")),
+      ).toEqual(["x1"]);
+      expect(
+        await ids(project, "ids", days("2024-03-02", "2024-03-02")),
+      ).toEqual(["d2"]);
+      expect(
+        await ids(project, "ids-other", days("2024-03-01", "2024-03-01")),
+      ).toEqual(["o1"]);
+      expect(
+        await ids(project, "unknown", days("2024-03-01", "2024-03-02")),
+      ).toEqual([]);
+      expect(
+        await ids(project, "ids", days("2024-04-01", "2024-04-02")),
+      ).toEqual([]);
+      // the same list after a repeated append
+      await a.append({
+        batchId: "ids",
+        dayRange: days("2024-03-01", "2024-03-02"),
+        rows,
+      });
+      expect(
+        await ids(project, "ids", days("2024-03-01", "2024-03-02")),
+      ).toEqual(["d1", "d2"]);
     });
     it("scopes the batch probe by day range", async () => {
       const a = await factory();
@@ -2445,10 +2472,9 @@ export function archiveStoreContract(
       ];
       const multi = {
         batchId: "multi",
-        stagedKey: "multi-stage",
         dayRange: days("2024-03-01", "2024-03-04"),
+        rows,
       };
-      await options.stage(a, multi.stagedKey, rows, multi.batchId);
       expect((await a.append(multi)).rowCount).toBe(3);
       expect(await a.hasBatch("multi", multi.dayRange)).toBe(true);
       expect(await a.hasBatch("multi", days("2024-03-04", "2024-03-04"))).toBe(
@@ -2481,15 +2507,9 @@ export function archiveStoreContract(
       const first = await a.append(batch);
       const later = {
         batchId: "later",
-        stagedKey: "later-stage",
         dayRange: [day, day] as [Day, Day],
+        rows: [event("e", 9), event("f", 10)],
       };
-      await options.stage(
-        a,
-        later.stagedKey,
-        [event("e", 9), event("f", 10)],
-        later.batchId,
-      );
       const second = await a.append(later);
       expect(second.snapshotId).not.toBe(first.snapshotId);
       expect(await a.append(batch)).toEqual(first);
@@ -2551,18 +2571,11 @@ export function archiveStoreContract(
     it("orders equal receivedAt by eventId in both directions", async () => {
       const a = await factory();
       const ids = ["m", "b", "z", "a", "Z", "é"];
-      const tied = {
+      await a.append({
         batchId: "tied",
-        stagedKey: "tied-stage",
-        dayRange: [day, day] as [Day, Day],
-      };
-      await options.stage(
-        a,
-        tied.stagedKey,
-        ids.map((id) => event(id, 5)),
-        tied.batchId,
-      );
-      await a.append(tied);
+        dayRange: [day, day],
+        rows: ids.map((id) => event(id, 5)),
+      });
       const asc = [...ids].sort((x, y) => (x < y ? -1 : x > y ? 1 : 0));
       for (const limit of [1, 2, 6]) {
         expect(
@@ -2585,23 +2598,16 @@ export function archiveStoreContract(
       const a = await setup();
       expect(a.capabilities.rowDelete).toBe(options.rowDelete);
       await a.append(batch);
-      const foreign = {
+      await a.append({
         batchId: "foreign",
-        stagedKey: "foreign-stage",
-        dayRange: [day, day] as [Day, Day],
-      };
-      await options.stage(
-        a,
-        foreign.stagedKey,
-        [
+        dayRange: [day, day],
+        rows: [
           event("f1", 2, {
             projectId: otherProject,
             user: { email: "subject@example.org" },
           }),
         ],
-        foreign.batchId,
-      );
-      await a.append(foreign);
+      });
       const deleted = await a.deleteWhere({
         erasureId: "isolated" as ErasureId,
         projectId: project,

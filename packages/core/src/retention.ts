@@ -22,7 +22,7 @@ export interface RetentionSweepResult {
 }
 
 /** Only per-event overflow payloads are ever deleted here, never claim checks or other keys. */
-const ownsOverflowBlob = (projectId: ProjectId, key: string) =>
+export const ownsOverflowBlob = (projectId: ProjectId, key: string) =>
   key.startsWith(`payloads/${projectId}/`);
 
 /**
@@ -33,8 +33,11 @@ const ownsOverflowBlob = (projectId: ProjectId, key: string) =>
  * overflow payloads sweeps after the stack's longest retention plus a margin. The reverse
  * order could leave a live event whose payload is gone.
  *
- * TODO(M4): when archival is selected, only delete events already archived, and hand blob
- * keys to the archive and subject-erasure hooks instead of deleting them here.
+ * This sweep runs only for stacks without an archive. With an archive selected, the archival
+ * worker deletes events after commit and owns the overflow blobs (see archival.ts); the `retention`
+ * cron job then leaves events alone.
+ * TODO(M4h): hard-retention hooks (archive-side retention) for stacks with an archive.
+ * TODO(M4j): hand blob keys to the subject-erasure hook.
  */
 export async function deleteExpiredEvents(
   options: RetentionSweepOptions,

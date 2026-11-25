@@ -406,13 +406,28 @@ export interface BlobStore {
 }
 
 export interface ArchiveStore {
-  /** Repeating a batchId is safe and must not append its rows twice. */
+  /**
+   * Commit the rows as one snapshot, tagged `archive_batch = batchId`. Repeating a batchId is safe
+   * and must not append its rows twice (the first append wins); an empty batch is rejected.
+   * Rows are complete events (overflow payloads already inlined). `dayRange` is the inclusive UTC
+   * day range of the rows' receivedAt (see `summarizeBatch`).
+   */
   append(batch: {
     batchId: string;
-    stagedKey: string;
     dayRange: [Day, Day];
+    rows: StoredEvent[];
   }): Promise<{ snapshotId: string; rowCount: number }>;
+  /** Partition-pruned by dayRange; true when a row tagged with batchId is committed. */
   hasBatch(batchId: string, dayRange: [Day, Day]): Promise<boolean>;
+  /**
+   * The ids of one project's rows tagged with batchId (pruned by dayRange), for the archival
+   * DELETE step: the committed snapshot is the record of what to delete. Empty when unknown.
+   */
+  batchEventIds(
+    projectId: ProjectId,
+    batchId: string,
+    dayRange: [Day, Day],
+  ): Promise<EventId[]>;
   /** Same exclusive keyset and ordering as EventRepo.listByIssue. */
   query(query: EventQuery): Promise<EventPage>;
   getEvent(

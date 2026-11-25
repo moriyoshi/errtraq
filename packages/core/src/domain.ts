@@ -220,8 +220,10 @@ export interface ArchiveState {
   scanCursor?: Cursor;
   batch?: {
     id: string;
-    state: "staged" | "committed";
-    stagedKey: string;
+    /** `committing`: the archive append may or may not have happened (probe hasBatch). */
+    state: "committing" | "committed";
+    /** Blob listing the overflow payload keys of the batch rows, for the DELETE step. */
+    overflowKey?: string;
     rowCount: number;
     dayRange: [Day, Day];
     maxReceivedAt: Timestamp;

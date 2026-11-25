@@ -1,3 +1,4 @@
+export * from "./archive-planner.js";
 export * from "./artifact-bundles.js";
 export * from "./blob-key.js";
 export * from "./bootstrap.js";
@@ -22,5 +23,6 @@ export * from "./queue.js";
 export * from "./rate-rejection.js";
 export * from "./record-handler.js";
 export * from "./recover-ingest.js";
+export * from "./retention.js";
 export * from "./stack-model.js";
 export * from "./symbolication.js";

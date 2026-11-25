@@ -6,7 +6,6 @@ import type {
   StoredEvent,
   Timestamp,
 } from "@moriyoshi/errtraq-core";
-import { encodeStagedBatch } from "@moriyoshi/errtraq-core";
 import { expect, it } from "vitest";
 import { MemoryActiveStore } from "./memory-active.js";
 import { MemoryArchiveStore } from "./memory-other.js";
@@ -43,17 +42,10 @@ it("merges keyset pages without dropping tails or duplicating overlapping events
       },
       row,
     );
-  await archive.blobs.put(
-    "stage",
-    encodeStagedBatch(
-      "b",
-      rows.filter((_, i) => [1, 2, 4, 5].includes(i)),
-    ).bytes,
-  );
   await archive.append({
     batchId: "b",
-    stagedKey: "stage",
     dayRange: ["2024-01-01" as Day, "2024-01-01" as Day],
+    rows: rows.filter((_, i) => [1, 2, 4, 5].includes(i)),
   });
   let after: EventPosition | undefined;
   const result: string[] = [];

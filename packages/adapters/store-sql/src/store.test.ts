@@ -9,6 +9,7 @@ import {
 } from "@moriyoshi/errtraq-core";
 import {
   activeStoreContract,
+  archivalSuite,
   FakeClock,
   MemoryKV,
 } from "@moriyoshi/errtraq-testing";
@@ -44,6 +45,14 @@ let sequence = 0;
 for (const kind of ["memory", "file"] as const) {
   describe(`SQLite ${kind}`, () => {
     activeStoreContract(async () => {
+      const db = database(
+        kind === "memory" ? ":memory:" : join(directory, `${++sequence}.db`),
+      );
+      const store = createSqlStore({ db, dialect: sqliteStoreDialect });
+      await store.migrate();
+      return store;
+    });
+    archivalSuite(async () => {
       const db = database(
         kind === "memory" ? ":memory:" : join(directory, `${++sequence}.db`),
       );

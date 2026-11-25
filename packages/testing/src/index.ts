@@ -1,3 +1,4 @@
+export * from "./archival.js";
 export {
   type AwsEmulatorClient,
   createAwsTestNamespace,

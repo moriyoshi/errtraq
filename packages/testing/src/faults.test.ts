@@ -1,10 +1,9 @@
-import {
-  type Day,
-  type EventId,
-  encodeStagedBatch,
-  type ProjectId,
-  type StoredEvent,
-  type Timestamp,
+import type {
+  Day,
+  EventId,
+  ProjectId,
+  StoredEvent,
+  Timestamp,
 } from "@moriyoshi/errtraq-core";
 import { describe, expect, it } from "vitest";
 import {
@@ -16,7 +15,7 @@ import {
   InjectedFault,
 } from "./faults.js";
 import { MemoryActiveStore } from "./memory-active.js";
-import { MemoryArchiveStore } from "./memory-other.js";
+import { MemoryArchiveStore, MemoryBlobStore } from "./memory-other.js";
 
 const project = "1" as ProjectId;
 const row = (id: string): StoredEvent => ({
@@ -31,14 +30,13 @@ const row = (id: string): StoredEvent => ({
 });
 const batch = {
   batchId: "1/1",
-  stagedKey: "stage",
+  rows: [row("a")],
   dayRange: ["2024-01-01", "2024-01-01"] as [Day, Day],
 };
 
 describe("fault injection wrappers", () => {
   it("throws before the effect on the Nth call of an archive operation", async () => {
     const inner = new MemoryArchiveStore();
-    await inner.blobs.put("stage", encodeStagedBatch("1/1", [row("a")]).bytes);
     const faults = new FaultInjector().arm({
       op: "archive.append",
       nth: 2,
@@ -57,7 +55,6 @@ describe("fault injection wrappers", () => {
 
   it("leaves the effect in place when failing after", async () => {
     const inner = new MemoryArchiveStore();
-    await inner.blobs.put("stage", encodeStagedBatch("1/1", [row("a")]).bytes);
     const faults = new FaultInjector().arm({
       op: "archive.append",
       nth: 1,
@@ -99,7 +96,7 @@ describe("fault injection wrappers", () => {
   });
 
   it("wraps blob stores, resets and validates plans", async () => {
-    const inner = new MemoryArchiveStore().blobs;
+    const inner = new MemoryBlobStore();
     const faults = new FaultInjector();
     const blobs = faultyBlobStore(inner, faults);
     faults.arm({ op: "blob.put", nth: 1, when: "before" });

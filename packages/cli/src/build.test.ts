@@ -101,18 +101,18 @@ describe("built stacks", () => {
       Object.assign(globalThis, { __m2dInit: state });
       const url = pathToFileURL(join(output, "cron/index.mjs")).href;
       const entry = await import(`${url}?retry`);
-      await expect(entry.handler({ job: "retention" })).rejects.toThrow(
+      await expect(entry.handler({ job: "erasure-worker" })).rejects.toThrow(
         "temporary construction failure",
       );
       await expect(
-        entry.handler({ job: "retention" }),
+        entry.handler({ job: "erasure-worker" }),
       ).resolves.toBeUndefined();
       expect(state.calls).toBe(3);
       state.calls = 0;
       const concurrent = await import(`${url}?concurrent`);
       await Promise.all(
         Array.from({ length: 5 }, () =>
-          concurrent.handler({ job: "retention" }),
+          concurrent.handler({ job: "erasure-worker" }),
         ),
       );
       expect(state.calls).toBe(2);

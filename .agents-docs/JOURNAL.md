@@ -1882,3 +1882,35 @@ choice; no quota increase). Findings:
   M4_PLAN risk 5). The contract `stage` option now takes the batch id and there is a `stageUnreadable` option.
 - Fault wrappers are functions (`faultyArchiveStore`, `faultyActiveStore`, `faultyMeta`, `faultyBlobStore`) over a
   shared `FaultInjector`; plans fire once on the Nth call of `<scope>.<method>` before or after the effect.
+
+## 2026-11-25 — M4b: archival planner and worker, staging dropped
+
+- The M4a Parquet staging codec was removed in this slice by owner decision. The archive is the
+  write-ahead record: the worker passes rows straight to `ArchiveStore.append({batchId, dayRange, rows})`,
+  and the DELETE step reads the id list back from the committed snapshot with the new
+  `ArchiveStore.batchEventIds(projectId, batchId, dayRange)`. The state machine is SCAN, COMMIT (CAS
+  `committing`, then append), MARK, DELETE, CLEAR. Costs: one archive read per batch; engines that need
+  a file to commit (native committer, Cloudflare) are out of M4 and would bring staging back as an
+  engine option (codec in git history at 14c8c9e). `hyparquet` and its layering allowlist entries went
+  with it; core keeps only `archive-rows.ts` (row definition, day range, bounds).
+- Resume of a `committing` batch: `hasBatch` true goes to MARK; false means nothing durable existed, so
+  the worker CAS-clears `batch` and rescans, rebuilding under the same batch id (the rows may differ if
+  late events arrived). Residual race, documented in ARCHITECTURE: a stale holder that passed its COMMIT CAS,
+  then stalls longer than the lease, may append late. The engine's idempotence on the batch id (first
+  append wins) prevents duplicates, but if its row set differs from the rebuilt batch the rebuilt
+  `dayRange` could prune some of its rows out of `batchEventIds`, leaving them for a later batch that
+  would archive them twice. This needs a stall longer than 2x the invocation timeout between the CAS and
+  the append call; M4j must also account for erasure interacting with it.
+- Overflow blob keys cannot be recovered from the archive (the archived event is self-contained, the key
+  is dropped), so the worker writes a small nonce-keyed manifest `archive-overflow/<batch>-<owner>-<n>.json`
+  before the COMMIT CAS and records its key in `batch.overflowKey`. Only keys, no PII; orphans from a
+  crash before the CAS are swept in M4h.
+- The `archive-planner` and `retention` cron jobs are wired in `createCronHandler` by optional
+  arguments; the `retention` job now touches the store, so the AWS cold-start test uses the still
+  unimplemented `erasure-worker` job as its no-op. The scan contract already covered cursor-free restart
+  after partial deletes, so no `EventRepo` contract change was needed (DynamoDB emulated suite not rerun).
+- Lease `until` is `now + 2 x invocationTimeoutMs` (default 15 min), renewed by every CAS; the lease is
+  released by CAS before a continuation is sent. The fault matrix (every operation of every call, before
+  and after, on memory and sqlite) is generated from a dry run's call counts, so new operations are
+  covered automatically.
+

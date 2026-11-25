@@ -52,7 +52,7 @@ export const CRON_JOBS = [
   name: string;
   schedule: string;
   role: FunctionRole;
-}[]; // TODO(M4): implement handlers.
+}[]; // TODO(M4j): the erasure-worker handler.
 export type CapabilityValue = string | number | boolean;
 export const ENVIRONMENT_FEATURES = [
   "writable-filesystem",
