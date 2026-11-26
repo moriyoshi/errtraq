@@ -58,6 +58,8 @@ export function categories(ctx) {
       owned: true,
       url: `https://firestore.googleapis.com/v1/projects/${project}/databases`,
       key: "databases",
+      // The databases list takes no page size (400 with one) and returns every database.
+      pageSize: null,
       pick: mine,
     },
     {
@@ -72,6 +74,7 @@ export function categories(ctx) {
       owned: true,
       url: `https://iam.googleapis.com/v1/projects/${project}/serviceAccounts`,
       key: "accounts",
+      pageSize: 100,
       pick: (_, item) =>
         mine(String(item.email ?? "").split("@")[0] ?? "") ||
         /^errtraq-(push|scheduler)@/.test(String(item.email ?? "")),
@@ -112,7 +115,15 @@ async function listAll(ctx, category) {
   const items = [];
   let token = "";
   for (let page = 0; page < 20; page++) {
-    const url = `${category.url}${category.url.includes("?") ? "&" : "?"}${token ? `pageToken=${encodeURIComponent(token)}&` : ""}pageSize=500`;
+    // Page size limits differ per API and an oversized one is a 400, not a clamp.
+    const size = category.pageSize === undefined ? 500 : category.pageSize;
+    const query = [
+      ...(token ? [`pageToken=${encodeURIComponent(token)}`] : []),
+      ...(size === null ? [] : [`pageSize=${size}`]),
+    ].join("&");
+    const url = query
+      ? `${category.url}${category.url.includes("?") ? "&" : "?"}${query}`
+      : category.url;
     const response = await ctx.http("GET", url);
     if (!ok(response)) return { error: response.status };
     items.push(...(response.json?.[category.key] ?? []));
@@ -168,11 +179,15 @@ export async function inventory(ctx) {
   const enabled = await listAll(ctx, {
     url: `https://serviceusage.googleapis.com/v1/projects/${ctx.config.project}/services?filter=state:ENABLED`,
     key: "services",
+    pageSize: 200,
   });
-  ctx.report.info(
-    "Enabled APIs left on",
-    `${(enabled.items ?? []).length} (disable the ones the run enabled if the project is shared)`,
-  );
+  if (enabled.error)
+    ctx.report.fail("Enabled APIs left on", `cannot list (${enabled.error})`);
+  else
+    ctx.report.info(
+      "Enabled APIs left on",
+      `${enabled.items.length} (disable the ones the run enabled if the project is shared)`,
+    );
   return { owned, outside };
 }
 

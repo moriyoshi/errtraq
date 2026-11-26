@@ -77,4 +77,28 @@ describe("inventory probe", () => {
     await inventory(ctx);
     expect(ctx.report.summary().fail).toBeGreaterThan(5);
   });
+  it("sends only the page sizes each API accepts (an oversized one is a 400)", async () => {
+    // Limits observed on real GCP (G8 run 1).
+    const limits = [
+      [/firestore\.googleapis/, 0],
+      [/iam\.googleapis\.com.*serviceAccounts/, 100],
+      [/serviceusage/, 200],
+    ];
+    const urls = [];
+    const fetch = async (url) => {
+      urls.push(String(url));
+      const size = Number(new URL(String(url)).searchParams.get("pageSize"));
+      const limit = limits.find(([pattern]) => pattern.test(String(url)));
+      const refused = limit && size > limit[1];
+      return new Response("{}", {
+        status: refused ? 400 : 200,
+        headers: { "content-type": "application/json" },
+      });
+    };
+    const { ctx, output } = await testContext({ fetch });
+    await inventory(ctx);
+    expect(ctx.report.summary().fail).toBe(0);
+    expect(output()).toContain("INFO Enabled APIs left on: 0");
+    expect(urls.some((url) => /firestore/.test(url))).toBe(true);
+  });
 });
