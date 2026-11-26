@@ -68,9 +68,8 @@ beyond their defaults. Enabled APIs stay on after the destroy (section 9).
 ## 2. The run stack
 
 `node scripts/gcp-verify/stack.mjs` writes `.agents-workspace/tmp/g8/stack.ts` plus copies of the two example
-stacks it builds on (`gcp-env.ts`, `gcp-firestore.ts`, with `.ts` import specifiers). Node cannot resolve the
-examples' `./gcp-env.js` imports to `.ts` files, so the example stacks cannot be given to the CLI directly;
-the copy is the supported route (the text of the examples stays the single source).
+stacks it builds on (`gcp-env.ts`, `gcp-firestore.ts`). The example stacks use `.ts` import specifiers, so the
+CLI also loads them directly.
 
 It derives from `stacks/gcp-firestore-bootstrap.ts` with three changes: the `record` role and grouped
 recording (so the ordered `record` queue, `orderingKey` and `deliveryAttempt` are exercised; the example
