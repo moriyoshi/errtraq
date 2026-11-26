@@ -101,4 +101,18 @@ describe("inventory probe", () => {
     expect(output()).toContain("INFO Enabled APIs left on: 0");
     expect(urls.some((url) => /firestore/.test(url))).toBe(true);
   });
+  it("counts a deleted registry repository as no images left", async () => {
+    const { ctx, output } = await testContext({
+      env: { ERRTRAQ_GCP_AR_REPO: "errtraq" },
+      fetch: routerFetch([
+        ["GET", /artifactregistry/, () => ({ status: 404 })],
+        ["GET", /./, () => ({ body: {} })],
+      ]),
+    });
+    await inventory(ctx);
+    expect(ctx.report.summary().fail).toBe(0);
+    expect(output()).toContain(
+      "Artifact Registry images (outside Terraform): 0",
+    );
+  });
 });

@@ -140,7 +140,9 @@ export async function inventory(ctx) {
   let outside = 0;
   for (const category of categories(ctx)) {
     const listed = await listAll(ctx, category);
-    if (listed.error) {
+    // A parent that is gone (the operator's registry repository after cleanup) leaves nothing.
+    if (listed.error === 404 && !category.owned) listed.items = [];
+    else if (listed.error) {
       ctx.report.fail(category.id, `cannot list (${listed.error})`);
       continue;
     }
