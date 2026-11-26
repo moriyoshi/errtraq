@@ -2258,3 +2258,13 @@ Measurements and results (all checks pass after the fixes; 92 + 25 IAM + variant
 - Unexplained: during the second apply the provider got 401 on Firestore `GetOperation` with an access token from `GOOGLE_OAUTH_ACCESS_TOKEN` that had most of its hour left; the six indexes finished server side and were imported (TODO).
 
 Leftovers after cleanup: none of the Terraform-owned categories (inventory `--expect empty` clean); bootstrap secret, Artifact Registry repository, operator service account and the temporary project-level token creator grant removed; 11 soft-deleted custom roles and the two Firestore database ids stay blocked for a while (a re-run needs another stack name); the enabled APIs stay on.
+
+## 2026-11-26 — Web UI slices UI-a and UI-b
+
+Design: `.agents-docs/WEB_UI_DESIGN.md`. UI-a (10ce37a) and UI-b (98084bf) were implemented by Sonnet subagents and reviewed by Claude Opus.
+
+- TanStack Router decodes search params as JSON by default, so an all-digit event ID becomes a lossy number; `packages/ui` uses string-only `parseSearch` / `stringifySearch`.
+- Solid + TanStack Router: calling `navigate()` inside `createEffect` (auto-select of the only organization / project) restarts the router load in a busy loop. Use `<Navigate>`, and read the token in `beforeLoad` guards without subscribing (`peekToken()`).
+- The CSP `<meta>` cannot apply in `vite dev` (HMR and the Solid refresh preamble are inline scripts); the plugin strips it in dev and fills `connect-src` in the build, and the Playwright test runs against `vite preview` so the real policy is exercised.
+- Event neighbours (`previousEventID` / `nextEventID`, `/events/oldest/`) are `listByIssue` with `limit: 1` and `after`; on an empty source page the walk continues with the cursor alone (federation treats `cursor` and `after` as exclusive) and gives up after 20 pages, reported as no neighbour.
+- Concurrent sessions: a plain `git commit` by one session commits whatever another session has staged (the design doc landed in 252c015, a G8 commit). Commit with an explicit pathspec (`git commit -- <paths>`) when other agents share the tree.
