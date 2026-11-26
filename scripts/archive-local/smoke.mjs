@@ -14,7 +14,7 @@ import { stripVTControlCharacters } from "node:util";
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const compose = resolve(root, "docker/archive/compose.yaml");
 const project = "errtraq-archive-smoke";
-const version = "0.2.9";
+const version = "0.2.10";
 
 function skip(message) {
   console.log(`SKIP archive smoke: ${message}`);
