@@ -5,8 +5,7 @@ import { createAwsTestNamespace } from "../../packages/testing/src/aws-emulator.
 import { client } from "./client.mjs";
 import { testDynamoConcurrency } from "./dynamodb-local.mjs";
 import { defaultBinary } from "./emulator-binary.mjs";
-import { checkConditionalUpdateGap } from "./gap-checks.mjs";
-import { loadGaps, skipped } from "./gaps.mjs";
+import { assertConditionalUpdateAtomic } from "./gap-checks.mjs";
 import { probeControl } from "./probe-control.mjs";
 import { probeDynamo } from "./probe-dynamodb.mjs";
 import { probeFifo } from "./probe-fifo.mjs";
@@ -75,7 +74,7 @@ try {
       if (!result.supported) failed = true;
     }
   await probeFifo(endpoint);
-  skipped(loadGaps(), "sqs-fifo");
+  console.log("PASS sqs fifo settings, group exclusion and receive attributes");
   const control = await probeControl(endpoint);
   for (const [name, result] of Object.entries(control)) {
     console.log(
@@ -160,14 +159,11 @@ try {
     if (!removed) throw new Error("Namespace cleanup left a resource behind");
   }
   console.log("PASS namespace cleanup");
-  await checkConditionalUpdateGap(api);
-  skipped(loadGaps(), "dynamodb-conditional-atomicity");
-  console.log("Running implemented DynamoDB store repository contract cases");
+  await assertConditionalUpdateAtomic(api);
+  console.log("PASS dynamodb conditional-update atomicity");
   console.log(
-    "SKIPPED concurrent store and CAS contracts on winterbaume: issue #61 violates conditional atomicity; a diagnostic runs separately (https://github.com/moriyoshi/winterbaume/issues/61)",
+    "Running the full DynamoDB store repository contract (concurrent and CAS cases included; issue #61 fixed at v0.2.10)",
   );
-  const storePattern =
-    "^(?!.*(?:measures issue-grouped writes on DynamoDB Local|measures grouped queue contention end to end on DynamoDB Local|atomically records concurrent event groups for one issue|atomically creates or bumps, reopens regressions, and tracks the latest event|preserves an occurrence concurrent with an issue update|atomically ignores concurrent duplicate deliveries|uses compare-and-set for creation and competing writers, and lists erasures|pages erasures by state and serializes concurrent erasure transitions|atomically creates a token once and never revives a revoked token|keeps one revokedAt when the same token is revoked concurrently|bootstraps a DynamoDB store concurrently without prior migration|atomically creates one initial active project key)).*$";
   const storeContract = spawn(
     "pnpm",
     [
@@ -178,8 +174,6 @@ try {
       "--disableConsoleIntercept",
       "--testTimeout",
       "30000",
-      "--testNamePattern",
-      storePattern,
     ],
     {
       stdio: "inherit",

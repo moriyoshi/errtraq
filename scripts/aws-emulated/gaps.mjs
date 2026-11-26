@@ -6,13 +6,8 @@ export function loadGaps() {
     readFileSync(new URL("./gaps.json", import.meta.url), "utf8"),
   );
   const doc = readFileSync(resolve(".agents-docs/WINTERBAUME_GAPS.md"), "utf8");
-  const expected = [
-    "dynamodb-conditional-atomicity",
-    "sqs-fifo",
-    "tags-eventbridge",
-    "lambda-vpc-readback",
-    "cloudwatch-alarm-readback",
-  ];
+  // Every exception was removed at v0.2.10; a new one must be added here and documented.
+  const expected = [];
   if (
     JSON.stringify(Object.keys(gaps).sort()) !== JSON.stringify(expected.sort())
   )

@@ -5,7 +5,6 @@ import {
   mkdirSync,
   mkdtempSync,
   readdirSync,
-  readFileSync,
   writeFileSync,
 } from "node:fs";
 import { createServer } from "node:net";
@@ -14,12 +13,11 @@ import { client, element } from "./client.mjs";
 import { defaultBinary } from "./emulator-binary.mjs";
 import { applyFifo } from "./fifo-apply.mjs";
 import {
+  assertConditionalUpdateAtomic,
   assertPartialBatchSupport,
-  checkConditionalUpdateGap,
   checkEventbridgeGap,
   checkStandaloneGaps,
 } from "./gap-checks.mjs";
-import { loadGaps, skipped } from "./gaps.mjs";
 import {
   assertFunctionTransition,
   assertQueueTransition,
@@ -61,7 +59,6 @@ if (
   throw new Error(
     `Missing cached AWS provider ${version}; run pnpm infra:validate first`,
   );
-const gaps = loadGaps();
 const temp = mkdtempSync(resolve(scratch, "m3a2-apply-"));
 const modules = resolve(temp, "modules");
 cpSync(resolve(root, "infra/modules"), modules, { recursive: true });
@@ -125,12 +122,12 @@ try {
   if (!ready) throw new Error(`Emulator did not start: ${serverError}`);
   const c = client(endpoint);
   if (fifoOnly) {
-    await applyFifo({ c, gaps, temp, modules, version, cache, endpoint, tf });
+    await applyFifo({ c, temp, modules, version, cache, endpoint, tf });
     throw fifoOnlyComplete;
   }
   await checkStandaloneGaps(c);
-  await checkConditionalUpdateGap(c);
-  skipped(gaps, "dynamodb-conditional-atomicity");
+  await assertConditionalUpdateAtomic(c);
+  console.log("PASS dynamodb conditional-update atomicity");
   run("pnpm", ["build"], root);
   const sts = await c.request("sts", "/", {
     method: "POST",
@@ -142,11 +139,10 @@ try {
   await checkEventbridgeGap(c, account);
   if (groupedOnly) await probeFifo(endpoint);
   else if (!postgresOnly)
-    await applyFifo({ c, gaps, temp, modules, version, cache, endpoint, tf });
+    await applyFifo({ c, temp, modules, version, cache, endpoint, tf });
   if (!postgresOnly && !groupedOnly)
     await runStandalone({
       c,
-      gaps,
       temp,
       modules,
       version,
@@ -156,21 +152,6 @@ try {
       tf,
       run,
     });
-  // Apply grouped roots with only the two independently probed FIFO readback gaps removed.
-  if (!postgresOnly) {
-    const file = resolve(modules, "aws/sqs/main.tf");
-    let source = readFileSync(file, "utf8");
-    for (const from of [
-      'deduplication_scope         = each.value.fifo ? "messageGroup" : null',
-      'fifo_throughput_limit       = each.value.fifo ? "perMessageGroupId" : null',
-    ]) {
-      if (source.split(from).length !== 2)
-        throw new Error("FIFO emulator override no longer matches");
-      source = source.replace(from, `${from.split("=")[0]}= null`);
-    }
-    writeFileSync(file, source);
-    skipped(gaps, "sqs-fifo");
-  }
   const { deriveDeployment, resolveStack } = await import(
     "../../packages/core/dist/index.js"
   );
@@ -238,17 +219,8 @@ try {
     const repeat = JSON.parse(
       run("terraform", ["show", "-json", "-no-color", "repeat.tfplan"], dir),
     );
-    const exceptions = assertRepeatPlan(repeat, gaps, stack.providers.aws.tags);
-    const gone = [];
-    for (const id of ["tags-eventbridge", "cloudwatch-alarm-readback"]) {
-      if (exceptions.has(id)) skipped(gaps, id);
-      else gone.push(id);
-    }
-    if (gone.length)
-      throw new Error(
-        `Emulator gaps no longer reproduce; remove the exceptions: ${gone.join(", ")}`,
-      );
-    console.log("PASS shared-stack repeat plan after named gap exclusions");
+    assertRepeatPlan(repeat);
+    console.log("PASS shared-stack repeat plan is empty");
     tf(dir, "apply", "-auto-approve", "-input=false");
     await verifyDeployment(c, stack, view, account);
     console.log("PASS shared-stack second apply and API assertions");
@@ -396,23 +368,8 @@ try {
         secondDir,
       ),
     );
-    const secondExceptions = assertRepeatPlan(
-      secondRepeat,
-      gaps,
-      second.providers.aws.tags,
-    );
-    const secondGone = [];
-    for (const id of ["tags-eventbridge", "cloudwatch-alarm-readback"]) {
-      if (secondExceptions.has(id)) skipped(gaps, id);
-      else secondGone.push(id);
-    }
-    if (secondGone.length)
-      throw new Error(
-        `Emulator gaps no longer reproduce; remove the exceptions: ${secondGone.join(", ")}`,
-      );
-    console.log(
-      "PASS per-topic API assertions and repeat plan after named gap exclusions",
-    );
+    assertRepeatPlan(secondRepeat);
+    console.log("PASS per-topic API assertions and empty repeat plan");
     tf(secondDir, "apply", "-auto-approve", "-input=false");
     await verifyDeployment(c, second, secondView, account);
     console.log("PASS per-topic second apply and API assertions");
@@ -501,7 +458,7 @@ try {
     console.log("PASS feature fixture destroy and API inventory");
   }
 
-  // Confirm the VPC readback gap before excluding the affected block in a temporary copy.
+  // Issue #62 (fixed at v0.2.10): VpcConfig must come back from create and GetFunction.
   const vpcProbe = "m3f2-vpc-probe";
   const probeBody = {
     FunctionName: vpcProbe,
@@ -529,17 +486,19 @@ try {
   await c.request("lambda", `/2015-03-31/functions/${vpcProbe}`, {
     method: "DELETE",
   });
-  if (createdVpc.VpcConfig || readVpc.VpcConfig)
-    throw new Error(
-      "Emulator VPC gap no longer reproduces; remove the temporary override and assert VPC readback",
-    );
-  skipped(gaps, "lambda-vpc-readback");
-  const lambdaModule = resolve(modules, "aws/lambda-app/main.tf");
-  const moduleSource = readFileSync(lambdaModule, "utf8");
-  const vpcBlock = "for_each = local.vpc_enabled ? [1] : []";
-  if (moduleSource.split(vpcBlock).length !== 2)
-    throw new Error("Cannot isolate the VPC block in the copied Lambda module");
-  writeFileSync(lambdaModule, moduleSource.replace(vpcBlock, "for_each = []"));
+  for (const [where, config] of [
+    ["CreateFunction", createdVpc.VpcConfig],
+    ["GetFunction", readVpc.VpcConfig],
+  ]) {
+    if (
+      JSON.stringify(config?.SubnetIds) !==
+        JSON.stringify(probeBody.VpcConfig.SubnetIds) ||
+      JSON.stringify(config?.SecurityGroupIds) !==
+        JSON.stringify(probeBody.VpcConfig.SecurityGroupIds)
+    )
+      throw new Error(`Lambda ${where} must return VpcConfig (issue #62)`);
+  }
+  console.log("PASS Lambda VpcConfig readback");
   const pgStack = variant(fixtures["postgres-vpc"], {
     name: "m3f2-postgres",
     protection: "disposable",
@@ -572,7 +531,7 @@ try {
   tf(pgDir, "apply", "-auto-approve", "-input=false");
   await verifyDeployment(c, pgStack, pgView, account);
   console.log(
-    "PASS PostgreSQL IAM generated stack and role policies (VPC readback excluded)",
+    "PASS PostgreSQL IAM generated stack, VPC config and role policies",
   );
   tf(pgDir, "destroy", "-auto-approve", "-input=false");
   await verifyCleanup(c, pgStack.name);

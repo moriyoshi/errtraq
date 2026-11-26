@@ -1,14 +1,12 @@
 import assert from "node:assert/strict";
-import { cpSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { skipped } from "./gaps.mjs";
 import { probeFifo } from "./probe-fifo.mjs";
 import { providerOverride } from "./terraform-config.mjs";
 
-/** Apply the real module with only unsupported readback settings removed in its scratch copy. */
+/** Apply the unmodified module and read the queues back. */
 export async function applyFifo({
   c,
-  gaps,
   temp,
   modules,
   version,
@@ -17,28 +15,10 @@ export async function applyFifo({
   tf,
 }) {
   await probeFifo(endpoint);
-  skipped(gaps, "sqs-fifo");
   const dir = resolve(temp, "fifo-standalone"),
     moduleDir = resolve(dir, "module");
   mkdirSync(dir, { recursive: true });
   cpSync(resolve(modules, "aws/sqs"), moduleDir, { recursive: true });
-  const file = resolve(moduleDir, "main.tf");
-  let source = readFileSync(file, "utf8");
-  for (const [from, to] of [
-    [
-      'deduplication_scope         = each.value.fifo ? "messageGroup" : null',
-      "deduplication_scope         = null",
-    ],
-    [
-      'fifo_throughput_limit       = each.value.fifo ? "perMessageGroupId" : null',
-      "fifo_throughput_limit       = null",
-    ],
-  ]) {
-    if (source.split(from).length !== 2)
-      throw new Error("FIFO emulator override no longer matches");
-    source = source.replace(from, to);
-  }
-  writeFileSync(file, source);
   writeFileSync(
     resolve(dir, "main.tf.json"),
     JSON.stringify(
@@ -90,14 +70,14 @@ export async function applyFifo({
     AttributeNames: ["All"],
   });
   assert.equal(attrs.Attributes.FifoQueue, "true");
+  assert.equal(attrs.Attributes.DeduplicationScope, "messageGroup");
+  assert.equal(attrs.Attributes.FifoThroughputLimit, "perMessageGroupId");
   assert.equal(dead.Attributes.FifoQueue, "true");
   assert.equal(
     JSON.parse(attrs.Attributes.RedrivePolicy).deadLetterTargetArn,
     dead.Attributes.QueueArn,
   );
-  console.log(
-    "PASS FIFO queue and FIFO DLQ apply and API readback (named emulator exceptions above)",
-  );
+  console.log("PASS FIFO queue and FIFO DLQ apply and API readback");
   tf(dir, "destroy", "-auto-approve", "-input=false");
   console.log("PASS FIFO queue and FIFO DLQ destroy");
 }

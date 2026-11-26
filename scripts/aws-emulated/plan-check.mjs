@@ -1,72 +1,17 @@
 import assert from "node:assert/strict";
 
-/** Only the named missing API readbacks may differ in a repeat plan. */
-export function assertRepeatPlan(plan, gaps, expectedTags = {}) {
-  const observed = new Set();
+/** At v0.2.10 no readback gap remains: a repeat plan must change nothing. */
+export function assertRepeatPlan(plan) {
   for (const change of plan.resource_changes ?? []) {
     if (
       change.mode !== "managed" ||
       JSON.stringify(change.change.actions) === '["no-op"]'
     )
       continue;
-    assert.deepEqual(
-      change.change.actions,
-      ["update"],
-      `unexpected repeat-plan action at ${change.address}`,
-    );
-    const before = { ...change.change.before },
-      after = { ...change.change.after };
-    const fieldsByType = {
-      aws_cloudwatch_event_rule: [["tags_all", "tags-eventbridge"]],
-    };
-    if (
-      change.type === "aws_cloudwatch_metric_alarm" &&
-      (before.datapoints_to_alarm !== after.datapoints_to_alarm ||
-        before.treat_missing_data !== after.treat_missing_data)
-    ) {
-      // The emulator returns neither field: they read back as 0 and "missing".
-      if (!gaps["cloudwatch-alarm-readback"])
-        throw new Error(
-          "Undeclared emulator exception cloudwatch-alarm-readback",
-        );
-      assert.equal(before.datapoints_to_alarm, 0, change.address);
-      assert.equal(before.treat_missing_data, "missing", change.address);
-      assert.ok([1, 3].includes(after.datapoints_to_alarm), change.address);
-      assert.equal(after.treat_missing_data, "notBreaching", change.address);
-      observed.add("cloudwatch-alarm-readback");
-      for (const field of ["datapoints_to_alarm", "treat_missing_data"]) {
-        delete before[field];
-        delete after[field];
-      }
-    }
-    const fields = fieldsByType[change.type] ?? [];
-    for (const [field, gap] of fields) {
-      if (JSON.stringify(before[field]) !== JSON.stringify(after[field])) {
-        if (!gaps[gap]) throw new Error(`Undeclared emulator exception ${gap}`);
-        if (gap.startsWith("tags-")) {
-          assert.deepEqual(
-            before[field],
-            {},
-            `unexpected prior tag values at ${change.address}`,
-          );
-          assert.deepEqual(
-            after[field],
-            expectedTags,
-            `unexpected desired tag values at ${change.address}`,
-          );
-        }
-        observed.add(gap);
-        delete before[field];
-        delete after[field];
-      }
-    }
-    assert.deepEqual(
-      after,
-      before,
-      `unexpected repeat-plan difference at ${change.address}`,
+    assert.fail(
+      `unexpected repeat-plan change at ${change.address}: ${JSON.stringify(change.change.actions)}`,
     );
   }
-  return observed;
 }
 
 export function assertQueueTransition(plan, before, after) {

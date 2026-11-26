@@ -1,28 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
+  assertConditionalUpdateAtomic,
   assertPartialBatchSupport,
-  checkConditionalUpdateGap,
 } from "./gap-checks.mjs";
 
-describe("emulator gaps must still reproduce", () => {
-  it("requires the conditional update race to reproduce and cleans its table", async () => {
-    let updates = 0;
-    const broken = {
-      dynamo: async (action) => {
-        if (action === "UpdateItem") {
-          updates++;
-          return {};
-        }
-        return {};
-      },
-    };
-    await expect(
-      checkConditionalUpdateGap(broken, 1, 2),
-    ).resolves.toBeUndefined();
-    expect(updates).toBe(2);
+describe("emulator fixes must keep holding", () => {
+  it("requires exactly one conditional update winner per round and cleans its table", async () => {
     let deleted = false,
       seen = false;
-    const fixed = {
+    const atomic = {
       dynamo: async (action) => {
         if (action === "DeleteTable") deleted = true;
         if (action === "UpdateItem") {
@@ -32,8 +18,19 @@ describe("emulator gaps must still reproduce", () => {
         return {};
       },
     };
-    await expect(checkConditionalUpdateGap(fixed, 1, 2)).rejects.toThrow(
-      "no longer reproduces",
+    await expect(
+      assertConditionalUpdateAtomic(atomic, 1, 2),
+    ).resolves.toBeUndefined();
+    expect(deleted).toBe(true);
+    deleted = false;
+    const racy = {
+      dynamo: async (action) => {
+        if (action === "DeleteTable") deleted = true;
+        return {};
+      },
+    };
+    await expect(assertConditionalUpdateAtomic(racy, 1, 2)).rejects.toThrow(
+      "exactly one winner",
     );
     expect(deleted).toBe(true);
   });
