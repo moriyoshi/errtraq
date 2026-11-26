@@ -116,7 +116,7 @@ describe("iam probe", () => {
         }),
       ],
       [
-        "POST",
+        "GET",
         /run\.googleapis\.com.*services\/gcp-g8-(\w+):getIamPolicy$/,
         (_u, _i, m) => ({
           body: {
@@ -137,7 +137,7 @@ describe("iam probe", () => {
         }),
       ],
       ["GET", /storage\/v1\/b\/.*\/iam$/, () => ({ body: { bindings: [] } })],
-      ["POST", /pubsub.*:getIamPolicy$/, () => ({ body: {} })],
+      ["GET", /pubsub.*:getIamPolicy$/, () => ({ body: {} })],
     ]);
   }
   it("accepts the designed policies and rejects a public consumer or a primitive role", async () => {

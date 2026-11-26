@@ -45,7 +45,8 @@ const TOPIC_TESTS = [
   "pubsub.topics.get",
   "pubsub.topics.delete",
   "pubsub.topics.setIamPolicy",
-  "pubsub.subscriptions.consume",
+  // Valid on a topic (subscriptions.consume is not: the whole test is refused with 400).
+  "pubsub.topics.attachSubscription",
 ];
 const SECRET_TESTS = [
   "secretmanager.versions.access",
@@ -142,8 +143,11 @@ export function diffPermissions(tested, granted, expected) {
   };
 }
 
+// Resource Manager reads a policy with POST; Cloud Run v2 and Pub/Sub with GET (POST is a 404).
 const iamPolicy = (ctx, url, body) =>
-  ctx.http("POST", url, { json: body ?? {} });
+  url.startsWith("https://cloudresourcemanager.")
+    ? ctx.http("POST", url, { json: body ?? {} })
+    : ctx.http("GET", url);
 
 /** Live policy checks. */
 export async function policyChecks(ctx) {
