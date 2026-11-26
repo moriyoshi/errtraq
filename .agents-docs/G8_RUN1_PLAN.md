@@ -339,8 +339,8 @@ Finish with `inventory.mjs --expect empty` clean for the Terraform-owned categor
 
 ## 11. What G8a found while building this (product notes)
 
-- The example stacks cannot be loaded by the CLI as they are (`./gcp-env.js` has no `.js` file); the derived
-  run stack copies them with `.ts` specifiers. Not changed: the specifiers match the repository's tsconfig.
+- The example stacks could not be loaded by the CLI (`./gcp-env.js` has no `.js` file). Fixed in the G8a
+  review: the stacks use `.ts` specifiers (`allowImportingTsExtensions` in `tsconfig.node-tests.json`).
 - A user account cannot mint an ID token with a custom audience, and the handler's operator verifier checks
   the audience (`errtraq-push`), so the bootstrap call needs a service account's token. An operator
   service account with impersonation is the documented route; accepting the Cloud Run service URL as a
