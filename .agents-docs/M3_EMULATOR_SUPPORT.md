@@ -1,7 +1,7 @@
 # M3 AWS emulator probes
 
-The baseline is the Winterbaume server release `winterbaume-server-v0.2.9` (commit
-`70006139231c1d0569a6ec303a671e53b8d6e6c3`). `pnpm aws-emulator:install` installs the prebuilt release
+The baseline is the Winterbaume server release `winterbaume-server-v0.2.10` (commit
+`f79b3353ec2e49259267572719a15b4a29955435`). `pnpm aws-emulator:install` installs the prebuilt release
 binary for the host after verifying its pinned SHA-256; hosts without a pinned prebuilt asset build the
 checksum-pinned `source.tar.gz` instead. Downloads, the extracted binary and any build output stay under
 `.agents-workspace/tmp`. A source build needs Rust and network access and is substantial (a debug build
@@ -25,7 +25,7 @@ endpoints. S3 uses path-style URLs.
 | S3 | Delete and missing object | Pass |
 | DynamoDB | GSI query, ascending and descending | Pass |
 | DynamoDB | Sequential transaction condition check and abort | Pass |
-| DynamoDB | Concurrent UpdateItem condition/write atomicity | Known gap ([#61](https://github.com/moriyoshi/winterbaume/issues/61)); reproduced |
+| DynamoDB | Concurrent UpdateItem condition/write atomicity (150 rounds of 200 racers, exactly one winner each) | Pass (fixed at v0.2.10, [#61](https://github.com/moriyoshi/winterbaume/issues/61)) |
 | DynamoDB | Conditional update with `ADD` and `SET if_not_exists` | Pass |
 | DynamoDB | BatchGetItem and consistent GetItem | Pass |
 | DynamoDB | TTL attribute registration | Pass |
@@ -35,6 +35,7 @@ endpoints. S3 uses path-style URLs.
 | SQS | Change visibility and redelivery | Pass |
 | SQS | Delayed delivery | Pass |
 | SQS | DLQ redrive | Pass |
+| SQS | FIFO settings, group exclusion and receive attributes | Pass (fixed at v0.2.10, #64 to #66) |
 
 The harness also creates two independent namespaces using the module-derived eleven-index
 store and KV tables and SQS queue/DLQ shape, then verifies removal. Runtime values such as the test

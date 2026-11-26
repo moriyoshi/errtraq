@@ -2258,3 +2258,12 @@ Measurements and results (all checks pass after the fixes; 92 + 25 IAM + variant
 - Unexplained: during the second apply the provider got 401 on Firestore `GetOperation` with an access token from `GOOGLE_OAUTH_ACCESS_TOKEN` that had most of its hour left; the six indexes finished server side and were imported (TODO).
 
 Leftovers after cleanup: none of the Terraform-owned categories (inventory `--expect empty` clean); bootstrap secret, Artifact Registry repository, operator service account and the temporary project-level token creator grant removed; 11 soft-deleted custom roles and the two Firestore database ids stay blocked for a while (a re-run needs another stack name); the enabled APIs stay on.
+
+## 2026-11-26 — Emulator pin moved to winterbaume-server v0.2.10
+
+- **Pin:** `winterbaume-server-v0.2.10`, tag commit `f79b3353ec2e49259267572719a15b4a29955435` (the tag is annotated; the tag object is `92555c36`), `source.tar.gz` sha256 `ff42c567f7ca65c748730234a115f1532ebe98693e4af2b7adfc0fc28f069c5d`, `aarch64-apple-darwin` asset `3972eada905bd3cd6b1fc4af03bf4e35b85b5f6535fdbbac672bba467e100640`. All three were downloaded and hashed locally and matched the release `.sha256` files; the linux aarch64 asset (`e1aa8246acb7912b3e225f1967c3ebf622649082160ea79eefbf2ce107c89ad3`, matched too) was extracted to `bin-linux` for the M4d smoke, whose version constant moved to 0.2.10.
+- **Fixed upstream:** #61, #62, #64-#66, #67, #68, #69. Still open: #48, #49, #81, #82. Details and evidence: "Status at v0.2.10" in `WINTERBAUME_GAPS.md`.
+- **Harness consequence:** `gaps.json` is empty. The old checks that required each gap to keep reproducing now assert the fix (`assertConditionalUpdateAtomic`, `probeFifo`, VPC readback, empty `assertRepeatPlan`), and the SQS and Lambda modules apply unmodified. The store-dynamodb contract runs in full on winterbaume (49 of 49, three runs), so its concurrency exclusion pattern is gone from `run.mjs`.
+- **Surprise worth keeping:** the pre-existing exception checks fail loudly when a gap vanishes, which is what caught every removal; v0.2.10 also made the generated-root probe apply inside its 90 second limit and the `lambda-app` second plan clean.
+- **Not verified:** `infra:apply-emulated` stops at the feature fixture for a reason unrelated to the emulator (see TODO.md); `archive:smoke` and `e2e:archive` were not run (images would have to be pulled into the shared Docker; e2e:archive needs Lakekeeper and does not use winterbaume directly).
+
