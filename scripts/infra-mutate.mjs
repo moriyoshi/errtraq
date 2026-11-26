@@ -69,13 +69,23 @@ function terraform(args, cwd) {
     CHECKPOINT_DISABLE: "1",
   };
   delete env.TF_PLUGIN_CACHE_DIR;
-  const result = spawnSync("terraform", args, {
-    cwd,
-    env,
-    encoding: "utf8",
-    maxBuffer: 64 * 1024 * 1024,
-  });
+  // Terraform sometimes exits before the provider plugin it started (seen on failing
+  // mutations), leaving the provider orphaned. Run it in its own process group and
+  // terminate whatever is left of that group once Terraform itself has exited.
+  const result = spawnSync(
+    "/bin/sh",
+    [
+      "-c",
+      'set -m; "$@" </dev/null & child=$!; wait "$child"; status=$?; kill -TERM -"$child" 2>/dev/null; exit "$status"',
+      "sh",
+      "terraform",
+      ...args,
+    ],
+    { cwd, env, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 },
+  );
   if (result.error) throw result.error;
+  if (result.status === 127)
+    throw new Error(`terraform could not be started: ${result.stderr}`);
   return result;
 }
 function prepare(component, label, provider = "aws") {
