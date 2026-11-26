@@ -105,5 +105,9 @@ describe("Firestore KV deployment configuration", () => {
     expect(inputs.ttl_policies).toEqual([
       { collection: "kv", field: "expireAt" },
     ]);
+    // Found on real GCP (G8 run 1): the TTL field kept its single-field index.
+    expect(inputs.field_exemptions).toEqual(
+      ["v", "n", "c", "expireAt"].map((field) => ({ collection: "kv", field })),
+    );
   });
 });

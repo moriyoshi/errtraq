@@ -12,6 +12,24 @@ exports[`gcp-cloudsql > generates Terraform for the google provider > main 1`] =
     },
     "kv": {
       "database_id": null,
+      "field_exemptions": [
+        {
+          "collection": "kv",
+          "field": "v"
+        },
+        {
+          "collection": "kv",
+          "field": "n"
+        },
+        {
+          "collection": "kv",
+          "field": "c"
+        },
+        {
+          "collection": "kv",
+          "field": "expireAt"
+        }
+      ],
       "labels": {
         "app": "errtraq"
       },
@@ -364,6 +382,24 @@ exports[`gcp-firestore > generates Terraform for the google provider > main 1`] 
     },
     "kv": {
       "database_id": null,
+      "field_exemptions": [
+        {
+          "collection": "kv",
+          "field": "v"
+        },
+        {
+          "collection": "kv",
+          "field": "n"
+        },
+        {
+          "collection": "kv",
+          "field": "c"
+        },
+        {
+          "collection": "kv",
+          "field": "expireAt"
+        }
+      ],
       "labels": {
         "app": "errtraq"
       },
@@ -915,6 +951,24 @@ exports[`gcp-firestore-bootstrap > generates Terraform for the google provider >
     },
     "kv": {
       "database_id": null,
+      "field_exemptions": [
+        {
+          "collection": "kv",
+          "field": "v"
+        },
+        {
+          "collection": "kv",
+          "field": "n"
+        },
+        {
+          "collection": "kv",
+          "field": "c"
+        },
+        {
+          "collection": "kv",
+          "field": "expireAt"
+        }
+      ],
       "labels": {
         "app": "errtraq"
       },
@@ -1444,6 +1498,24 @@ exports[`gcp-firestore-per-topic > generates Terraform for the google provider >
     },
     "kv": {
       "database_id": null,
+      "field_exemptions": [
+        {
+          "collection": "kv",
+          "field": "v"
+        },
+        {
+          "collection": "kv",
+          "field": "n"
+        },
+        {
+          "collection": "kv",
+          "field": "c"
+        },
+        {
+          "collection": "kv",
+          "field": "expireAt"
+        }
+      ],
       "labels": {
         "app": "errtraq"
       },
