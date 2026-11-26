@@ -30,6 +30,7 @@ export function findLayeringViolations(
   const restricted = coreRestricted || options.workers === true;
   const adapter = path.match(/(?:^|\/)packages\/adapters\/([^/]+)\//)?.[1];
   const platform = path.match(/(?:^|\/)packages\/platforms\/([^/]+)\//)?.[1];
+  const ui = /(?:^|\/)packages\/ui\//.test(path);
   const aliases = new Set();
   function report(node) {
     const { line, character } = source.getLineAndCharacterOfPosition(
@@ -76,6 +77,15 @@ export function findLayeringViolations(
       /(?:^|\/)packages\/platforms\/([^/]+)(?:\/|$)/,
     )?.[1];
     if (platformTarget && platformTarget !== platform) report(node);
+    // The browser SPA talks to the API over HTTP and shares no runtime code with the server
+    // packages: no workspace package imports and no relative imports into another package's src.
+    if (
+      ui &&
+      (specifier.startsWith("@moriyoshi/errtraq-") ||
+        (!bare &&
+          /(?:^|\/)packages\/(?!ui\/)[^/]+\/(?:.+\/)?src\//.test(target ?? "")))
+    )
+      report(node);
     if (adapter && target) {
       const dest = target.match(/(?:^|\/)packages\/adapters\/([^/]+)/)?.[1];
       if (dest && dest !== adapter) report(node);

@@ -17,7 +17,32 @@ function check(code) {
   const program = ts.createProgram([name], options, host);
   return findLayeringViolations(program, program.getSourceFile(name));
 }
+function checkAt(name, code) {
+  const options = { noLib: true };
+  const host = ts.createCompilerHost(options);
+  const original = host.getSourceFile;
+  host.getSourceFile = (file, ...args) =>
+    file === name
+      ? ts.createSourceFile(name, code, ts.ScriptTarget.Latest, true)
+      : original(file, ...args);
+  const program = ts.createProgram([name], options, host);
+  return findLayeringViolations(program, program.getSourceFile(name));
+}
 describe("layering checker", () => {
+  it("keeps the browser UI independent of the server packages", () => {
+    const ui = "packages/ui/src/x.ts";
+    expect(
+      checkAt(ui, 'import "zod"; import "solid-js"; import "./y";'),
+    ).toEqual([]);
+    expect(checkAt(ui, 'import "@moriyoshi/errtraq-core";')).toHaveLength(1);
+    expect(
+      checkAt(ui, 'import type { A } from "@moriyoshi/errtraq-http";'),
+    ).toHaveLength(1);
+    expect(checkAt(ui, 'import "../../core/src/index";')).toHaveLength(1);
+    expect(checkAt(ui, 'import "../../../testing/fixtures/a.json";')).toEqual(
+      [],
+    );
+  });
   it("permits property names and locally bound identifiers", () => {
     expect(
       check(

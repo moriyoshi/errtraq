@@ -7,7 +7,7 @@
     "node": "^22.18.0 || >=23.6.0"
   },
   "scripts": {
-    "typecheck": "tsc -p tsconfig.tests.json --noEmit && tsc -p tsconfig.node-tests.json --noEmit",
+    "typecheck": "tsc -p tsconfig.tests.json --noEmit && tsc -p tsconfig.node-tests.json --noEmit && tsc -p packages/ui/tsconfig.json --noEmit && tsc -p packages/ui/tsconfig.node.json --noEmit",
     "lint": "biome check . && node scripts/check-layering.mjs && node scripts/check-exports.mjs",
     "test": "vitest run",
     "build": "node scripts/build.mjs",
@@ -17,6 +17,7 @@
     "container:check": "node scripts/container-check.mjs",
     "aws-emulator:install": "node scripts/aws-emulated/install.mjs",
     "archive:smoke": "node scripts/archive-local/smoke.mjs",
+    "e2e:ui": "pnpm build && pnpm --filter @moriyoshi/errtraq-ui build && pnpm --filter @moriyoshi/errtraq-ui e2e",
     "e2e:archive": "pnpm build && node scripts/e2e-archive.mjs",
     "test:gcs-emulated": "node scripts/gcs-emulated/run.mjs",
     "test:pubsub-emulated": "node scripts/pubsub-emulated/run.mjs",
