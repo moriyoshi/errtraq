@@ -26,6 +26,21 @@ mock_provider "aws" {
   mock_resource "aws_lambda_function_url" {
     defaults = { function_url = "https://example.invalid/" }
   }
+  mock_data "aws_cloudfront_cache_policy" {
+    defaults = { id = "00000000-0000-0000-0000-000000000001" }
+  }
+  mock_data "aws_cloudfront_origin_request_policy" {
+    defaults = { id = "00000000-0000-0000-0000-000000000002" }
+  }
+  mock_resource "aws_s3_bucket" {
+    defaults = { arn = "arn:aws:s3:::example-ui-123", id = "example-ui-123", bucket_regional_domain_name = "example-ui-123.s3.us-east-1.amazonaws.com" }
+  }
+  mock_resource "aws_cloudfront_distribution" {
+    defaults = { arn = "arn:aws:cloudfront::000000000000:distribution/EXAMPLE", id = "EXAMPLE", domain_name = "d111111abcdef8.cloudfront.net" }
+  }
+  mock_resource "aws_cloudfront_function" {
+    defaults = { arn = "arn:aws:cloudfront::000000000000:function/example-ui-spa" }
+  }
 }
 run "functions_triggers_and_urls" {
   command = apply
@@ -158,6 +173,143 @@ run "private_url" {
     condition     = aws_lambda_function_url.http["api"].authorization_type == "AWS_IAM" && length(aws_lambda_permission.url) == 0 && length(aws_lambda_function_url.http["api"].cors) == 0
     error_message = "IAM URLs must not receive public permissions or ingest CORS."
   }
+}
+run "api_browser_access_and_ingest_url" {
+  command = apply
+  variables {
+    name              = "example"
+    tags              = {}
+    ingest_public_url = "https://ingest.example.com/prefix"
+    api_cors_origins  = ["https://ui.example.com", "http://localhost:5173"]
+    functions = {
+      api    = { roles = ["api"], http = ["api"], artifact = "tests/artifact.txt", memory_mb = 512, timeout_sec = 30, architecture = "arm64", environment = { TABLE = "t" }, secrets = {}, secret_reads = [], policies = [] }
+      ingest = { roles = ["ingest"], http = ["ingest"], artifact = "tests/artifact.txt", memory_mb = 512, timeout_sec = 30, architecture = "arm64", environment = {}, secrets = {}, secret_reads = [], policies = [] }
+    }
+    queue_triggers = {}
+    cron_triggers  = {}
+  }
+  assert {
+    condition     = length(aws_lambda_function_url.http["api"].cors) == 1 && toset(one(aws_lambda_function_url.http["api"].cors).allow_origins) == toset(["https://ui.example.com", "http://localhost:5173"]) && toset(one(aws_lambda_function_url.http["api"].cors).allow_methods) == toset(["GET", "PUT", "POST"]) && toset(one(aws_lambda_function_url.http["api"].cors).allow_headers) == toset(["authorization", "content-type"]) && toset(one(aws_lambda_function_url.http["api"].cors).expose_headers) == toset(["link"]) && one(aws_lambda_function_url.http["api"].cors).allow_credentials == false && one(aws_lambda_function_url.http["api"].cors).max_age == 86400
+    error_message = "The API URL must allow exactly the configured origins, the API methods and headers, and expose Link."
+  }
+  assert {
+    condition     = toset(one(aws_lambda_function_url.http["ingest"].cors).allow_origins) == toset(["*"]) && toset(one(aws_lambda_function_url.http["ingest"].cors).allow_methods) == toset(["POST"])
+    error_message = "The ingest URL keeps its own public CORS policy."
+  }
+  assert {
+    condition     = jsonencode(aws_lambda_function.function["api"].environment[0].variables) == jsonencode({ TABLE = "t", ERRTRAQ_PUBLIC_INGEST_URL = "https://ingest.example.com/prefix" }) && !contains(keys(try(aws_lambda_function.function["ingest"].environment[0].variables, {})), "ERRTRAQ_PUBLIC_INGEST_URL")
+    error_message = "Only the API function receives the public ingest URL."
+  }
+}
+run "api_without_cors_or_ingest_url" {
+  command = apply
+  variables {
+    name           = "example"
+    tags           = {}
+    functions      = { api = { roles = ["api"], http = ["api"], artifact = "tests/artifact.txt", memory_mb = 512, timeout_sec = 30, architecture = "arm64", environment = {}, secrets = {}, secret_reads = [], policies = [] } }
+    queue_triggers = {}
+    cron_triggers  = {}
+  }
+  assert {
+    condition     = length(aws_lambda_function_url.http["api"].cors) == 0 && !contains(keys(aws_lambda_function.function["api"].environment[0].variables), "ERRTRAQ_PUBLIC_INGEST_URL")
+    error_message = "Without settings the API URL has no CORS block and the function no ingest URL."
+  }
+}
+run "api_cors_rejected_on_shared_ingest_function" {
+  command = plan
+  variables {
+    name             = "example"
+    tags             = {}
+    api_cors_origins = ["https://ui.example.com"]
+    functions        = { shared = { roles = ["ingest", "api"], http = ["ingest", "api"], artifact = "tests/artifact.txt", memory_mb = 512, timeout_sec = 30, architecture = "arm64", environment = {}, secrets = {}, secret_reads = [], policies = [] } }
+    queue_triggers   = {}
+    cron_triggers    = {}
+  }
+  expect_failures = [var.api_cors_origins]
+}
+run "api_cors_rejects_wildcards_and_paths" {
+  command = plan
+  variables {
+    name             = "example"
+    tags             = {}
+    api_cors_origins = ["*"]
+    functions        = { api = { roles = ["api"], http = ["api"], artifact = "tests/artifact.txt", memory_mb = 512, timeout_sec = 30, architecture = "arm64", environment = {}, secrets = {}, secret_reads = [], policies = [] } }
+    queue_triggers   = {}
+    cron_triggers    = {}
+  }
+  expect_failures = [var.api_cors_origins]
+}
+run "ingest_public_url_rejects_credentials" {
+  command = plan
+  variables {
+    name              = "example"
+    tags              = {}
+    ingest_public_url = "https://user:pass@ingest.example.com"
+    functions         = { api = { roles = ["api"], http = ["api"], artifact = "tests/artifact.txt", memory_mb = 512, timeout_sec = 30, architecture = "arm64", environment = {}, secrets = {}, secret_reads = [], policies = [] } }
+    queue_triggers    = {}
+    cron_triggers     = {}
+  }
+  expect_failures = [var.ingest_public_url]
+}
+run "web_ui_behind_cloudfront" {
+  command = apply
+  variables {
+    name = "example"
+    tags = {}
+    ui   = { build_anchor = "tests/ui-build/api/bundle.zip" }
+    functions = {
+      api    = { roles = ["api"], http = ["api"], artifact = "tests/artifact.txt", memory_mb = 512, timeout_sec = 30, architecture = "arm64", environment = {}, secrets = {}, secret_reads = [], policies = [] }
+      ingest = { roles = ["ingest"], http = ["ingest"], artifact = "tests/artifact.txt", memory_mb = 512, timeout_sec = 30, architecture = "arm64", environment = {}, secrets = {}, secret_reads = [], policies = [] }
+    }
+    queue_triggers = {}
+    cron_triggers  = {}
+  }
+  assert {
+    condition     = length(module.static_site) == 1 && output.ui_domain_name == "d111111abcdef8.cloudfront.net" && output.ui_distribution_id == "EXAMPLE" && output.ui_bucket_name == "example-ui-123"
+    error_message = "The UI outputs must come from the static-site module."
+  }
+  assert {
+    condition     = aws_lambda_function_url.http["api"].authorization_type == "NONE" && length(aws_lambda_function_url.http["api"].cors) == 0
+    error_message = "The API URL stays public (it checks the Bearer token itself) and needs no CORS behind the same-origin distribution."
+  }
+}
+run "no_web_ui_by_default" {
+  command = apply
+  variables {
+    name           = "example"
+    tags           = {}
+    functions      = { api = { roles = ["api"], http = ["api"], artifact = "tests/artifact.txt", memory_mb = 512, timeout_sec = 30, architecture = "arm64", environment = {}, secrets = {}, secret_reads = [], policies = [] } }
+    queue_triggers = {}
+    cron_triggers  = {}
+  }
+  assert {
+    condition     = length(module.static_site) == 0 && output.ui_domain_name == "" && output.ui_distribution_id == "" && output.ui_bucket_name == ""
+    error_message = "Without ui nothing is created and the outputs are empty."
+  }
+}
+run "web_ui_needs_a_public_api_function" {
+  command = plan
+  variables {
+    name           = "example"
+    tags           = {}
+    ui             = { build_anchor = "tests/ui-build/api/bundle.zip" }
+    functions      = { api = { roles = ["api"], http = ["api"], artifact = "tests/artifact.txt", memory_mb = 512, timeout_sec = 30, architecture = "arm64", auth_type = "AWS_IAM", environment = {}, secrets = {}, secret_reads = [], policies = [] } }
+    queue_triggers = {}
+    cron_triggers  = {}
+  }
+  expect_failures = [var.ui]
+}
+run "web_ui_needs_the_api_exposed" {
+  command = plan
+  variables {
+    name           = "example"
+    tags           = {}
+    ui             = { build_anchor = "tests/ui-build/ingest/bundle.zip" }
+    functions      = { ingest = { roles = ["ingest"], http = ["ingest"], artifact = "tests/artifact.txt", memory_mb = 512, timeout_sec = 30, architecture = "arm64", environment = {}, secrets = {}, secret_reads = [], policies = [] } }
+    queue_triggers = {}
+    cron_triggers  = {}
+  }
+  expect_failures = [var.ui]
 }
 run "inline_policy_limit" {
   command = plan

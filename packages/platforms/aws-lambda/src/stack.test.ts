@@ -1,4 +1,9 @@
-import { resolveStack, validateStack, variable } from "@moriyoshi/errtraq-core";
+import {
+  deriveDeployment,
+  resolveStack,
+  validateStack,
+  variable,
+} from "@moriyoshi/errtraq-core";
 import { expect, it } from "vitest";
 import shared from "../../../../stacks/aws-dynamodb.js";
 import { awsLambda, lambdaEsbuildTarget } from "./stack.js";
@@ -160,4 +165,143 @@ it("accepts an existing artifact bucket or a stack variable", () => {
     platform.infra.inputs(platform.config, { functions: [], triggers: [] })
       .artifact_bucket,
   ).toEqual(variable("ARTIFACT_BUCKET"));
+});
+
+const direct = (platform: ReturnType<typeof awsLambda>, variables = {}) =>
+  deriveDeployment(
+    resolveStack({
+      ...Object.fromEntries(Object.entries(shared)),
+      platform,
+      recordMode: "direct",
+      variables,
+    }),
+  );
+it("passes the public ingest URL and API CORS origins to the module, never to the app", () => {
+  const plain = awsLambda();
+  expect(plain.infra.inputs(plain.config, direct(plain))).not.toHaveProperty(
+    "ingest_public_url",
+  );
+  const options = {
+    publicIngestUrl: "https://ingest.example.test",
+    apiCorsOrigins: ["https://ui.example.test"],
+  };
+  const platform = awsLambda(options);
+  expect(
+    platform.infra.inputs(platform.config, direct(platform)),
+  ).toMatchObject({
+    ingest_public_url: "https://ingest.example.test",
+    api_cors_origins: ["https://ui.example.test"],
+  });
+  // CORS belongs on a function URL of its own: the ingest URL's policy is public.
+  const sharedFn = awsLambda({ ...options, split: [] });
+  expect(() =>
+    sharedFn.infra.inputs(sharedFn.config, direct(sharedFn)),
+  ).toThrow(/function of its own/);
+  const noApi = awsLambda({ ...options, http: ["ingest"] });
+  expect(() => noApi.infra.inputs(noApi.config, direct(noApi))).toThrow(
+    /exposed over HTTP/,
+  );
+  for (const bad of [
+    "*",
+    "https://ui.example.test/",
+    "https://ui.example.test/x",
+    "ui.example.test",
+    "ftp://ui.example.test",
+  ])
+    expect(() => awsLambda({ apiCorsOrigins: [bad] })).toThrow();
+  expect(() => awsLambda({ apiCorsOrigins: [] })).toThrow();
+  for (const bad of [
+    "ingest.example.test",
+    "https://u:p@ingest.example.test",
+    "https://ingest.example.test/?x=1",
+    "https://ingest.example.test/#x",
+  ])
+    expect(() => awsLambda({ publicIngestUrl: bad })).toThrow();
+});
+it("accepts stack variables for the public ingest URL and API CORS origins and reserves the env name", () => {
+  const platform = awsLambda({
+    publicIngestUrl: variable("INGEST_URL"),
+    apiCorsOrigins: variable("UI_ORIGINS"),
+  });
+  const variables = {
+    INGEST_URL: {
+      type: "string" as const,
+      sensitive: false,
+      default: "https://ingest.example.test",
+    },
+    UI_ORIGINS: {
+      type: "string[]" as const,
+      sensitive: false,
+      default: ["https://ui.example.test"],
+    },
+  };
+  const stack = {
+    ...Object.fromEntries(Object.entries(shared)),
+    platform,
+    recordMode: "direct" as const,
+    variables,
+  };
+  expect(validateStack(stack)).toEqual([]);
+  expect(
+    validateStack({
+      ...stack,
+      variables: {
+        ...variables,
+        UI_ORIGINS: { type: "string" as const, sensitive: false },
+      },
+    }).some((issue) => issue.message.includes("must have type string[]")),
+  ).toBe(true);
+  const inputs = platform.infra.inputs(
+    platform.config,
+    direct(platform, variables),
+  );
+  expect(inputs.ingest_public_url).toEqual(variable("INGEST_URL"));
+  expect(inputs.api_cors_origins).toEqual(variable("UI_ORIGINS"));
+  expect(platform.manifest.reservedBindings).toContain(
+    "ERRTRAQ_PUBLIC_INGEST_URL",
+  );
+});
+it("hosts the web UI from the API function's build output and rejects what CloudFront cannot reach", () => {
+  const plain = awsLambda();
+  expect(plain.infra.inputs(plain.config, direct(plain))).not.toHaveProperty(
+    "ui",
+  );
+  const platform = awsLambda({
+    ui: { directory: "../packages/ui/dist", priceClass: "PriceClass_All" },
+  });
+  const inputs = platform.infra.inputs(platform.config, direct(platform));
+  expect(inputs.ui).toEqual({
+    build_anchor: expect.objectContaining({ functionId: "api" }),
+    price_class: "PriceClass_All",
+  });
+  expect(awsLambda({ ui: { directory: "dist" } }).config).toMatchObject({
+    ui: { priceClass: "PriceClass_100" },
+  });
+  expect(platform.infra.module.outputs).toMatchObject({
+    ui_domain_name: "string",
+    ui_distribution_id: "string",
+    ui_bucket_name: "string",
+  });
+  // The API must be reachable over HTTP, and its function URL public (CloudFront cannot send the
+  // Bearer token through origin access control).
+  expect(() =>
+    awsLambda({ ui: { directory: "dist" }, http: ["ingest"] }),
+  ).toThrow(/api role to be exposed over HTTP/);
+  expect(() =>
+    awsLambda({
+      ui: { directory: "dist" },
+      roles: ["ingest", "consumer", "cron"],
+      split: ["ingest", "consumer", "cron"],
+      http: ["ingest"],
+    }),
+  ).toThrow();
+  const iam = awsLambda({
+    ui: { directory: "dist" },
+    settings: { api: { urlAuth: "AWS_IAM" } },
+  });
+  expect(() => iam.infra.inputs(iam.config, direct(iam))).toThrow(
+    /without IAM authorization/,
+  );
+  for (const bad of [{ directory: "" }, { directory: "x", priceClass: "Mars" }])
+    expect(() => awsLambda({ ui: bad as never })).toThrow();
 });

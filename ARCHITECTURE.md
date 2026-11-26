@@ -713,6 +713,33 @@ private functions need NAT or suitable service endpoints for their AWS API calls
 adapters and deployed secret sources are implemented; the first real AWS deployment passed.
 Further AWS verification and remaining M3 work are tracked in the agent documents.
 
+### Web UI hosting (UI-c)
+
+The web UI (`packages/ui`, a static Vite build) is hosted from the **platform** settings, not from
+a stack selection: HTTP exposure (`http`, function URLs) belongs to the platform, and the model has
+no port kind or build-input phase for a static site. Standalone serves a directory at `/` from the
+same HTTP server (`uiDirectory` or `ERRTRAQ_UI_DIR`): files as they are, SPA fallback for
+navigations outside `/api/`, immutable caching for hashed `assets/*`, no path traversal. On AWS the
+platform setting `ui: { directory }` makes the `lambda-app` module instantiate `aws/static-site`: a
+private S3 bucket behind CloudFront with origin access control, the API function URL behind
+`/api/0/*` (managed `CachingDisabled` and `AllViewerExceptHostHeader` policies; the URL keeps
+authorization `NONE`, because origin access control would replace the user's Bearer token with a
+SigV4 signature), a viewer-request CloudFront Function for the SPA fallback (never custom error
+responses, which would rewrite the API's own 403 / 404 JSON), and a response headers policy. The UI
+and the API are then one origin and need no CORS; ingest keeps its own function URL (the DSN host).
+`errtraq build` copies the UI directory into `<build>/ui` with a manifest (path, content type,
+cache control, SHA-256 per file); `errtraq infra generate` verifies it, and Terraform uploads
+exactly those files (`aws_s3_object` per manifest entry), reading the build copy located next to the
+function artifacts, never the source tree.
+
+Browser access from another origin is explicit and exact: standalone `apiCorsOrigins` enables the
+API app's CORS; on Lambda `apiCorsOrigins` fills the API function URL's `cors` block (the app adds
+no headers, as for ingest) and requires the API in a function of its own, because a function URL has
+one policy and ingest's is public. The key list's `dsn` needs the public ingest URL: standalone
+reuses `publicUrl`; Lambda takes the operator-supplied `publicIngestUrl` (a literal or a stack
+variable, such as a custom domain), delivered to the API function as `ERRTRAQ_PUBLIC_INGEST_URL`.
+It cannot be derived from the ingest function's own URL output (a Terraform cycle).
+
 ### Deployed bootstrap
 
 Bootstrap (migrations, the first organization, project, DSN key and API token, and the bootstrap

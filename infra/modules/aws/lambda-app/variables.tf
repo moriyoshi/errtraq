@@ -202,3 +202,41 @@ variable "alarm_topic_arn" {
     error_message = "alarm_topic_arn must be null or an SNS topic ARN."
   }
 }
+variable "ingest_public_url" {
+  type        = string
+  description = "Operator-supplied public ingest URL (for example a custom domain in front of the ingest function URL); delivered to the API function as ERRTRAQ_PUBLIC_INGEST_URL so the key list can show DSNs. It cannot be derived from the ingest function URL output: that would make the API function's environment depend on a sibling and, for a shared function, on itself."
+  default     = null
+  validation {
+    condition     = var.ingest_public_url == null ? true : can(regex("^https?://[^/?#@]+(/[^?#]*)?$", var.ingest_public_url))
+    error_message = "ingest_public_url must be an HTTP(S) URL without credentials, query or fragment."
+  }
+}
+variable "api_cors_origins" {
+  type        = list(string)
+  description = "Exact browser origins allowed to call the API function URL (CORS block on the URL; the application adds no headers). Requires the API to be exposed by a function that does not also expose ingest, whose URL already carries its own public policy."
+  default     = []
+  validation {
+    condition     = length(var.api_cors_origins) <= 20 && alltrue([for origin in var.api_cors_origins : can(regex("^https?://[^/?#@*]+$", origin))])
+    error_message = "api_cors_origins must be at most 20 exact HTTP(S) origins without a path or wildcard."
+  }
+  validation {
+    condition     = length(var.api_cors_origins) == 0 || (anytrue([for fn in values(var.functions) : contains(fn.http, "api")]) && !anytrue([for fn in values(var.functions) : contains(fn.http, "api") && contains(fn.http, "ingest")]))
+    error_message = "api_cors_origins needs the API exposed by a function that does not also expose ingest."
+  }
+}
+variable "ui" {
+  type = object({
+    build_anchor = string
+    price_class  = optional(string, "PriceClass_100")
+  })
+  description = "Host the built web UI (S3 behind CloudFront, with /api/0/* routed to the API function URL: ../static-site). build_anchor is the build-output path of the API function's artifact (<build>/<function id>/...); the UI build copy is <build>/ui next to the function directories. Requires the API to be exposed by a function whose URL authorization is NONE: the API checks the Bearer token itself, and origin access control would replace it."
+  default     = null
+  validation {
+    condition     = var.ui == null ? true : anytrue([for fn in values(var.functions) : contains(fn.http, "api") && fn.auth_type == "NONE"])
+    error_message = "ui needs the API exposed over HTTP with URL authorization NONE."
+  }
+  validation {
+    condition     = var.ui == null ? true : length(var.ui.build_anchor) > 0 && !startswith(var.ui.build_anchor, "/")
+    error_message = "ui.build_anchor must be a relative path."
+  }
+}

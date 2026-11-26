@@ -24,11 +24,37 @@ const publicUrl = z
       return false;
     }
   }, "Public URL must be an HTTP(S) origin without credentials");
+/** An exact CORS origin: scheme, host and optional port, no path; never a wildcard. */
+export const corsOrigins = z
+  .array(
+    z.string().refine((value) => {
+      try {
+        const url = new URL(value);
+        return (
+          ["http:", "https:"].includes(url.protocol) && url.origin === value
+        );
+      } catch {
+        return false;
+      }
+    }, "CORS origin must be an exact HTTP(S) origin without a path"),
+  )
+  .min(1)
+  .max(20);
 const baseConfigSchema = z.strictObject({
   host: z.string().min(1).default("127.0.0.1"),
   publicUrl: publicUrl.optional(),
   port: z.number().int().min(0).max(65535).default(8787),
   tokenDirectory: z.string().min(1).default(".errtraq"),
+  /**
+   * Origins allowed to call the API from a browser (a UI served from another origin). Absent
+   * means no CORS headers; the UI this process serves itself (`uiDirectory`) is same origin.
+   */
+  apiCorsOrigins: corsOrigins.optional(),
+  /**
+   * Directory of built web UI assets (`packages/ui/dist`) served at `/` by this server. Relative
+   * paths resolve against the working directory, like `tokenDirectory`.
+   */
+  uiDirectory: z.string().min(1).optional(),
   rateLimit: z.number().int().positive().nullable().default(60),
   rateWindowSec: z.number().int().positive().default(60),
   roles: z
@@ -89,6 +115,8 @@ const stackConfigSchema = baseConfigSchema
     publicUrl: configReference(publicUrl).optional(),
     port: portWithReference,
     tokenDirectory: configReference(z.string().min(1)).default(".errtraq"),
+    apiCorsOrigins: configReference(corsOrigins).optional(),
+    uiDirectory: configReference(z.string().min(1)).optional(),
   })
   .refine(
     (config) =>

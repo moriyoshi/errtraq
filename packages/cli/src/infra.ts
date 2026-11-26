@@ -26,6 +26,7 @@ import {
 import { DEFAULT_LAMBDA_RUNTIME } from "@moriyoshi/errtraq-platform-aws-lambda/stack";
 import type { BuildManifest } from "./build.js";
 import { terraformModulesPackage, vendorModules } from "./modules.js";
+import { verifyUiAssets } from "./ui-build.js";
 
 /** What a Cloud Run build artifact records (the bundle is an ES module run with Node 22). */
 export const CLOUD_RUN_ARTIFACT = { handler: "index.mjs", runtime: "node22" };
@@ -301,6 +302,30 @@ export async function generateInfra(
         `Build artifact handler or runtime mismatch for ${fn.id}`,
       );
     artifacts[fn.id] = relative(resolve(output), full).split(sep).join("/");
+  }
+  if (
+    stack.platform.manifest.id === "aws-lambda" &&
+    (stack.platform.config as { ui?: unknown }).ui
+  ) {
+    // Terraform finds the UI copy as `<build>/ui`, derived from the API function's artifact path.
+    const api = view.functions.find((fn) => fn.http.includes("api"));
+    const anchor = api && artifacts[api.id];
+    if (!manifest?.ui) {
+      if (!allowMissing)
+        throw new Error("Missing UI build; run errtraq build first");
+      placeholders = true;
+    } else if (!anchor || !api) {
+      throw new Error("ui needs the api role exposed over HTTP");
+    } else {
+      if (
+        resolve(dirname(dirname(resolve(output, anchor)))) !==
+        resolve(buildDirectory)
+      )
+        throw new Error(
+          "UI build is not next to the function artifacts; run errtraq build first",
+        );
+      await verifyUiAssets(buildDirectory);
+    }
   }
   const modules = await resolveModules(stack, repo, infraOptions);
   const result = generate(stack, {

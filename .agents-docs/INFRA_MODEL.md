@@ -596,7 +596,17 @@ and passes its S3 location to Lambda. The bucket must be in the function region 
 principal needs object management access. Without it, Lambda uses direct ZIP upload; the CLI
 rejects files over a conservative 50,000,000-byte threshold. AWS describes the direct-upload
 limit as approximate and requires S3 for larger ZIPs: [Lambda deployment troubleshooting](https://docs.aws.amazon.com/lambda/latest/dg/troubleshooting-deployment.html).
-Lambda function URLs, not the ingest application, supply CORS. Lambda bundles use the core
+Lambda function URLs, not the ingest application, supply CORS; the same holds for the optional
+API CORS (`apiCorsOrigins`, exact origins, API in its own function). The optional `publicIngestUrl`
+and `ui` platform settings are module inputs (`ingest_public_url`, `ui`), not runtime config
+references: `publicIngestUrl` and `apiCorsOrigins` are in `infrastructureConfigReferences`, and the
+module delivers the URL to the API function as `ERRTRAQ_PUBLIC_INGEST_URL` (a reserved binding).
+Web UI hosting does not fit a child selection: a child needs a `PortKind` (none fits a static
+site, and a platform cannot be a child), a child resource needs a binding or capability, and a
+child's inputs cannot name a build artifact (`artifact()` is valid only in platform inputs and only
+for a function id). The platform therefore passes `ui = { build_anchor = <API function artifact>,
+price_class }` to `lambda-app`, which calls `../static-site` as a nested module and derives the
+build copy `<build>/ui` from the anchor (two directories up). Lambda bundles use the core
 runtime entry, omit Zod and are minified with names preserved.
 
 Lambda platform `rateLimit` defaults to 60 event items per minute for each DSN key; set a

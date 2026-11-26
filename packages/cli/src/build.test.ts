@@ -827,6 +827,134 @@ describe("built stacks", () => {
       buildStack(local, repo, output, resolve(repo, "stacks/local.ts")),
     ).rejects.toThrow("Invalid generated Dockerfile");
   }, 30000);
+  it("copies the UI into the standalone container and points the platform at it", async () => {
+    const source = join(temp, "standalone-ui-src");
+    await mkdir(join(source, "assets"), { recursive: true });
+    await writeFile(join(source, "index.html"), "<!doctype html>");
+    await writeFile(join(source, "assets", "index-1.js"), "export {};");
+    const stack = {
+      ...Object.fromEntries(Object.entries(local)),
+      platform: {
+        ...local.platform,
+        config: {
+          ...(local.platform.config as object),
+          uiDirectory: source,
+        },
+      },
+    } as typeof local;
+    const output = join(temp, "standalone-ui");
+    const manifest = await buildStack(
+      stack,
+      repo,
+      output,
+      resolve(repo, "stacks/local.ts"),
+    );
+    expect(manifest.ui).toEqual({ directory: "ui", assets: 2 });
+    const dockerfile = await readFile(join(output, "Dockerfile"), "utf8");
+    expect(dockerfile).toContain("COPY --chown=node:node ui/site /app/ui\n");
+    expect(dockerfile).toContain(
+      "ENV ERRTRAQ_HOST=0.0.0.0 ERRTRAQ_DATA_DIR=/data ERRTRAQ_UI_DIR=/app/ui",
+    );
+    expect(await readFile(join(output, "ui/site/index.html"), "utf8")).toBe(
+      "<!doctype html>",
+    );
+    expect(
+      JSON.parse(await readFile(join(output, "ui/manifest.json"), "utf8"))
+        .assets,
+    ).toHaveLength(2);
+    // Rebuilding with the UI owned succeeds; dropping the setting removes the copy and the layer.
+    await buildStack(stack, repo, output, resolve(repo, "stacks/local.ts"));
+    const without = await buildStack(
+      local,
+      repo,
+      output,
+      resolve(repo, "stacks/local.ts"),
+    );
+    expect(without.ui).toBeUndefined();
+    await expect(readFile(join(output, "ui/manifest.json"))).rejects.toThrow();
+    const plain = await readFile(join(output, "Dockerfile"), "utf8");
+    expect(plain).not.toContain("ERRTRAQ_UI_DIR");
+    expect(plain).not.toContain("COPY --chown=node:node ui/site");
+  }, 30000);
+  it("copies the web UI into the AWS build and generates Terraform that reads the copy", async () => {
+    const source = join(temp, "aws-ui-src");
+    await mkdir(join(source, "assets"), { recursive: true });
+    await writeFile(join(source, "index.html"), "<!doctype html>");
+    await writeFile(join(source, "assets", "index-1.js"), "export {};");
+    const stack = resolveStack({
+      ...Object.fromEntries(Object.entries(shared)),
+      platform: {
+        ...shared.platform,
+        config: {
+          ...(shared.platform.config as object),
+          ui: { directory: source, priceClass: "PriceClass_100" },
+        },
+      },
+    });
+    const output = join(temp, "aws-ui-build");
+    const manifest = await buildStack(
+      stack,
+      repo,
+      output,
+      resolve(repo, "stacks/aws-dynamodb.ts"),
+    );
+    expect(manifest.ui).toEqual({ directory: "ui", assets: 2 });
+    expect(
+      JSON.parse(await readFile(join(output, "ui/manifest.json"), "utf8")),
+    ).toMatchObject({
+      version: 1,
+      assets: [
+        {
+          path: "assets/index-1.js",
+          cacheControl: "public, max-age=31536000, immutable",
+        },
+        { path: "index.html", cacheControl: "no-cache" },
+      ],
+    });
+    // Without the copy Terraform cannot be generated; with it, it reads <build>/ui next to the
+    // function directories and never the source directory.
+    const target = join(temp, "aws-ui-terraform");
+    await expect(
+      generateInfra(
+        stack,
+        repo,
+        join(temp, "aws-ui-none"),
+        join(temp, "nowhere"),
+        false,
+      ),
+    ).rejects.toThrow("Build manifest not found");
+    await generateInfra(stack, repo, target, output, false);
+    const main = JSON.parse(
+      await readFile(join(target, "main.tf.json"), "utf8"),
+    );
+    const anchor = main.module.platform.ui.build_anchor as string;
+    expect(anchor).toBe(
+      relative(target, join(output, "api/bundle.zip")).replaceAll("\\", "/"),
+    );
+    expect(resolve(target, anchor, "../../ui/manifest.json")).toBe(
+      join(output, "ui/manifest.json"),
+    );
+    expect(JSON.stringify(main)).not.toContain(source);
+    await assertNoLocalPaths(target);
+    // A UI file changed after the build is caught before Terraform would upload it.
+    await writeFile(join(output, "ui/site/index.html"), "<!doctype html>x");
+    await expect(
+      generateInfra(stack, repo, target, output, false),
+    ).rejects.toThrow("UI asset hash mismatch: index.html");
+    // A build made without the UI setting has no copy to generate from.
+    const plain = join(temp, "aws-no-ui-build");
+    await buildStack(
+      resolveStack({
+        ...Object.fromEntries(Object.entries(shared)),
+      }),
+      repo,
+      plain,
+      resolve(repo, "stacks/aws-dynamodb.ts"),
+    );
+    await expect(
+      generateInfra(stack, repo, join(temp, "aws-ui-plain"), plain, false),
+    ).rejects.toThrow("Missing UI build");
+  }, 60000);
   it("rejects unowned and outside output directories and missing artifacts", async () => {
     const directory = join(temp, "unowned");
     await import("node:fs/promises").then((fs) => fs.mkdir(directory));

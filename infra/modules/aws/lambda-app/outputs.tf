@@ -18,3 +18,15 @@ output "image_repository_url" {
   value       = length(aws_ecr_repository.image) > 0 ? aws_ecr_repository.image[0].repository_url : ""
   description = "errtraq-type=string; errtraq-keys=; ECR repository URL for the container-image functions, or an empty string when none exist"
 }
+output "ui_domain_name" {
+  value       = length(module.static_site) > 0 ? module.static_site[0].domain_name : ""
+  description = "errtraq-type=string; errtraq-keys=; CloudFront domain name of the web UI (https://<domain>/ serves the UI and the same-origin API), or an empty string without ui"
+}
+output "ui_distribution_id" {
+  value       = length(module.static_site) > 0 ? module.static_site[0].distribution_id : ""
+  description = "errtraq-type=string; errtraq-keys=; CloudFront distribution ID of the web UI, or an empty string without ui"
+}
+output "ui_bucket_name" {
+  value       = length(module.static_site) > 0 ? module.static_site[0].bucket_name : ""
+  description = "errtraq-type=string; errtraq-keys=; S3 bucket that holds the web UI assets, or an empty string without ui"
+}

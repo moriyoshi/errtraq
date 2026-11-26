@@ -55,3 +55,75 @@ export function googleRoleContract(directory) {
   }
   return violations;
 }
+
+/**
+ * Source-level rules for the web UI static site: the bucket blocks public access, only the
+ * distribution may read it (origin access control, a bucket policy tied to its ARN), the API
+ * origin does not use origin access control (it would replace the Bearer token), nothing is served
+ * over plain HTTP, and there are no distribution-wide custom error responses (they would rewrite
+ * the API's 403 and 404 JSON into index.html). Returns the violations in `main.tf` (empty when clean).
+ */
+export function staticSiteContract(directory) {
+  const text = readFileSync(resolve(directory, "main.tf"), "utf8");
+  const violations = [];
+  const block = text.match(
+    /resource "aws_s3_bucket_public_access_block" "site" \{([\s\S]*?)\n\}/,
+  )?.[1];
+  for (const setting of [
+    "block_public_acls",
+    "block_public_policy",
+    "ignore_public_acls",
+    "restrict_public_buckets",
+  ])
+    if (!block || !new RegExp(`${setting}\\s*=\\s*true`).test(block))
+      violations.push(`bucket does not set ${setting} = true`);
+  if (/custom_error_response/.test(text))
+    violations.push("custom_error_response rewrites the API's error JSON");
+  const controls = [
+    ...text.matchAll(
+      /resource "aws_cloudfront_origin_access_control" "[^"]+" \{([\s\S]*?)\n\}/g,
+    ),
+  ];
+  if (controls.length !== 1)
+    violations.push("exactly one origin access control is expected");
+  for (const control of controls)
+    if (!/signing_behavior\s*=\s*"always"/.test(control[1] ?? ""))
+      violations.push("origin access control must always sign");
+  const api = text.match(
+    /origin \{\s*origin_id\s*=\s*"api"([\s\S]*?)\n {2}\}/,
+  )?.[1];
+  if (!api) violations.push("API origin not found");
+  else if (/origin_access_control_id/.test(api))
+    violations.push("API origin must not use origin access control");
+  if (/viewer_protocol_policy\s*=\s*"allow-all"/.test(text))
+    violations.push("viewer_protocol_policy allow-all");
+  const policy = text.match(
+    /resource "aws_s3_bucket_policy" "site" \{([\s\S]*?)\n\}/,
+  )?.[1];
+  if (!policy) violations.push("bucket policy not found");
+  else {
+    const allows = policy.match(/Effect\s*=\s*"Allow"/g)?.length ?? 0;
+    const scoped =
+      policy.match(
+        /Principal\s*=\s*\{ Service = "cloudfront\.amazonaws\.com" \}[\s\S]*?"AWS:SourceArn"\s*=\s*aws_cloudfront_distribution\.site\.arn/g,
+      )?.length ?? 0;
+    if (allows === 0 || allows !== scoped)
+      violations.push(
+        "every Allow must name the CloudFront principal and this distribution",
+      );
+    for (const action of policy.matchAll(
+      /Action\s*=\s*(?:"([^"]+)"|\[([^\]]*)\])/g,
+    ))
+      if (
+        /\*/.test(action[1] ?? action[2] ?? "") &&
+        !/Deny/.test(
+          policy
+            .slice(0, action.index ?? 0)
+            .split("Effect")
+            .pop() ?? "",
+        )
+      )
+        violations.push(`wildcard action ${action[1] ?? action[2]}`);
+  }
+  return violations;
+}

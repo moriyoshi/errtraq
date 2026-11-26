@@ -28,6 +28,7 @@ import {
 import { createApiApp, createIngestApp } from "@moriyoshi/errtraq-http";
 import { Hono } from "hono";
 import { configSchema, type StandaloneConfig } from "./stack.js";
+import { createUiHandler } from "./static-ui.js";
 import type { DevTokenManager } from "./token.js";
 
 export { infra, manifest } from "./stack.js";
@@ -114,6 +115,7 @@ export function create({
   recordMode = "direct",
   rateRejection,
   archiveRetentionDays,
+  environment,
 }: CreateContext<StandaloneConfig, Partial<Bindings>, Bindings>) {
   const bindings = { ...dependencies, ...runtimeBindings };
   const cfg = configSchema.parse(config);
@@ -214,8 +216,23 @@ export function create({
             logger,
             archive: bindings.archive,
             ...(cfg.publicUrl ? { ingestUrl: cfg.publicUrl } : {}),
+            ...(cfg.apiCorsOrigins
+              ? { cors: { origins: cfg.apiCorsOrigins } }
+              : {}),
           }),
         );
+      // The environment variable wins over the setting so a container image can point at the
+      // assets `errtraq build` copied into it.
+      const uiDirectory = environment?.ERRTRAQ_UI_DIR || cfg.uiDirectory;
+      if (uiDirectory) {
+        const ui = await createUiHandler(uiDirectory);
+        // Registered after every API and ingest route, so those always win.
+        app.on(
+          ["GET", "HEAD"],
+          "*",
+          async (c, next) => (await ui(c)) ?? next(),
+        );
+      }
       const server = serve({
         fetch: app.fetch,
         hostname: cfg.host,

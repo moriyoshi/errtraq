@@ -8,7 +8,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { homedir } from "node:os";
-import { isAbsolute, join, relative, sep } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import {
   DUCKDB_EXTENSIONS,
   IMAGE_EXTENSION_DIRECTORY,
@@ -43,6 +43,11 @@ import {
   isErrtraqWorkspace,
   safeDirectory,
 } from "./infra.js";
+import {
+  buildUiAssets,
+  UI_BUILD_DIRECTORY,
+  UI_SITE_DIRECTORY,
+} from "./ui-build.js";
 
 function sourceValue(value: unknown): string {
   if (isEnvRef(value))
@@ -146,6 +151,8 @@ export interface BuildManifest {
   platform: string;
   artifacts: Record<string, BuildArtifact>;
   dockerfile?: "Dockerfile";
+  /** The built web UI copied into `ui/` (see ui-build.ts); Terraform or the container reads it. */
+  ui?: { directory: typeof UI_BUILD_DIRECTORY; assets: number };
 }
 export async function buildStack(
   stack: StackConfig,
@@ -201,11 +208,15 @@ export async function buildStack(
         (await lstat(join(output, "Dockerfile"))).isSymbolicLink())
     )
       throw new Error("Invalid generated Dockerfile");
+    // The UI copy is owned only when the previous build recorded it.
+    const ownedUi = (entry: string) =>
+      entry === UI_BUILD_DIRECTORY && previous.ui !== undefined;
     const unexpected = entries.filter(
       (entry) =>
         entry !== "manifest.json" &&
         entry !== "Dockerfile" &&
         entry !== EXTENSION_SCRIPT &&
+        !ownedUi(entry) &&
         !previousFunctions.has(entry),
     );
     if (unexpected.length)
@@ -216,7 +227,8 @@ export async function buildStack(
       (name) =>
         name !== "manifest.json" &&
         name !== "Dockerfile" &&
-        name !== EXTENSION_SCRIPT,
+        name !== EXTENSION_SCRIPT &&
+        !ownedUi(name),
     )) {
       const path = join(output, entry);
       const stat = await lstat(path);
@@ -276,8 +288,8 @@ export async function buildStack(
         ? "awsBootstrapVault, bootstrapSecretName, createBootstrapHandler"
         : "createHandler";
       const bootstrapOptions = `{stackName:${JSON.stringify(stack.name)},store:adapters.store,kv:adapters.kv,vault:awsBootstrapVault(process.env),secretName:bootstrapSecretName(process.env),...${JSON.stringify(bootstrapRetentionPolicy(stack))},rateRejection:plan.rateRejection,logger}`;
-      entry = `${imports}\n${engineImport}import { constructDeployedPlan, env, variable } from "@moriyoshi/errtraq-core/runtime";\nimport { ${handlerImports}, createSecretsManagerSource, lambdaAwsCredentials, lambdaRateLimit, retryableInitialization } from "@moriyoshi/errtraq-platform-aws-lambda/handler";\nconst plan=${sourceValue(plan)}; const modules={${modules}}; const kinds=${JSON.stringify(kinds)}; const logger={debug:(m,f)=>console.debug(m,f??{}),info:(m,f)=>console.info(m,f??{}),warn:(m,f)=>console.warn(m,f??{}),error:(m,f)=>console.error(m,f??{})};\nconst secretSource=createSecretsManagerSource({environment:process.env});
-const getHandler=retryableInitialization(async()=>{ const built=await constructDeployedPlan(plan,process.env, async (name)=>{ if(!Object.hasOwn(modules,name)) throw new Error("Unknown module "+name); return modules[name]; }, logger, secretSource${engineBindings}); try { const adapters=Object.fromEntries(Object.entries(kinds).map(([kind,path])=>[kind,built.instances.get(path)])); return ${bootstrapFn ? `createBootstrapHandler(${bootstrapOptions})` : `createHandler({roles:${JSON.stringify(fn.roles)},http:${JSON.stringify(fn.http)},recordMode:plan.recordMode,rateRejection:plan.rateRejection,rateLimit:lambdaRateLimit(process.env.ERRTRAQ_INGEST_RATE_LIMIT),archiveRetentionDays:plan.archiveRetentionDays,archiveInvocationTimeoutMs:${archiveTimeoutMs},adapters,logger})`}; } catch(error) { try { await built.close(); } catch(cleanup) { throw new AggregateError([error,cleanup],"Handler creation and cleanup failed"); } throw error; } });\nexport async function handler(event){return (await getHandler())(event);}\n`;
+      entry = `${imports}\n${engineImport}import { constructDeployedPlan, env, variable } from "@moriyoshi/errtraq-core/runtime";\nimport { ${handlerImports}, createSecretsManagerSource, lambdaAwsCredentials, lambdaIngestUrl, lambdaRateLimit, retryableInitialization } from "@moriyoshi/errtraq-platform-aws-lambda/handler";\nconst plan=${sourceValue(plan)}; const modules={${modules}}; const kinds=${JSON.stringify(kinds)}; const logger={debug:(m,f)=>console.debug(m,f??{}),info:(m,f)=>console.info(m,f??{}),warn:(m,f)=>console.warn(m,f??{}),error:(m,f)=>console.error(m,f??{})};\nconst secretSource=createSecretsManagerSource({environment:process.env});
+const getHandler=retryableInitialization(async()=>{ const built=await constructDeployedPlan(plan,process.env, async (name)=>{ if(!Object.hasOwn(modules,name)) throw new Error("Unknown module "+name); return modules[name]; }, logger, secretSource${engineBindings}); try { const adapters=Object.fromEntries(Object.entries(kinds).map(([kind,path])=>[kind,built.instances.get(path)])); return ${bootstrapFn ? `createBootstrapHandler(${bootstrapOptions})` : `createHandler({roles:${JSON.stringify(fn.roles)},http:${JSON.stringify(fn.http)},recordMode:plan.recordMode,rateRejection:plan.rateRejection,rateLimit:lambdaRateLimit(process.env.ERRTRAQ_INGEST_RATE_LIMIT),ingestUrl:lambdaIngestUrl(process.env.ERRTRAQ_PUBLIC_INGEST_URL),archiveRetentionDays:plan.archiveRetentionDays,archiveInvocationTimeoutMs:${archiveTimeoutMs},adapters,logger})`}; } catch(error) { try { await built.close(); } catch(cleanup) { throw new AggregateError([error,cleanup],"Handler creation and cleanup failed"); } throw error; } });\nexport async function handler(event){return (await getHandler())(event);}\n`;
     } else if (stack.platform.manifest.id === "cloud-run") {
       const plan = deployedPlan(stack, fn.id);
       const specs = [
@@ -464,6 +476,28 @@ for(const signal of ["SIGTERM","SIGINT"]) process.on(signal,()=>{if(stopping){if
       );
     }
   }
+  // The web UI is a build input like the bundles: Terraform (AWS) or the container image
+  // (standalone) reads this copy, never the source directory.
+  const uiSource =
+    stack.platform.manifest.id === "aws-lambda"
+      ? (stack.platform.config as { ui?: { directory: string } }).ui?.directory
+      : stack.platform.manifest.id === "standalone"
+        ? (stack.platform.config as { uiDirectory?: unknown }).uiDirectory
+        : undefined;
+  if (typeof uiSource === "string") {
+    const built = await buildUiAssets(
+      resolve(dirname(stackFile), uiSource),
+      output,
+    );
+    manifest.ui = {
+      directory: UI_BUILD_DIRECTORY,
+      assets: built.assets.length,
+    };
+  } else
+    await rm(join(output, UI_BUILD_DIRECTORY), {
+      recursive: true,
+      force: true,
+    });
   if (stack.platform.manifest.id === "aws-lambda") {
     const dockerfile = join(output, "Dockerfile");
     if (imageFunctions.length) {
@@ -508,7 +542,12 @@ for(const signal of ["SIGTERM","SIGINT"]) process.on(signal,()=>{if(stopping){if
       stack.archive?.manifest.id === "archive-iceberg"
         ? `# DuckDB native binding for the archive engine (external to the bundle).\nRUN npm install --prefix /app --omit=dev --no-audit --no-fund --no-package-lock @duckdb/node-api@${DUCKDB_NODE_API_VERSION} && chown -R node:node /app\n`
         : "";
-    const dockerfile = `FROM node:22.23-bookworm-slim\nWORKDIR /app\nRUN mkdir -p /data && chown node:node /data\n${duckdbLayer}COPY --chown=node:node ${id}/index.mjs /app/index.mjs\n# Explicitly opt in to listening on the container network.\nENV ERRTRAQ_HOST=0.0.0.0 ERRTRAQ_DATA_DIR=/data\nUSER node\nVOLUME ["/data"]\nEXPOSE 8787\nHEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 CMD node -e "fetch('http://127.0.0.1:'+(process.env.ERRTRAQ_PORT||'8787')+'/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"\nENTRYPOINT ["node", "/app/index.mjs"]\n`;
+    // The UI build copied above; the variable makes the platform serve it at / (it overrides the
+    // stack setting, whose path means something else on the build host).
+    const uiLayer = manifest.ui
+      ? `COPY --chown=node:node ${UI_BUILD_DIRECTORY}/${UI_SITE_DIRECTORY} /app/ui\n`
+      : "";
+    const dockerfile = `FROM node:22.23-bookworm-slim\nWORKDIR /app\nRUN mkdir -p /data && chown node:node /data\n${duckdbLayer}COPY --chown=node:node ${id}/index.mjs /app/index.mjs\n${uiLayer}# Explicitly opt in to listening on the container network.\nENV ERRTRAQ_HOST=0.0.0.0 ERRTRAQ_DATA_DIR=/data${manifest.ui ? " ERRTRAQ_UI_DIR=/app/ui" : ""}\nUSER node\nVOLUME ["/data"]\nEXPOSE 8787\nHEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 CMD node -e "fetch('http://127.0.0.1:'+(process.env.ERRTRAQ_PORT||'8787')+'/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"\nENTRYPOINT ["node", "/app/index.mjs"]\n`;
     await writeFile(join(output, "Dockerfile"), dockerfile);
     manifest.dockerfile = "Dockerfile";
   }

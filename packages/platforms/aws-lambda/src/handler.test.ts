@@ -1,4 +1,9 @@
-import { bootstrapProject, type Message } from "@moriyoshi/errtraq-core";
+import {
+  type ApiTokenId,
+  bootstrapProject,
+  hashApiToken,
+  type Message,
+} from "@moriyoshi/errtraq-core";
 import {
   DeterministicIdGen,
   FakeClock,
@@ -11,6 +16,7 @@ import {
 import { expect, it, vi } from "vitest";
 import {
   createHandler,
+  lambdaIngestUrl,
   lambdaRateLimit,
   retryableInitialization,
 } from "./handler.js";
@@ -576,4 +582,77 @@ it("requires the archive adapters for the archive role and gives the API the arc
       },
     }),
   ).not.toThrow();
+});
+
+it("builds DSNs from the operator-supplied ingest URL and adds no CORS headers itself", async () => {
+  const store = new MemoryActiveStore();
+  const clock = new FakeClock();
+  const boot = await bootstrapProject({
+    store,
+    kv: new MemoryKV(clock),
+    ids: new DeterministicIdGen(),
+    orgSlug: "org",
+    projectSlug: "web",
+  });
+  await store.projects.putToken({
+    id: "token" as ApiTokenId,
+    orgId: boot.org.id,
+    tokenHash: await hashApiToken("secret"),
+    scopes: ["event:read"],
+  });
+  const request = (
+    handler: (event: unknown) => Promise<unknown>,
+    headers: Record<string, string>,
+  ) =>
+    handler({
+      version: "2.0",
+      routeKey: "$default",
+      rawPath: "/api/0/projects/org/web/keys/",
+      rawQueryString: "",
+      headers: { host: "api.example.test", ...headers },
+      body: null,
+      isBase64Encoded: false,
+      requestContext: {
+        http: {
+          method: "GET",
+          path: "/api/0/projects/org/web/keys/",
+          protocol: "HTTP/1.1",
+          sourceIp: "127.0.0.1",
+          userAgent: "test",
+        },
+        domainName: "api.example.test",
+        requestId: "test",
+        stage: "$default",
+        time: "",
+        timeEpoch: 0,
+        accountId: "",
+        apiId: "",
+      },
+    }) as Promise<{ statusCode: number; body: string; headers: object }>;
+  const make = (ingestUrl?: string) =>
+    createHandler({
+      roles: ["api"],
+      http: ["api"],
+      ...(ingestUrl ? { ingestUrl } : {}),
+      adapters: { store, blob: new MemoryBlobStore() },
+    });
+  const headers = { authorization: "Bearer secret", origin: "https://ui.test" };
+  const withUrl = await request(make("https://ingest.example.test/"), headers);
+  expect(withUrl.statusCode).toBe(200);
+  expect(JSON.parse(withUrl.body)[0].dsn.public).toBe(
+    `https://${boot.key.publicKey}@ingest.example.test/${boot.project.id}`,
+  );
+  // The function URL's CORS block carries the browser policy; the app must not duplicate it.
+  expect(withUrl.headers).not.toHaveProperty("access-control-allow-origin");
+  const without = await request(make(), headers);
+  expect(JSON.parse(without.body)[0]).not.toHaveProperty("dsn");
+});
+it("validates the delivered public ingest URL", () => {
+  expect(lambdaIngestUrl(undefined)).toBeUndefined();
+  expect(lambdaIngestUrl("")).toBeUndefined();
+  expect(lambdaIngestUrl("https://ingest.example.test")).toBe(
+    "https://ingest.example.test",
+  );
+  for (const invalid of ["ingest.example.test", "ftp://x.test", "https://"])
+    expect(() => lambdaIngestUrl(invalid)).toThrow("Invalid public ingest URL");
 });

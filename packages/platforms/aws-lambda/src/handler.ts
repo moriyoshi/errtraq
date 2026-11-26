@@ -40,6 +40,11 @@ export interface HandlerOptions {
   recordMode?: "direct" | "grouped";
   rateRejection?: RateRejectionConfig;
   rateLimit?: number | null;
+  /**
+   * Public ingest URL for the DSNs of the API's key list (`ERRTRAQ_PUBLIC_INGEST_URL`). The API
+   * adds no CORS headers: the function URL's CORS block carries the browser policy.
+   */
+  ingestUrl?: string;
   http: readonly FunctionRole[];
   adapters: {
     store?: ActiveStore;
@@ -75,6 +80,19 @@ export function lambdaRateLimit(
   if (!/^[1-9][0-9]*$/.test(value) || !Number.isSafeInteger(Number(value)))
     throw new Error("Invalid Lambda ingest rate limit");
   return Number(value);
+}
+/** Parse the operator-supplied public ingest URL; missing or empty means the key list has no `dsn`. */
+export function lambdaIngestUrl(value: string | undefined): string | undefined {
+  if (value === undefined || value === "") return undefined;
+  let url: URL | undefined;
+  try {
+    url = new URL(value);
+  } catch {
+    // fall through to the error
+  }
+  if (!url || !["http:", "https:"].includes(url.protocol))
+    throw new Error("Invalid public ingest URL");
+  return value;
 }
 /** Share successful initialization while allowing the next invocation to retry a failure. */
 export function retryableInitialization<T>(
@@ -130,6 +148,7 @@ export function createHandler(
         clock,
         logger: log,
         archive: adapters.archive,
+        ...(options.ingestUrl ? { ingestUrl: options.ingestUrl } : {}),
       }),
     );
   }

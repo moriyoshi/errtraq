@@ -31,7 +31,10 @@
     "bootstrap_function_arn": "string",
     "bootstrap_function_name": "string",
     "image_repository_url": "string",
-    "ingest_url": "string"
+    "ingest_url": "string",
+    "ui_bucket_name": "string",
+    "ui_distribution_id": "string",
+    "ui_domain_name": "string"
   },
   "rds-iam-access": {
     "policies": {
@@ -122,5 +125,10 @@
         "url": "string"
       }
     }
+  },
+  "static-site": {
+    "bucket_name": "string",
+    "distribution_id": "string",
+    "domain_name": "string"
   }
 }

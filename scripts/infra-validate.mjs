@@ -10,6 +10,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { resolve } from "node:path";
+import { copyChildren } from "./infra-children.mjs";
 import {
   capturedShape,
   checkShape,
@@ -150,6 +151,14 @@ try {
         cpSync(resolve(providerRoot, component.name), target, {
           recursive: true,
         });
+        // A module may call a sibling (lambda-app hosts static-site); copy it beside the copy.
+        copyChildren(
+          providerRoot,
+          component.name,
+          resolve(temporary, version, provider.name),
+          family.constraint,
+          version,
+        );
         const versions = resolve(target, "versions.tf");
         const source = readFileSync(versions, "utf8");
         const constraint = source.match(family.constraint)?.[0];

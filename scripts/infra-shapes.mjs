@@ -14,6 +14,7 @@ export const captureRuns = {
   s3: "policies_and_lifecycle",
   s3tables: "bucket_namespace_and_policies",
   sqs: "queues_and_policies",
+  "static-site": "private_bucket_served_only_through_the_distribution",
   gcs: "policies_and_lifecycle",
   pubsub: "queues_and_policies",
   firestore: "database_indexes_and_policies",

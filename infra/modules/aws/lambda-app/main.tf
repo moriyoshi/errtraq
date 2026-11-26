@@ -121,7 +121,7 @@ resource "aws_lambda_function" "function" {
       command = ["${each.key}/${var.handler}"]
     }
   }
-  environment { variables = merge(each.value.environment, each.value.secrets, contains(each.value.roles, "bootstrap") ? { ERRTRAQ_BOOTSTRAP_SECRET_NAME = var.bootstrap_secret_name } : {}) }
+  environment { variables = merge(each.value.environment, each.value.secrets, contains(each.value.roles, "bootstrap") ? { ERRTRAQ_BOOTSTRAP_SECRET_NAME = var.bootstrap_secret_name } : {}, contains(each.value.http, "api") && var.ingest_public_url != null ? { ERRTRAQ_PUBLIC_INGEST_URL = var.ingest_public_url } : {}) }
   dynamic "vpc_config" {
     for_each = local.vpc_enabled ? [1] : []
     content {
@@ -188,6 +188,19 @@ resource "aws_lambda_function_url" "http" {
       # Lowercase: AWS stores header names lowercased, so other casings drift on every plan.
       allow_headers  = ["content-type", "content-encoding", "x-sentry-auth", "x-requested-with", "sentry-trace", "baggage"]
       expose_headers = ["x-sentry-error", "x-sentry-rate-limits", "retry-after"]
+    }
+  }
+  # Browser access to the API from another origin (a UI hosted elsewhere): exact origins only. The
+  # application adds no CORS headers of its own on Lambda, so the response carries one policy.
+  dynamic "cors" {
+    for_each = !contains(each.value.http, "ingest") && contains(each.value.http, "api") && length(var.api_cors_origins) > 0 ? [1] : []
+    content {
+      allow_origins     = var.api_cors_origins
+      allow_methods     = ["GET", "PUT", "POST"]
+      allow_headers     = ["authorization", "content-type"]
+      expose_headers    = ["link"]
+      allow_credentials = false
+      max_age           = 86400
     }
   }
 }
@@ -270,4 +283,16 @@ resource "aws_cloudwatch_metric_alarm" "errors" {
   treat_missing_data  = "notBreaching"
   alarm_actions       = var.alarm_topic_arn == null ? [] : [var.alarm_topic_arn]
   tags                = var.tags
+}
+# The web UI: a private bucket behind CloudFront that serves the build and forwards /api/0/* to the
+# API function URL, so the UI and the API share one origin. Ingest keeps its own function URL (the
+# DSN host) and is not routed through the distribution.
+module "static_site" {
+  count            = var.ui == null ? 0 : 1
+  source           = "../static-site"
+  name             = var.name
+  tags             = var.tags
+  api_origin_url   = local.role_urls.api
+  assets_directory = "${dirname(dirname(var.ui.build_anchor))}/ui"
+  price_class      = var.ui.price_class
 }

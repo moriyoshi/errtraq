@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { cpSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { z } from "zod";
@@ -9,6 +10,7 @@ import {
   deriveDeployment,
   env,
   out,
+  output,
   resolveStack,
   variable,
 } from "../packages/core/dist/index.js";
@@ -99,6 +101,37 @@ export const fixtures = {
       mode: "per-topic",
       alarmTopicArn: "arn:aws:sns:us-east-1:123456789012:operators",
     }),
+  }),
+  // Browser access to the API from another origin, and DSNs with an operator-supplied ingest URL.
+  "api-browser": variant(shared, {
+    recordMode: "direct",
+    platform: awsLambda({
+      publicIngestUrl: variable("INGEST_URL"),
+      apiCorsOrigins: variable("UI_ORIGINS"),
+    }),
+    variables: {
+      INGEST_URL: {
+        type: "string",
+        sensitive: false,
+        default: "https://ingest.example.test",
+      },
+      UI_ORIGINS: {
+        type: "string[]",
+        sensitive: false,
+        default: ["https://ui.example.test", "http://localhost:5173"],
+      },
+    },
+  }),
+  // The web UI on CloudFront next to the DSN host; prepareRoot writes the UI build copy it reads.
+  ui: variant(shared, {
+    recordMode: "direct",
+    platform: awsLambda({ ui: { directory: "../packages/ui/dist" } }),
+    outputs: {
+      ...shared.outputs,
+      ui_domain_name: output("platform", "ui_domain_name"),
+      ui_distribution_id: output("platform", "ui_distribution_id"),
+      ui_bucket_name: output("platform", "ui_bucket_name"),
+    },
   }),
   "config-refs": variant(shared, {
     store: {
@@ -371,6 +404,9 @@ output "test_alarms" {
   value = { for id, alarm in aws_cloudwatch_metric_alarm.errors : id => { name = alarm.alarm_name, namespace = alarm.namespace, metric = alarm.metric_name, dimensions = alarm.dimensions, statistic = alarm.statistic, period = alarm.period, evaluation_periods = alarm.evaluation_periods, datapoints_to_alarm = alarm.datapoints_to_alarm, threshold = alarm.threshold, comparison = alarm.comparison_operator, missing = alarm.treat_missing_data, actions = tolist(alarm.alarm_actions), tags = alarm.tags } }
 }
 output "test_bootstrap_policies" { value = { for id, policy in aws_iam_role_policy.bootstrap_secret : id => jsondecode(policy.policy) if policy.role == aws_iam_role.function[id].id } }
+output "test_cors" {
+  value = { for id, url in aws_lambda_function_url.http : id => try(sort(one(url.cors).allow_origins), []) }
+}
 output "test_http" {
   value = { for role in ["ingest", "api"] : role => local.role_urls[role] if local.role_urls[role] != "" }
 }
@@ -389,6 +425,12 @@ const test = `mock_provider "aws" {
   mock_resource "aws_iam_role" { defaults = { arn = "arn:aws:iam::123456789012:role/test" } }
   mock_resource "aws_sqs_queue" { defaults = { arn = "arn:aws:sqs:us-east-1:123456789012:test" } }
   mock_resource "aws_cloudwatch_event_rule" { defaults = { arn = "arn:aws:events:us-east-1:123456789012:rule/test" } }
+  mock_resource "aws_lambda_function_url" { defaults = { function_url = "https://example.invalid/" } }
+  mock_data "aws_cloudfront_cache_policy" { defaults = { id = "00000000-0000-0000-0000-000000000001" } }
+  mock_data "aws_cloudfront_origin_request_policy" { defaults = { id = "00000000-0000-0000-0000-000000000002" } }
+  mock_resource "aws_s3_bucket" { defaults = { arn = "arn:aws:s3:::test-bucket", id = "test-bucket", bucket_regional_domain_name = "test-bucket.s3.us-east-1.amazonaws.com" } }
+  mock_resource "aws_cloudfront_distribution" { defaults = { arn = "arn:aws:cloudfront::123456789012:distribution/TEST", id = "TEST", domain_name = "d111111abcdef8.cloudfront.net" } }
+  mock_resource "aws_cloudfront_function" { defaults = { arn = "arn:aws:cloudfront::123456789012:function/test" } }
 }
 run "generated_root" {
   command = apply
@@ -423,6 +465,10 @@ run "generated_root" {
   assert {
     condition = jsonencode(module.platform.test_bootstrap_policies) == jsonencode(output.expected_bootstrap_policies)
     error_message = "Bootstrap secret policies differ from the deployment view: only the bootstrap function may have one, scoped to the configured secret."
+  }
+  assert {
+    condition = jsonencode(module.platform.test_cors) == jsonencode(output.expected_cors)
+    error_message = "Function URL CORS origins differ from the deployment view."
   }
   assert {
     condition = sort(keys(module.platform.test_http)) == sort(keys(output.expected_http))
@@ -577,6 +623,33 @@ export function prepareRoot(parent, name, version) {
   mkdirSync(resolve(target, "build"));
   for (const fn of view.functions)
     writeFileSync(resolve(target, `build/${fn.id}.zip`), "test artifact");
+  if (stack.platform.config.ui) {
+    // The build copy `errtraq build` writes: <build>/ui next to the function directories (here
+    // `build/<id>.zip`, so the module resolves it to ui/ beside build/).
+    mkdirSync(resolve(target, "ui/site/assets"), { recursive: true });
+    const files = {
+      "index.html": "<!doctype html>",
+      "assets/index-abc123.js": "export {};",
+    };
+    const assets = Object.entries(files).map(([path, body]) => {
+      writeFileSync(resolve(target, "ui/site", path), body);
+      return {
+        path,
+        contentType: path.endsWith(".js")
+          ? "text/javascript; charset=utf-8"
+          : "text/html; charset=utf-8",
+        cacheControl: path.startsWith("assets/")
+          ? "public, max-age=31536000, immutable"
+          : "no-cache",
+        contentHash: createHash("sha256").update(body).digest("base64"),
+        size: body.length,
+      };
+    });
+    writeFileSync(
+      resolve(target, "ui/manifest.json"),
+      `${JSON.stringify({ version: 1, assets }, null, 2)}\n`,
+    );
+  }
   const providerPath = resolve(target, "providers.tf.json");
   const provider = JSON.parse(readFileSync(providerPath, "utf8"));
   provider.terraform.required_providers.aws.version = `= ${version}`;
@@ -594,6 +667,15 @@ export function prepareRoot(parent, name, version) {
             render(b.binding.value, b.selection),
           ]),
         ),
+        // The module, not an adapter binding, delivers the public ingest URL to the API function.
+        ...(fn.http.includes("api") && stack.platform.config.publicIngestUrl
+          ? {
+              ERRTRAQ_PUBLIC_INGEST_URL: render(
+                stack.platform.config.publicIngestUrl,
+                "platform",
+              ),
+            }
+          : {}),
         // The module, not an adapter binding, delivers the name of the one secret.
         ...(fn.roles.includes("bootstrap")
           ? { ERRTRAQ_BOOTSTRAP_SECRET_NAME: bootstrapSecret }
@@ -664,6 +746,24 @@ export function prepareRoot(parent, name, version) {
   );
   const http = Object.fromEntries(
     view.functions.flatMap((fn) => fn.http.map((role) => [role, true])),
+  );
+  // The API's own CORS block (exact origins) on its function URL; ingest's is the public policy.
+  const apiOrigins = stack.platform.config.apiCorsOrigins;
+  const cors = Object.fromEntries(
+    view.functions
+      .filter((fn) => fn.http.length)
+      .map((fn) => [
+        fn.id,
+        fn.http.includes("ingest")
+          ? ["*"]
+          : apiOrigins
+            ? [
+                ...(Array.isArray(apiOrigins)
+                  ? apiOrigins
+                  : stack.variables[apiOrigins.name].default),
+              ].sort()
+            : [],
+      ]),
   );
   const tags = stack.providers.aws.tags;
   const alarm = (fields) => ({
@@ -736,6 +836,7 @@ export function prepareRoot(parent, name, version) {
       crons,
       cron_schedules,
       http,
+      cors,
     }).map(([key, value]) => [`expected_${key}`, { value }]),
   );
   const api = view.functions.find((fn) => fn.roles.includes("api"));
@@ -831,9 +932,17 @@ override_data {
   }
 `
       : "";
+  const uiAssertion = stack.platform.config.ui
+    ? `
+  assert {
+    condition = output.ui_domain_name == "d111111abcdef8.cloudfront.net" && output.ui_distribution_id == "TEST" && output.ui_bucket_name == "test-bucket" && module.platform.ui_domain_name == output.ui_domain_name
+    error_message = "The UI outputs must come from the static site."
+  }
+`
+    : "";
   const rootTest = test.replace(
     /\n}\s*$/,
-    `${vpcAssertions}${metadataAssertion}${queueAlarmAssertion}${artifactAssertion}\n}\n`,
+    `${vpcAssertions}${metadataAssertion}${queueAlarmAssertion}${artifactAssertion}${uiAssertion}\n}\n`,
   );
   writeFileSync(
     resolve(target, "tests/root.tftest.hcl"),

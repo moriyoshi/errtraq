@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "assets": [
+    {
+      "path": "assets/index-abc123.css",
+      "contentType": "text/css; charset=utf-8",
+      "cacheControl": "public, max-age=31536000, immutable",
+      "contentHash": "0AwO0JPP7nAPs8zFzbr5/8Frjbcl2kGRfDMk6jommRs=",
+      "size": 25
+    },
+    {
+      "path": "assets/index-abc123.js",
+      "contentType": "text/javascript; charset=utf-8",
+      "cacheControl": "public, max-age=31536000, immutable",
+      "contentHash": "jmCbtxwguFjHfw6fkLsTGduEd7E/n5ZfGh4YUkv1CIE=",
+      "size": 11
+    },
+    {
+      "path": "favicon.svg",
+      "contentType": "image/svg+xml",
+      "cacheControl": "no-cache",
+      "contentHash": "zR+v48x/BvVerT8NzjkwCsp6iRF5Pnb83TJ3mcBwmsI=",
+      "size": 7
+    },
+    {
+      "path": "index.html",
+      "contentType": "text/html; charset=utf-8",
+      "cacheControl": "no-cache",
+      "contentHash": "M1/KhXTwYO6iTrza5rePMkFPXeA9oQhP0Oc9cQdo46k=",
+      "size": 16
+    }
+  ]
+}

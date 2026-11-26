@@ -212,7 +212,8 @@ export function createApiApp(options: {
     const requestId = logUnexpected(options.logger, error, c.req.raw);
     return c.json({ detail: "Internal server error", requestId }, 500);
   });
-  // TODO(UI-c): the stack config supplies these origins.
+  // The stack config supplies these origins: standalone passes them here, while on Lambda the
+  // function URL's CORS block carries the policy (so the app must not duplicate it).
   if (options.cors) {
     const origins = options.cors.origins.map(corsOrigin);
     if (origins.length === 0) throw new Error("CORS origins must not be empty");

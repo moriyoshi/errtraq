@@ -2160,5 +2160,96 @@
     "provider": "google",
     "root": "gcp-firestore",
     "operation": "gcp-drop-store-binding"
+  },
+  {
+    "id": "site-public-bucket",
+    "module": "static-site",
+    "file": "main.tf",
+    "find": "block_public_acls       = true",
+    "replace": "block_public_acls       = false"
+  },
+  {
+    "id": "site-policy-wildcard",
+    "module": "static-site",
+    "file": "main.tf",
+    "find": "Action    = \"s3:GetObject\"",
+    "replace": "Action    = \"s3:*\""
+  },
+  {
+    "id": "site-error-responses",
+    "module": "static-site",
+    "file": "main.tf",
+    "find": "  restrictions {",
+    "replace": "  custom_error_response {\n    error_code         = 404\n    response_code      = 200\n    response_page_path = \"/index.html\"\n  }\n  restrictions {"
+  },
+  {
+    "id": "site-api-origin-oac",
+    "module": "static-site",
+    "file": "main.tf",
+    "find": "domain_name = local.api_host",
+    "replace": "domain_name              = local.api_host\n    origin_access_control_id = aws_cloudfront_origin_access_control.site.id"
+  },
+  {
+    "id": "site-oac-never-signs",
+    "module": "static-site",
+    "file": "main.tf",
+    "find": "signing_behavior                  = \"always\"",
+    "replace": "signing_behavior                  = \"never\""
+  },
+  {
+    "id": "site-api-cached",
+    "module": "static-site",
+    "file": "main.tf",
+    "find": "name = \"Managed-CachingDisabled\"",
+    "replace": "name = \"Managed-CachingOptimized\""
+  },
+  {
+    "id": "site-api-host-forwarded",
+    "module": "static-site",
+    "file": "main.tf",
+    "find": "name = \"Managed-AllViewerExceptHostHeader\"",
+    "replace": "name = \"Managed-AllViewer\""
+  },
+  {
+    "id": "site-api-plain-http",
+    "module": "static-site",
+    "file": "main.tf",
+    "find": "viewer_protocol_policy   = \"https-only\"",
+    "replace": "viewer_protocol_policy   = \"allow-all\""
+  },
+  {
+    "id": "site-spa-rewrite-moved",
+    "module": "static-site",
+    "file": "main.tf",
+    "find": "event_type   = \"viewer-request\"",
+    "replace": "event_type   = \"viewer-response\""
+  },
+  {
+    "id": "site-referrer-policy",
+    "module": "static-site",
+    "file": "main.tf",
+    "find": "referrer_policy = \"no-referrer\"",
+    "replace": "referrer_policy = \"origin\""
+  },
+  {
+    "id": "site-frame-ancestors",
+    "module": "static-site",
+    "file": "main.tf",
+    "find": "content_security_policy = \"frame-ancestors 'none'\"",
+    "replace": "content_security_policy = \"frame-ancestors 'self'\""
+  },
+  {
+    "id": "lambda-api-cors-wildcard",
+    "module": "lambda-app",
+    "file": "main.tf",
+    "find": "allow_origins     = var.api_cors_origins",
+    "replace": "allow_origins     = [\"*\"]"
+  },
+  {
+    "id": "lambda-api-cors-credentials",
+    "module": "lambda-app",
+    "file": "main.tf",
+    "find": "allow_credentials = false",
+    "replace": "allow_credentials = true"
   }
 ]

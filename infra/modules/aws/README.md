@@ -133,3 +133,39 @@ rather than applied. Its `read`, `write` and `delete` policies grant the Iceberg
 actions and `GetTableData` / `PutTableData` on the bucket's tables; no function role can drop or
 reconfigure the bucket. `catalog_uri` and `table_bucket_arn` are the REST endpoint and warehouse
 the adapter uses.
+
+## Web UI (static-site)
+
+`static-site` is called by `lambda-app` when the `ui` input is set (the platform setting
+`awsLambda({ ui: { directory } })`); it is also a module of its own with its contract test. It
+creates a private S3 bucket (block public access, owner-enforced, SSE-S3, TLS-only) behind a
+CloudFront distribution with origin access control; the bucket policy lets only that distribution
+read and list. The default behavior serves the bucket, rewrites client-side routes to `/index.html`
+in a viewer-request CloudFront Function (no custom error responses: they would also rewrite the
+API's own 403 / 404 JSON), and applies a response headers policy (HSTS, `nosniff`,
+`frame-ancestors 'none'`, `Referrer-Policy: no-referrer`). The `/api/0/*` behavior goes to the API
+function URL over HTTPS with the managed `CachingDisabled` and `AllViewerExceptHostHeader` policies
+(the function URL rejects a foreign `Host`) and every method. The API function URL keeps
+authorization `NONE`: CloudFront origin access control signs the origin request with SigV4 in the
+`Authorization` header (signing behavior `always`), which replaces the user's Bearer token, and the
+API authenticates the Bearer itself. Ingest is not routed here; it stays on its own function URL
+(the DSN host). Minted project IDs start at 1, so `/api/0/*` never matches an ingest path
+`/api/<projectId>/...`.
+
+Objects come from `<build>/ui/manifest.json` (written by `errtraq build`): one `aws_s3_object` per
+entry with the manifest's content type, cache control (`assets/*` immutable for a year, the rest
+`no-cache`) and hash. `lambda-app` derives `<build>/ui` from the API function's artifact path
+(`<build>/<function id>/...`). The distribution uses the default CloudFront domain; a custom domain
+and certificate are not yet supported (`TODO(UI-f)`). Outputs: `domain_name` (the UI URL),
+`distribution_id`, `bucket_name`; `lambda-app` re-exports them as `ui_domain_name`,
+`ui_distribution_id`, `ui_bucket_name`.
+
+## API browser access and DSNs (lambda-app)
+
+`api_cors_origins` (exact origins, at most 20) puts a CORS block on the API function URL
+(`GET`, `PUT`, `POST`; `authorization`, `content-type`; exposes `link`; max age 86400; no
+credentials). The API must be exposed by a function that does not also expose ingest, whose URL
+already carries the public ingest policy. The application adds no CORS headers on Lambda.
+`ingest_public_url` is delivered to the functions that expose the API as
+`ERRTRAQ_PUBLIC_INGEST_URL` so the key list shows DSNs; it is operator-supplied because the ingest
+function URL output cannot feed the function's own environment.

@@ -9,9 +9,11 @@ import {
   writeFileSync,
 } from "node:fs";
 import { resolve } from "node:path";
+import { copyChildren } from "./infra-children.mjs";
 import {
   dynamoMetadataProtection,
   googleRoleContract,
+  staticSiteContract,
 } from "./infra-security-contract.mjs";
 import { capturedShape, checkShape, shapeFixture } from "./infra-shapes.mjs";
 
@@ -90,9 +92,18 @@ function terraform(args, cwd) {
 }
 function prepare(component, label, provider = "aws") {
   const family = families[provider];
-  const target = resolve(temp, label);
+  // The module sits in `<label>/<provider>/<component>` so sibling modules it calls resolve.
+  const parent = resolve(temp, label, provider);
+  const target = resolve(parent, component);
   mkdirSync(target, { recursive: true });
   cpSync(resolve(family.root, component), target, { recursive: true });
+  copyChildren(
+    family.root,
+    component,
+    parent,
+    family.constraint,
+    family.version,
+  );
   const versions = resolve(target, "versions.tf");
   const source = readFileSync(versions, "utf8");
   if (!family.constraint.test(source))
@@ -168,6 +179,10 @@ try {
     );
     if (component === "dynamodb" && !dynamoMetadataProtection(target))
       throw new Error("DynamoDB metadata protection baseline failed");
+    if (component === "static-site" && staticSiteContract(target).length)
+      throw new Error(
+        `Static site contract baseline failed: ${staticSiteContract(target)}`,
+      );
     if (provider === "google" && googleRoleContract(target).length)
       throw new Error(
         `Google role contract baseline failed for ${component}: ${googleRoleContract(target)}`,
@@ -201,6 +216,9 @@ try {
       tests.status !== 0 ? "tests" : "",
       result.differs ? "shape" : "",
       mutation.module === "dynamodb" && !dynamoMetadataProtection(target)
+        ? "source"
+        : "",
+      mutation.module === "static-site" && staticSiteContract(target).length
         ? "source"
         : "",
       provider === "google" && googleRoleContract(target).length

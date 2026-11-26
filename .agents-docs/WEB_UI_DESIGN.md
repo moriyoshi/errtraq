@@ -35,10 +35,13 @@ server functions, which reintroduces the BFF this design avoids. The UI is a pur
 
 ### Hosting: static assets provisioned from the stack config
 
-The UI is a build artifact plus a static-hosting component, described like every other stack
-component: an `ui` selection in the stack config with the `manifest` / `create` / `infra` triple,
-and hand-written HCL under `infra/modules/<provider>/static-site`. `errtraq build` produces the
-bundle; `errtraq infra generate` composes the module.
+The UI is a build artifact plus a static-hosting component. Implemented in UI-c as a **platform
+setting** (`awsLambda({ ui: { directory } })`, standalone `uiDirectory`), not as a `ui` selection:
+the model has no port kind for it and a child's inputs cannot receive a build manifest (see
+`INFRA_MODEL.md`). Hand-written HCL lives under `infra/modules/aws/static-site`, called by
+`lambda-app`. `errtraq build` copies the UI into `<build>/ui` with a manifest; `errtraq infra
+generate` verifies it. Open question 4 stays open for the owner: Cloudflare and GCP can choose
+differently, and a `ui` selection would need a new port kind plus a build-input reference.
 
 | Provider | Hosting | API routing |
 |---|---|---|
@@ -171,7 +174,7 @@ packages/ui/                 @moriyoshi/errtraq-ui, Vite + Solid SPA, builds to 
   src/auth/                  token login (phase 1), OIDC PKCE (phase 2)
   src/routes/                issue list, issue detail, event, releases, settings
   src/components/            stack trace, breadcrumbs, context tables, charts
-packages/adapters/ui-static/ (or a platform-level component; decided in UI-c) manifest / create / infra
+(no ui-static adapter: hosting is a platform setting, see "Hosting")
 infra/modules/aws/static-site/   S3 + CloudFront + OAC + /api/0 behavior
 ```
 
@@ -184,7 +187,7 @@ infra/modules/aws/static-site/   S3 + CloudFront + OAC + /api/0 behavior
 |---|---|---|
 | **UI-a** | API surface: organization / project read routes, capabilities endpoint, event neighbours, bulk update, DSN key list, optional CORS | Route tests in `http`; contract suite extended where a repo method is new |
 | **UI-b** | `packages/ui` skeleton: router, query client, token login, issue list and detail on the existing API | Playwright tests against `errtraq dev --stack stacks/local.ts`, seeded by the real `@sentry/node` SDK as in `pnpm e2e`; opt-in (skip without a browser) |
-| **UI-c** | `ui` stack selection and `aws/static-site` module with same-origin routing; standalone server serves the build | Infra-gen snapshot tests, `terraform validate` on the generated root |
+| **UI-c** (done) | Platform-owned hosting: `aws/static-site` module with same-origin routing, standalone server serves the build, `ingestUrl` and API CORS from the stack config | Infra-gen snapshot tests, `terraform validate` on the generated root |
 | **UI-d** | Statistics: contract suite first, then SQL, DynamoDB, Firestore; histogram and facets in the UI | Contract suites pass on every store adapter |
 | **UI-e** | OIDC: JWT verification and claim-to-scope mapping in `http`, PKCE in the SPA | Unit tests with a locally generated JWKS; no network in the default test path |
 | **UI-f** | Bulk actions, releases pages, settings, keyboard navigation, dark mode | UI tests |

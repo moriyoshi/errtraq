@@ -55,6 +55,34 @@ export function isImageFunction(
     )
   );
 }
+/** An exact CORS origin: scheme, host and optional port, no path; never a wildcard. */
+const corsOrigin = z.string().refine((value) => {
+  try {
+    const url = new URL(value);
+    return ["http:", "https:"].includes(url.protocol) && url.origin === value;
+  } catch {
+    return false;
+  }
+}, "CORS origin must be an exact HTTP(S) origin without a path");
+/** Public ingest URL (the DSN host): HTTP(S), no credentials, query or fragment; a path prefix is kept. */
+const ingestPublicUrl = z.string().refine((value) => {
+  try {
+    const url = new URL(value);
+    return (
+      ["http:", "https:"].includes(url.protocol) &&
+      !url.username &&
+      !url.password &&
+      !url.search &&
+      !url.hash &&
+      !value.endsWith("?") &&
+      !value.endsWith("#")
+    );
+  } catch {
+    return false;
+  }
+}, "Public ingest URL must be an HTTP(S) URL without credentials, query or fragment");
+/** Environment variable that carries the public ingest URL to the API function. */
+export const PUBLIC_INGEST_URL_ENV = "ERRTRAQ_PUBLIC_INGEST_URL";
 const settings = z.strictObject({
   memoryMb: z.number().int().min(128).max(10240).optional(),
   timeoutSec: z.number().int().min(1).max(900).optional(),
@@ -103,6 +131,37 @@ export const configSchema = z
      * limited to exactly this one secret name.
      */
     bootstrapSecretName: z.string().regex(BOOTSTRAP_SECRET_NAME).optional(),
+    /**
+     * The URL clients send events to (a custom domain in front of the ingest function URL, or the
+     * function URL itself once known). The API puts it into the DSNs of the key list. It must come
+     * from the operator, a literal or a stack variable: the function's own URL output would make
+     * the function's environment depend on itself. Absent, the key list has no `dsn`.
+     */
+    publicIngestUrl: configReference(ingestPublicUrl).optional(),
+    /**
+     * Origins allowed to call the API from a browser when the UI is hosted elsewhere. They go into
+     * the API function URL's CORS block (the app does not add CORS headers itself, as for ingest),
+     * which needs the API in a function of its own. The bundled static site is same origin and
+     * needs none.
+     */
+    apiCorsOrigins: configReference(
+      z.array(corsOrigin).min(1).max(20),
+    ).optional(),
+    /**
+     * Host the built web UI (a directory with `index.html`, relative to the stack file) on S3
+     * behind CloudFront, with `/api/0/*` routed to the API function URL. Requires the API to be
+     * exposed over HTTP. `errtraq build` copies the directory into the build output and writes the
+     * asset manifest Terraform uploads from.
+     */
+    ui: z
+      .strictObject({
+        directory: z.string().min(1),
+        /** Price class of the distribution; the default serves every edge location. */
+        priceClass: z
+          .enum(["PriceClass_100", "PriceClass_200", "PriceClass_All"])
+          .default("PriceClass_100"),
+      })
+      .optional(),
     cronDlqArn: z
       .string()
       .regex(/^arn:[^:]+:sqs:/)
@@ -126,6 +185,12 @@ export const configSchema = z
         "VPC subnet IDs and security group IDs must be provided together",
     },
   )
+  .refine((config) => !config.ui || config.http.includes("api"), {
+    message: "ui requires the api role to be exposed over HTTP",
+  })
+  .refine((config) => !config.ui || config.roles.includes("api"), {
+    message: "ui requires the api role",
+  })
   .refine(
     (config) =>
       config.roles.includes("bootstrap") ===
@@ -179,12 +244,15 @@ export const manifest: PlatformManifest = {
   infrastructureConfigReferences: {
     artifactBucket: "string",
     imageUri: "string",
+    publicIngestUrl: "string",
+    apiCorsOrigins: "string[]",
     vpcSubnetIds: "string[]",
     vpcSecurityGroupIds: "string[]",
   },
   reservedBindings: [
     "ERRTRAQ_INGEST_RATE_LIMIT",
     BOOTSTRAP_SECRET_ENV,
+    PUBLIC_INGEST_URL_ENV,
     "_HANDLER",
     "_X_AMZN_TRACE_ID",
     "AWS_DEFAULT_REGION",
@@ -209,6 +277,9 @@ export const infra: InfraDescriptor<Config> = {
       image_repository_url: "string",
       bootstrap_function_name: "string",
       bootstrap_function_arn: "string",
+      ui_domain_name: "string",
+      ui_distribution_id: "string",
+      ui_bucket_name: "string",
     },
   },
   inputs: (config, deployment): Record<string, InfraValue> => {
@@ -226,9 +297,48 @@ export const infra: InfraDescriptor<Config> = {
         throw new Error(
           `Function ${fn.id} runs from the ${imageArchitecture} image and cannot use ${fn.settings.architecture}`,
         );
+    const apiFunction = deployment.functions.find((fn) =>
+      fn.http.includes("api"),
+    );
+    if (config.apiCorsOrigins !== undefined) {
+      if (!apiFunction)
+        throw new Error("apiCorsOrigins needs the api role exposed over HTTP");
+      // A function URL has one CORS policy for every path, and ingest's is public (any origin,
+      // POST); a browser UI needs credentials-bearing headers for the API only.
+      if (apiFunction.http.includes("ingest"))
+        throw new Error(
+          `apiCorsOrigins needs the api role in a function of its own (it shares ${apiFunction.id} with ingest); add "api" to split`,
+        );
+    }
+    if (config.ui) {
+      if (!apiFunction)
+        throw new Error("ui needs the api role exposed over HTTP");
+      // CloudFront cannot call an IAM-protected function URL without origin access control, which
+      // would replace the user's Bearer token with its own signature.
+      if (apiFunction.settings.urlAuth === "AWS_IAM")
+        throw new Error(
+          `ui needs the API function URL without IAM authorization (urlAuth NONE); ${apiFunction.id} uses AWS_IAM`,
+        );
+    }
     return {
       name: stackValue("name"),
       tags: stackValue("tags"),
+      // The static site reads the build copy `errtraq build` writes next to the function
+      // artifacts; the module derives that directory from the API function's artifact path.
+      ...(config.ui && apiFunction
+        ? {
+            ui: {
+              build_anchor: apiFunction.artifact,
+              price_class: config.ui.priceClass ?? "PriceClass_100",
+            },
+          }
+        : {}),
+      ...(config.publicIngestUrl
+        ? { ingest_public_url: config.publicIngestUrl }
+        : {}),
+      ...(config.apiCorsOrigins
+        ? { api_cors_origins: config.apiCorsOrigins }
+        : {}),
       ...(config.alarmTopicArn
         ? { alarm_topic_arn: config.alarmTopicArn }
         : {}),
