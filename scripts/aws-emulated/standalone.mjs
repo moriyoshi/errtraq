@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { mkdirSync, writeFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { relative, resolve } from "node:path";
 import { element } from "./client.mjs";
 import { canonicalPolicy } from "./expected.mjs";
 import { assertPartialBatchSupport } from "./gap-checks.mjs";
@@ -92,7 +92,12 @@ export async function runStandalone({
           },
           provider: { aws: [{ region: "us-east-1" }] },
           module: {
-            test: { source: resolve(modules, "aws", component), ...inputs },
+            // A relative source keeps the module in the root's package, so lambda-app's
+            // `../static-site` submodule resolves (an absolute path is a remote package).
+            test: {
+              source: relative(dir, resolve(modules, "aws", component)),
+              ...inputs,
+            },
           },
         },
         null,

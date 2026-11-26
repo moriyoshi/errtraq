@@ -377,11 +377,13 @@ try {
     await verifyCleanup(c, second.name);
     console.log("PASS per-topic destroy and API inventory");
     if (groupedOnly) throw fifoOnlyComplete;
-    const featureStack = variant(fixtures.archive, {
+    // Shared mode puts `archive.project` on the consumer's queue, which a function platform
+    // rejects once the archive role exists (D6), so the shared-to-per-topic transition is
+    // checked on the archive-free stack with notifications enabled.
+    const featureStack = variant(original, {
       name: "m3a2-feature",
       protection: "disposable",
       features: { notifications: true },
-      queue: original.queue,
     });
     const featureNext = variant(featureStack, { queue: perTopic.queue });
     const featureDir = resolve(temp, "feature");
@@ -428,9 +430,9 @@ try {
       .sort();
     if (
       JSON.stringify(featureKeys) !==
-      JSON.stringify(["archive_project", "ingest", "notifications", "record"])
+      JSON.stringify(["ingest", "notifications", "record"])
     )
-      throw new Error("Feature fixture did not activate all four topics");
+      throw new Error("Feature fixture did not activate all three topics");
     run(
       "terraform",
       [
