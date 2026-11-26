@@ -1740,8 +1740,24 @@
     "provider": "google",
     "module": "cloud-run-app",
     "file": "main.tf",
-    "find": "for_each = merge(each.value.environment, each.value.secrets)",
-    "replace": "for_each = each.value.environment"
+    "find": "for_each = merge(each.value.environment, each.value.secrets, local.grant_users_env[each.key])",
+    "replace": "for_each = merge(each.value.environment, local.grant_users_env[each.key])"
+  },
+  {
+    "id": "run-grant-users-dropped",
+    "provider": "google",
+    "module": "cloud-run-app",
+    "file": "main.tf",
+    "find": "for_each = merge(each.value.environment, each.value.secrets, local.grant_users_env[each.key])",
+    "replace": "for_each = merge(each.value.environment, each.value.secrets)"
+  },
+  {
+    "id": "run-grant-users-every-function",
+    "provider": "google",
+    "module": "cloud-run-app",
+    "file": "main.tf",
+    "find": "contains(fn.roles, \"bootstrap\") && length(local.sql_user_names) > 0",
+    "replace": "length(local.sql_user_names) > 0"
   },
   {
     "id": "run-vpc-egress",
