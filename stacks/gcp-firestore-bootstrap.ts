@@ -1,7 +1,7 @@
 import { defineStack, output, variable } from "@moriyoshi/errtraq-core";
 import { cloudRun } from "@moriyoshi/errtraq-platform-cloud-run/stack";
-import { IMAGE_VARIABLE, requiredEnv } from "./gcp-env.js";
-import base from "./gcp-firestore.js";
+import { IMAGE_VARIABLE, requiredEnv } from "./gcp-env.ts";
+import base from "./gcp-firestore.ts";
 
 const projectId = requiredEnv("ERRTRAQ_GCP_PROJECT");
 const region = requiredEnv("ERRTRAQ_GCP_REGION");
