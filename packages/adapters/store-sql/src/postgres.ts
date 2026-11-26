@@ -1,13 +1,18 @@
 import { readFile } from "node:fs/promises";
 import type { CreateContext } from "@moriyoshi/errtraq-core";
-import { Kysely } from "kysely";
-import { parseAdminSecret, provisionIamUser } from "./postgres-admin.js";
+import { Kysely, sql } from "kysely";
+import {
+  memberTableStatements,
+  parseAdminSecret,
+  provisionIamUser,
+} from "./postgres-admin.js";
 import {
   type CloudSqlPoolOptions,
   CLOUDSQL_BINDINGS as CS,
   cloudSqlIamPoolConfig,
   cloudSqlIamUserName,
   cloudSqlTransport,
+  parseGrantUsers,
 } from "./postgres-cloudsql.js";
 import {
   postgresDialect,
@@ -32,6 +37,8 @@ export async function create({
       : undefined;
   let dialect: ReturnType<typeof postgresDialect>;
   let provision: (() => Promise<void>) | undefined;
+  // Table-level grants for the other function users, run as the migrating user that owns the tables.
+  let members: string[] = [];
   if (mode === "iam") {
     const required = (name: string) => {
       const value = bindings[name];
@@ -135,6 +142,10 @@ export async function create({
       if (!secretSource)
         throw new Error("Postgres administration requires a secret source");
       const runtimeUser = user;
+      // The users of the other functions, from the platform; the migrating user owns the tables.
+      members = parseGrantUsers(text(CS.grantUsers)).filter(
+        (member) => member !== runtimeUser,
+      );
       provision = async () => {
         const transport = cloudSqlTransport({
           instanceConnectionName,
@@ -145,6 +156,7 @@ export async function create({
           port: transport.port ?? 5432,
           database,
           user: runtimeUser,
+          members,
           ssl: transport.ssl,
           flavor: "cloudsql",
           admin: parseAdminSecret(await secretSource.read(adminSecret)),
@@ -188,6 +200,8 @@ export async function create({
       ? async () => {
           await provision();
           await migrate();
+          for (const statement of memberTableStatements(members))
+            await sql.raw(statement).execute(db);
         }
       : migrate,
     close: () => db.destroy(),

@@ -45,6 +45,22 @@ const serviceAccountEmail = z
   .string()
   .regex(/^[A-Za-z0-9][A-Za-z0-9._-]*@[A-Za-z0-9.-]+\.gserviceaccount\.com$/);
 
+/** The shape of a Cloud SQL IAM service account user name (the email without `.gserviceaccount.com`). */
+const iamUserName = z
+  .string()
+  .regex(/^[A-Za-z0-9][A-Za-z0-9._-]*@[A-Za-z0-9.-]+\.iam$/);
+/** Parse a comma separated list of IAM database user names (at most 32), as the bootstrap role receives it. */
+export function parseGrantUsers(raw: string | undefined): string[] {
+  if (!raw) return [];
+  const users = raw.split(",").map((item) => item.trim());
+  if (
+    users.length > 32 ||
+    !users.every((u) => iamUserName.safeParse(u).success)
+  )
+    throw new Error("Invalid Cloud SQL IAM user list");
+  return [...new Set(users)];
+}
+
 /** The database user of a service account: the email without `.gserviceaccount.com`. */
 export function cloudSqlIamUserName(email: string): string {
   if (!serviceAccountEmail.safeParse(email).success)
@@ -92,11 +108,17 @@ export const cloudSqlIamSchema = z.strictObject({
   region: z.string().regex(/^[a-z]+(-[a-z]+)?[0-9]+(-[a-z0-9]+)*$/),
   database: z.string().min(1),
   /**
-   * The service account the functions run as. Its database user is derived from it. When
-   * omitted, each runtime derives its own user from its own identity (one user per function
-   * service account); then the SQL grants must exist for each of them.
+   * Not accepted. Every function runs as its own service account and the login token names that
+   * account, so each function must log in as its own IAM database user (the platform module
+   * creates one per function): a configured shared user could never be logged in to. Each
+   * runtime derives its user from its own identity.
    */
-  serviceAccountEmail: serviceAccountEmail.optional(),
+  serviceAccountEmail: z
+    .never({
+      error:
+        "serviceAccountEmail is not supported: every function logs in as its own service account's IAM database user",
+    })
+    .optional(),
   connection: connectionSchema.default({
     kind: "unix-socket",
     socketDir: DEFAULT_SOCKET_DIR,
@@ -122,6 +144,8 @@ export const CLOUDSQL_BINDINGS = {
   port: "ERRTRAQ_POSTGRES_PORT",
   serverCa: "ERRTRAQ_POSTGRES_SERVER_CA",
   serverName: "ERRTRAQ_POSTGRES_SERVER_NAME",
+  /** Set by the platform module on the bootstrap role: the function users that get data access. */
+  grantUsers: "ERRTRAQ_POSTGRES_GRANT_USERS",
 } as const;
 
 export interface CloudSqlPoolOptions {
@@ -210,7 +234,7 @@ export function cloudSqlIamPoolConfig(
  * login, `roles/cloudsql.client` where the proxy socket is used), per capability like RDS.
  * The HCL module is `infra/modules/google/cloudsql-iam-access`. Its documents also carry
  * `iam_database_user` on the login grant: the platform module then creates one IAM database user
- * per function service account (omitted when `serviceAccountEmail` names an operator-managed user).
+ * per function service account.
  */
 export function cloudSqlInfra(
   config: z.output<typeof cloudSqlIamSchema>,
@@ -225,9 +249,6 @@ export function cloudSqlInfra(
     inputs: () => ({
       instance_connection_name: config.instanceConnectionName,
       region: config.region,
-      ...(config.serviceAccountEmail
-        ? { database_user: cloudSqlIamUserName(config.serviceAccountEmail) }
-        : {}),
       transport: config.connection.kind,
     }),
     resources: { primary: "external" },
@@ -260,9 +281,6 @@ export function cloudSqlEnvBindings(
   return [
     env(b.instance, config.instanceConnectionName),
     env(b.database, config.database),
-    ...(config.serviceAccountEmail
-      ? [env(b.user, cloudSqlIamUserName(config.serviceAccountEmail))]
-      : []),
     ...(connection.kind === "unix-socket"
       ? [env(b.socketDir, connection.socketDir)]
       : [

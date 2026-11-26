@@ -74,7 +74,7 @@ resource "google_cloud_run_v2_service" "function" {
       # Secret bindings carry the secret's resource name: the runtime reads the value through the
       # Secret Manager API, so the value never appears in the service configuration.
       dynamic "env" {
-        for_each = merge(each.value.environment, each.value.secrets)
+        for_each = merge(each.value.environment, each.value.secrets, local.grant_users_env[each.key])
         content {
           name  = env.key
           value = env.value
@@ -307,6 +307,15 @@ locals {
       for b in local.bindings : [{ function = b.function, project = b.iam_database_user.project, instance = b.iam_database_user.instance }]
       if can(b.iam_database_user)
     ])) : "${pair.function}|${pair.project}|${pair.instance}" => pair
+  }
+}
+# The bootstrap role grants data access to the users of every function (the migrating user owns the
+# tables). Derived from the service account emails, not from google_sql_user, so the services stay
+# independent of the user resources.
+locals {
+  sql_user_names = sort(distinct([for key, user in local.sql_users : trimsuffix(google_service_account.function[user.function].email, ".gserviceaccount.com")]))
+  grant_users_env = {
+    for id, fn in var.functions : id => contains(fn.roles, "bootstrap") && length(local.sql_user_names) > 0 ? { ERRTRAQ_POSTGRES_GRANT_USERS = join(",", local.sql_user_names) } : {}
   }
 }
 resource "terraform_data" "binding_forms" {

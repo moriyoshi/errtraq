@@ -19,6 +19,9 @@ const adminUser = env("DRV_ADMIN_USER");
 const adminPassword = env("DRV_ADMIN_PASSWORD");
 const runtimeUser = env("DRV_RUNTIME_USER");
 const runtimePassword = env("DRV_RUNTIME_PASSWORD");
+// The IAM user of another function: it gets data access, the runtime (migrating) user owns the tables.
+const memberUser = env("DRV_MEMBER_USER");
+const memberPassword = env("DRV_MEMBER_PASSWORD");
 const check = (condition: unknown, message: string) => {
   if (!condition) throw new Error(`FAIL: ${message}`);
   console.log(`ok: ${message}`);
@@ -35,6 +38,10 @@ await admin.connect();
 await admin.query(`drop role if exists "${runtimeUser}"`).catch(() => {});
 await admin.query(
   `create role "${runtimeUser}" login password '${runtimePassword}'`,
+);
+await admin.query(`drop role if exists "${memberUser}"`).catch(() => {});
+await admin.query(
+  `create role "${memberUser}" login password '${memberPassword}'`,
 );
 await admin.end();
 
@@ -75,6 +82,7 @@ const store = await create({
   bindings: {
     ...base,
     ERRTRAQ_POSTGRES_ADMIN_SECRET: "admin-secret",
+    ERRTRAQ_POSTGRES_GRANT_USERS: `${runtimeUser},${memberUser}`,
     accessToken: async () => {
       tokens++;
       return runtimePassword;
@@ -92,6 +100,64 @@ const before = tokens;
 await Promise.all(Array.from({ length: 6 }, () => store.projects.list()));
 check(tokens >= before, "queries through the pool keep working");
 await store.close();
+
+// 2b. The other function's user: data access on the migrated tables, no schema changes.
+{
+  const member = new pg.Client({
+    host: `/cloudsql/${instance}`,
+    database,
+    user: memberUser,
+    password: memberPassword,
+  });
+  await member.connect();
+  const owner = await member.query(
+    "select tableowner from pg_tables where schemaname = 'public' and tablename = 'projects'",
+  );
+  check(
+    owner.rows[0]?.tableowner === runtimeUser,
+    "the migrating user owns the tables",
+  );
+  await member.query("select count(*) from projects");
+  check(true, "the member user can read the migrated tables");
+  const denied = async (statement: string) => {
+    try {
+      await member.query(statement);
+    } catch (error) {
+      return (error as { code?: string }).code === "42501";
+    }
+    return false;
+  };
+  check(
+    await denied("create table member_made (id int)"),
+    "the member user cannot create tables",
+  );
+  check(
+    await denied("drop table projects"),
+    "the member user cannot drop tables",
+  );
+  await member.end();
+  // A later migration run by the owner: default privileges cover the new table.
+  const owned = new pg.Client({
+    host: `/cloudsql/${instance}`,
+    database,
+    user: runtimeUser,
+    password: runtimePassword,
+  });
+  await owned.connect();
+  // Default privileges are those the owner set while migrating.
+  await owned.query("create table later_table (id int)");
+  await owned.end();
+  const again = new pg.Client({
+    host: `/cloudsql/${instance}`,
+    database,
+    user: memberUser,
+    password: memberPassword,
+  });
+  await again.connect();
+  await again.query("select count(*) from later_table");
+  check(true, "tables created by a later migration are readable too");
+  await again.end();
+}
 
 // 3. The pool configuration alone, with a connection per call: a token per connection.
 let calls = 0;

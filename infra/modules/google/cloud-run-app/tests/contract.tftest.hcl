@@ -161,8 +161,10 @@ variables {
       vpc_egress    = "private-ranges-only"
       environment   = { ERRTRAQ_BOOTSTRAP_SECRET_NAME = "errtraq-bootstrap" }
       secrets       = {}
-      policies      = []
-      secret_reads  = []
+      policies = [jsonencode([
+        { role = "roles/cloudsql.instanceUser", resource = "projects/example-project", condition = { title = "t", description = "d", expression = "resource.name == 'projects/example-project/instances/example-sql'" }, iam_database_user = { project = "example-project", instance = "example-sql" } },
+      ])]
+      secret_reads = []
     }
   }
   queue_triggers = {
@@ -328,7 +330,7 @@ run "functions_triggers_and_urls" {
       toset(keys(google_pubsub_topic_iam_member.binding)) == toset(["ingest|1|0"]),
       google_pubsub_topic_iam_member.binding["ingest|1|0"].topic == "example-shared",
       google_pubsub_topic_iam_member.binding["ingest|1|0"].role == "roles/pubsub.publisher",
-      toset(keys(google_project_iam_member.binding)) == toset(["api|0|0", "api|0|1", "consumer|1|0"]),
+      toset(keys(google_project_iam_member.binding)) == toset(["api|0|0", "api|0|1", "bootstrap|0|0", "consumer|1|0"]),
       google_project_iam_member.binding["api|0|0"].role == "roles/cloudsql.instanceUser",
       google_project_iam_member.binding["api|0|0"].condition[0].expression == "resource.name == 'projects/example-project/instances/example-sql'",
       google_project_iam_member.binding["consumer|1|0"].role == "projects/example-project/roles/example_fs_store_read",
@@ -338,12 +340,18 @@ run "functions_triggers_and_urls" {
   }
   assert {
     condition = alltrue([
-      toset(keys(google_sql_user.iam)) == toset(["api|example-project|example-sql"]),
-      one(values(google_sql_user.iam)).type == "CLOUD_IAM_SERVICE_ACCOUNT",
-      one(values(google_sql_user.iam)).name == "api-sa@example-project.iam",
-      one(values(google_sql_user.iam)).instance == "example-sql",
+      toset(keys(google_sql_user.iam)) == toset(["api|example-project|example-sql", "bootstrap|example-project|example-sql"]),
+      alltrue([for user in values(google_sql_user.iam) : user.type == "CLOUD_IAM_SERVICE_ACCOUNT" && user.instance == "example-sql"]),
+      toset([for user in values(google_sql_user.iam) : user.name]) == toset(["api-sa@example-project.iam", "bootstrap-sa@example-project.iam"]),
     ])
     error_message = "One IAM database user per function service account that holds the Cloud SQL login."
+  }
+  assert {
+    condition = alltrue([
+      [for env in google_cloud_run_v2_service.function["bootstrap"].template[0].containers[0].env : env.value if env.name == "ERRTRAQ_POSTGRES_GRANT_USERS"] == ["api-sa@example-project.iam,bootstrap-sa@example-project.iam"],
+      alltrue([for id in ["ingest", "api", "consumer", "cron"] : length([for env in google_cloud_run_v2_service.function[id].template[0].containers[0].env : env.value if env.name == "ERRTRAQ_POSTGRES_GRANT_USERS"]) == 0]),
+    ])
+    error_message = "Only the bootstrap role learns the list of function database users to grant data access to."
   }
 }
 run "vpc_egress_and_extras" {
