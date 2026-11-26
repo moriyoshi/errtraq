@@ -29,7 +29,7 @@ variable "transport" {
 }
 variable "database_user" {
   type        = string
-  description = "Operator-managed database user shared by every function (a configured serviceAccountEmail). When null, the platform module creates one IAM database user per function service account."
+  description = "Operator-managed database user shared by every function. The errtraq descriptor never sets it: every function logs in as its own service account, so the platform module creates one IAM database user per function service account (the null default)."
   default     = null
   validation {
     condition     = var.database_user == null ? true : can(regex("^[A-Za-z_][A-Za-z0-9_.@-]{0,62}$", var.database_user))

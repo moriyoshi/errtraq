@@ -63,6 +63,37 @@ export function privilegeStatements(
   ];
 }
 /**
+ * What a user that does not own the schema needs before the owner grants table privileges:
+ * connect to the database and use (not create in) the schema. Table and sequence privileges
+ * follow from {@link memberTableStatements}, run by the owner after the migration.
+ */
+export function memberPrivilegeStatements(
+  user: string,
+  database: string,
+): string[] {
+  const role = quoteIdentifier(user);
+  return [
+    `grant connect on database ${quoteIdentifier(database)} to ${role}`,
+    `grant usage on schema ${SCHEMA} to ${role}`,
+  ];
+}
+/**
+ * Table-level privileges of the other users, run by the migrating user: it owns the tables and
+ * can therefore grant on them. Data access only (no DDL, no truncate), existing objects and,
+ * through default privileges of the migrating user, every object a later migration creates.
+ */
+export function memberTableStatements(users: readonly string[]): string[] {
+  return users.flatMap((user) => {
+    const role = quoteIdentifier(user);
+    return [
+      `grant select, insert, update, delete on all tables in schema ${SCHEMA} to ${role}`,
+      `grant usage, select on all sequences in schema ${SCHEMA} to ${role}`,
+      `alter default privileges in schema ${SCHEMA} grant select, insert, update, delete on tables to ${role}`,
+      `alter default privileges in schema ${SCHEMA} grant usage, select on sequences to ${role}`,
+    ];
+  });
+}
+/**
  * `rds`: create the login role and grant `rds_iam`. `cloudsql`: the IAM user is created through
  * the Cloud SQL Admin API (Terraform), `create role` cannot make one, so it must exist already.
  */
@@ -99,6 +130,32 @@ export async function ensureIamUser(
   for (const statement of privilegeStatements(user, database, flavor))
     await client.query(statement);
 }
+/**
+ * {@link ensureIamUser} for the migrating user, plus the connection-level grants of the other
+ * users of the same database (each must exist already: Terraform creates the IAM users).
+ */
+export async function ensureIamUsers(
+  client: Queryable,
+  migrator: string,
+  members: readonly string[],
+  database: string,
+  flavor: ProvisionFlavor = "rds",
+): Promise<void> {
+  await ensureIamUser(client, migrator, database, flavor);
+  for (const member of new Set(members)) {
+    if (member === migrator) continue;
+    const exists = await client.query(
+      "select 1 from pg_roles where rolname = $1",
+      [member],
+    );
+    if (!exists.rows.length)
+      throw Object.assign(new Error("IAM database user is missing"), {
+        code: "ROLE_MISSING",
+      });
+    for (const statement of memberPrivilegeStatements(member, database))
+      await client.query(statement);
+  }
+}
 function safeCode(error: unknown): string | undefined {
   const code = (error as { code?: unknown } | null)?.code;
   return typeof code === "string" && /^[A-Z0-9_]{4,32}$/.test(code)
@@ -109,8 +166,10 @@ export interface AdminConnection {
   host: string;
   port: number;
   database: string;
-  /** The runtime IAM database user to create. */
+  /** The runtime IAM database user to create; it migrates and owns the tables. */
   user: string;
+  /** Other IAM database users (one per function service account) that get data access. */
+  members?: readonly string[];
   ca?: string;
   /** Overrides the TLS settings derived from `ca`; `false` for a mounted unix socket. */
   ssl?: pg.ClientConfig["ssl"];
@@ -151,7 +210,13 @@ export async function provisionIamUser(
           await real.connect();
           return real;
         })();
-    await ensureIamUser(client, options.user, options.database, options.flavor);
+    await ensureIamUsers(
+      client,
+      options.user,
+      options.members ?? [],
+      options.database,
+      options.flavor,
+    );
   } catch (error) {
     throw new PostgresProvisionError(safeCode(error));
   } finally {

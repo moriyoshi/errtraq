@@ -22,15 +22,23 @@ import {
 process.env.ERRTRAQ_GCP_PROJECT = "example-project";
 process.env.ERRTRAQ_GCP_REGION = "europe-west1";
 process.env.ERRTRAQ_GCP_SQL_INSTANCE = "example-sql";
+process.env.ERRTRAQ_GCP_OPERATOR_MEMBER = "user:operator@example.com";
 const scratch = resolve(".agents-workspace/tmp");
 mkdirSync(scratch, { recursive: true });
 const copy = mkdtempSync(resolve(scratch, "gcp-stacks-"));
-for (const file of ["gcp-env.ts", "gcp-firestore.ts", "gcp-cloudsql.ts"])
+const stackFiles = [
+  "gcp-env.ts",
+  "gcp-firestore.ts",
+  "gcp-cloudsql.ts",
+  "gcp-firestore-bootstrap.ts",
+  "gcp-firestore-per-topic.ts",
+];
+for (const file of stackFiles)
   writeFileSync(
     resolve(copy, file),
     readFileSync(resolve("stacks", file), "utf8").replace(
-      /from "\.\/gcp-env\.js"/g,
-      'from "./gcp-env.ts"',
+      /from "(\.\/gcp-[a-z-]+)\.js"/g,
+      'from "$1.ts"',
     ),
   );
 const load = async (file) =>
@@ -38,6 +46,8 @@ const load = async (file) =>
 export const gcpFixtures = {
   "gcp-firestore": await load("gcp-firestore.ts"),
   "gcp-cloudsql": await load("gcp-cloudsql.ts"),
+  "gcp-fs-bootstrap": await load("gcp-firestore-bootstrap.ts"),
+  "gcp-fs-per-topic": await load("gcp-firestore-per-topic.ts"),
 };
 export const IMAGE = `europe-west1-docker.pkg.dev/example-project/errtraq/app@sha256:${"a".repeat(64)}`;
 
@@ -56,6 +66,7 @@ output "test_subscriptions" { value = { for key, subscription in google_pubsub_s
 output "test_invokers" { value = { push = sort(keys(google_cloud_run_v2_service_iam_member.push)), scheduler = sort(keys(google_cloud_run_v2_service_iam_member.scheduler)), public = sort(keys(google_cloud_run_v2_service_iam_member.public)) } }
 output "test_crons" { value = { for key, job in google_cloud_scheduler_job.cron : key => { schedule = job.schedule, time_zone = job.time_zone, function = var.cron_triggers[key].function_id, audience = job.http_target[0].oidc_token[0].audience, path = trimprefix(job.http_target[0].uri, google_cloud_run_v2_service.function[var.cron_triggers[key].function_id].uri) } } }
 output "test_service_audiences" { value = { for id, service in google_cloud_run_v2_service.function : id => sort(tolist(service.custom_audiences)) } }
+output "test_operators" { value = sort(keys(google_cloud_run_v2_service_iam_member.operator)) }
 output "test_sql_users" { value = sort([for key, user in google_sql_user.iam : "\${user.instance}|\${split("|", key)[0]}"]) }
 `;
 const delivered = [
@@ -64,6 +75,7 @@ const delivered = [
   "ERRTRAQ_SCHEDULER_SERVICE_ACCOUNT",
   "ERRTRAQ_INGEST_RATE_LIMIT",
   "ERRTRAQ_BOOTSTRAP_SECRET_NAME",
+  "ERRTRAQ_POSTGRES_GRANT_USERS",
 ];
 const test = `mock_provider "google" {
   mock_data "google_client_config" { defaults = { project = "example-project" } }
@@ -111,6 +123,10 @@ run "generated_root" {
   assert {
     condition = jsonencode(module.platform.test_crons) == jsonencode(output.expected_crons)
     error_message = "Scheduler jobs differ from the deployment view."
+  }
+  assert {
+    condition = jsonencode(sort(module.platform.test_operators)) == jsonencode(sort(output.expected_operators))
+    error_message = "Only the configured operator members may invoke the bootstrap service."
   }
   assert {
     condition = jsonencode(module.platform.test_sql_users) == jsonencode(output.expected_sql_users)
@@ -239,6 +255,14 @@ export function prepareGcpRoot(parent, name, version) {
       .map((fn) => fn.id),
     expected_crons: crons,
     expected_sql_users: sqlUsers,
+    expected_operators: view.functions
+      .filter((fn) => fn.roles.includes("bootstrap"))
+      .flatMap((fn) =>
+        stack.platform.config.operatorMembers.map(
+          (member) => `${fn.id}|${member}`,
+        ),
+      )
+      .sort(),
     expected_audience: stack.platform.config.oidcAudience,
   };
   writeFileSync(

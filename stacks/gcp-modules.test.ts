@@ -11,10 +11,13 @@ const env = {
   ERRTRAQ_GCP_PROJECT: "example-project",
   ERRTRAQ_GCP_REGION: "europe-west1",
   ERRTRAQ_GCP_SQL_INSTANCE: "example-sql",
+  ERRTRAQ_GCP_OPERATOR_MEMBER: "user:operator@example.com",
 };
 const stacks = {
   "gcp-firestore": () => import("./gcp-firestore.js"),
   "gcp-cloudsql": () => import("./gcp-cloudsql.js"),
+  "gcp-firestore-bootstrap": () => import("./gcp-firestore-bootstrap.js"),
+  "gcp-firestore-per-topic": () => import("./gcp-firestore-per-topic.js"),
 };
 afterEach(() => vi.unstubAllEnvs());
 

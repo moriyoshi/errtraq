@@ -67,17 +67,41 @@
   "pubsub": {
     "policies": {
       "consume": {
+        "archive_project": "json-document",
+        "ingest": "json-document",
+        "notifications": "json-document",
         "plain": "json-document",
         "record": "json-document",
         "shared": "json-document"
       },
       "produce": {
+        "archive_project": "json-document",
+        "ingest": "json-document",
+        "notifications": "json-document",
         "plain": "json-document",
         "record": "json-document",
         "shared": "json-document"
       }
     },
     "queues": {
+      "archive_project": {
+        "dlq_subscription": "string",
+        "dlq_topic": "string",
+        "subscription": "string",
+        "topic": "string"
+      },
+      "ingest": {
+        "dlq_subscription": "string",
+        "dlq_topic": "string",
+        "subscription": "string",
+        "topic": "string"
+      },
+      "notifications": {
+        "dlq_subscription": "string",
+        "dlq_topic": "string",
+        "subscription": "string",
+        "topic": "string"
+      },
       "plain": {
         "dlq_subscription": "string",
         "dlq_topic": "string",

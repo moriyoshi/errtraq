@@ -59,6 +59,12 @@ const role = z.enum([
   "archive",
   "bootstrap",
 ]);
+/**
+ * An IAM member that may invoke the bootstrap service. Only named principals: `allUsers` and
+ * `allAuthenticatedUsers` would expose a service that runs migrations and mints API tokens.
+ */
+export const OPERATOR_MEMBER =
+  /^(?:(?:user|group|serviceAccount):[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}|domain:[A-Za-z0-9.-]+\.[A-Za-z]{2,})$/;
 const accountId = z.string().regex(/^[a-z][a-z0-9-]{4,28}[a-z0-9]$/);
 /** An image pinned by digest (literals only; a stack variable may carry any reference). */
 export const IMAGE_REFERENCE =
@@ -110,7 +116,17 @@ export const configSchema = z
       .string()
       .regex(/^[A-Za-z0-9_-]{1,255}$/)
       .optional(),
+    /**
+     * IAM members (`user:`, `group:`, `serviceAccount:`, `domain:`) granted `roles/run.invoker` on
+     * the private bootstrap service. Empty leaves the service invocable by nobody.
+     */
+    operatorMembers: z.array(z.string().regex(OPERATOR_MEMBER)).default([]),
   })
+  .refine(
+    (config) =>
+      config.operatorMembers.length === 0 || config.roles.includes("bootstrap"),
+    { message: "operatorMembers is only valid with the bootstrap role" },
+  )
   .refine(
     (config) =>
       config.roles.includes("bootstrap") ===
@@ -265,6 +281,7 @@ export const infra: InfraDescriptor<Config> = {
           }
         : {}),
       oidc_audience: config.oidcAudience,
+      operator_members: config.operatorMembers,
       push_service_account_id: config.pushServiceAccountId,
       scheduler_service_account_id: config.schedulerServiceAccountId,
       functions: Object.fromEntries(

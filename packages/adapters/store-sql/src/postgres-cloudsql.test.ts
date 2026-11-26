@@ -1,12 +1,19 @@
 import { validateStack, variable } from "@moriyoshi/errtraq-core";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { create } from "./postgres.js";
-import { ensureIamUser, privilegeStatements } from "./postgres-admin.js";
+import {
+  ensureIamUser,
+  ensureIamUsers,
+  memberPrivilegeStatements,
+  memberTableStatements,
+  privilegeStatements,
+} from "./postgres-admin.js";
 import {
   CloudSqlTokenError,
   cloudSqlIamPoolConfig,
   cloudSqlIamUserName,
   cloudSqlTransport,
+  parseGrantUsers,
 } from "./postgres-cloudsql.js";
 import { postgres } from "./postgres-stack.js";
 
@@ -149,13 +156,16 @@ describe("Cloud SQL stack selection", () => {
     instanceConnectionName: ICN,
     region: "europe-west1",
     database: "errtraq",
-    serviceAccountEmail: SA,
   };
   const binding = (s: ReturnType<typeof postgres>, name: string) =>
     s.infra.bindings.find((item) => item.name === name)?.value;
-  it("derives the user, defaults to the socket and names the module", () => {
+  it("leaves the user to each runtime identity, defaults to the socket and names the module", () => {
     const s = postgres(base);
-    expect(binding(s, "ERRTRAQ_POSTGRES_USER")).toBe("app-store@project.iam");
+    expect(binding(s, "ERRTRAQ_POSTGRES_USER")).toBeUndefined();
+    // No shared database_user: the platform module creates one IAM user per function account.
+    expect(s.infra.inputs(s.config as never, {} as never)).not.toHaveProperty(
+      "database_user",
+    );
     expect(binding(s, "ERRTRAQ_POSTGRES_SOCKET_DIR")).toBe("/cloudsql");
     expect(binding(s, "ERRTRAQ_POSTGRES_HOST")).toBeUndefined();
     expect(s.infra.module).toMatchObject({
@@ -198,15 +208,15 @@ describe("Cloud SQL stack selection", () => {
     expect(admin).toMatchObject({ kind: "secret", capabilities: ["admin"] });
     expect(s.infra.capabilities.admin).toEqual({ primary: null });
   });
-  it("omits the user binding when the runtime identity decides", () => {
-    const { serviceAccountEmail: _, ...noUser } = base;
-    expect(binding(postgres(noUser), "ERRTRAQ_POSTGRES_USER")).toBeUndefined();
+  it("rejects a shared serviceAccountEmail: it contradicts one IAM database user per function", () => {
+    expect(() =>
+      postgres({ ...base, serviceAccountEmail: SA } as never),
+    ).toThrow(/serviceAccountEmail is not supported/);
   });
   it("rejects bad configuration", () => {
     for (const bad of [
       { ...base, instanceConnectionName: "nope" },
       { ...base, region: "" },
-      { ...base, serviceAccountEmail: "person@example.com" },
       { ...base, secret: variable("s") },
       { ...base, connection: { kind: "tcp", host: "10.0.0.5" } },
       { ...base, connection: { kind: "unix-socket", socketDir: "/a/../b" } },
@@ -348,5 +358,125 @@ describe("Cloud SQL administration", () => {
     await ensureIamUser(client(true), "u@p.iam", "db", "cloudsql");
     expect(statements.some((s) => s.startsWith("create role"))).toBe(false);
     expect(statements.some((s) => s.includes('"u@p.iam"'))).toBe(true);
+  });
+});
+
+describe("Cloud SQL grants for every function user", () => {
+  const recorder = (existing: string[]) => {
+    const statements: string[] = [];
+    return {
+      statements,
+      query: async (text: string, values?: unknown[]) => {
+        statements.push(text);
+        return {
+          rows:
+            text.startsWith("select 1") &&
+            existing.includes(String(values?.[0]))
+              ? [{}]
+              : [],
+        };
+      },
+    };
+  };
+  const a = "api@p.iam";
+  const b = "consumer@p.iam";
+  const c = "cron@p.iam";
+  it("grants the migrating user ownership rights and the others connection-level access", async () => {
+    const client = recorder([a, b, c]);
+    await ensureIamUsers(client, a, [a, b, c, b], "db", "cloudsql");
+    const text = client.statements.join("\n");
+    // The migrator keeps create on the schema; the members only use it.
+    expect(text).toContain(
+      'grant usage, create on schema public to "api@p.iam"',
+    );
+    for (const user of [b, c]) {
+      expect(text).toContain(`grant connect on database "db" to "${user}"`);
+      expect(text).toContain(`grant usage on schema public to "${user}"`);
+      expect(text).not.toContain(`create on schema public to "${user}"`);
+    }
+    // Duplicates and the migrator itself are granted once as a member.
+    expect(
+      client.statements.filter((s) =>
+        s.includes(`connect on database "db" to "${b}"`),
+      ),
+    ).toHaveLength(1);
+    expect(text).not.toContain("rds_iam");
+  });
+  it("fails clearly when Terraform did not create one of the users", async () => {
+    await expect(
+      ensureIamUsers(recorder([a]), a, [b], "db", "cloudsql"),
+    ).rejects.toMatchObject({ code: "ROLE_MISSING" });
+  });
+  it("gives members data access only, now and for later migrations", () => {
+    const statements = memberTableStatements([b]);
+    expect(statements).toContain(
+      'grant select, insert, update, delete on all tables in schema public to "consumer@p.iam"',
+    );
+    expect(
+      statements.some((s) => s.startsWith("alter default privileges")),
+    ).toBe(true);
+    const all =
+      statements.join("\n") + memberPrivilegeStatements(b, "db").join("\n");
+    expect(all).not.toMatch(/grant all|truncate|create/);
+    expect(memberTableStatements([])).toEqual([]);
+  });
+  it("quotes hostile user names", () => {
+    expect(memberTableStatements(['x" to public; --'])[0]).toContain(
+      '"x"" to public; --"',
+    );
+  });
+});
+describe("Cloud SQL grant user list", () => {
+  it("parses, dedupes and validates the platform-supplied list", () => {
+    expect(parseGrantUsers(undefined)).toEqual([]);
+    expect(parseGrantUsers("a@p.iam, b@p.iam,a@p.iam")).toEqual([
+      "a@p.iam",
+      "b@p.iam",
+    ]);
+    for (const bad of [
+      "a@p.iam,",
+      'x"@p.iam',
+      "a@p.example.com",
+      "a b@p.iam",
+      Array.from({ length: 33 }, (_, i) => `u${i}@p.iam`).join(","),
+    ])
+      expect(() => parseGrantUsers(bad)).toThrow(
+        "Invalid Cloud SQL IAM user list",
+      );
+  });
+  it("is read from the bootstrap role's binding and provisions every user", async () => {
+    const seen: unknown[] = [];
+    vi.doMock("./postgres-admin.js", async (original) => ({
+      ...(await original<typeof import("./postgres-admin.js")>()),
+      provisionIamUser: async (options: unknown) => {
+        seen.push(options);
+      },
+    }));
+    vi.resetModules();
+    const { create: createMocked } = await import("./postgres.js");
+    const store = await createMocked({
+      config: { mode: "cloudsql-iam" },
+      bindings: {
+        ERRTRAQ_POSTGRES_INSTANCE: ICN,
+        ERRTRAQ_POSTGRES_DATABASE: "db",
+        ERRTRAQ_POSTGRES_USER: "boot@p.iam",
+        ERRTRAQ_POSTGRES_GRANT_USERS: "boot@p.iam,api@p.iam,cron@p.iam",
+        ERRTRAQ_POSTGRES_ADMIN_SECRET: "x",
+        accessToken: async () => "tok",
+      },
+      dependencies: {},
+      secretSource: {
+        read: async () => JSON.stringify({ username: "a", password: "b" }),
+      },
+    });
+    // The migration itself needs a server; only provisioning is observed here.
+    await store.migrate().catch(() => undefined);
+    await store.close();
+    vi.doUnmock("./postgres-admin.js");
+    expect(seen[0]).toMatchObject({
+      user: "boot@p.iam",
+      members: ["api@p.iam", "cron@p.iam"],
+      flavor: "cloudsql",
+    });
   });
 });

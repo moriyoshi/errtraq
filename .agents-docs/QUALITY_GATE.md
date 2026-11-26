@@ -74,6 +74,7 @@ AWS emulator probes and the namespace lifecycle are opt-in:
 ```sh
 pnpm aws-emulator:install              # install the checksum-verified pinned release (prebuilt where pinned, else built from source)
 pnpm test:aws-emulated                 # probes and adapter contracts; skips absent builds
+pnpm test:gcp-emulated                 # Firestore, Pub/Sub and GCS emulators in Docker: GCP contracts, then the Cloud Run handler end to end; skips without Docker (gaps: GCP_EMULATOR_GAPS.md)
 pnpm test:workers-smoke                # runs S3, SQS producer / delayed push and KV against local fakes in workerd
 ```
 

@@ -6,21 +6,27 @@ run "queues_and_policies" {
     project_id = "example-project"
     region     = "europe-west1"
     physical_queues = {
-      shared = { ack_deadline_sec = 180, min_backoff_sec = 10, max_backoff_sec = 600, dlq_enabled = true, max_delivery_attempts = 5 }
-      record = { ordered = true, ack_deadline_sec = 180, dlq_enabled = true, max_delivery_attempts = 5 }
-      plain  = { ack_deadline_sec = 60, dlq_enabled = false }
+      shared          = { ack_deadline_sec = 180, min_backoff_sec = 10, max_backoff_sec = 600, dlq_enabled = true, max_delivery_attempts = 5 }
+      record          = { ordered = true, ack_deadline_sec = 180, dlq_enabled = true, max_delivery_attempts = 5 }
+      plain           = { ack_deadline_sec = 60, dlq_enabled = false }
+      ingest          = { ack_deadline_sec = 180, min_backoff_sec = 10, max_backoff_sec = 600, dlq_enabled = true, max_delivery_attempts = 5 }
+      archive_project = { ack_deadline_sec = 180, min_backoff_sec = 10, max_backoff_sec = 600, dlq_enabled = true, max_delivery_attempts = 5 }
+      notifications   = { ack_deadline_sec = 180, min_backoff_sec = 10, max_backoff_sec = 600, dlq_enabled = true, max_delivery_attempts = 5 }
     }
   }
   assert {
     condition = jsonencode(output.queues) == jsonencode({
-      plain  = { topic = "projects/example-project/topics/example-plain", subscription = "projects/example-project/subscriptions/example-plain", dlq_topic = "", dlq_subscription = "" }
-      record = { topic = "projects/example-project/topics/example-record", subscription = "projects/example-project/subscriptions/example-record", dlq_topic = "projects/example-project/topics/example-record-dlq", dlq_subscription = "projects/example-project/subscriptions/example-record-dlq" }
-      shared = { topic = "projects/example-project/topics/example-shared", subscription = "projects/example-project/subscriptions/example-shared", dlq_topic = "projects/example-project/topics/example-shared-dlq", dlq_subscription = "projects/example-project/subscriptions/example-shared-dlq" }
+      ingest          = { topic = "projects/example-project/topics/example-ingest", subscription = "projects/example-project/subscriptions/example-ingest", dlq_topic = "projects/example-project/topics/example-ingest-dlq", dlq_subscription = "projects/example-project/subscriptions/example-ingest-dlq" }
+      archive_project = { topic = "projects/example-project/topics/example-archive_project", subscription = "projects/example-project/subscriptions/example-archive_project", dlq_topic = "projects/example-project/topics/example-archive_project-dlq", dlq_subscription = "projects/example-project/subscriptions/example-archive_project-dlq" }
+      notifications   = { topic = "projects/example-project/topics/example-notifications", subscription = "projects/example-project/subscriptions/example-notifications", dlq_topic = "projects/example-project/topics/example-notifications-dlq", dlq_subscription = "projects/example-project/subscriptions/example-notifications-dlq" }
+      plain           = { topic = "projects/example-project/topics/example-plain", subscription = "projects/example-project/subscriptions/example-plain", dlq_topic = "", dlq_subscription = "" }
+      record          = { topic = "projects/example-project/topics/example-record", subscription = "projects/example-project/subscriptions/example-record", dlq_topic = "projects/example-project/topics/example-record-dlq", dlq_subscription = "projects/example-project/subscriptions/example-record-dlq" }
+      shared          = { topic = "projects/example-project/topics/example-shared", subscription = "projects/example-project/subscriptions/example-shared", dlq_topic = "projects/example-project/topics/example-shared-dlq", dlq_subscription = "projects/example-project/subscriptions/example-shared-dlq" }
     })
     error_message = "Topics are <name>-<physical>, dead-letter topics <name>-<physical>-dlq, and the subscription name is reserved as <name>-<physical>."
   }
   assert {
-    condition     = toset(keys(google_pubsub_topic.dlq)) == toset(["shared", "record"]) && toset(keys(google_pubsub_subscription.dlq)) == toset(["shared", "record"])
+    condition     = toset(keys(google_pubsub_topic.dlq)) == toset(["shared", "record", "ingest", "archive_project", "notifications"]) && toset(keys(google_pubsub_subscription.dlq)) == toset(["shared", "record", "ingest", "archive_project", "notifications"])
     error_message = "Dead-letter topics and their retaining subscriptions exist exactly for queues with a DLQ."
   }
   assert {
@@ -32,14 +38,14 @@ run "queues_and_policies" {
     error_message = "Messages persist only in the explicit region."
   }
   assert {
-    condition = alltrue([for key in ["shared", "record", "plain"] :
+    condition = alltrue([for key in ["shared", "record", "plain", "ingest", "archive_project", "notifications"] :
       jsonencode(jsondecode(output.policies.produce[key])) == jsonencode([{ role = "roles/pubsub.publisher", resource = "projects/example-project/topics/example-${key}" }]) &&
       length(jsondecode(output.policies.consume[key])) == 0
     ])
     error_message = "Producers publish on exactly the physical topic; consumers need no binding because push uses run.invoker."
   }
   assert {
-    condition     = toset(keys(output.policies)) == toset(["produce", "consume"]) && alltrue([for policies in values(output.policies) : toset(keys(policies)) == toset(["shared", "record", "plain"])])
+    condition     = toset(keys(output.policies)) == toset(["produce", "consume"]) && alltrue([for policies in values(output.policies) : toset(keys(policies)) == toset(["shared", "record", "plain", "ingest", "archive_project", "notifications"])])
     error_message = "Policy output shape must follow the descriptor."
   }
 }
