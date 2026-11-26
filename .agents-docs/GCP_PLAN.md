@@ -198,6 +198,13 @@ Status 2026-11-26: offline part implemented on branch `g2` (contract and unit te
 - Scope: `stacks/gcp-firestore.ts`, `stacks/gcp-cloudsql.ts`, a per-topic variant; generation snapshots in `infra-gen`; `scripts/gcp-emulated/` mirroring `scripts/aws-emulated` (starts the three emulators on free ports, sets the standard `*_EMULATOR_HOST` variables, runs the contract suites and the standalone end-to-end with `@sentry/node` against a Cloud Run handler process, skips with a clear message when an emulator binary or image is missing); `errtraq dev` can already run the standalone platform with fs blobs for local development, so no GCP emulation is required for the default developer loop. A `WINTERBAUME_GAPS.md` style note records what the GCP emulators cannot check (indexes, IAM, OIDC, quotas).
 - Tests: default suite offline; opt-in `pnpm gcp-emulator` suite.
 - Done: snapshots green, emulated suite passes where the emulators allow, gaps documented.
+- Status (2026-11-26, branch `g7`): implemented, review pending. What was built and where it differs from the scope text:
+  - Platform field `operatorMembers` (IAM members `user:`, `group:`, `serviceAccount:`, `domain:`; `allUsers` and `allAuthenticatedUsers` are rejected; only valid with the `bootstrap` role) feeds the module's `operator_members`.
+  - Example stacks: `gcp-firestore`, `gcp-cloudsql`, `gcp-firestore-bootstrap` (stack name `gcp-fs-bootstrap`, operator from the required `ERRTRAQ_GCP_OPERATOR_MEMBER`, direct recording) and `gcp-firestore-per-topic` (`gcp-fs-per-topic`; names stay within the 20-character limit). All four have generation snapshots in `stacks/__snapshots__/gcp.test.ts.snap` and generated roots in `scripts/infra-gcp-roots.mjs` (validated at both provider versions, the bootstrap root also checks the operator invoker bindings). No default project or region anywhere (D7, D8); placeholders only in tests.
+  - Cloud SQL users (the G4/G7 item): the platform module gives the bootstrap function `ERRTRAQ_POSTGRES_GRANT_USERS` (the IAM user of every function that logs in to the store). The admin bootstrap (`ensureIamUsers`) prepares the migrating user as before and gives each other user `connect` and schema `usage`; after the migration the migrating user, who owns the tables, grants select, insert, update, delete (and sequence usage) on existing tables and as default privileges for later migrations. A privileged admin cannot be relied on to grant on another user's tables on Cloud SQL (`cloudsqlsuperuser` is not a superuser), hence the owner does it. `serviceAccountEmail` is rejected in the Cloud SQL config: every function has its own service account and the login token names that account, so a shared user cannot be logged in to.
+  - `pnpm test:gcp-emulated` (`scripts/gcp-emulated/`): the three emulators in `errtraq-g7-*` containers, the four contract suites, then the built Cloud Run handler end to end with real `@sentry/node` and Pub/Sub push to `/_errtraq/push/shared`, asserting grouped and counted issues through the API. A fake metadata server (`GCE_METADATA_HOST`) supplies tokens; the Firestore emulator needs the token `owner`.
+  - The OIDC test switch: the emulator sends no OIDC token, so the test stack uses the existing `pushAuth: "none"` of `queue-pubsub`, now hardened: it also drops a host-injected verifier (previously `verifyPush` won), requires a loopback emulator and is refused when `K_SERVICE` or `K_REVISION` is set, so it cannot be enabled in a deployed config.
+  - Gaps: `GCP_EMULATOR_GAPS.md`. The GCS emulator origin is baked into the test stack at build time (the blob adapter takes its endpoint from configuration); the other emulators are found through their standard environment variables.
 
 ### G8. Real GCP verification (operator-run)
 
@@ -397,7 +404,7 @@ D14. Scope of the archive tier on GCP (before any archive work). Options: defer 
 | G4 | pool config, descriptor, stack schema, unchanged postgres suites | existing local Postgres suite |
 | G5 | handler, validation, build manifest, infra-gen snapshots | none |
 | G6 | `terraform validate`, `terraform test` with mock providers, binding-document mutation tests | none |
-| G7 | generation snapshots | `pnpm gcp-emulator` end-to-end |
+| G7 | generation snapshots | `pnpm test:gcp-emulated` end-to-end |
 | G8 | none | real project, operator-run |
 
 ## 9. Sources (fetched 2026-11-25)
