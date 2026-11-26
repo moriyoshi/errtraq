@@ -97,7 +97,7 @@ export async function listQueries(ctx) {
   ctx.report.info("list queries", `${pages} requests`);
 }
 
-/** Composite and field indexes of both databases must be READY. */
+/** Composite indexes of both databases must be READY, and the kv TTL policy ACTIVE next to its field exemption. */
 export async function indexStates(ctx) {
   for (const purpose of ["store", "kv"]) {
     const response = await ctx.http(
@@ -115,6 +115,16 @@ export async function indexStates(ctx) {
         `${indexes.length} indexes, ${notReady.length} not ready (${response.status})`,
     );
   }
+  const field = await ctx.http(
+    "GET",
+    `https://firestore.googleapis.com/v1/${ctx.names.database("kv")}/collectionGroups/kv/fields/expireAt`,
+  );
+  ctx.report.check(
+    "the kv expireAt field has an ACTIVE TTL policy and no index (exemption merged)",
+    field.json?.ttlConfig?.state === "ACTIVE" &&
+      !(field.json?.indexConfig?.indexes ?? []).length,
+    () => `ttl ${field.json?.ttlConfig?.state ?? "none"} (${field.status})`,
+  );
 }
 
 async function stage(ctx, boot, message, index) {

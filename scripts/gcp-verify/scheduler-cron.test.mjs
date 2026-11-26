@@ -67,7 +67,14 @@ describe("cron probe", () => {
         }),
       ],
       ["POST", /uploadType=media/, () => ({ body: {} })],
-      ["POST", /staged-recovery:run$/, () => ((ran = true), { body: {} })],
+      [
+        "POST",
+        /staged-recovery:run$/,
+        () => {
+          ran = true;
+          return { body: {} };
+        },
+      ],
       [
         "GET",
         /api\.test.*issues/,

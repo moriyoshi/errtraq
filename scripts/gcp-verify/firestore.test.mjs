@@ -61,6 +61,11 @@ describe("firestore probe", () => {
       routerFetch([
         [
           "GET",
+          /fields\/expireAt/,
+          () => ({ body: { ttlConfig: { state: "ACTIVE" }, indexConfig: {} } }),
+        ],
+        [
+          "GET",
           /collectionGroups\/-\/indexes/,
           () => ({ body: { indexes: [{ state: "READY" }, { state }] } }),
         ],
