@@ -55,6 +55,7 @@ export default async function globalSetup(): Promise<() => Promise<void>> {
   let output = "";
   let errors = "";
   const idp: FakeIdp = await startFakeIdp(await freePort());
+  const serverPort = await freePort();
   const server: ChildProcess = spawn(
     process.execPath,
     [
@@ -69,8 +70,10 @@ export default async function globalSetup(): Promise<() => Promise<void>> {
       env: {
         ...process.env,
         ERRTRAQ_DATA_DIR: dataDir,
-        ERRTRAQ_PORT: "0",
+        ERRTRAQ_PORT: String(serverPort),
         ERRTRAQ_HOST: "127.0.0.1",
+        // The key list builds DSNs from this origin, so the settings page shows a real one.
+        ERRTRAQ_PUBLIC_URL: `http://127.0.0.1:${serverPort}`,
         ERRTRAQ_OIDC_ISSUER: idp.issuer,
       },
       stdio: ["ignore", "pipe", "pipe"],
@@ -122,6 +125,7 @@ export default async function globalSetup(): Promise<() => Promise<void>> {
     });
     // The Vite config reads this when preview() loads it.
     process.env.ERRTRAQ_API_TARGET = origin;
+    process.env.ERRTRAQ_PUBLIC_URL = `http://127.0.0.1:${serverPort}`;
     const port = await freePort();
     previewServer = await preview({
       root: uiRoot,

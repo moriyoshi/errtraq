@@ -50,6 +50,11 @@ describe("static site contract", () => {
   it("holds for the module", () => {
     expect(staticSiteContract("infra/modules/aws/static-site")).toEqual([]);
   });
+  it("flags a custom domain on an old TLS policy", () => {
+    expect(mutated('"TLSv1.2_2021"', '"TLSv1"')).toEqual([
+      "a custom certificate needs minimum_protocol_version TLSv1.2 or newer",
+    ]);
+  });
   it("flags a public bucket, a broad or unscoped policy and plain HTTP", () => {
     expect(
       mutated(

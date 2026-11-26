@@ -33,7 +33,11 @@ import {
   releaseReader,
   toTimestamp,
 } from "@moriyoshi/errtraq-core/runtime";
-import { createApiApp, createIngestApp } from "@moriyoshi/errtraq-http";
+import {
+  createApiApp,
+  createIngestApp,
+  publicApiOrigin,
+} from "@moriyoshi/errtraq-http";
 import { Hono } from "hono";
 import { handle, type LambdaEvent } from "hono/aws-lambda";
 
@@ -47,6 +51,8 @@ export interface HandlerOptions {
    * adds no CORS headers: the function URL's CORS block carries the browser policy.
    */
   ingestUrl?: string;
+  /** Public origin of the API for `Link` and permalinks (`ERRTRAQ_PUBLIC_API_URL`). */
+  publicApiUrl?: string;
   /** OIDC Bearer and proxy-assertion settings (`ERRTRAQ_AUTH_CONFIG`); absent means API tokens only. */
   auth?: AuthSettings;
   http: readonly FunctionRole[];
@@ -111,6 +117,15 @@ export function lambdaIngestUrl(value: string | undefined): string | undefined {
     throw new Error("Invalid public ingest URL");
   return value;
 }
+/**
+ * Parse the operator-configured public API origin (`ERRTRAQ_PUBLIC_API_URL`); missing or empty
+ * means absolute URLs come from the request URL. Never derived from request headers.
+ */
+export function lambdaPublicApiUrl(
+  value: string | undefined,
+): string | undefined {
+  return publicApiOrigin(value);
+}
 /** Share successful initialization while allowing the next invocation to retry a failure. */
 export function retryableInitialization<T>(
   initialize: () => Promise<T>,
@@ -166,6 +181,7 @@ export function createHandler(
         logger: log,
         archive: adapters.archive,
         ...(options.ingestUrl ? { ingestUrl: options.ingestUrl } : {}),
+        ...(options.publicApiUrl ? { publicApiUrl: options.publicApiUrl } : {}),
         ...(options.auth ? { auth: options.auth } : {}),
       }),
     );

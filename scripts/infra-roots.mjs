@@ -108,9 +108,15 @@ export const fixtures = {
     recordMode: "direct",
     platform: awsLambda({
       publicIngestUrl: variable("INGEST_URL"),
+      publicApiUrl: variable("API_URL"),
       apiCorsOrigins: variable("UI_ORIGINS"),
     }),
     variables: {
+      API_URL: {
+        type: "string",
+        sensitive: false,
+        default: "https://api.example.test",
+      },
       INGEST_URL: {
         type: "string",
         sensitive: false,
@@ -165,6 +171,27 @@ export const fixtures = {
   ui: variant(shared, {
     recordMode: "direct",
     platform: awsLambda({ ui: { directory: "../packages/ui/dist" } }),
+    outputs: {
+      ...shared.outputs,
+      ui_domain_name: output("platform", "ui_domain_name"),
+      ui_distribution_id: output("platform", "ui_distribution_id"),
+      ui_bucket_name: output("platform", "ui_bucket_name"),
+    },
+  }),
+  // A custom domain: aliases, the operator's us-east-1 certificate and a web ACL; the API URL
+  // defaults to https://<first alias>.
+  "ui-domain": variant(shared, {
+    recordMode: "direct",
+    platform: awsLambda({
+      ui: {
+        directory: "../packages/ui/dist",
+        aliases: ["errtraq.example.com"],
+        certificateArn:
+          "arn:aws:acm:us-east-1:123456789012:certificate/11111111-2222-3333-4444-555555555555",
+        wafAclArn:
+          "arn:aws:wafv2:us-east-1:123456789012:global/webacl/errtraq/11111111-2222-3333-4444-555555555555",
+      },
+    }),
     outputs: {
       ...shared.outputs,
       ui_domain_name: output("platform", "ui_domain_name"),
@@ -727,6 +754,16 @@ export function prepareRoot(parent, name, version) {
                 stack.platform.config.publicIngestUrl,
                 "platform",
               ),
+            }
+          : {}),
+        // The module delivers the public API origin: the setting, else https://<first alias>.
+        ...(fn.http.includes("api") &&
+        (stack.platform.config.publicApiUrl ||
+          stack.platform.config.ui?.aliases?.length)
+          ? {
+              ERRTRAQ_PUBLIC_API_URL: stack.platform.config.publicApiUrl
+                ? render(stack.platform.config.publicApiUrl, "platform")
+                : `https://${stack.platform.config.ui.aliases[0]}`,
             }
           : {}),
         // The module delivers the sign-in settings as JSON (keys sorted, as jsonencode does).

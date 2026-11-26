@@ -2225,6 +2225,13 @@
     "replace": "event_type   = \"viewer-response\""
   },
   {
+    "id": "site-custom-domain-old-tls",
+    "module": "static-site",
+    "file": "main.tf",
+    "find": "\"TLSv1.2_2021\"",
+    "replace": "\"TLSv1\""
+  },
+  {
     "id": "site-referrer-policy",
     "module": "static-site",
     "file": "main.tf",

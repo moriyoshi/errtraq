@@ -152,14 +152,19 @@ function URL over HTTPS with the managed `CachingDisabled` and `AllViewerExceptH
 authorization `NONE`: CloudFront origin access control signs the origin request with SigV4 in the
 `Authorization` header (signing behavior `always`), which replaces the user's Bearer token, and the
 API authenticates the Bearer itself. Ingest is not routed here; it stays on its own function URL
-(the DSN host). Minted project IDs start at 1, so `/api/0/*` never matches an ingest path
+(the DSN host). Project ID 0 is rejected, so `/api/0/*` never matches an ingest path
 `/api/<projectId>/...`.
 
 Objects come from `<build>/ui/manifest.json` (written by `errtraq build`): one `aws_s3_object` per
 entry with the manifest's content type, cache control (`assets/*` immutable for a year, the rest
 `no-cache`) and hash. `lambda-app` derives `<build>/ui` from the API function's artifact path
-(`<build>/<function id>/...`). The distribution uses the default CloudFront domain; a custom domain
-and certificate are not yet supported (`TODO(UI-f)`). Outputs: `domain_name` (the UI URL),
+(`<build>/<function id>/...`). Without `aliases` the distribution uses the default CloudFront
+domain and certificate. With `aliases` (exact host names, at most 10) it needs `certificate_arn`,
+an existing ACM certificate **in us-east-1** (the only region CloudFront reads; the stack and the
+module both reject any other), served over SNI with TLS 1.2 or newer; `waf_acl_arn` optionally
+attaches an existing CLOUDFRONT-scope WAFv2 web ACL (also us-east-1). No certificate, validation
+record or DNS record is created: point a CNAME or alias at the `domain_name` output yourself.
+Outputs: `domain_name` (the UI URL),
 `distribution_id`, `bucket_name`; `lambda-app` re-exports them as `ui_domain_name`,
 `ui_distribution_id`, `ui_bucket_name`.
 
@@ -172,6 +177,15 @@ already carries the public ingest policy. The application adds no CORS headers o
 `ingest_public_url` is delivered to the functions that expose the API as
 `ERRTRAQ_PUBLIC_INGEST_URL` so the key list shows DSNs; it is operator-supplied because the ingest
 function URL output cannot feed the function's own environment.
+
+`public_api_url` (an origin: scheme and host, no path) is delivered the same way as
+`ERRTRAQ_PUBLIC_API_URL`; the API then builds `Link` headers, issue permalinks and the chunk-upload
+URL from it instead of the request URL, which behind CloudFront is the function URL host. It comes
+from configuration only: the distribution forwards viewer headers to the API, so a value taken from
+`X-Forwarded-Host` could be chosen by the client. The stack sets it from `publicApiUrl`, else
+`https://<first ui alias>`. The environment variables of one function share Lambda's 4 KB: the
+platform adds the adapter bindings, `ERRTRAQ_AUTH_CONFIG` (at most 3072 bytes), the public ingest URL
+and the public API URL (each at most 256 bytes) and refuses a stack that exceeds 4096.
 
 ## Sign-in settings (lambda-app)
 

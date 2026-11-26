@@ -16,6 +16,10 @@ export default defineStack({
     host: env("ERRTRAQ_HOST", { defaultValue: "127.0.0.1" }),
     port: env("ERRTRAQ_PORT", { defaultValue: "8787", valueType: "number" }),
     tokenDirectory: env("ERRTRAQ_DATA_DIR", { defaultValue: ".errtraq" }),
+    // The origin DSNs are built from (the API key list shows `dsn` only when this is set).
+    publicUrl: env("ERRTRAQ_PUBLIC_URL", {
+      defaultValue: "http://127.0.0.1:8787",
+    }),
     rateLimit: 10000,
     roles: ["ingest", "api", "consumer", "cron"],
     split: [],

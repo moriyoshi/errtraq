@@ -211,6 +211,15 @@ variable "ingest_public_url" {
     error_message = "ingest_public_url must be an HTTP(S) URL without credentials, query or fragment."
   }
 }
+variable "public_api_url" {
+  type        = string
+  description = "Operator-supplied public origin of the API (for example https://errtraq.example.com, the custom domain of the static site); delivered to the API function as ERRTRAQ_PUBLIC_API_URL so Link headers and issue permalinks use it instead of the function URL host. Never derived from a request header. The stack defaults it to https://<first ui alias> when aliases are set."
+  default     = null
+  validation {
+    condition     = var.public_api_url == null ? true : can(regex("^https?://[^/?#@]+$", var.public_api_url))
+    error_message = "public_api_url must be an HTTP(S) origin without a path, credentials, query or fragment."
+  }
+}
 variable "auth_config" {
   type        = any
   description = "Sign-in settings for the API function (OIDC Bearer JWT verification and identity-aware proxy assertions), delivered as JSON in ERRTRAQ_AUTH_CONFIG to functions that expose the API. The platform validates the shape; Lambda limits all environment values together to 4 KB, so the JSON is capped well below that."
@@ -235,14 +244,25 @@ variable "api_cors_origins" {
 }
 variable "ui" {
   type = object({
-    build_anchor = string
-    price_class  = optional(string, "PriceClass_100")
+    build_anchor    = string
+    price_class     = optional(string, "PriceClass_100")
+    aliases         = optional(list(string), [])
+    certificate_arn = optional(string)
+    waf_acl_arn     = optional(string)
   })
   description = "Host the built web UI (S3 behind CloudFront, with /api/0/* routed to the API function URL: ../static-site). build_anchor is the build-output path of the API function's artifact (<build>/<function id>/...); the UI build copy is <build>/ui next to the function directories. Requires the API to be exposed by a function whose URL authorization is NONE: the API checks the Bearer token itself, and origin access control would replace it."
   default     = null
   validation {
     condition     = var.ui == null ? true : anytrue([for fn in values(var.functions) : contains(fn.http, "api") && fn.auth_type == "NONE"])
     error_message = "ui needs the API exposed over HTTP with URL authorization NONE."
+  }
+  validation {
+    condition     = var.ui == null ? true : (length(var.ui.aliases) == 0) == (var.ui.certificate_arn == null)
+    error_message = "ui.aliases and ui.certificate_arn go together."
+  }
+  validation {
+    condition     = var.ui == null ? true : var.ui.certificate_arn == null || can(regex("^arn:aws:acm:us-east-1:[0-9]{12}:certificate/", var.ui.certificate_arn))
+    error_message = "ui.certificate_arn must be an ACM certificate in us-east-1."
   }
   validation {
     condition     = var.ui == null ? true : length(var.ui.build_anchor) > 0 && !startswith(var.ui.build_anchor, "/")

@@ -97,6 +97,15 @@ export function staticSiteContract(directory) {
     violations.push("API origin must not use origin access control");
   if (/viewer_protocol_policy\s*=\s*"allow-all"/.test(text))
     violations.push("viewer_protocol_policy allow-all");
+  if (
+    /acm_certificate_arn/.test(text) &&
+    !/minimum_protocol_version\s*=\s*var\.certificate_arn == null \? null : "TLSv1\.2/.test(
+      text,
+    )
+  )
+    violations.push(
+      "a custom certificate needs minimum_protocol_version TLSv1.2 or newer",
+    );
   const policy = text.match(
     /resource "aws_s3_bucket_policy" "site" \{([\s\S]*?)\n\}/,
   )?.[1];

@@ -305,12 +305,145 @@ it("hosts the web UI from the API function's build output and rejects what Cloud
   for (const bad of [{ directory: "" }, { directory: "x", priceClass: "Mars" }])
     expect(() => awsLambda({ ui: bad as never })).toThrow();
 });
+const CERT =
+  "arn:aws:acm:us-east-1:123456789012:certificate/11111111-2222-3333-4444-555555555555";
+const WAF =
+  "arn:aws:wafv2:us-east-1:123456789012:global/webacl/errtraq/11111111-2222-3333-4444-555555555555";
+it("delivers an explicit public API URL as a module input and reserves its environment name", () => {
+  const platform = awsLambda({ publicApiUrl: "https://errtraq.example.com" });
+  expect(
+    platform.infra.inputs(platform.config, direct(platform)).public_api_url,
+  ).toBe("https://errtraq.example.com");
+  const variables = awsLambda({ publicApiUrl: variable("API_URL") });
+  expect(
+    variables.infra.inputs(
+      variables.config,
+      direct(variables, {
+        API_URL: {
+          type: "string" as const,
+          sensitive: false,
+          default: "https://errtraq.example.com",
+        },
+      }),
+    ).public_api_url,
+  ).toEqual(variable("API_URL"));
+  expect(variables.manifest.reservedBindings).toContain(
+    "ERRTRAQ_PUBLIC_API_URL",
+  );
+  expect(variables.manifest.infrastructureConfigReferences?.publicApiUrl).toBe(
+    "string",
+  );
+  const none = awsLambda();
+  expect(none.infra.inputs(none.config, direct(none))).not.toHaveProperty(
+    "public_api_url",
+  );
+  for (const bad of [
+    "https://errtraq.example.com/api",
+    "https://errtraq.example.com/",
+    "https://u:p@errtraq.example.com",
+    "ftp://errtraq.example.com",
+    "errtraq.example.com",
+  ])
+    expect(() => awsLambda({ publicApiUrl: bad })).toThrow();
+});
+it("serves the UI on custom domains with the operator's certificate and web ACL", () => {
+  const platform = awsLambda({
+    ui: {
+      directory: "dist",
+      aliases: ["errtraq.example.com", "ui.example.com"],
+      certificateArn: CERT,
+      wafAclArn: WAF,
+    },
+  });
+  const inputs = platform.infra.inputs(platform.config, direct(platform));
+  expect(inputs.ui).toMatchObject({
+    aliases: ["errtraq.example.com", "ui.example.com"],
+    certificate_arn: CERT,
+    waf_acl_arn: WAF,
+  });
+  // The first alias is the default public API URL; an explicit setting wins.
+  expect(inputs.public_api_url).toBe("https://errtraq.example.com");
+  const explicit = awsLambda({
+    publicApiUrl: "https://api.example.com",
+    ui: {
+      directory: "dist",
+      aliases: ["errtraq.example.com"],
+      certificateArn: CERT,
+    },
+  });
+  expect(
+    explicit.infra.inputs(explicit.config, direct(explicit)).public_api_url,
+  ).toBe("https://api.example.com");
+  const plain = awsLambda({ ui: { directory: "dist" } });
+  const plainInputs = plain.infra.inputs(plain.config, direct(plain));
+  expect(plainInputs.ui).not.toHaveProperty("aliases");
+  expect(plainInputs).not.toHaveProperty("public_api_url");
+});
+it("validates aliases, the us-east-1 certificate and the web ACL", () => {
+  const ui = (extra: object) =>
+    awsLambda({ ui: { directory: "dist", ...extra } as never });
+  expect(() => ui({ aliases: ["errtraq.example.com"] })).toThrow(/go together/);
+  expect(() => ui({ certificateArn: CERT })).toThrow(/go together/);
+  expect(() =>
+    ui({
+      aliases: ["errtraq.example.com"],
+      certificateArn: CERT.replace("us-east-1", "eu-west-1"),
+    }),
+  ).toThrow(/us-east-1/);
+  expect(() =>
+    ui({
+      aliases: ["errtraq.example.com"],
+      certificateArn: CERT,
+      wafAclArn: WAF.replace("global", "regional"),
+    }),
+  ).toThrow(/wafAclArn/);
+  expect(() =>
+    ui({
+      aliases: ["errtraq.example.com"],
+      certificateArn: CERT,
+      wafAclArn: WAF.replace("us-east-1", "eu-west-1"),
+    }),
+  ).toThrow(/wafAclArn/);
+  for (const aliases of [
+    ["Errtraq.example.com"],
+    ["*.example.com"],
+    ["example"],
+    ["errtraq.example.com."],
+    ["a.example.com", "a.example.com"],
+    [],
+  ])
+    expect(() => ui({ aliases, certificateArn: CERT })).toThrow();
+});
 const grant = {
   claim: "groups",
   value: "viewers",
   org: "default",
   scopes: ["event:read" as const],
 };
+it("counts the public URLs with the sign-in settings against Lambda's 4 KB", () => {
+  const platform = awsLambda({
+    publicApiUrl: "https://errtraq.example.com",
+    publicIngestUrl: "https://ingest.example.com/prefix",
+    oidc: {
+      issuer: "https://idp.example.com",
+      audience: "errtraq",
+      grants: Array.from({ length: 12 }, (_, i) => ({
+        ...grant,
+        value: `g${i}`,
+      })),
+    },
+  });
+  const view = direct(platform);
+  expect(() => platform.infra.inputs(platform.config, view)).not.toThrow();
+  // The same settings next to adapter bindings that leave too little room are refused. The
+  // sign-in settings alone are capped at 3072 bytes; the rest of the budget is shared.
+  const api = view.functions.find((fn) => fn.http.includes("api"));
+  api?.envBindings.push({
+    binding: { name: "BIG", kind: "env", value: "x".repeat(3500) },
+  } as never);
+  expect(() => platform.infra.inputs(platform.config, view)).toThrow(/4096/);
+});
+
 it("delivers OIDC and signed proxy settings as one JSON-able module input and reserves the env name", () => {
   const platform = awsLambda({
     oidc: {

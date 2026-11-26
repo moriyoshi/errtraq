@@ -146,6 +146,8 @@ resource "aws_cloudfront_distribution" "site" {
   default_root_object = "index.html"
   price_class         = var.price_class
   tags                = var.tags
+  aliases             = var.aliases
+  web_acl_id          = var.waf_acl_arn
 
   origin {
     origin_id                = "site"
@@ -164,11 +166,10 @@ resource "aws_cloudfront_distribution" "site" {
       origin_ssl_protocols   = ["TLSv1.2"]
     }
   }
-  # TODO(UI-f): the API builds Link and permalink URLs from the request URL, which behind this
-  # distribution is the function URL host. The UI only reads the cursor from Link, so it works.
   # Ingest (/api/<projectId>/envelope/ ...) stays on its own function URL, the DSN host, and is
   # not routed here. Project ID 0 is rejected (isProjectId in core), so /api/0/* cannot collide with
-  # an ingest path.
+  # an ingest path. The API builds Link and permalink URLs from its configured public API URL
+  # (ERRTRAQ_PUBLIC_API_URL), not from the request, whose host here is the function URL.
   ordered_cache_behavior {
     path_pattern             = "/api/0/*"
     target_origin_id         = "api"
@@ -196,7 +197,12 @@ resource "aws_cloudfront_distribution" "site" {
       restriction_type = "none"
     }
   }
+  # Aliases need the operator's certificate (SNI only: no dedicated IP charge); without them the
+  # default CloudFront certificate serves the *.cloudfront.net name.
   viewer_certificate {
-    cloudfront_default_certificate = true
+    cloudfront_default_certificate = var.certificate_arn == null ? true : null
+    acm_certificate_arn            = var.certificate_arn
+    ssl_support_method             = var.certificate_arn == null ? null : "sni-only"
+    minimum_protocol_version       = var.certificate_arn == null ? null : "TLSv1.2_2021"
   }
 }

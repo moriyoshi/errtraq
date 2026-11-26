@@ -2333,3 +2333,11 @@ Implemented by a Sonnet subagent for Claude Opus review (uncommitted, in paralle
 - **e2e shares one server across both files**, and `ui-f.e2e.ts` runs before `ui.e2e.ts` is not guaranteed by name, so every test restores issue statuses in `afterEach` through the API. `stacks/local.ts` has no `publicUrl`, hence no DSN in the key list: the DSN test injects one with `page.route` on the keys response (follow-up in `TODO.md`).
 - **Bulk update semantics the UI relies on:** the server validates every id before writing, so a failed batch (404 on an unknown id) changed nothing; batches are sent sequentially and a failure does not stop the others. Rollback is per batch from a snapshot of the cached lists, and lists are refetched afterwards either way.
 - `biome check --write packages/ui/src` formats UI-e's in-progress files too; run it on named files only while another agent is editing the package.
+
+
+## 2026-11-26 — UI-f part 2: public API URL and custom domain
+
+- **Origin only, from configuration only.** `publicApiUrl` is an exact origin (no path): `Link`, permalinks and the chunk-upload URL append their own paths, and `publicRequestUrl` swaps just protocol and host of the request URL, so query strings and paths survive. A test sends forged `X-Forwarded-Host`, `Forwarded` and `Host` headers and checks none reach `Link`, with and without the setting.
+- **The 4 KB check moved.** It used to run only inside the sign-in input; it now runs for every API function that gets a module-supplied value (auth config, public ingest URL, public API URL). A reference is assumed to be its 256-byte maximum. Terraform cannot sum the environment, so the module only bounds `auth_config`.
+- **`certificate_arn` and `aliases` are one unit** (validated in the stack schema, the `lambda-app` variable and the `static-site` variable). The viewer certificate switches to `acm_certificate_arn` with `sni-only` and `TLSv1.2_2021`; the security contract and a mutation (`site-custom-domain-old-tls`) pin the TLS floor. Wildcard aliases and upper case are refused (exact lower-case host names only).
+- **e2e DSN is real now**: the e2e server runs `stacks/local-oidc.ts` with `ERRTRAQ_PUBLIC_URL` (a port chosen up front, since the server's own port is otherwise random). The "No DSN" notice is tested by stripping `dsn` from the real key response.

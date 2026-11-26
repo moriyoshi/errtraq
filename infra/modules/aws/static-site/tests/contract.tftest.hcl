@@ -129,6 +129,60 @@ run "rejects_a_directory_without_a_manifest" {
   }
   expect_failures = [var.assets_directory]
 }
+run "default_domain_uses_the_cloudfront_certificate" {
+  command = apply
+  assert {
+    condition     = length(aws_cloudfront_distribution.site.aliases) == 0 && one(aws_cloudfront_distribution.site.viewer_certificate).cloudfront_default_certificate == true && one(aws_cloudfront_distribution.site.viewer_certificate).acm_certificate_arn == null && aws_cloudfront_distribution.site.web_acl_id == null
+    error_message = "Without aliases the default CloudFront certificate is used and no web ACL is attached."
+  }
+}
+run "custom_domain_uses_the_operators_certificate_and_web_acl" {
+  command = apply
+  variables {
+    aliases         = ["errtraq.example.com", "ui.example.com"]
+    certificate_arn = "arn:aws:acm:us-east-1:123456789012:certificate/11111111-2222-3333-4444-555555555555"
+    waf_acl_arn     = "arn:aws:wafv2:us-east-1:123456789012:global/webacl/errtraq/11111111-2222-3333-4444-555555555555"
+  }
+  assert {
+    condition     = toset(aws_cloudfront_distribution.site.aliases) == toset(["errtraq.example.com", "ui.example.com"]) && one(aws_cloudfront_distribution.site.viewer_certificate).acm_certificate_arn == "arn:aws:acm:us-east-1:123456789012:certificate/11111111-2222-3333-4444-555555555555" && one(aws_cloudfront_distribution.site.viewer_certificate).ssl_support_method == "sni-only" && one(aws_cloudfront_distribution.site.viewer_certificate).minimum_protocol_version == "TLSv1.2_2021" && one(aws_cloudfront_distribution.site.viewer_certificate).cloudfront_default_certificate != true
+    error_message = "Aliases need the operator's certificate over SNI with TLS 1.2 or newer."
+  }
+  assert {
+    condition     = aws_cloudfront_distribution.site.web_acl_id == "arn:aws:wafv2:us-east-1:123456789012:global/webacl/errtraq/11111111-2222-3333-4444-555555555555"
+    error_message = "The web ACL is attached to the distribution."
+  }
+}
+run "rejects_aliases_without_a_certificate" {
+  command = plan
+  variables {
+    aliases = ["errtraq.example.com"]
+  }
+  expect_failures = [var.certificate_arn]
+}
+run "rejects_a_certificate_outside_us_east_1" {
+  command = plan
+  variables {
+    aliases         = ["errtraq.example.com"]
+    certificate_arn = "arn:aws:acm:eu-west-1:123456789012:certificate/11111111-2222-3333-4444-555555555555"
+  }
+  expect_failures = [var.certificate_arn]
+}
+run "rejects_a_certificate_without_aliases" {
+  command = plan
+  variables {
+    certificate_arn = "arn:aws:acm:us-east-1:123456789012:certificate/11111111-2222-3333-4444-555555555555"
+  }
+  expect_failures = [var.certificate_arn]
+}
+run "rejects_bad_aliases_and_a_regional_web_acl" {
+  command = plan
+  variables {
+    aliases         = ["Errtraq.Example.com", "*.example.com"]
+    certificate_arn = "arn:aws:acm:us-east-1:123456789012:certificate/11111111-2222-3333-4444-555555555555"
+    waf_acl_arn     = "arn:aws:wafv2:eu-west-1:123456789012:regional/webacl/errtraq/11111111-2222-3333-4444-555555555555"
+  }
+  expect_failures = [var.aliases, var.waf_acl_arn]
+}
 run "rejects_unknown_price_class" {
   command = plan
   variables {

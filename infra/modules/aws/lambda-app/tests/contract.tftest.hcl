@@ -273,6 +273,58 @@ run "web_ui_behind_cloudfront" {
     error_message = "The API URL stays public (it checks the Bearer token itself) and needs no CORS behind the same-origin distribution."
   }
 }
+run "public_api_url_and_custom_domain" {
+  command = apply
+  variables {
+    name           = "example"
+    tags           = {}
+    public_api_url = "https://errtraq.example.com"
+    ui = {
+      build_anchor    = "tests/ui-build/api/bundle.zip"
+      aliases         = ["errtraq.example.com"]
+      certificate_arn = "arn:aws:acm:us-east-1:123456789012:certificate/11111111-2222-3333-4444-555555555555"
+      waf_acl_arn     = "arn:aws:wafv2:us-east-1:123456789012:global/webacl/errtraq/11111111-2222-3333-4444-555555555555"
+    }
+    functions = {
+      api    = { roles = ["api"], http = ["api"], artifact = "tests/artifact.txt", memory_mb = 512, timeout_sec = 30, architecture = "arm64", environment = { TABLE = "t" }, secrets = {}, secret_reads = [], policies = [] }
+      ingest = { roles = ["ingest"], http = ["ingest"], artifact = "tests/artifact.txt", memory_mb = 512, timeout_sec = 30, architecture = "arm64", environment = {}, secrets = {}, secret_reads = [], policies = [] }
+    }
+    queue_triggers = {}
+    cron_triggers  = {}
+  }
+  assert {
+    condition     = jsonencode(aws_lambda_function.function["api"].environment[0].variables) == jsonencode({ TABLE = "t", ERRTRAQ_PUBLIC_API_URL = "https://errtraq.example.com" }) && !contains(keys(try(aws_lambda_function.function["ingest"].environment[0].variables, {})), "ERRTRAQ_PUBLIC_API_URL")
+    error_message = "Only the API function receives the public API URL."
+  }
+}
+run "public_api_url_rejects_a_path" {
+  command = plan
+  variables {
+    name           = "example"
+    tags           = {}
+    public_api_url = "https://errtraq.example.com/api"
+    functions      = { api = { roles = ["api"], http = ["api"], artifact = "tests/artifact.txt", memory_mb = 512, timeout_sec = 30, architecture = "arm64", environment = {}, secrets = {}, secret_reads = [], policies = [] } }
+    queue_triggers = {}
+    cron_triggers  = {}
+  }
+  expect_failures = [var.public_api_url]
+}
+run "custom_domain_needs_a_us_east_1_certificate" {
+  command = plan
+  variables {
+    name = "example"
+    tags = {}
+    ui = {
+      build_anchor    = "tests/ui-build/api/bundle.zip"
+      aliases         = ["errtraq.example.com"]
+      certificate_arn = "arn:aws:acm:eu-west-1:123456789012:certificate/11111111-2222-3333-4444-555555555555"
+    }
+    functions      = { api = { roles = ["api"], http = ["api"], artifact = "tests/artifact.txt", memory_mb = 512, timeout_sec = 30, architecture = "arm64", environment = {}, secrets = {}, secret_reads = [], policies = [] } }
+    queue_triggers = {}
+    cron_triggers  = {}
+  }
+  expect_failures = [var.ui]
+}
 run "no_web_ui_by_default" {
   command = apply
   variables {

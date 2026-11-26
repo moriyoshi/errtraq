@@ -190,10 +190,19 @@ test("lists a release created through the API, with its deploy", async ({
   await expect(page.getByText("No source map bundles uploaded")).toBeVisible();
 });
 
-test("the settings page says so when the server has no ingest URL", async ({
+test("the settings page says so when the key list has no DSN", async ({
   page,
 }) => {
-  // `stacks/local.ts` sets no publicUrl, so the key list carries no DSN.
+  // A server without publicUrl answers keys without `dsn`; strip it from the real response.
+  await page.route("**/api/0/projects/default/default/keys/", async (route) => {
+    const keys = (await (await route.fetch()).json()) as Record<
+      string,
+      unknown
+    >[];
+    await route.fulfill({
+      json: keys.map(({ dsn: _dsn, ...rest }) => rest),
+    });
+  });
   await login(page);
   await page.getByRole("tab", { name: "Settings" }).click();
   await expect(page.getByTestId("no-dsn")).toContainText("publicUrl");
@@ -207,34 +216,29 @@ test("the settings page says so when the server has no ingest URL", async ({
   expect(await page.locator("main").innerText()).not.toContain(token());
 });
 
-test("the settings page shows the DSN with a copy button and SDK snippets", async ({
+test("the settings page shows the server's DSN with a copy button and SDK snippets", async ({
   page,
   context,
 }) => {
   await context.grantPermissions(["clipboard-read", "clipboard-write"]);
-  // The local stack has no ingest URL; add a DSN to the real key list the way a configured
-  // server would build it.
-  const dsn = "http://0123456789abcdef@127.0.0.1:8787/1";
-  await page.route("**/api/0/projects/default/default/keys/", async (route) => {
-    const keys = (await (await route.fetch()).json()) as Record<
-      string,
-      unknown
-    >[];
-    await route.fulfill({
-      json: keys.map((key) => ({ ...key, dsn: { public: dsn } })),
-    });
-  });
   await login(page);
   await page.getByRole("tab", { name: "Settings" }).click();
-  await expect(page.getByTestId("dsn").first()).toHaveText(dsn);
+  // The e2e server has publicUrl set, so this is the DSN the API built, not a stub.
+  const dsn = page.getByTestId("dsn").first();
+  await expect(dsn).toHaveText(
+    new RegExp(
+      `^http://[0-9a-f]+@${(process.env.ERRTRAQ_PUBLIC_URL ?? "").replace("http://", "").replace(".", "\\.")}/\\d+$`,
+    ),
+  );
+  const text = (await dsn.textContent()) ?? "";
   await page.getByRole("button", { name: "Copy the DSN" }).click();
   await expect(page.getByText("Copied")).toBeVisible();
-  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(dsn);
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(text);
   const snippets = page.locator(".snippet");
-  await expect(snippets.nth(0)).toContainText(`dsn: "${dsn}"`);
+  await expect(snippets.nth(0)).toContainText(`dsn: "${text}"`);
   await expect(snippets.nth(0)).toContainText("@sentry/browser");
   await expect(snippets.nth(1)).toContainText("@sentry/node");
-  await expect(snippets.nth(2)).toContainText(`dsn="${dsn}"`);
+  await expect(snippets.nth(2)).toContainText(`dsn="${text}"`);
   await page.getByRole("button", { name: "Copy the Python snippet" }).click();
   expect(await page.evaluate(() => navigator.clipboard.readText())).toContain(
     "sentry_sdk.init",

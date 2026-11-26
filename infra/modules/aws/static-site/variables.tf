@@ -43,3 +43,34 @@ variable "price_class" {
     error_message = "price_class must be PriceClass_100, PriceClass_200 or PriceClass_All."
   }
 }
+variable "aliases" {
+  type        = list(string)
+  description = "Custom domain names for the distribution (exact host names; the operator creates the DNS records). Requires certificate_arn. Empty keeps the default CloudFront domain and certificate."
+  default     = []
+  validation {
+    condition     = length(var.aliases) <= 10 && length(distinct(var.aliases)) == length(var.aliases) && alltrue([for alias in var.aliases : can(regex("^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z]([a-z0-9-]{0,61}[a-z0-9])$", alias))])
+    error_message = "aliases must be at most 10 distinct lower-case host names."
+  }
+}
+variable "certificate_arn" {
+  type        = string
+  description = "An existing ACM certificate covering every alias. CloudFront reads certificates from us-east-1 only, so the ARN must be in that region. Never created here."
+  default     = null
+  validation {
+    condition     = var.certificate_arn == null ? true : can(regex("^arn:aws:acm:us-east-1:[0-9]{12}:certificate/[0-9a-f-]{36}$", var.certificate_arn))
+    error_message = "certificate_arn must be an ACM certificate ARN in us-east-1."
+  }
+  validation {
+    condition     = (length(var.aliases) == 0) == (var.certificate_arn == null)
+    error_message = "aliases and certificate_arn go together: a custom domain needs a certificate, and a certificate is only used for aliases."
+  }
+}
+variable "waf_acl_arn" {
+  type        = string
+  description = "An existing CLOUDFRONT-scope WAFv2 web ACL (us-east-1) to attach to the distribution. Never created here."
+  default     = null
+  validation {
+    condition     = var.waf_acl_arn == null ? true : can(regex("^arn:aws:wafv2:us-east-1:[0-9]{12}:global/webacl/[A-Za-z0-9_-]{1,128}/[0-9a-f-]{36}$", var.waf_acl_arn))
+    error_message = "waf_acl_arn must be a CLOUDFRONT-scope WAFv2 web ACL ARN (arn:aws:wafv2:us-east-1:<account>:global/webacl/<name>/<id>)."
+  }
+}

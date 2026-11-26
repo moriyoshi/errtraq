@@ -20,6 +20,7 @@ import {
 } from "@moriyoshi/errtraq-core/runtime";
 import type { Context, Hono } from "hono";
 import type { ApiEnv } from "./api-env.js";
+import { publicRequestUrl } from "./public-url.js";
 
 type C = Context<ApiEnv>;
 interface Deploy {
@@ -50,6 +51,8 @@ export function addReleaseRoutes(
     ids: IdGen;
     blobs?: BlobStore;
     bundles?: ArtifactBundleService;
+    /** Configured public origin for absolute URLs (`Link`, chunk upload); absent: the request's. */
+    publicOrigin?: string;
     /** Whether a second event tier is wired; advertised on the root route. */
     archiveConfigured?: boolean;
   },
@@ -320,7 +323,7 @@ export function addReleaseRoutes(
       )
       .slice(0, limit);
     if (fixed) {
-      const url = new URL(c.req.url);
+      const url = publicRequestUrl(c.req.url, options.publicOrigin);
       if (next) url.searchParams.set("cursor", next);
       else url.searchParams.delete("cursor");
       c.header(
@@ -497,7 +500,7 @@ export function addReleaseRoutes(
         (c.req.query("cursor") || undefined) as Cursor | undefined,
         limit,
       );
-      const url = new URL(c.req.url);
+      const url = publicRequestUrl(c.req.url, options.publicOrigin);
       if (page.nextCursor) url.searchParams.set("cursor", page.nextCursor);
       else url.searchParams.delete("cursor");
       c.header(
@@ -547,7 +550,7 @@ export function addReleaseRoutes(
       if (!bundles) return unavailable(c);
       const l = bundles.limits;
       return c.json({
-        url: `${new URL(c.req.url).origin}/api/0/organizations/${encodeURIComponent(o.slug)}/chunk-upload/`,
+        url: `${publicRequestUrl(c.req.url, options.publicOrigin).origin}/api/0/organizations/${encodeURIComponent(o.slug)}/chunk-upload/`,
         chunkSize: l.chunkSize,
         chunksPerRequest: l.chunksPerRequest,
         maxRequestSize: l.maxRequestSize,

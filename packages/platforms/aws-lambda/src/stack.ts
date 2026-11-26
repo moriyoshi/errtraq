@@ -86,6 +86,36 @@ const ingestPublicUrl = z.string().refine((value) => {
     return false;
   }
 }, "Public ingest URL must be an HTTP(S) URL without credentials, query or fragment");
+/**
+ * The public origin of the API: scheme and host (and port) only, since `Link` headers and
+ * permalinks append their own path. Distinct from the ingest URL, which keeps a path prefix.
+ */
+const apiPublicOrigin = z
+  .string()
+  .max(256)
+  .refine((value) => {
+    try {
+      const url = new URL(value);
+      return (
+        ["http:", "https:"].includes(url.protocol) &&
+        url.origin === value &&
+        value !== "null"
+      );
+    } catch {
+      return false;
+    }
+  }, "Public API URL must be an exact HTTP(S) origin without path, credentials, query or fragment");
+/** A CloudFront alias: a lower-case DNS host name (no wildcard, no trailing dot). */
+const ALIAS =
+  /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z](?:[a-z0-9-]{0,61}[a-z0-9])$/;
+/** CloudFront only accepts a certificate from us-east-1, whatever region the stack is in. */
+const CLOUDFRONT_CERTIFICATE_ARN =
+  /^arn:aws:acm:us-east-1:[0-9]{12}:certificate\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+/** A CLOUDFRONT-scope web ACL (WAFv2 keeps those in us-east-1 under `global`). */
+const CLOUDFRONT_WAF_ARN =
+  /^arn:aws:wafv2:us-east-1:[0-9]{12}:global\/webacl\/[A-Za-z0-9_-]{1,128}\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+/** Environment variable that carries the public API origin to the API function. */
+export const PUBLIC_API_URL_ENV = "ERRTRAQ_PUBLIC_API_URL";
 /** Environment variable that carries the public ingest URL to the API function. */
 export const PUBLIC_INGEST_URL_ENV = "ERRTRAQ_PUBLIC_INGEST_URL";
 /** Environment variable that carries the sign-in settings (JSON) to the API function. */
@@ -162,6 +192,14 @@ export const configSchema = z
      */
     publicIngestUrl: configReference(ingestPublicUrl).optional(),
     /**
+     * The origin clients reach the API at (`https://errtraq.example.com`), used for `Link`
+     * headers, issue permalinks and the chunk-upload URL. Behind CloudFront the request URL is the
+     * function URL host, and request headers are never trusted for this (the distribution forwards
+     * viewer headers). Absent, `ui.aliases` supplies `https://<first alias>`; with neither, the
+     * request URL is used. A literal or a stack variable, like `publicIngestUrl`.
+     */
+    publicApiUrl: configReference(apiPublicOrigin).optional(),
+    /**
      * Origins allowed to call the API from a browser when the UI is hosted elsewhere. They go into
      * the API function URL's CORS block (the app does not add CORS headers itself, as for ingest),
      * which needs the API in a function of its own. The bundled static site is same origin and
@@ -183,6 +221,32 @@ export const configSchema = z
         priceClass: z
           .enum(["PriceClass_100", "PriceClass_200", "PriceClass_All"])
           .default("PriceClass_100"),
+        /**
+         * Custom domain names for the distribution (exact host names). They need
+         * `certificateArn`; the operator creates the DNS records (a CNAME or alias to the
+         * distribution's `ui_domain_name` output). Without them the default CloudFront domain and
+         * certificate are used. The first alias becomes the default `publicApiUrl`.
+         */
+        aliases: z.array(z.string().regex(ALIAS)).min(1).max(10).optional(),
+        /**
+         * An existing ACM certificate covering every alias. It must be in us-east-1, which is the
+         * only region CloudFront reads certificates from; it is never created here.
+         */
+        certificateArn: z
+          .string()
+          .regex(
+            CLOUDFRONT_CERTIFICATE_ARN,
+            "certificateArn must be an ACM certificate ARN in us-east-1 (CloudFront reads certificates from that region only)",
+          )
+          .optional(),
+        /** An existing CLOUDFRONT-scope WAFv2 web ACL (us-east-1) to attach; never created here. */
+        wafAclArn: z
+          .string()
+          .regex(
+            CLOUDFRONT_WAF_ARN,
+            "wafAclArn must be a CLOUDFRONT-scope WAFv2 web ACL ARN (arn:aws:wafv2:us-east-1:<account>:global/webacl/<name>/<id>)",
+          )
+          .optional(),
       })
       .optional(),
     /**
@@ -253,6 +317,22 @@ export const configSchema = z
   })
   .refine(
     (config) =>
+      !config.ui ||
+      (config.ui.aliases === undefined) ===
+        (config.ui.certificateArn === undefined),
+    {
+      message:
+        "ui.aliases and ui.certificateArn go together: CloudFront serves a custom domain only with a certificate for it",
+    },
+  )
+  .refine(
+    (config) =>
+      !config.ui?.aliases ||
+      new Set(config.ui.aliases).size === config.ui.aliases.length,
+    { message: "ui.aliases must not repeat a name" },
+  )
+  .refine(
+    (config) =>
       config.roles.includes("bootstrap") ===
       (config.bootstrapSecretName !== undefined),
     {
@@ -305,6 +385,7 @@ export const manifest: PlatformManifest = {
     artifactBucket: "string",
     imageUri: "string",
     publicIngestUrl: "string",
+    publicApiUrl: "string",
     "oidc.issuer": "string",
     "oidc.audience": "string",
     "proxyAuth.issuer": "string",
@@ -319,6 +400,7 @@ export const manifest: PlatformManifest = {
     "ERRTRAQ_INGEST_RATE_LIMIT",
     BOOTSTRAP_SECRET_ENV,
     PUBLIC_INGEST_URL_ENV,
+    PUBLIC_API_URL_ENV,
     AUTH_CONFIG_ENV,
     "_HANDLER",
     "_X_AMZN_TRACE_ID",
@@ -348,6 +430,46 @@ function assertVariableReferencesOnly(value: unknown, path: string): void {
     for (const [key, item] of Object.entries(value as object))
       assertVariableReferencesOnly(item, `${path}.${key}`);
 }
+/** The API origin the function is told: the setting, else `https://<first alias>`, else none. */
+function effectivePublicApiUrl(config: Config): unknown {
+  return (
+    config.publicApiUrl ??
+    (config.ui?.aliases?.[0] ? `https://${config.ui.aliases[0]}` : undefined)
+  );
+}
+/** Bytes an environment variable takes: a literal's length, a reference assumed at its maximum. */
+function envBytes(name: string, value: unknown): number {
+  return name.length + (typeof value === "string" ? value.length : 256);
+}
+/**
+ * Lambda limits all environment variables of a function together to 4 KB (names included). The
+ * API function carries the adapter bindings plus up to three module-supplied values: the sign-in
+ * settings (bounded at 3072 bytes by itself), the public ingest URL and the public API URL.
+ */
+function assertEnvironmentFits(
+  config: Config,
+  apiFunction: DeploymentFunction | undefined,
+): void {
+  if (!apiFunction) return;
+  const known = [
+    ...apiFunction.envBindings.map((item) => item.binding),
+    ...apiFunction.secretBindings.map((item) => item.binding),
+  ].reduce((sum, binding) => sum + envBytes(binding.name, binding.value), 0);
+  const publicApi = effectivePublicApiUrl(config);
+  const total =
+    known +
+    (config.oidc !== undefined || config.proxyAuth !== undefined
+      ? AUTH_CONFIG_ENV.length + authConfigBytes(config)
+      : 0) +
+    (config.publicIngestUrl
+      ? envBytes(PUBLIC_INGEST_URL_ENV, config.publicIngestUrl)
+      : 0) +
+    (publicApi ? envBytes(PUBLIC_API_URL_ENV, publicApi) : 0);
+  if (total > LAMBDA_ENVIRONMENT_LIMIT_BYTES)
+    throw new Error(
+      `The ${apiFunction.id} function's environment would be about ${total} bytes with the sign-in settings and public URLs; Lambda allows 4096 in total`,
+    );
+}
 /** The module input for the sign-in settings, after the checks that need the deployment. */
 function authConfigInput(
   config: Config,
@@ -359,26 +481,6 @@ function authConfigInput(
     throw new Error("oidc and proxyAuth need the api role exposed over HTTP");
   assertVariableReferencesOnly(config.oidc, "oidc");
   assertVariableReferencesOnly(config.proxyAuth, "proxyAuth");
-  // Every environment value of the function counts toward Lambda's 4 KB limit (names included).
-  const known = [
-    ...apiFunction.envBindings.map((item) => item.binding),
-    ...apiFunction.secretBindings.map((item) => item.binding),
-  ].reduce(
-    (sum, binding) =>
-      sum +
-      binding.name.length +
-      (typeof binding.value === "string" ? binding.value.length : 0),
-    0,
-  );
-  const total =
-    known +
-    AUTH_CONFIG_ENV.length +
-    authConfigBytes(config) +
-    (config.publicIngestUrl ? PUBLIC_INGEST_URL_ENV.length + 256 : 0);
-  if (total > LAMBDA_ENVIRONMENT_LIMIT_BYTES)
-    throw new Error(
-      `The ${apiFunction.id} function's environment would be about ${total} bytes with the sign-in settings; Lambda allows 4096 in total`,
-    );
   return {
     ...(config.oidc === undefined ? {} : { oidc: config.oidc as InfraValue }),
     ...(config.proxyAuth === undefined
@@ -440,6 +542,10 @@ export const infra: InfraDescriptor<Config> = {
         );
     }
     const authConfig = authConfigInput(config, apiFunction);
+    assertEnvironmentFits(config, apiFunction);
+    const publicApiUrl = effectivePublicApiUrl(config) as
+      | InfraValue
+      | undefined;
     return {
       name: stackValue("name"),
       tags: stackValue("tags"),
@@ -450,9 +556,19 @@ export const infra: InfraDescriptor<Config> = {
             ui: {
               build_anchor: apiFunction.artifact,
               price_class: config.ui.priceClass ?? "PriceClass_100",
+              ...(config.ui.aliases
+                ? {
+                    aliases: config.ui.aliases,
+                    certificate_arn: config.ui.certificateArn as string,
+                  }
+                : {}),
+              ...(config.ui.wafAclArn
+                ? { waf_acl_arn: config.ui.wafAclArn }
+                : {}),
             },
           }
         : {}),
+      ...(publicApiUrl ? { public_api_url: publicApiUrl } : {}),
       ...(config.publicIngestUrl
         ? { ingest_public_url: config.publicIngestUrl }
         : {}),

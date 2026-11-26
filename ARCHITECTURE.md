@@ -740,6 +740,13 @@ reuses `publicUrl`; Lambda takes the operator-supplied `publicIngestUrl` (a lite
 variable, such as a custom domain), delivered to the API function as `ERRTRAQ_PUBLIC_INGEST_URL`.
 It cannot be derived from the ingest function's own URL output (a Terraform cycle).
 
+Absolute URLs the API builds (`Link`, issue permalinks, the chunk-upload URL) use the request URL
+unless the platform sets the public API origin: Lambda `publicApiUrl` (default `https://<first
+ui.aliases>`), delivered as `ERRTRAQ_PUBLIC_API_URL`. It is configuration only, never
+`X-Forwarded-Host` or any request header, because CloudFront forwards viewer headers. A custom
+domain is `ui: { aliases, certificateArn, wafAclArn? }` with an existing us-east-1 ACM certificate
+(the stack validates the region); no certificate or DNS record is created.
+
 ### Sign-in (UI-e)
 
 No user table: the API turns a credential into a `Principal` (`{ kind: "token" | "oidc" | "proxy",

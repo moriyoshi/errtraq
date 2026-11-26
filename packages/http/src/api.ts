@@ -46,6 +46,7 @@ import {
 import { createAuthenticator, csrfAllowed, type Principal } from "./auth.js";
 import { logUnexpected } from "./errors.js";
 import type { FetchLike } from "./jwt.js";
+import { publicApiOrigin, publicRequestUrl } from "./public-url.js";
 import { addReleaseRoutes } from "./release-routes.js";
 import {
   facetJson,
@@ -91,6 +92,12 @@ export function createApiApp(options: {
    * different hosts, so without it the key list carries no `dsn` instead of guessing one.
    */
   ingestUrl?: string;
+  /**
+   * Public origin of the API (`https://errtraq.example.com`) for the absolute URLs it builds:
+   * `Link` headers, issue permalinks and the chunk-upload endpoint. Behind a CDN the request URL
+   * is the function URL host. Configuration only, never a request header. Absent, the request URL.
+   */
+  publicApiUrl?: string;
   /** Cross-origin browser access for a UI hosted elsewhere; off by default. Exact origins only. */
   cors?: { origins: string[]; maxAgeSec?: number };
   /** OIDC Bearer JWTs and identity-aware proxy principals, next to API tokens; off when absent. */
@@ -98,6 +105,7 @@ export function createApiApp(options: {
   /** Fetch used for JWKS and discovery; defaults to the global `fetch`. For tests. */
   authFetch?: FetchLike;
 }): Hono<Env> {
+  const publicOrigin = publicApiOrigin(options.publicApiUrl);
   const app = new Hono<Env>({ strict: false });
   const { store, clock } = options;
   const events = new EventQueryService({
@@ -352,7 +360,7 @@ export function createApiApp(options: {
     return n;
   }
   function link(c: import("hono").Context<Env>, next: string | null) {
-    const url = new URL(c.req.url);
+    const url = publicRequestUrl(c.req.url, publicOrigin);
     if (next) url.searchParams.set("cursor", next);
     else url.searchParams.delete("cursor");
     c.header(
@@ -420,7 +428,10 @@ export function createApiApp(options: {
     return c.json(
       await Promise.all(
         page.items.map(async (issue) => ({
-          ...(await renderIssue(issue, new URL(c.req.url).origin)),
+          ...(await renderIssue(
+            issue,
+            publicRequestUrl(c.req.url, publicOrigin).origin,
+          )),
           ...(stats ? { stats: stats.get(issue.id) ?? {} } : {}),
         })),
       ),
@@ -524,7 +535,10 @@ export function createApiApp(options: {
   app.get("/api/0/issues/:id", async (c) => {
     const issue = await scopedIssue(c.req.param("id"), c.get("token"));
     if (!issue) return c.json({ detail: "Not found" }, 404);
-    const rendered = await renderIssue(issue, new URL(c.req.url).origin);
+    const rendered = await renderIssue(
+      issue,
+      publicRequestUrl(c.req.url, publicOrigin).origin,
+    );
     if (!store.stats || !store.capabilities.issueStats) return c.json(rendered);
     const now = Date.parse(clock.now());
     const stats = await issueSeries(
@@ -609,7 +623,7 @@ export function createApiApp(options: {
     return c.json(
       await renderIssue(
         await updateStatus(issue, status),
-        new URL(c.req.url).origin,
+        publicRequestUrl(c.req.url, publicOrigin).origin,
       ),
     );
   });
@@ -709,6 +723,7 @@ export function createApiApp(options: {
   });
   const ids = options.ids ?? new WebCryptoIdGen();
   addReleaseRoutes(app, {
+    publicOrigin,
     store,
     clock,
     ids,
