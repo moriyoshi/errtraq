@@ -78,10 +78,11 @@ pnpm test:gcp-emulated                 # Firestore, Pub/Sub and GCS emulators in
 pnpm test:workers-smoke                # runs S3, SQS producer / delayed push and KV against local fakes in workerd
 ```
 
-Winterbaume issue #61 prevents the store's concurrent transaction and CAS contracts from proving
-atomicity. The command runs those unchanged cases against a cached, digest-pinned DynamoDB
-Local Docker image when available and prints a skip otherwise; it never pulls an image.
-The Winterbaume 40-writer diagnostic records the gap separately and is not a correctness or
+Winterbaume issue #61 (conditional writes not atomic with their checks) is fixed at v0.2.10, so the
+store's concurrent transaction and CAS contracts now run in full against winterbaume. The command also
+runs the same unchanged cases against a cached, digest-pinned DynamoDB
+Local Docker image when available (a comparison against another implementation) and prints a skip otherwise; it never pulls an image.
+The Winterbaume 40-writer diagnostic is not a correctness or
 contention benchmark. DynamoDB Local also runs the grouped in-process pipeline with four memory
 queue workers, 200 and 500 hot events and background traffic, reporting transaction attempts,
 group concurrency and drain time. The memory queue sends one record at a time, so it does not
@@ -180,7 +181,7 @@ The opt-in emulator apply workflow is:
 ```sh
 pnpm infra:apply-emulated
 pnpm infra:apply-emulated --postgres-only  # focused IAM Postgres fixture
-pnpm infra:apply-emulated --fifo-only      # FIFO queue and DLQ with named emulator exceptions
+pnpm infra:apply-emulated --fifo-only      # FIFO queue and DLQ
 pnpm infra:apply-emulated --grouped-only   # grouped shared and per-topic roots
 ```
 
@@ -189,15 +190,11 @@ independent Terraform data directories and a read-only plugin directory. It appl
 DynamoDB, SQS and Lambda modules and generated shared and per-topic example stacks,
 checks resources and policies through service APIs, compares repeat and change plans,
 and checks API inventories after destroy. The Postgres fixture also checks exact RDS connect
-and network-interface role policies; the pinned emulator drops Lambda VPC configuration, so a
-self-verifying named exception omits that block only from a temporary module copy. Provider queue-stabilization and deletion waits
+and network-interface role policies; the VPC configuration read back from the emulator (fixed at v0.2.10, #62). Provider queue-stabilization and deletion waits
 make this a lengthy opt-in run. A feature-enabled fixture checks the three-topic
-queue transition; the grouped examples enable `ingest` and `record`. Named exceptions are listed in
-`scripts/aws-emulated/gaps.json`, logged visibly, linked to
-[WINTERBAUME_GAPS.md](./WINTERBAUME_GAPS.md), and checked to ensure each gap still reproduces. Temporary module overrides exclude the unusable ownership-control resource and unsupported FIFO
-settings; tracked modules and generator output are unchanged.
-For FIFO, a temporary SQS module copy omits high-throughput settings that the emulator discards;
-the test applies and destroys the FIFO queue and FIFO DLQ, and checks their API readback. It
+queue transition; the grouped examples enable `ingest` and `record`. The named-exception inventory
+`scripts/aws-emulated/gaps.json` is empty at v0.2.10 (see [WINTERBAUME_GAPS.md](./WINTERBAUME_GAPS.md)): repeat plans must be empty and the modules apply unmodified. A new exception must be declared there, logged and documented.
+The FIFO test applies and destroys the FIFO queue and FIFO DLQ unmodified, and checks their API readback. It
 cannot prove FIFO group exclusion or event group attributes on the pinned emulator.
 Lifecycle header, DynamoDB encryption and deletion protection, EventBridge retry/DLQ settings and partial-batch readback
 are exercised by the updated pin rather than excluded.

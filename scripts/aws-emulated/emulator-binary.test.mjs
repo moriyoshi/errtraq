@@ -16,7 +16,7 @@ describe("pinned emulator release", () => {
     else process.env.ERRTRAQ_WINTERBAUME_BINARY = saved;
   });
   it("pins a tag, a commit and well-formed checksums", () => {
-    expect(tag).toBe("winterbaume-server-v0.2.9");
+    expect(tag).toBe("winterbaume-server-v0.2.10");
     expect(commit).toMatch(/^[0-9a-f]{40}$/);
     expect(sourceSha256).toMatch(/^[0-9a-f]{64}$/);
     for (const asset of Object.values(assets))
@@ -28,7 +28,7 @@ describe("pinned emulator release", () => {
   });
   it("locates the prebuilt binary under the versioned install directory", () => {
     expect(prebuiltBinary("aarch64-apple-darwin")).toMatch(
-      /winterbaume-server-v0\.2\.9\/bin\/winterbaume-server-aarch64-apple-darwin\/winterbaume-server$/,
+      /winterbaume-server-v0\.2\.10\/bin\/winterbaume-server-aarch64-apple-darwin\/winterbaume-server$/,
     );
     expect(["string", "undefined"]).toContain(typeof hostTriple());
   });

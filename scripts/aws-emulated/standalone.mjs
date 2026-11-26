@@ -4,7 +4,6 @@ import { resolve } from "node:path";
 import { element } from "./client.mjs";
 import { canonicalPolicy } from "./expected.mjs";
 import { assertPartialBatchSupport } from "./gap-checks.mjs";
-import { skipped } from "./gaps.mjs";
 import { assertRepeatPlan } from "./plan-check.mjs";
 import { moduleShapes } from "./shapes.mjs";
 import { providerOverride } from "./terraform-config.mjs";
@@ -12,7 +11,6 @@ import { verifyCleanup } from "./verify-deployment.mjs";
 
 export async function runStandalone({
   c,
-  gaps,
   temp,
   modules,
   version,
@@ -293,7 +291,7 @@ export async function runStandalone({
     const repeat = JSON.parse(
       run("terraform", ["show", "-no-color", "-json", "repeat.tfplan"], dir),
     );
-    for (const id of assertRepeatPlan(repeat, gaps)) skipped(gaps, id);
+    assertRepeatPlan(repeat);
     tf(dir, "apply", "-auto-approve", "-input=false");
     tf(dir, "destroy", "-auto-approve", "-input=false");
     await verifyCleanup(c, name);

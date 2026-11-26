@@ -9,7 +9,7 @@ export async function testDynamoConcurrency(shapes) {
   });
   if (available.status !== 0) {
     console.log(
-      "SKIPPED DynamoDB Local concurrency contract: pinned image or Docker unavailable; winterbaume issue #61 prevents this assertion",
+      "SKIPPED DynamoDB Local concurrency contract: pinned image or Docker unavailable; the comparison run against DynamoDB Local is skipped (winterbaume runs the same contract since v0.2.10)",
     );
     return;
   }
@@ -56,7 +56,7 @@ export async function testDynamoConcurrency(shapes) {
     }
     if (!ready) throw new Error("DynamoDB Local did not become ready");
     console.log(
-      "Running unmodified 40-writer and duplicate contracts against pinned DynamoDB Local (winterbaume issue #61)",
+      "Running unmodified 40-writer and duplicate contracts against pinned DynamoDB Local (a second implementation to compare with)",
     );
     const test = spawn(
       "pnpm",

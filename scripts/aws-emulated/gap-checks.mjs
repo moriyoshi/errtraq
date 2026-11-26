@@ -9,11 +9,11 @@ export function assertPartialBatchSupport(mapping) {
   );
 }
 /**
- * Reproduce issue #61: only one conditional update may succeed on each absent key. A round
- * reproduced the race 7-30% of the time in 2026-11-25 measurements, so 150 rounds bound a false
- * "no longer reproduces" below 1e-4 and stop at the first reproduction.
+ * Issue #61 (fixed at v0.2.10): exactly one conditional update may succeed on each absent key,
+ * however many race. The old race reproduced in 7-30% of rounds, so 150 rounds make a regression
+ * that goes unnoticed negligible.
  */
-export async function checkConditionalUpdateGap(
+export async function assertConditionalUpdateAtomic(
   c,
   rounds = 150,
   attempts = 200,
@@ -44,12 +44,15 @@ export async function checkConditionalUpdateGap(
           !String(result.reason).includes("ConditionalCheckFailedException")
         )
           throw result.reason;
-      if (results.filter((result) => result.status === "fulfilled").length > 1)
-        return;
+      const winners = results.filter(
+        (result) => result.status === "fulfilled",
+      ).length;
+      assert.equal(
+        winners,
+        1,
+        `conditional update must have exactly one winner (round ${round}, issue #61)`,
+      );
     }
-    throw new Error(
-      `dynamodb-conditional-atomicity gap no longer reproduces in ${rounds} rounds; inspect and remove the exception`,
-    );
   } finally {
     await c.dynamo("DeleteTable", { TableName });
   }

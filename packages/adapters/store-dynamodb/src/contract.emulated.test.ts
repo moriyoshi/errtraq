@@ -480,7 +480,7 @@ describe.skipIf(!endpoint)("DynamoDB store emulator", () => {
       (outcome) => outcome.status === "fulfilled",
     ).length;
     console.log(
-      `WINTERBAUME #61 DIAGNOSTIC: ${transactions} transaction attempts / 40 events (${(transactions / 40).toFixed(2)} per event); ${succeeded} fulfilled, ${40 - succeeded} failed; not an atomicity assertion`,
+      `TRANSACTION DIAGNOSTIC: ${transactions} transaction attempts / 40 events (${(transactions / 40).toFixed(2)} per event); ${succeeded} fulfilled, ${40 - succeeded} failed; not an atomicity assertion`,
     );
     expect(outcomes).toHaveLength(40);
   }, 30000);

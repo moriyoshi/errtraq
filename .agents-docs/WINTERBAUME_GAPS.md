@@ -1,21 +1,57 @@
 # Winterbaume gaps found by Terraform provider probes
 
 The historical provider probe below targeted revision `69fed1d7fb0eb9a2738ff3274197c7591129c4cb`.
-The pinned emulator is the prebuilt release `winterbaume-server-v0.2.9` (commit
-`70006139231c1d0569a6ec303a671e53b8d6e6c3`; on hosts without a pinned prebuilt asset the installer
+The pinned emulator is the prebuilt release `winterbaume-server-v0.2.10` (commit
+`f79b3353ec2e49259267572719a15b4a29955435`; on hosts without a pinned prebuilt asset the installer
 builds the checksum-pinned `source.tar.gz`). Earlier pins fixed the S3 lifecycle header, DynamoDB SSE
 and deletion protection, EventBridge retry/DLQ fields and the Lambda partial-batch setting. v0.2.9 also fixes
 S3 ownership-control deletion, tag readback for DynamoDB, IAM, S3 and Lambda event source mappings, S3
 UTF-8 keys, Lambda permission conditions, the Lambda mapping function filter and `ScalingConfig`;
 their exceptions are removed. The remaining sections describe the historical observations unless
-stated otherwise; see "Status at v0.2.9" for the current state. `pnpm infra:probe-emulated` creates an isolated local server,
+stated otherwise; see "Status at v0.2.10" for the current state (the status table at v0.2.9 below it is kept as history). `pnpm infra:probe-emulated` creates an isolated local server,
 uses the real AWS provider with loopback-only endpoints and no AWS credentials, and saves
 Terraform apply and provider debug logs in an ignored scratch directory. Runs are capped
 at 90 seconds per apply; a timeout is a probe limit, not an AWS error response. The probe
 is an inventory: it does not implement the complete M3a2 apply/assert/destroy workflow.
 The existing `pnpm infra:validate` mock-provider checks remain in place.
 
-## Status at v0.2.9
+## Status at v0.2.10
+
+Re-tested against the v0.2.10 binary (release published 2026-11-26, tag commit
+`f79b3353ec2e49259267572719a15b4a29955435`; 21 commits since v0.2.9) on 2026-11-26, loopback only,
+no credentials. v0.2.10 fixes #61, #62, #64 to #66, #67, #68 and #69 (upstream commits "atomic DynamoDB
+conditional writes, Lambda function settings, EC2 security group descriptions", "FIFO deduplication scope, message
+group gating and system attributes", "apply PutRule tags on creation and scope rules by event bus", "accept AWS
+JSON 1.0 and keep every PutMetricAlarm setting"). It also adds opt-in STS relaxations (`--relax`, #77, not used by
+errtraq) and release-harness fixes. Retested by a direct probe against a fresh server and by the harness
+(`pnpm test:aws-emulated`, `pnpm infra:apply-emulated`); the five named exceptions of `gaps.json` are all removed
+and the repeat plans of the shared and per-topic stacks are now empty.
+
+| Gap | Status | Evidence |
+| --- | --- | --- |
+| #48 Lambda Invoke executes ZIP | still reproduces | `Invoke` of a valid ZIP returns `{}` |
+| #49 S3 bucket policy enforcement | still reproduces | TLS-deny policy stored; `PutObject` over HTTP returns 200 |
+| #61 DynamoDB conditional atomicity | fixed | `assertConditionalUpdateAtomic`: 150 rounds of 200 concurrent `attribute_not_exists` updates, exactly one winner per round (v0.2.9: 19 of 100 rounds had several). The full store repository contract (concurrent writers, CAS, erasure transitions, token creation, concurrent bootstrap; 49 tests) passes against winterbaume three times in a row, so its exclusion list was removed from `run.mjs` |
+| #62 Lambda `VpcConfig` | fixed | `CreateFunction` and `GetFunction` return `VpcConfig` (also `Architectures` and `EphemeralStorage`); the Postgres IAM fixture applies the unmodified `lambda-app` module |
+| #64 SQS FIFO `DeduplicationScope` / `FifoThroughputLimit` | fixed | readback `messageGroup` / `perMessageGroupId` |
+| #65 SQS FIFO group exclusion | fixed | a second receive returns nothing while the group's first message is in flight |
+| #66 SQS FIFO receive attributes | fixed | `MessageGroupId`, `MessageDeduplicationId`, `SequenceNumber` returned when requested through `MessageSystemAttributeNames` (the older `AttributeNames` receive still works) |
+| #67 EventBridge rule tags | fixed | `PutRule` tags are returned by `ListTagsForResource`; the repeat plan has no `tags_all` drift |
+| #68 CloudWatch alarm readback | fixed | query API `PutMetricAlarm` period 300, 3 periods, `DatapointsToAlarm` 2 and `TreatMissingData` read back as set; a new alarm starts in `INSUFFICIENT_DATA` |
+| #69 CloudWatch AWS JSON 1.0 | fixed | `GraniteServiceVersion20100801.ListMetrics` returns `{"Metrics":[]}` |
+| #81 S3 presigned requests | still reproduces | query-string SigV4 `GET` returns 404 `UnknownService` |
+| #82 S3 unsigned requests | still reproduces | an unsigned `GET` returns 404 `UnknownService` |
+| S3 Tables, ECR | still absent | no such services (unchanged; see the sections below) |
+
+`pnpm infra:probe-emulated` with `ERRTRAQ_PROBE_PROVIDER=6.73.0` (the default 6.32.1 cannot initialise `lambda-app`, which requires provider >= 6.73.0): `dynamodb`, `sqs`, `s3`, `lambda-app` and `generated-root` apply; `lambda-app` now has a clean second plan (exit 0; at v0.2.9 it drifted) and `generated-root`, which hit the 90 second spawn timeout at v0.2.9, applies within the limit. `Invoke` still returns `{}` (#48). `dynamodb-protected` still fails with `ResourceInUseException` and the `dynamodb` target's API observation still reports its table missing: both come from the probe sharing one emulator and table-name scheme between targets, not from the emulator, and are unchanged from v0.2.9.
+
+Everything marked fixed at v0.2.9 in the older table still holds (run again by the harness). Code consequences:
+`gaps.json` is `{}` (a new exception must be declared there and documented under a heading of this file);
+`assertRepeatPlan` accepts only empty repeat plans; the SQS and Lambda modules are applied unmodified; the
+probes assert FIFO, conditional atomicity and VPC readback instead of requiring them to fail. Still open
+for the harness: see TODO.md ("Winterbaume v0.2.10").
+
+## Status at v0.2.9 (history)
 
 Re-tested against the v0.2.9 binary on 2026-11-25 (loopback only, no credentials).
 
@@ -125,6 +161,8 @@ Fixed at v0.2.9 for DynamoDB, IAM, S3 and Lambda event source mappings (#51-#54)
 
 ## EventBridge rule tag readback is incomplete
 
+Fixed at v0.2.10 (#67); the text below is historical.
+
 - Revision: `79c452d2bb2844abf771cfa4a497275c24b46489`; provider `6.73.0`.
 - Resource: `aws_cloudwatch_event_rule` for `staged-recovery`; `PutRule` creates the rule,
   but its tag readback does not retain the `app=errtraq` default tag. A repeat plan proposes
@@ -134,6 +172,8 @@ Fixed at v0.2.9 for DynamoDB, IAM, S3 and Lambda event source mappings (#51-#54)
   [issue #67](https://github.com/moriyoshi/winterbaume/issues/67).
 
 ## CloudWatch alarm datapoint and missing-data settings are not returned
+
+Fixed at v0.2.10 (#68 and #69); the text below is historical.
 
 - Revision: `79c452d2bb2844abf771cfa4a497275c24b46489`; provider `6.73.0`; reproduced through
   the real provider by the apply harness (M3 alarms).
@@ -154,6 +194,8 @@ Fixed at v0.2.9 for DynamoDB, IAM, S3 and Lambda event source mappings (#51-#54)
   [issue #69](https://github.com/moriyoshi/winterbaume/issues/69).
 
 ## DynamoDB conditional updates are not atomic with their checks
+
+Fixed at v0.2.10 (#61): the condition is evaluated inside the backend in the same step as the write. The text below is historical.
 
 - Revision: `69fed1d7fb0eb9a2738ff3274197c7591129c4cb`; v0.2.9 (and `79c452d2bb2844abf771cfa4a497275c24b46489`) still has the separate `get_item` and `update_item` calls. `UpdateItem` reads and
   evaluates `ConditionExpression` in the request handler, then separately calls the backend
@@ -293,19 +335,21 @@ reproduces).
 | Tag readback: S3 `CreateBucket` drops `CreateBucketConfiguration.Tags` | [#53](https://github.com/moriyoshi/winterbaume/issues/53) |
 | Tag readback: Lambda event source mapping has no ARN and cannot be tagged | [#54](https://github.com/moriyoshi/winterbaume/issues/54) |
 | S3 percent-decoding corrupts UTF-8 keys | [#58](https://github.com/moriyoshi/winterbaume/issues/58) (fixed at v0.2.9) |
-| DynamoDB conditional updates are not atomic with their checks | [#61](https://github.com/moriyoshi/winterbaume/issues/61) |
-| Lambda `VpcConfig` is accepted but never returned | [#62](https://github.com/moriyoshi/winterbaume/issues/62) |
-| SQS FIFO `DeduplicationScope` / `FifoThroughputLimit` are discarded | [#64](https://github.com/moriyoshi/winterbaume/issues/64) |
-| SQS FIFO delivers more of a group while a message is in flight | [#65](https://github.com/moriyoshi/winterbaume/issues/65) |
-| SQS FIFO receive omits `MessageGroupId`, `MessageDeduplicationId`, `SequenceNumber` | [#66](https://github.com/moriyoshi/winterbaume/issues/66) |
-| EventBridge `PutRule` drops `Tags` | [#67](https://github.com/moriyoshi/winterbaume/issues/67) |
-| CloudWatch `DescribeAlarms` omits `TreatMissingData`; new alarms start in `OK` | [#68](https://github.com/moriyoshi/winterbaume/issues/68) |
-| CloudWatch rejects AWS JSON 1.0 protocol requests (`MissingAction`); AWS CLI 2.35 cannot call it | [#69](https://github.com/moriyoshi/winterbaume/issues/69) |
+| DynamoDB conditional updates are not atomic with their checks | [#61](https://github.com/moriyoshi/winterbaume/issues/61) (fixed at v0.2.10) |
+| Lambda `VpcConfig` is accepted but never returned | [#62](https://github.com/moriyoshi/winterbaume/issues/62) (fixed at v0.2.10) |
+| SQS FIFO `DeduplicationScope` / `FifoThroughputLimit` are discarded | [#64](https://github.com/moriyoshi/winterbaume/issues/64) (fixed at v0.2.10) |
+| SQS FIFO delivers more of a group while a message is in flight | [#65](https://github.com/moriyoshi/winterbaume/issues/65) (fixed at v0.2.10) |
+| SQS FIFO receive omits `MessageGroupId`, `MessageDeduplicationId`, `SequenceNumber` | [#66](https://github.com/moriyoshi/winterbaume/issues/66) (fixed at v0.2.10) |
+| EventBridge `PutRule` drops `Tags` | [#67](https://github.com/moriyoshi/winterbaume/issues/67) (fixed at v0.2.10) |
+| CloudWatch `DescribeAlarms` omits `TreatMissingData`; new alarms start in `OK` | [#68](https://github.com/moriyoshi/winterbaume/issues/68) (fixed at v0.2.10) |
+| CloudWatch rejects AWS JSON 1.0 protocol requests (`MissingAction`); AWS CLI 2.35 cannot call it | [#69](https://github.com/moriyoshi/winterbaume/issues/69) (fixed at v0.2.10) |
 | S3 presigned (query-string SigV4) requests are not routed: 404 `UnknownService` (found 2026-11-25 at v0.2.9; `blob-s3` presign is covered only by the published-vector unit test, not against the emulator) | [#81](https://github.com/moriyoshi/winterbaume/issues/81) |
 | S3 unsigned requests return 404 JSON `UnknownService` instead of 403 `AccessDenied` (found in the M4d spike at v0.2.9) | [#82](https://github.com/moriyoshi/winterbaume/issues/82) |
 | S3 ranged GET in server release 0.2.6 | [#29](https://github.com/moriyoshi/winterbaume/issues/29) (closed; fixed at the pinned revision) |
 
 ## Lambda VPC configuration is discarded
+
+Fixed at v0.2.10 (#62); the text below is historical.
 
 At both historical revision `69fed1d7fb0eb9a2738ff3274197c7591129c4cb` and v0.2.9, Lambda
 `CreateFunction` accepts `VpcConfig` containing `SubnetIds: ["subnet-12345678"]` and
@@ -317,6 +361,8 @@ policy and all other generated resources remain in the emulated apply. Terraform
 cover the intended block. Filed as [issue #62](https://github.com/moriyoshi/winterbaume/issues/62).
 
 ## FIFO settings and delivery are incomplete
+
+Fixed at v0.2.10 (#64 to #66); the text below is historical.
 
 Reproduced at v0.2.9 (originally observed at `79c452d2bb2844abf771cfa4a497275c24b46489`, 2026-11-21), loopback SQS JSON API. `CreateQueue` for `fifo-probe.fifo` with `FifoQueue=true`,
 `ContentBasedDeduplication=false`, `DeduplicationScope=messageGroup` and

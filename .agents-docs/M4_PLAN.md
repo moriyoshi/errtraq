@@ -21,7 +21,7 @@ difference is called out as an owner decision (section 3). ARCHITECTURE.md is ca
 | Archive contract suite | `archiveStoreContract` exists (append idempotency incl. concurrent append, `hasBatch`, keyset paging both orders, issue and half-open range filters, project isolation, `getEvent` with hint, `deleteWhere` by email and by event ids, `hardErase`, `expireSnapshots`). Runs only against the fake. | `testing/src/contracts.ts` (archiveStoreContract), `contracts.test.ts` |
 | Archive fake | `MemoryArchiveStore` (stages JSON arrays, not Parquet). | `testing/src/memory-other.ts` |
 | Federation | `EventQueryService` (M4c) and the shared `federationSuite`; the API takes an optional `archive`. No platform passes one yet (M4g). | `core/src/event-query.ts`, `testing/src/federation.ts`, `http/src/api.ts` |
-| Adapter package and infra | None. No `packages/adapters/archive-iceberg`, no `docker/` directory (ARCHITECTURE lists one), no Lakekeeper or archive Terraform modules, no `archive` function role (`FUNCTION_ROLES` is ingest, api, consumer, record, cron, bootstrap). winterbaume is installed by `scripts/aws-emulated/install.mjs` (pin v0.2.9). | repo tree |
+| Adapter package and infra | None. No `packages/adapters/archive-iceberg`, no `docker/` directory (ARCHITECTURE lists one), no Lakekeeper or archive Terraform modules, no `archive` function role (`FUNCTION_ROLES` is ingest, api, consumer, record, cron, bootstrap). winterbaume is installed by `scripts/aws-emulated/install.mjs` (pin v0.2.10). | repo tree |
 | Erasure | No suppression (`TODO(M4)` at `consumer.ts:382` and `record-handler.ts:195`), no `SubjectIndex`, no reducer, no ledger worker, no erasure API routes. | repo tree |
 
 ### 1.2 What the spikes concluded

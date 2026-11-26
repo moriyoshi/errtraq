@@ -1,18 +1,18 @@
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 
-// Pinned Winterbaume server release (tag winterbaume-server-v0.2.9).
-export const version = "0.2.9";
+// Pinned Winterbaume server release (tag winterbaume-server-v0.2.10).
+export const version = "0.2.10";
 export const tag = `winterbaume-server-v${version}`;
-export const commit = "70006139231c1d0569a6ec303a671e53b8d6e6c3";
+export const commit = "f79b3353ec2e49259267572719a15b4a29955435";
 export const sourceSha256 =
-  "fcd7ce0b22645cdda48e15533d4699ad67124f3ba46e3804ed8d1cbecf938c13";
+  "ff42c567f7ca65c748730234a115f1532ebe98693e4af2b7adfc0fc28f069c5d";
 // SHA-256 of the prebuilt release assets, keyed by target triple. Hosts without
 // an entry build source.tar.gz instead. Add a triple only after verifying the
 // asset against the release's published .sha256 file.
 export const assets = {
   "aarch64-apple-darwin": {
-    sha256: "c7e80093e19af3a3694774fd22f7d25f007229f38d360bee7b279e5de1b7f8dc",
+    sha256: "3972eada905bd3cd6b1fc4af03bf4e35b85b5f6535fdbbac672bba467e100640",
   },
 };
 export const releaseBase = `https://github.com/moriyoshi/winterbaume/releases/download/${tag}`;

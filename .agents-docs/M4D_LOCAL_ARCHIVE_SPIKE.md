@@ -11,13 +11,13 @@ Date: 2026-11-25. Scope: environment and spike only, no product code. Run with `
 | --- | --- | --- |
 | db | `postgres:17.12` | sha256:87c8b42f423b45d5247e6aa8fdb2e7762fec164c68a50fe3eb07e7bfcaf4dbcf (arm64) |
 | migrate, lakekeeper | `quay.io/lakekeeper/catalog:v0.15.1` | sha256:22dcb6044c106a962c242b70051bd226bd50c9134c763121d8713c37fe9a70ec (arm64), `migrate` then `serve`, `LAKEKEEPER__AUTHZ_BACKEND=allowall` |
-| winterbaume | `debian:bookworm-slim` (sha256:e67eeead736ff7bbe258ef088bff683635c561b1fcfefad0806c1df4ab49ce0e) with the winterbaume-server v0.2.9 linux aarch64 binary bind-mounted read-only | binary from the checksum-verified archive (sha256 bc62e118...b7ec996), runs on glibc of bookworm, flags `--host 0.0.0.0 --port 5555 --region us-east-1` (same flags as `scripts/aws-emulated/run.mjs`) |
+| winterbaume | `debian:bookworm-slim` (sha256:e67eeead736ff7bbe258ef088bff683635c561b1fcfefad0806c1df4ab49ce0e) with the winterbaume-server v0.2.10 linux aarch64 binary bind-mounted read-only | binary from the checksum-verified archive (archive sha256 e1aa8246...7c89ad3, matching the release .sha256 file; the spike itself ran on v0.2.9, sha256 bc62e118...b7ec996, and was not re-run on v0.2.10), runs on glibc of bookworm, flags `--host 0.0.0.0 --port 5555 --region us-east-1` (same flags as `scripts/aws-emulated/run.mjs`) |
 | runner | `docker/archive/runner/Dockerfile`, `node:26.13.1-bookworm-slim` (sha256:0042e17d...54798c9) | `@duckdb/node-api@2.0.1-r.1` (npm `latest`; DuckDB v2.0.1; the earlier spike used 2.0.0-r.1) installed inside the image only; `iceberg`, `httpfs`, `avro` extensions are downloaded at runtime inside the container |
 
 Platform: every service carries `platform: ${ARCHIVE_PLATFORM:-linux/arm64}` because the pinned binary is aarch64 (Apple Silicon runs it natively).
 On an amd64 host set `WINTERBAUME_LINUX_BINARY` to the x86_64 build; the smoke command then selects `linux/amd64` itself.
 There is no linux entry in `scripts/aws-emulated/install.mjs` yet; the smoke command looks for the extracted binary under
-`.agents-workspace/tmp/winterbaume-server-v0.2.9/bin-linux/...` or `WINTERBAUME_LINUX_BINARY`, and SKIPs with instructions otherwise.
+`.agents-workspace/tmp/winterbaume-server-v0.2.10/bin-linux/...` or `WINTERBAUME_LINUX_BINARY`, and SKIPs with instructions otherwise.
 The smoke command also SKIPs (exit 0) when Docker or the compose plugin is missing (verified with an empty PATH).
 
 Files: `docker/archive/compose.yaml`, `docker/archive/runner/Dockerfile`, `scripts/archive-local/smoke.mjs` (host orchestrator:
