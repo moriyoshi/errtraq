@@ -2291,3 +2291,18 @@ Implemented by a Sonnet subagent (uncommitted at the time of writing; review pen
 - **`ingestUrl` on Lambda must be operator-supplied** (`publicIngestUrl`, a literal or stack variable): the function's own URL output as an environment value is a cycle. Platform-config references are not delivered to Lambda at run time (only adapter selections' references are), so the value is a module input that the module puts in the API function's environment as the reserved `ERRTRAQ_PUBLIC_INGEST_URL`.
 - **One function URL has one CORS policy**: API CORS on Lambda is rejected (descriptor and HCL) when the API shares a function with ingest, whose policy is public (`*`).
 - `isProjectId` accepts `"0"` but minted IDs start at 1; the `/api/0/*` behavior relies on that (TODO).
+
+
+## 2026-11-26 — UI-d: per-issue hourly counts and tag facets
+
+Implemented by a Sonnet subagent for Claude Opus review (uncommitted). Design: `.agents-docs/WEB_UI_DESIGN.md` ("Statistics") and `.agents-docs/DYNAMODB_DESIGN.md` ("Statistics items").
+
+- **Firestore cannot be touched, so the port is optional.** Required members on `ActiveStore` (`stats`, `capabilities.issueStats` / `tagFacets`) would break the typecheck of `store-firestore`, which another session owns. They are optional (absent means unsupported) and `TODO(G-ui)` lives in `TODO.md`; tighten the type once Firestore implements them.
+- **Counters in the record transaction cost no new contention domain.** A DynamoDB facet item's GSI sort key embeds its count, so it needs the same read-then-guard as `issue-count`; but every writer of a facet also guards the issue count in the same transaction, so a facet guard can only fail together with the issue guard and the existing retry loop covers it. The pre-read is repeated on every attempt.
+- **Day items, not hour items, on DynamoDB.** One item per (issue, UTC day) holds `h00`..`h23`; a 30-day read is 31 items per issue instead of 744 and a group touches one item per distinct day. Worst case for ten events is 88 transaction actions (not 100+): the budget argument is `5 + 6m` facet items, because only `level` has five values and each other key one value per event.
+- **Sentry's `totalValues` counts events, not distinct values.** The tag API returns it that way (the UI needs it for proportions) and adds `uniqueValues` for the distinct count.
+- **Hex-doubled sort keys bound the value length.** `GSI13SK` and `SK` hex-encode the value, so 200 characters of a multi-byte script would exceed the 1024-byte sort key limit; `facetsOf` cuts to 200 characters and then to 255 UTF-8 bytes (the indexed-text bound) in core for every store.
+- **Postgres contract + many pools**: each contract case opens its own pool; adding 13 cases pushed `pnpm test:postgres` over `max_connections` ("too many clients"). The integration file now destroys each case's pools in `afterEach`.
+- **Layering**: a `http` test file may import only `@moriyoshi/errtraq-core` (not `/runtime`), while worker-reachable `http` sources import `/runtime`; and a DynamoDB adapter value import of `@moriyoshi/errtraq-core` main pulls zod into the Lambda bundle (use `/store`).
+- The normalizer produces only `level`, `release`, `environment` and explicit tags; browser, OS, runtime and server names are not derived from contexts (`TODO.md`).
+

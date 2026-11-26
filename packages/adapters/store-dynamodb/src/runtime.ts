@@ -3,6 +3,7 @@ import type {
   ActiveStore,
   Clock,
   CreateContext,
+  IssueStatsRepo,
   Logger,
 } from "@moriyoshi/errtraq-core";
 import { withIdentifierLimits } from "@moriyoshi/errtraq-core/store";
@@ -21,6 +22,7 @@ import { backfillProjectOrgIndexes, projectRepository } from "./projects.js";
 import { recordEvent, recordEvents } from "./record-event.js";
 import { releaseRepository } from "./releases.js";
 import type { Config } from "./stack.js";
+import { statsRepository } from "./stats.js";
 
 export {
   DynamoStoreAccessDeniedError,
@@ -52,6 +54,8 @@ export class DynamoStore implements ActiveStore {
     textSearch: false,
     lastSeenRangeOnOtherSort: false,
     recordEvents: true,
+    issueStats: true,
+    tagFacets: true,
   };
   private readonly endpoint: string;
   private shards?: number;
@@ -239,6 +243,7 @@ export class DynamoStore implements ActiveStore {
   );
   releases: ActiveStore["releases"] = releaseRepository(this);
   meta: ActiveStore["meta"] = metaRepository(this);
+  stats: IssueStatsRepo = statsRepository(this);
 }
 export function create({
   config,

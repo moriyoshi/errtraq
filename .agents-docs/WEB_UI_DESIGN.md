@@ -122,19 +122,34 @@ federated. The UI may badge events served from the archive, if the API marks the
 ### Statistics
 
 Bucketed counts and tag facets cannot be computed by scanning events on DynamoDB or Firestore,
-and the no-table-scan rule forbids it. The proposal is to maintain them on the record path:
+and the no-table-scan rule forbids it, so they are maintained on the record path. Decided and
+implemented in UI-d:
 
-- per issue, hourly count buckets (plus daily roll-up after a retention window) keyed by
-  `(projectId, issueId, bucket)`;
-- per issue, top-N counters per tag key for a fixed allow-list (`environment`, `release`,
-  `level`, `browser`, `os`, `runtime`, `url` host), capped per key.
-
-Both are new port behaviour, so the `IssueRepo` contract suite is extended first, then every
-store adapter (SQL, DynamoDB, Firestore). Open trade-off (owner decision): write the counters
-inside the atomic `recordOccurrence` / `recordEvent` operation (exact, but one more item in the
-DynamoDB `TransactWriteItems` and the Firestore transaction), or as a separate best-effort
-update after it (cheaper, tolerates small drift on redelivery). A store that does not
-implement them reports so through `capabilities`, and the UI hides the panels.
+- **Counters are written inside the atomic `recordEvent` / `recordEvents` operation.** A
+  duplicate event changes no counter; the numbers have the meaning of `Issue.count` (accepted
+  insertions ever recorded, never decremented by retention, archival or erasure).
+- **Time basis is `receivedAt`**, UTC; the API says so (`timeBasis: "receivedAt"` on the issue
+  detail). Hourly buckets only, kept 31 days (removed by the `retention` cron on explicit-delete
+  stores, by item TTL on DynamoDB). Daily series are summed from hourly buckets at read time.
+- **Tag facets use a fixed allow-list**: `level`, `environment`, `release`, `server_name`,
+  `browser.name`, `os.name`, `runtime.name`. The first three come from the stored event; the
+  last four only from an explicit event tag of that name (the normalizer does not derive
+  them from contexts). Never a `user.*` key, URL or IP, because facets are not reached by
+  subject erasure. Values are cut to 200 characters; one never-decremented, non-expiring
+  counter per `(issue, key, value)`; no cap on distinct values, the top-N read is index-served.
+- **Port**: `ActiveStore.stats` (`IssueStatsRepo`: `series`, `tagFacets`, `tagValues`,
+  `deleteBefore`), gated by `capabilities.issueStats` / `tagFacets`, both optional on the type
+  so an adapter that has not implemented them (Firestore) keeps compiling and counts as `false`.
+  A separate repo rather than `IssueRepo` methods because it is optional and has its own
+  retention operation.
+- **API**: issue list `statsPeriod=24h|14d` (zero-filled `[unixSeconds, count]` points from one
+  batched call per page; other values 400; a store without the capability 400), issue detail
+  `stats` (`24h`, `30d`) and `timeBasis`, `GET /issues/:id/tags/`, `/tags/:key/`,
+  `/tags/:key/values/` (Link-paged). `totalValues` counts events as in Sentry; `uniqueValues`
+  is the distinct-value count.
+- **UI**: inline-SVG sparkline per list row (shown only when `issueStats`), histogram with a
+  24h / 30d toggle and a tags panel with proportion bars on the issue page, and a paged
+  values list per key. The text alternative and printed totals carry the numbers.
 
 ## Features
 
@@ -188,7 +203,7 @@ infra/modules/aws/static-site/   S3 + CloudFront + OAC + /api/0 behavior
 | **UI-a** | API surface: organization / project read routes, capabilities endpoint, event neighbours, bulk update, DSN key list, optional CORS | Route tests in `http`; contract suite extended where a repo method is new |
 | **UI-b** | `packages/ui` skeleton: router, query client, token login, issue list and detail on the existing API | Playwright tests against `errtraq dev --stack stacks/local.ts`, seeded by the real `@sentry/node` SDK as in `pnpm e2e`; opt-in (skip without a browser) |
 | **UI-c** (done) | Platform-owned hosting: `aws/static-site` module with same-origin routing, standalone server serves the build, `ingestUrl` and API CORS from the stack config | Infra-gen snapshot tests, `terraform validate` on the generated root |
-| **UI-d** | Statistics: contract suite first, then SQL, DynamoDB, Firestore; histogram and facets in the UI | Contract suites pass on every store adapter |
+| **UI-d** (done, Firestore pending) | Statistics: contract suite first, then memory, SQL and DynamoDB; sparkline, histogram and tag facets in the UI. Firestore declares both capabilities false until its own slice (`TODO(G-ui)`) | Contract suites pass on every store adapter that declares the capabilities |
 | **UI-e** | OIDC: JWT verification and claim-to-scope mapping in `http`, PKCE in the SPA | Unit tests with a locally generated JWKS; no network in the default test path |
 | **UI-f** | Bulk actions, releases pages, settings, keyboard navigation, dark mode | UI tests |
 
@@ -197,7 +212,7 @@ Cloudflare and GCP hosting modules follow the platforms (M6, G-series), not this
 ## Open questions
 
 1. Scheduling: start now with its own milestone letter, or after M3 / M4 / M6 settle.
-2. Statistics counters: inside the atomic record operation, or best-effort beside it.
+2. ~~Statistics counters: inside the atomic record operation, or best-effort beside it.~~ Decided in UI-d: inside the atomic record operation.
 3. First IdP to support and test: Cognito for AWS, Google for Cloud Run, or a generic OIDC
    provider only.
 4. Whether `ui-static` is an adapter (one per provider) or a platform-owned component, given that

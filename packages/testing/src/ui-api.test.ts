@@ -168,8 +168,8 @@ describe("capabilities on the root route", () => {
         textSearch: c.store.capabilities.textSearch,
         lastSeenRangeOnOtherSort: c.store.capabilities.lastSeenRangeOnOtherSort,
         archive,
-        issueStats: false,
-        tagFacets: false,
+        issueStats: true,
+        tagFacets: true,
       });
     }
   });

@@ -97,13 +97,14 @@ real load tests justify changing list semantics.
 | `issue-last`, `issue-first`, `issue-count` | `project|status`, respective descending-sort/ascending-ID composite | One per sort, `KEYS_ONLY`; status-less list merges the three status partitions. |
 | `entity-list` | `entityKind|scope`, entity-ID key | Projects, keys, releases and bundles by project and release; `KEYS_ONLY`; sparse, scope per operation. |
 | `project-org` | `ENTITY|projects-by-org|orgId`, project-ID key | Projects of one organization: `ProjectRepo.listByOrg` is one eventual Query plus strong hydration, `KEYS_ONLY`, sparse, written by `projects.put` next to the `entity-list` pair. Projects written before this index exist need `DynamoStore.backfillProjectOrgIndexes()` (no scan: it pages the global project index and conditionally adds the two attributes; idempotent). |
+| `facet-count` | `FV|project|issue|key` (the item's own `PK`), `countSort#E(value)` | UI-d tag facets: the top-N and the value pager of one `(issue, key)` are one bounded Query on one partition, count descending then value ascending; `KEYS_ONLY` plus strong hydration, sparse (only facet value items). See "Statistics items". |
 | `erasure-all`, `erasure-project`, `erasure-state`, `erasure-project-state` | applicable global/project/state PK, project/erasure-ID SK | Four `KEYS_ONLY` sparse indexes, one chosen for each metadata filter combination. |
 
 The issue-ID GSI is retained as requested alongside the strong pointer. `getById` uses the
 strong pointer as its authoritative path; the GSI is redundant for this operation but is
 available for index parity and backfill validation. Its extra write/storage cost is deliberate
 and a future simplification can remove it only with a reviewed schema migration. These are
-**12 GSIs**, within the default table quota of 20; no count-refresh GSI. Verify quota and
+**13 GSIs**, within the default table quota of 20; no count-refresh GSI. Verify quota and
 provider replacement behavior. All index attributes are `S`; no multi-attribute GSI key is
 required. A `KEYS_ONLY` entry includes table/GSI keys but not event payload or mutable entity
 data. Each GSI Query is eventual; BGet in chunks <=100 with `ConsistentRead:true`, retry
@@ -225,6 +226,59 @@ and the memory fake implement the same atomic contract. The FIFO path reduces ro
 only the datastore enforces correctness when leases expire or the deployment has overlapping modes.
 
 
+### Statistics items (UI-d)
+
+Per-issue hourly counts and tag facets are written by the record transaction itself, never
+beside it: a duplicate event cancels the whole transaction and so changes no counter, exactly
+as it changes no `Issue.count`. Meaning: accepted insertions ever recorded, never decremented
+by retention, archival or erasure. Time basis `receivedAt`, UTC. Issues that existed before
+the feature simply start counting from zero. Core owns the rules (`packages/core/src/stats.ts`:
+the key allow-list `level, environment, release, server_name, browser.name, os.name,
+runtime.name`, 200-character values, `statsIncrements`); the adapter only maps them to items.
+
+| Item | `PK` | `SK` | Attributes |
+| --- | --- | --- | --- |
+| Hourly buckets (one per issue and UTC day) | `HB|project|issue` | `YYYY-MM-DD` | `h00`..`h23` (N, `ADD`), `ttlEpoch` (N) |
+| Facet value | `FV|project|issue|key` | `E(value)` | `count` (N), `val` (S), `GSI13PK` = `PK`, `GSI13SK` = `fixedWidth(MAX_SAFE - count)#E(value)` |
+| Facet totals (one per issue) | `FT|project|issue` | `DATA` | `v0`..`v6` distinct values, `c0`..`c6` events, per allow-list index (N, `ADD`) |
+
+* Day items pack the 24 hourly counters, so a 30-day read is at most 31 items per issue and a
+  `recordEvents` group touches one item per distinct day, not per hour. `ttlEpoch` is the end
+  of the day plus 31 days, so every hour is kept at least 31 days. An expired but not yet
+  deleted item is harmless: reads are bounded by an explicit range.
+* A facet value item's GSI sort key embeds the count, which `ADD` cannot concatenate, so it
+  uses the same guard as `issue-count`: a strong `BatchGetItem` reads the current counts, the
+  `Update` `SET`s the new `GSI13SK` and `ADD`s, conditioned on the old count (or
+  `attribute_not_exists(PK)` for a new value). Every writer of a facet also guards the
+  issue's own count in the same transaction, so a facet guard can only fail when the issue
+  guard fails too; the existing bounded retry re-reads everything (the facet pre-read is
+  repeated on each attempt). The totals item and the day items are unguarded `ADD`s.
+* Values are cut to 200 characters and then to 255 UTF-8 bytes, so `E(value)` (hex, doubled)
+  keeps `GSI13SK` under 530 bytes. No cardinality cap; the top-N read is `Query facet-count`
+  with `Limit`, never a scan of all values. `GSI13` is eventually consistent: candidates are
+  hydrated strongly and shown with their current counts (a value that has just changed rank
+  can be briefly out of order; a brand-new value can be briefly missing).
+* The new GSI is added to `infra/modules/aws/dynamodb/indexes.json` and the HCL test; adding a
+  GSI is an in-place update of the existing table (one index per apply).
+* Facets are not reached by subject erasure, so the allow-list excludes every `user.*` key,
+  URLs and IPs. Do not widen it without an erasure design.
+
+**Transaction budget with the counters (100 actions, 4 MiB).** For a group of `m <= 10` events
+of one issue: `m` event puts + 1 issue update + 1 pointer (creation only) + `D` day items
+(`D <= m`) + `F` distinct (key, value) items + 1 totals item (+ 1 fence once M4 erasure lands).
+`F <= 5 + 6m` because `level` has five possible values and each of the six other keys has one
+value per event. Worst case at `m = 10`: `10 + 1 + 1 + 10 + 65 + 1 = 88` actions (89 with the
+fence); a one-event call is at most `1 + 1 + 1 + 1 + 7 + 1 = 12`. So the existing split rule
+(at most 10 events and 3 MiB of serialized records per transaction, `RecordHandler`) needs no
+change. Bytes: a facet update is about 2 KiB (partition key framing, `val`, both GSI keys),
+so 65 of them are about 130 KiB, plus 10 day items and the totals item; the 4 MiB check
+adds this estimate to the event, issue and pointer sizes, and the 3 MiB record cap leaves
+1 MiB for the issue (at most 400 KiB) and all counters. Both limits are also asserted in
+`recordEvents` (action count and bytes), and `record-event.test.ts` pins the 88-action case.
+Extra WCU: each action is a transactional write (2x), so a typical one-event call
+(day + level + environment + release + totals) adds about 5 items, roughly 10 WCU, and each
+facet write also rewrites its `facet-count` entry.
+
 ### Bundle lifecycle (stage 1)
 
 No 48-debug-ID cap. Store the full immutable debug-ID manifest in BlobStore under a stable
@@ -284,7 +338,11 @@ capacity. User-visible pages may be eventually incomplete even after hydration.
 | `meta.getArchiveState`, `getErasureRequest` | G scoped item: ~1 RRU. |
 | `meta.compareAndSetArchiveState`, `compareAndSetErasureRequest` | Conditional Put/Update with expected-null creates version 0, else expected+1; invalid/mismatched -> `VersionConflictError`. Erasure metadata updates four sparse GSI keys; ~1 WRU + affected index writes. |
 | `meta.listErasureRequests` | Q one of four erasure GSIs depending on project/state, then B/validate. Page cost as above. |
-| `recordEvent`, `recordEvents` | TX and cancellation/branch rules above. Per-event cost example below; batch uses the same conditional transaction rules. |
+| `recordEvent`, `recordEvents` | TX and cancellation/branch rules above, now including the statistics counters ("Statistics items"). Per-event cost example below; batch uses the same conditional transaction rules. |
+| `stats.series` | One strong Query per issue on `HB|project|issue` (SK between two day keys, at most 31 items), 10 issues in flight; at most 100 issues per call. No GSI. |
+| `stats.tagFacets` | G `FT|project|issue` (totals), then per present key one eventual Q `facet-count` with `Limit` N and one strong B of all candidates (at most 7 x 10 keys). Never reads all values. |
+| `stats.tagValues` | One eventual Q `facet-count` page (`Limit` size+1, keyset = last index key) and one strong B of the page. |
+| `stats.deleteBefore` | No-op: bucket items expire through `ttlEpoch`; there is no project-wide index of buckets to sweep without a scan. |
 | `migrate` | Schema is provisioned by infra; no implicit table scan; explicit versioned migration for future schema changes. 0 data R/W. |
 
 Subject erasure is disabled consistently across sqlite, Postgres, memory and DynamoDB in stage

@@ -43,6 +43,7 @@ import {
   VersionConflictError,
 } from "@moriyoshi/errtraq-core";
 import { describe, expect, it, vi } from "vitest";
+import { issueStatsContract } from "./contracts-stats.js";
 import { MemoryBlobStore } from "./memory-other.js";
 import { bytes, stream } from "./shared.js";
 
@@ -167,6 +168,7 @@ export function activeStoreContract(
   options: ContractOptions = {},
 ): void {
   describe("ActiveStore contract", () => {
+    issueStatsContract(factory);
     it("declares grouped-recording support and supplies the operation", async () => {
       const store = await factory();
       expect(typeof store.capabilities.recordEvents).toBe("boolean");

@@ -30,6 +30,7 @@ import type {
   Timestamp,
 } from "./domain.js";
 import type { FunctionRole } from "./stack.js";
+import type { FacetKey } from "./stats.js";
 
 export interface IssueQuery {
   projectId: ProjectId;
@@ -267,6 +268,83 @@ export interface MetaRepo {
   ): Promise<void>;
 }
 
+/** One non-zero hourly bucket: `hour` is the UTC hour start (an hour-aligned Timestamp). */
+export interface StatsBucket {
+  hour: Timestamp;
+  count: number;
+}
+export interface IssueStatsSeries {
+  issueId: IssueId;
+  buckets: StatsBucket[];
+}
+export interface FacetValueCount {
+  value: string;
+  count: number;
+}
+export interface FacetSummary {
+  key: FacetKey;
+  /** Number of distinct values ever counted for the key. */
+  totalValues: number;
+  /** Sum of all value counts of the key (events that carried the key). */
+  totalCount: number;
+  topValues: FacetValueCount[];
+}
+
+/**
+ * Per-issue hourly counts and tag facets, written inside `recordEvent` / `recordEvents` in the
+ * same atomic operation as the event insertion: a duplicate event changes no counter (also not
+ * a duplicate inside one group), a new one adds exactly one to its UTC `receivedAt` hour bucket
+ * and to each allow-listed facet value it carries (see `facetsOf`). Like `Issue.count` they are
+ * all-time insertion counts: event deletion, archival and erasure never decrement them. Issues
+ * recorded before a store gained the feature simply have no earlier counts.
+ *
+ * Present on a store exactly when `capabilities.issueStats` / `tagFacets` is true; methods
+ * reject with UnsupportedQueryError when the matching capability is false. Facet values are
+ * never personal data (fixed key allow-list) and have no expiry; hourly buckets are kept 31 days.
+ */
+export interface IssueStatsRepo {
+  /** `explicit`: `deleteBefore` removes buckets (retention cron). `ttl`: the store expires them
+   * itself and `deleteBefore` is a bounded no-op. */
+  readonly expiry: "explicit" | "ttl";
+  /**
+   * Non-zero hourly buckets with `from <= hour < to`, ascending by hour, one entry per distinct
+   * requested issue in first-occurrence order (empty `buckets` when none). At most 100 issues
+   * and a range of at most 31 days; `from` and `to` are canonical timestamps with `from <= to`.
+   * Violations reject with RangeError. Reads are read-after-write consistent for a committed
+   * record call (adapters may serve them from indexes that lag, in which case they say so).
+   */
+  series(
+    projectId: ProjectId,
+    issueIds: readonly IssueId[],
+    range: { from: Timestamp; to: Timestamp },
+  ): Promise<IssueStatsSeries[]>;
+  /**
+   * For each allow-listed key that has values (allow-list order): its top `limit` (1..10)
+   * values by count descending then value ascending (UTF-8 byte order), with the key's
+   * distinct-value and total counts. Never scans every value.
+   */
+  tagFacets(
+    projectId: ProjectId,
+    issueId: IssueId,
+    options: { limit: number },
+  ): Promise<FacetSummary[]>;
+  /** All values of one allow-listed key, count descending then value ascending, keyset-paged;
+   * an unknown key rejects with RangeError. */
+  tagValues(
+    projectId: ProjectId,
+    issueId: IssueId,
+    key: FacetKey,
+    options?: { cursor?: Cursor; limit?: number },
+  ): Promise<Page<FacetValueCount>>;
+  /** Housekeeping for the retention cron: delete one project's hourly buckets with
+   * `hour < cutoff`, at most `limit` per call. Facet counters are never deleted. */
+  deleteBefore(
+    projectId: ProjectId,
+    cutoff: Timestamp,
+    options?: { limit?: number },
+  ): Promise<{ deleted: number; hasMore: boolean }>;
+}
+
 export interface RecordInput {
   occurrence: Occurrence;
   event: StoredEvent;
@@ -281,7 +359,8 @@ export interface ActiveStore {
   /** Atomically insert the event and create/bump the issue; duplicate (projectId, eventId)
    * changes nothing. Use a SQL transaction, D1 batch, DynamoDB TransactWriteItems with
    * an event-item condition, or a Firestore transaction. Regression uses receivedAt;
-   * latest event is the maximum (receivedAt, eventId). */
+   * latest event is the maximum (receivedAt, eventId). The same atomic operation adds the
+   * event's hourly bucket and allow-listed facet counters (see IssueStatsRepo). */
   recordEvent(
     occurrence: Occurrence,
     event: StoredEvent,
@@ -296,11 +375,18 @@ export interface ActiveStore {
   events: EventRepo;
   releases: ReleaseRepo;
   meta: MetaRepo;
+  /** Per-issue hourly counts and tag facets; present iff a capability below is true. Optional so
+   * stores that have not implemented it yet (absent = unsupported) keep compiling. */
+  stats?: IssueStatsRepo;
   capabilities: {
     lastSeenRangeOnOtherSort: boolean;
     textSearch: boolean;
     /** Whether atomic grouped recording is supported. */
     recordEvents: boolean;
+    /** Hourly per-issue counts (`stats.series`); absent means false. */
+    issueStats?: boolean;
+    /** Allow-listed tag facets (`stats.tagFacets`, `tagValues`); absent means false. */
+    tagFacets?: boolean;
   };
   migrate(): Promise<void>;
 }

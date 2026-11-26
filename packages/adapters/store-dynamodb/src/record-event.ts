@@ -4,6 +4,7 @@ import type {
   Occurrence,
   StoredEvent,
 } from "@moriyoshi/errtraq-core";
+import { statsIncrements } from "@moriyoshi/errtraq-core/store";
 import { DynamoStoreError, DynamoTransactionCanceledError } from "./errors.js";
 import { issueFromItem, issueMutableAttributes } from "./issue-item.js";
 import { issueKey, issuePointerKey, issuePointerSort } from "./issues.js";
@@ -27,7 +28,10 @@ import {
   primary,
   s,
 } from "./repository-base.js";
+import { planStats } from "./stats.js";
 
+/** DynamoDB's transaction ceiling; the counters of a full group are budgeted in DYNAMODB_DESIGN.md. */
+export const MAX_TRANSACTION_ACTIONS = 100;
 export const eventKey = (project: string, id: string) =>
   partition("EV", project, id);
 export const issueStatusPartition = (project: string, status: string) =>
@@ -238,6 +242,17 @@ export function recordEvent(
             ReturnValuesOnConditionCheckFailure: "ALL_OLD",
           },
         });
+      // Counters join the same transaction, after the pointer so cancellation reasons keep their
+      // positions: a duplicate event cancels everything and so changes no counter.
+      const plan = await planStats(
+        d,
+        occ.projectId,
+        occ.issueId,
+        statsIncrements([event]),
+      );
+      writes.push(...plan.writes);
+      if (writes.length > MAX_TRANSACTION_ACTIONS)
+        throw new RangeError("DynamoDB transaction exceeds 100 actions");
       try {
         await d.request("TransactWriteItems", {
           TransactItems: writes,
@@ -288,7 +303,7 @@ export function recordEvent(
           }
         }
         old = (reasons[1]?.item as Item | undefined) ?? (await get(d, PK));
-        if (reasons[2]?.code === "ConditionalCheckFailed" && !old)
+        if (next.isNew && reasons[2]?.code === "ConditionalCheckFailed" && !old)
           throw new DynamoStoreError("Issue pointer already exists");
         if (attempt < 79) await contentionDelay(attempt);
       }
@@ -383,10 +398,16 @@ export function recordEvents(
               ),
               owner: s(PK),
             });
+        const plan = await planStats(
+          d,
+          firstOcc.projectId,
+          firstOcc.issueId,
+          statsIncrements(pending.map(({ event }) => event)),
+        );
         if (
           pending.reduce(
             (sum, entry) => sum + itemSize(entry.row),
-            issueSize + pointerSize,
+            issueSize + pointerSize + plan.bytes,
           ) >
           4 * 1024 * 1024
         )
@@ -468,6 +489,10 @@ export function recordEvents(
               ReturnValuesOnConditionCheckFailure: "ALL_OLD",
             },
           });
+        // Aggregated counters: one action per distinct day, tag value and the totals item.
+        writes.push(...plan.writes);
+        if (writes.length > MAX_TRANSACTION_ACTIONS)
+          throw new RangeError("DynamoDB transaction exceeds 100 actions");
         try {
           await d.request("TransactWriteItems", {
             TransactItems: writes,

@@ -3,6 +3,9 @@ import {
   type ApiToken,
   type ArchiveState,
   type ArtifactBundle,
+  assertFacetKey,
+  assertFacetLimit,
+  assertStatsRange,
   bundleDebugIdsDigest,
   ConflictError,
   type Cursor,
@@ -10,8 +13,11 @@ import {
   type ErasureRequest,
   encodeCursor,
   eventCursorScope,
+  FACET_KEYS,
+  type FacetKey,
   InvalidCursorError,
   type Issue,
+  type IssueStatsRepo,
   NotFoundError,
   type Occurrence,
   type Page,
@@ -20,12 +26,15 @@ import {
   pageLimit,
   type RecordInput,
   type RecordResult,
+  type StatsIncrements,
   type StoredEvent,
+  statsIncrements,
   summarizeApiToken,
   UnsupportedQueryError,
   VersionConflictError,
   withIdentifierLimits,
 } from "@moriyoshi/errtraq-core";
+import { sql } from "kysely";
 import type { SqlStoreDialect } from "./dialect.js";
 import { migrate, type SqlDatabase } from "./schema.js";
 
@@ -151,8 +160,10 @@ export function createSqlStore({ db, dialect }: SqlStoreOptions): ActiveStore {
     trx: SqlDatabase,
     occurrence: Occurrence,
     event: StoredEvent,
+    /** A group collects its inserted events and writes the aggregated counters once. */
+    inserted?: StoredEvent[],
   ): Promise<RecordResult> {
-    const inserted = await dialect.insertIfAbsent(trx, "events", {
+    const wasInserted = await dialect.insertIfAbsent(trx, "events", {
       pk: pk(event.projectId, event.eventId),
       project_id: event.projectId,
       event_id: event.eventId,
@@ -168,7 +179,7 @@ export function createSqlStore({ db, dialect }: SqlStoreOptions): ActiveStore {
       tags: JSON.stringify(event.tags),
       data: JSON.stringify(event),
     });
-    if (!inserted) {
+    if (!wasInserted) {
       const old = await trx
         .selectFrom("events")
         .select("data")
@@ -245,8 +256,203 @@ export function createSqlStore({ db, dialect }: SqlStoreOptions): ActiveStore {
       data: JSON.stringify(issue),
     };
     await dialect.upsert(trx, "issues", values);
+    if (inserted) inserted.push(event);
+    else await writeStats(trx, event, statsIncrements([event]));
     return { inserted: true, issue, isNew, isRegression };
   }
+  /** Add this event's counters inside the record transaction (the issue lock is held). */
+  async function writeStats(
+    trx: SqlDatabase,
+    event: StoredEvent,
+    increments: StatsIncrements,
+  ): Promise<void> {
+    const where = { project_id: event.projectId, issue_id: event.issueId };
+    if (increments.hours.length)
+      await trx
+        .insertInto("issue_stats_hourly")
+        .values(
+          increments.hours.map(({ hour, count }) => ({
+            ...where,
+            hour,
+            count,
+          })),
+        )
+        .onConflict((oc) =>
+          oc.columns(["project_id", "issue_id", "hour"]).doUpdateSet({
+            count: sql`${sql.ref("issue_stats_hourly.count")} + excluded.count`,
+          }),
+        )
+        .execute();
+    if (!increments.facets.length) return;
+    const existing = await trx
+      .selectFrom("issue_tag_counts")
+      .select(["tag_key", "tag_value"])
+      .where("project_id", "=", event.projectId)
+      .where("issue_id", "=", event.issueId)
+      .where("tag_key", "in", [...new Set(increments.facets.map((f) => f.key))])
+      .where("tag_value", "in", [
+        ...new Set(increments.facets.map((f) => f.value)),
+      ])
+      .execute();
+    const known = new Set(
+      existing.map((row) => JSON.stringify([row.tag_key, row.tag_value])),
+    );
+    await trx
+      .insertInto("issue_tag_counts")
+      .values(
+        increments.facets.map(({ key, value, count }) => ({
+          ...where,
+          tag_key: key,
+          tag_value: value,
+          count,
+        })),
+      )
+      .onConflict((oc) =>
+        oc
+          .columns(["project_id", "issue_id", "tag_key", "tag_value"])
+          .doUpdateSet({
+            count: sql`${sql.ref("issue_tag_counts.count")} + excluded.count`,
+          }),
+      )
+      .execute();
+    const totals = new Map<string, { values: number; count: number }>();
+    for (const { key, value, count } of increments.facets) {
+      const total = totals.get(key) ?? { values: 0, count: 0 };
+      total.count += count;
+      if (!known.has(JSON.stringify([key, value]))) total.values++;
+      totals.set(key, total);
+    }
+    await trx
+      .insertInto("issue_tag_totals")
+      .values(
+        [...totals].map(([key, total]) => ({
+          ...where,
+          tag_key: key,
+          total_values: total.values,
+          total_count: total.count,
+        })),
+      )
+      .onConflict((oc) =>
+        oc.columns(["project_id", "issue_id", "tag_key"]).doUpdateSet({
+          total_values: sql`${sql.ref("issue_tag_totals.total_values")} + excluded.total_values`,
+          total_count: sql`${sql.ref("issue_tag_totals.total_count")} + excluded.total_count`,
+        }),
+      )
+      .execute();
+  }
+  const stats: IssueStatsRepo = {
+    expiry: "explicit",
+    series: async (projectId, issueIds, range) => {
+      assertStatsRange(issueIds, range);
+      const ids = [...new Set(issueIds)];
+      const rows = ids.length
+        ? await db
+            .selectFrom("issue_stats_hourly")
+            .select(["issue_id", "hour", "count"])
+            .where("project_id", "=", projectId)
+            .where("issue_id", "in", ids)
+            .where("hour", ">=", range.from)
+            .where("hour", "<", range.to)
+            .orderBy("issue_id")
+            .orderBy("hour")
+            .execute()
+        : [];
+      const byIssue = new Map<string, Array<{ hour: string; count: number }>>();
+      for (const row of rows) {
+        const list = byIssue.get(String(row.issue_id)) ?? [];
+        list.push({ hour: String(row.hour), count: Number(row.count) });
+        byIssue.set(String(row.issue_id), list);
+      }
+      return ids.map((id) => ({
+        issueId: id,
+        buckets: (byIssue.get(id) ?? []) as never,
+      }));
+    },
+    tagFacets: async (projectId, issueId, options) => {
+      assertFacetLimit(options.limit);
+      const totals = await db
+        .selectFrom("issue_tag_totals")
+        .select(["tag_key", "total_values", "total_count"])
+        .where("project_id", "=", projectId)
+        .where("issue_id", "=", issueId)
+        .execute();
+      const byKey = new Map(totals.map((row) => [String(row.tag_key), row]));
+      const present = FACET_KEYS.filter((key) => byKey.has(key));
+      return Promise.all(
+        present.map(async (key) => {
+          const total = byKey.get(key);
+          const top = await db
+            .selectFrom("issue_tag_counts")
+            .select(["tag_value", "count"])
+            .where("project_id", "=", projectId)
+            .where("issue_id", "=", issueId)
+            .where("tag_key", "=", key)
+            .orderBy("count", "desc")
+            .orderBy("tag_value", "asc")
+            .limit(options.limit)
+            .execute();
+          return {
+            key,
+            totalValues: Number(total?.total_values ?? 0),
+            totalCount: Number(total?.total_count ?? 0),
+            topValues: top.map((row) => ({
+              value: String(row.tag_value),
+              count: Number(row.count),
+            })),
+          };
+        }),
+      );
+    },
+    tagValues: async (projectId, issueId, key: FacetKey, options) => {
+      assertFacetKey(key);
+      const scope = JSON.stringify(["tag-values", projectId, issueId, key]);
+      const after = cursorKeys(options?.cursor, scope, 2);
+      let query = db
+        .selectFrom("issue_tag_counts")
+        .select(["tag_value", "count"])
+        .where("project_id", "=", projectId)
+        .where("issue_id", "=", issueId)
+        .where("tag_key", "=", key);
+      if (after) {
+        const [count, value] = after;
+        if (typeof count !== "number" || typeof value !== "string")
+          throw new InvalidCursorError("Invalid tag value cursor");
+        query = query.where((eb) =>
+          eb.or([
+            eb("count", "<", count),
+            eb.and([eb("count", "=", count), eb("tag_value", ">", value)]),
+          ]),
+        );
+      }
+      const size = limitOf(options?.limit);
+      const rows = await query
+        .orderBy("count", "desc")
+        .orderBy("tag_value", "asc")
+        .limit(size + 1)
+        .execute();
+      const selected = rows.slice(0, size).map((row) => ({
+        value: String(row.tag_value),
+        count: Number(row.count),
+      }));
+      const last = selected.at(-1);
+      return {
+        items: selected,
+        nextCursor:
+          rows.length > size && last
+            ? encodeCursor(scope, [last.count, last.value])
+            : null,
+      };
+    },
+    deleteBefore: async (projectId, cutoff, options) => {
+      const limit = limitOf(options?.limit ?? 500);
+      const result =
+        await sql`delete from issue_stats_hourly where project_id = ${projectId} and (issue_id, hour) in (select issue_id, hour from issue_stats_hourly where project_id = ${projectId} and hour < ${cutoff} limit ${limit})`.execute(
+          db,
+        );
+      const deleted = Number(result.numAffectedRows ?? 0n);
+      return { deleted, hasMore: deleted >= limit };
+    },
+  };
   function validateGroup(group: readonly RecordInput[]): void {
     if (!Array.isArray(group) || group.length < 1 || group.length > 10)
       throw new RangeError("Record group must contain 1 to 10 events");
@@ -272,7 +478,10 @@ export function createSqlStore({ db, dialect }: SqlStoreOptions): ActiveStore {
       textSearch: false,
       lastSeenRangeOnOtherSort: false,
       recordEvents: true,
+      issueStats: true,
+      tagFacets: true,
     },
+    stats,
     migrate: async () => retryBusy(() => migrate(db, dialect)),
     recordEvent: async (occurrence, event) => {
       validateGroup([{ occurrence, event }]);
@@ -294,8 +503,12 @@ export function createSqlStore({ db, dialect }: SqlStoreOptions): ActiveStore {
           `issue:${pk(first.occurrence.projectId, first.occurrence.issueId)}`,
         );
         const results: RecordResult[] = [];
+        const inserted: StoredEvent[] = [];
         for (const { occurrence, event } of group)
-          results.push(await recordOne(trx, occurrence, event));
+          results.push(await recordOne(trx, occurrence, event, inserted));
+        // One update per distinct hour bucket and per distinct tag value, not per record.
+        if (inserted[0])
+          await writeStats(trx, inserted[0], statsIncrements(inserted));
         const row = await trx
           .selectFrom("issues")
           .select("data")

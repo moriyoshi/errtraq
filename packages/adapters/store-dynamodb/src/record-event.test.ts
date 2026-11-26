@@ -60,6 +60,9 @@ describe("DynamoDB recordEvent", () => {
     const fetcher: typeof fetch = async (_url, init) => {
       const target = new Headers(init?.headers).get("x-amz-target");
       const body = JSON.parse(String(init?.body));
+      // No counter exists yet: the facet pre-read finds nothing.
+      if (target === "DynamoDB_20120810.BatchGetItem")
+        return Response.json({ Responses: { table: [] } });
       if (target === "DynamoDB_20120810.GetItem")
         return Response.json(
           body.Key.PK.S === "META|schema"
@@ -87,12 +90,90 @@ describe("DynamoDB recordEvent", () => {
     );
     expect(writes).toBe(0);
   });
+  it("fits the widest group in one transaction: 88 actions for ten events on ten days", async () => {
+    const transactions: Array<{
+      TransactItems: Array<Record<string, unknown>>;
+    }> = [];
+    const fetcher: typeof fetch = async (_url, init) => {
+      const target = new Headers(init?.headers).get("x-amz-target");
+      const body = JSON.parse(String(init?.body));
+      if (target === "DynamoDB_20120810.BatchGetItem")
+        return Response.json({ Responses: { table: [] } });
+      if (target === "DynamoDB_20120810.GetItem")
+        return Response.json(
+          body.Key.PK.S === "META|schema"
+            ? { Item: { projectTimeShards: { N: "4" } } }
+            : { Item: transactions.length ? row(10) : undefined },
+        );
+      transactions.push(body);
+      return Response.json({});
+    };
+    const store = new DynamoStore({
+      table: "table",
+      region: "us-east-1",
+      environment: { AWS_ACCESS_KEY_ID: "id", AWS_SECRET_ACCESS_KEY: "secret" },
+      fetch: fetcher,
+    });
+    const group = Array.from({ length: 10 }, (_, index) => {
+      const id = `wide-${index}` as EventId;
+      const at = new Date(
+        Date.UTC(2025, 0, 1 + index),
+      ).toISOString() as Timestamp;
+      return {
+        occurrence: {
+          ...occurrence,
+          eventId: id,
+          receivedAt: at,
+          timestamp: at,
+        },
+        event: {
+          ...event,
+          eventId: id,
+          receivedAt: at,
+          timestamp: at,
+          level: (["fatal", "error", "warning", "info", "debug"] as const)[
+            index % 5
+          ] as StoredEvent["level"],
+          environment: `env-${index}`,
+          release: `rel-${index}`,
+          tags: {
+            server_name: `srv-${index}`,
+            "browser.name": `br-${index}`,
+            "os.name": `os-${index}`,
+            "runtime.name": `rt-${index}`,
+          },
+        },
+      };
+    });
+    await store.recordEvents(group);
+    const [tx] = transactions;
+    // 10 events + issue + pointer + 10 day items + 65 values (5 levels, 6 keys x 10) + totals.
+    const kinds = (tx?.TransactItems ?? []).map((item) => {
+      const op = Object.keys(item)[0] as string;
+      const key = item[op] as {
+        Key?: { PK: { S: string } };
+        Item?: { PK: { S: string } };
+      };
+      return `${op}${(key.Key?.PK.S ?? key.Item?.PK.S ?? "").slice(0, 3)}`;
+    });
+    const count = (prefix: string) =>
+      kinds.filter((k) => k.endsWith(prefix)).length;
+    expect(count("EV|")).toBe(10);
+    expect(count("HB|")).toBe(10);
+    expect(count("FV|")).toBe(65);
+    expect(count("FT|")).toBe(1);
+    expect(tx?.TransactItems).toHaveLength(10 + 1 + 1 + 10 + 65 + 1);
+    expect(tx?.TransactItems.length).toBeLessThanOrEqual(100);
+  });
   it("removes only duplicate event puts after a real-shaped cancellation", async () => {
     let writes = 0,
       saved = row(3);
     const fetcher: typeof fetch = async (_url, init) => {
       const target = new Headers(init?.headers).get("x-amz-target");
       const body = JSON.parse(String(init?.body));
+      // No counter exists yet: the facet pre-read finds nothing.
+      if (target === "DynamoDB_20120810.BatchGetItem")
+        return Response.json({ Responses: { table: [] } });
       if (target === "DynamoDB_20120810.GetItem") {
         if (body.Key.PK.S === "META|schema")
           return Response.json({ Item: { projectTimeShards: { N: "4" } } });
@@ -100,7 +181,8 @@ describe("DynamoDB recordEvent", () => {
       }
       writes++;
       if (writes === 1) {
-        expect(body.TransactItems).toHaveLength(3);
+        // 2 events + issue + counters (one day item, the level value, the totals item).
+        expect(body.TransactItems).toHaveLength(6);
         return Response.json(
           {
             __type: "TransactionCanceledException",
@@ -116,7 +198,7 @@ describe("DynamoDB recordEvent", () => {
           { status: 400 },
         );
       }
-      expect(body.TransactItems).toHaveLength(2);
+      expect(body.TransactItems).toHaveLength(5);
       expect(
         body.TransactItems[1].Update.ExpressionAttributeValues[":increment"].N,
       ).toBe("1");
@@ -147,6 +229,9 @@ describe("DynamoDB recordEvent", () => {
     const fetcher: typeof fetch = async (_url, init) => {
       const target = new Headers(init?.headers).get("x-amz-target");
       const body = JSON.parse(String(init?.body));
+      // No counter exists yet: the facet pre-read finds nothing.
+      if (target === "DynamoDB_20120810.BatchGetItem")
+        return Response.json({ Responses: { table: [] } });
       if (target === "DynamoDB_20120810.GetItem") {
         if (body.Key.PK.S === "META|schema")
           return Response.json({ Item: { projectTimeShards: { N: "4" } } });
@@ -197,6 +282,9 @@ describe("DynamoDB recordEvent", () => {
     const fetcher: typeof fetch = async (_url, init) => {
       const target = new Headers(init?.headers).get("x-amz-target");
       const body = JSON.parse(String(init?.body));
+      // No counter exists yet: the facet pre-read finds nothing.
+      if (target === "DynamoDB_20120810.BatchGetItem")
+        return Response.json({ Responses: { table: [] } });
       if (target === "DynamoDB_20120810.GetItem") {
         if (body.Key.PK.S === "META|schema")
           return Response.json({ Item: { projectTimeShards: { N: "4" } } });
@@ -247,6 +335,9 @@ describe("DynamoDB recordEvent", () => {
     const fetcher: typeof fetch = async (_url, init) => {
       const target = new Headers(init?.headers).get("x-amz-target"),
         body = JSON.parse(String(init?.body));
+      // The facet pre-read is a batch read, not an issue reread.
+      if (target === "DynamoDB_20120810.BatchGetItem")
+        return Response.json({ Responses: { table: [] } });
       if (target === "DynamoDB_20120810.GetItem") {
         if (body.Key.PK.S === "META|schema")
           return Response.json({ Item: { projectTimeShards: { N: "4" } } });
@@ -296,6 +387,9 @@ describe("DynamoDB recordEvent", () => {
     const fetcher: typeof fetch = async (_url, init) => {
       const target = new Headers(init?.headers).get("x-amz-target");
       const body = JSON.parse(String(init?.body));
+      // No counter exists yet: the facet pre-read finds nothing.
+      if (target === "DynamoDB_20120810.BatchGetItem")
+        return Response.json({ Responses: { table: [] } });
       if (target === "DynamoDB_20120810.GetItem") {
         if (body.Key.PK.S === "META|schema")
           return Response.json({ Item: { projectTimeShards: { N: "4" } } });

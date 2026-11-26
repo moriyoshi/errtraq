@@ -44,6 +44,13 @@ export const whoamiSchema = z.object({
 export const issueStatusSchema = z.enum(["unresolved", "resolved", "ignored"]);
 export type IssueStatus = z.infer<typeof issueStatusSchema>;
 
+/** Sentry's `[unixSeconds, count]` points, keyed by period (`24h`, `14d`, `30d`). */
+export const statsSchema = z.record(
+  z.string(),
+  z.array(z.tuple([z.number(), z.number()])),
+);
+export type IssueStats = z.infer<typeof statsSchema>;
+
 export const issueSchema = z.object({
   id: z.string(),
   title: z.string(),
@@ -59,6 +66,9 @@ export const issueSchema = z.object({
   project: z
     .object({ id: z.string(), name: z.string(), slug: z.string() })
     .optional(),
+  stats: statsSchema.optional(),
+  /** errtraq labels the clock the buckets use (`receivedAt`). */
+  timeBasis: optionalString,
 });
 export type Issue = z.infer<typeof issueSchema>;
 
@@ -114,3 +124,24 @@ export const organizationsSchema = z.array(organizationSchema);
 export const projectsSchema = z.array(projectSchema);
 export const issuesSchema = z.array(issueSchema);
 export const eventsSchema = z.array(eventSchema);
+
+/**
+ * Tag facets. As in Sentry `totalValues` counts the events that carry the key; errtraq adds
+ * `uniqueValues` (distinct values), which other servers omit.
+ */
+export const tagValueSchema = z.object({
+  value: z.string(),
+  name: optionalString,
+  count: z.number(),
+});
+export type TagValue = z.infer<typeof tagValueSchema>;
+export const tagSchema = z.object({
+  key: z.string(),
+  name: z.string(),
+  totalValues: z.number().default(0),
+  uniqueValues: z.number().optional(),
+  topValues: z.array(tagValueSchema).default([]),
+});
+export type Tag = z.infer<typeof tagSchema>;
+export const tagsSchema = z.array(tagSchema);
+export const tagValuesSchema = z.array(tagValueSchema);

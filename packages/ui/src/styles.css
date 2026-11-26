@@ -274,7 +274,7 @@ select {
 
 .issue-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 5rem 4rem 9rem;
+  grid-template-columns: minmax(0, 1fr) 7.5rem 5rem 4rem 9rem;
   gap: 1rem;
   align-items: center;
   padding: 0.75rem 1rem;
@@ -603,6 +603,156 @@ select {
 .empty {
   padding: 2rem 0;
   text-align: center;
+}
+
+.spark {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  line-height: 1.2;
+}
+
+.spark svg {
+  display: block;
+  width: 96px;
+  height: 24px;
+}
+
+.spark-line {
+  stroke: var(--accent);
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+}
+
+.spark-base {
+  stroke: var(--line);
+  stroke-width: 1;
+}
+
+.issue-overview {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+  gap: 1rem;
+  margin: 1rem 0;
+  align-items: start;
+}
+
+.issue-overview:empty {
+  display: none;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.toggle {
+  margin: 0;
+  padding: 0;
+  display: inline-flex;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.toggle button {
+  border: 0;
+  background: var(--surface);
+  color: var(--ink);
+  padding: 0.2rem 0.7rem;
+  font: inherit;
+  cursor: pointer;
+}
+
+.toggle button + button {
+  border-left: 1px solid var(--line);
+}
+
+/* The pressed state is bold and underlined as well as filled, so colour is not the only cue. */
+.toggle button[aria-pressed="true"] {
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-weight: 700;
+  text-decoration: underline;
+}
+
+.bar-chart {
+  margin: 0;
+}
+
+.bar-chart svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-height: 160px;
+}
+
+.bar {
+  fill: var(--accent);
+}
+
+.bar-empty {
+  fill: var(--line);
+}
+
+.bar-axis {
+  stroke: var(--muted);
+  stroke-width: 1;
+}
+
+.bar-label {
+  fill: var(--muted);
+  font-size: 11px;
+}
+
+.tag-group + .tag-group {
+  margin-top: 0.9rem;
+}
+
+.tag-values {
+  list-style: none;
+  margin: 0.3rem 0 0.2rem;
+  padding: 0;
+}
+
+.tag-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+  font-size: 0.9rem;
+}
+
+.tag-value {
+  min-width: 0;
+}
+
+.tag-count {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.tag-bar {
+  height: 4px;
+  background: var(--line);
+  border-radius: 2px;
+  margin: 0.15rem 0 0.4rem;
+}
+
+.tag-bar span {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  border-radius: 2px;
+}
+
+@media (max-width: 800px) {
+  .issue-overview {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 @media (max-width: 640px) {

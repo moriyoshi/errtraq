@@ -13,6 +13,7 @@ import {
   useIssues,
   usePermissions,
 } from "../api/queries";
+import { Sparkline } from "../components/Charts";
 import { ErrorNotice, Level, Loading, Time } from "../components/common";
 import {
   type IssueSearch,
@@ -36,6 +37,8 @@ function Issues() {
     () => params().org,
     () => params().project,
     filter,
+    // Hourly sparkline points only when the store can serve them (never learned from a 400).
+    () => (permissions.capabilities().issueStats ? "24h" : undefined),
   );
   const rows = () => flatten(issues.data);
   const sentinel = createSentinel(issues);
@@ -126,7 +129,6 @@ function Issues() {
         <For each={rows()}>
           {(issue) => (
             <li class="issue-row">
-              {/* TODO(UI-d): count sparkline goes in this row once the API serves bucketed counts. */}
               <div class="issue-main">
                 <Link
                   to="/$org/$project/issues/$id"
@@ -136,6 +138,13 @@ function Issues() {
                   {issue.title}
                 </Link>
                 <div class="muted small ellipsis">{issue.culprit ?? ""}</div>
+              </div>
+              <div class="spark-cell">
+                <Show when={issue.stats?.["24h"]}>
+                  {(points) => (
+                    <Sparkline points={points()} period="24 hours" />
+                  )}
+                </Show>
               </div>
               <Level level={issue.level} />
               <div class="num" title="Events">

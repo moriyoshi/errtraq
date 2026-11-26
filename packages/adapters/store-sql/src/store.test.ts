@@ -153,7 +153,72 @@ describe("SQLite migrations and indexes", () => {
     await migrate(db, sqliteStoreDialect);
     await migrate(db, sqliteStoreDialect);
     const rows = await db.selectFrom("schema_version").selectAll().execute();
-    expect(rows.map((r) => r.version)).toEqual([1, 2, 3, 4, 5]);
+    expect(rows.map((r) => r.version)).toEqual([1, 2, 3, 4, 5, 6]);
+  });
+  it("adds the statistics tables at version 6 and serves top-N and ranges from indexes", async () => {
+    const db = database(":memory:");
+    await migrate(db, sqliteStoreDialect);
+    const plan = async (query: string) =>
+      (await sql.raw(`explain query plan ${query}`).execute(db)).rows
+        .map((row) => String((row as { detail: string }).detail))
+        .join("\n");
+    // Top-N: ordered straight off issue_tag_top, no temporary sort.
+    const top = await plan(
+      `select tag_value, count from issue_tag_counts where project_id = '1' and issue_id = 'i' and tag_key = 'level' order by count desc, tag_value asc limit 5`,
+    );
+    expect(top).toContain("issue_tag_top");
+    expect(top).not.toMatch(/TEMP B-TREE/);
+    const range = await plan(
+      `select hour, count from issue_stats_hourly where project_id = '1' and issue_id in ('a') and hour >= 'x' and hour < 'y' order by issue_id, hour`,
+    );
+    expect(range).toMatch(/issue_stats_hourly_pk|autoindex/i);
+    expect(range).not.toMatch(/SCAN issue_stats_hourly/);
+    const sweep = await plan(
+      `select issue_id, hour from issue_stats_hourly where project_id = '1' and hour < 'x' limit 5`,
+    );
+    expect(sweep).toContain("issue_stats_hour");
+  });
+  it("upgrades a version five database with counters starting at zero", async () => {
+    const db = database(":memory:");
+    await migrate(db, sqliteStoreDialect);
+    await sql`drop table issue_stats_hourly`.execute(db);
+    await sql`drop table issue_tag_counts`.execute(db);
+    await sql`drop table issue_tag_totals`.execute(db);
+    await db.deleteFrom("schema_version").where("version", "=", 6).execute();
+    const store = createSqlStore({ db, dialect: sqliteStoreDialect });
+    await store.migrate();
+    const at = "2024-03-10T12:00:00.000Z" as Timestamp;
+    await store.recordEvent(
+      {
+        projectId: "1" as never,
+        issueId: "i" as never,
+        eventId: "e" as never,
+        fingerprint: "i",
+        receivedAt: at,
+        timestamp: at,
+        title: "t",
+        culprit: "c",
+        level: "error",
+        type: "Error",
+        metadata: {},
+      },
+      {
+        projectId: "1" as never,
+        issueId: "i" as never,
+        eventId: "e" as never,
+        receivedAt: at,
+        timestamp: at,
+        level: "error",
+        tags: {},
+        payload: {},
+      },
+    );
+    expect(
+      await store.stats?.series("1" as never, ["i" as never], {
+        from: at,
+        to: "2024-03-10T13:00:00.000Z" as Timestamp,
+      }),
+    ).toEqual([{ issueId: "i", buckets: [{ hour: at, count: 1 }] }]);
   });
   it("upgrades version one and rejects newer schemas", async () => {
     const db = database(":memory:");
@@ -172,7 +237,7 @@ describe("SQLite migrations and indexes", () => {
           .orderBy("version")
           .execute()
       ).map((r) => r.version),
-    ).toEqual([1, 2, 3, 4, 5]);
+    ).toEqual([1, 2, 3, 4, 5, 6]);
     await db.insertInto("schema_version").values({ version: 7 }).execute();
     await expect(migrate(db, sqliteStoreDialect)).rejects.toMatchObject({
       name: "UnsupportedSchemaVersionError",

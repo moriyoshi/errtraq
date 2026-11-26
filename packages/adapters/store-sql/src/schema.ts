@@ -6,6 +6,8 @@ export type SqlDatabase = Kysely<
   Record<string, Record<string, string | number | null>>
 >;
 
+const LATEST_VERSION = 6;
+
 /** Apply numbered migrations transactionally; reject databases newer than this code. */
 export async function migrate(
   db: SqlDatabase,
@@ -42,7 +44,7 @@ async function migrateLocked(
     .select("version")
     .orderBy("version", "desc")
     .executeTakeFirst();
-  if (Number(latest?.version ?? 0) > 5)
+  if (Number(latest?.version ?? 0) > LATEST_VERSION)
     throw new UnsupportedSchemaVersionError(
       `Unsupported schema version ${String(latest?.version)}`,
     );
@@ -120,6 +122,12 @@ async function migrateLocked(
         await dialect.createIndex(db, "tokens_org", "tokens", ["scope", "pk"]);
       },
     },
+    {
+      version: 6,
+      // UI-d: per-issue hourly counts and allow-listed tag facets, written by the record
+      // transaction. Counters start at zero for issues that existed before this version.
+      run: (db: SqlDatabase) => createStatsSchema(db, dialect),
+    },
   ];
   for (const step of steps) {
     const run = async (trx: SqlDatabase) => {
@@ -129,7 +137,7 @@ async function migrateLocked(
         .orderBy("version", "desc")
         .executeTakeFirst();
       const version = Number(current?.version ?? 0);
-      if (version > 5)
+      if (version > LATEST_VERSION)
         throw new UnsupportedSchemaVersionError(
           `Unsupported schema version ${version}`,
         );
@@ -315,4 +323,68 @@ export async function upgradeIndexes(
     "project_id",
     "pk",
   ]);
+}
+
+/** Version 6: hourly buckets, tag-value counters and the per-key totals that avoid a value scan. */
+export async function createStatsSchema(
+  db: SqlDatabase,
+  dialect: SqlStoreDialect,
+): Promise<void> {
+  const { keyType, integerType } = dialect;
+  await db.schema
+    .createTable("issue_stats_hourly")
+    .ifNotExists()
+    .addColumn("project_id", keyType, (c) => c.notNull())
+    .addColumn("issue_id", keyType, (c) => c.notNull())
+    .addColumn("hour", keyType, (c) => c.notNull())
+    .addColumn("count", integerType, (c) => c.notNull())
+    // The primary key serves the bucket range of one issue.
+    .addPrimaryKeyConstraint("issue_stats_hourly_pk", [
+      "project_id",
+      "issue_id",
+      "hour",
+    ])
+    .execute();
+  // Retention sweeps one project's expired buckets by hour.
+  await dialect.createIndex(db, "issue_stats_hour", "issue_stats_hourly", [
+    "project_id",
+    "hour",
+  ]);
+  await db.schema
+    .createTable("issue_tag_counts")
+    .ifNotExists()
+    .addColumn("project_id", keyType, (c) => c.notNull())
+    .addColumn("issue_id", keyType, (c) => c.notNull())
+    .addColumn("tag_key", keyType, (c) => c.notNull())
+    .addColumn("tag_value", keyType, (c) => c.notNull())
+    .addColumn("count", integerType, (c) => c.notNull())
+    .addPrimaryKeyConstraint("issue_tag_counts_pk", [
+      "project_id",
+      "issue_id",
+      "tag_key",
+      "tag_value",
+    ])
+    .execute();
+  // Top-N and the value pager read this index in order; no value scan.
+  await dialect.createIndex(db, "issue_tag_top", "issue_tag_counts", [
+    "project_id",
+    "issue_id",
+    "tag_key",
+    "count desc",
+    "tag_value asc",
+  ]);
+  await db.schema
+    .createTable("issue_tag_totals")
+    .ifNotExists()
+    .addColumn("project_id", keyType, (c) => c.notNull())
+    .addColumn("issue_id", keyType, (c) => c.notNull())
+    .addColumn("tag_key", keyType, (c) => c.notNull())
+    .addColumn("total_values", integerType, (c) => c.notNull())
+    .addColumn("total_count", integerType, (c) => c.notNull())
+    .addPrimaryKeyConstraint("issue_tag_totals_pk", [
+      "project_id",
+      "issue_id",
+      "tag_key",
+    ])
+    .execute();
 }

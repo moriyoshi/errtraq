@@ -3,17 +3,24 @@ import {
   type ApiToken,
   type ArchiveState,
   type ArtifactBundle,
+  assertFacetKey,
+  assertFacetLimit,
+  assertStatsRange,
   bundleDebugIdsDigest,
   type Clock,
   ConflictError,
   type ErasureRequest,
+  FACET_KEYS,
+  type FacetKey,
   type Issue,
+  type IssueStatsRepo,
   NotFoundError,
   type Org,
   type Project,
   type ProjectKey,
   type Release,
   type StoredEvent,
+  statsIncrements,
   summarizeApiToken,
   UnsupportedQueryError,
   VersionConflictError,
@@ -21,12 +28,19 @@ import {
 } from "@moriyoshi/errtraq-core";
 import { compareKeys, copy, eventOrder, eventPage, page } from "./shared.js";
 
+const compareUtf8 = (a: string, b: string) => compareKeys([a], [b]);
+
+export interface MemoryActiveStoreOptions {
+  /** Declare hourly statistics and tag facets unsupported (the repo then rejects). Default true. */
+  stats?: boolean;
+}
+
 export class MemoryActiveStore implements ActiveStore {
-  readonly capabilities = {
-    lastSeenRangeOnOtherSort: false,
-    textSearch: false,
-    recordEvents: true,
-  };
+  readonly capabilities: ActiveStore["capabilities"];
+  /** project|issue -> UTC hour start -> count. */
+  private hourly = new Map<string, Map<string, number>>();
+  /** project|issue|key -> value -> count. */
+  private facets = new Map<string, Map<string, number>>();
   private orgs = new Map<string, Org>();
   private projectRows = new Map<string, Project>();
   private keys = new Map<string, ProjectKey>();
@@ -44,7 +58,17 @@ export class MemoryActiveStore implements ActiveStore {
   constructor(
     private readonly ttlClock?: Clock,
     deleteStrategy: "explicit" | "ttl" = "explicit",
+    options: MemoryActiveStoreOptions = {},
   ) {
+    const statsOn = options.stats ?? true;
+    this.capabilities = {
+      lastSeenRangeOnOtherSort: false,
+      textSearch: false,
+      recordEvents: true,
+      issueStats: statsOn,
+      tagFacets: statsOn,
+    };
+    this.stats = this.createStats(statsOn);
     if (deleteStrategy === "ttl" && !ttlClock)
       throw new Error("TTL store needs a clock");
     this.events.capabilities.deleteStrategy = deleteStrategy;
@@ -243,6 +267,7 @@ export class MemoryActiveStore implements ActiveStore {
     }
     this.issueRows.set(key, issue);
     this.eventRows.set(eventKey, eventCopy);
+    this.count(event);
     return {
       inserted: true,
       issue: copy(issue),
@@ -250,6 +275,110 @@ export class MemoryActiveStore implements ActiveStore {
       isRegression: !!isRegression,
     };
   };
+
+  private count(event: StoredEvent): void {
+    // One event per call here; a group aggregates the same way, adapters write per distinct item.
+    const increments = statsIncrements([event]);
+    const issue = this.key(event.projectId, event.issueId);
+    const hours = this.hourly.get(issue) ?? new Map<string, number>();
+    for (const { hour, count } of increments.hours)
+      hours.set(hour, (hours.get(hour) ?? 0) + count);
+    this.hourly.set(issue, hours);
+    for (const { key, value, count } of increments.facets) {
+      const id = this.key(event.projectId, event.issueId, key);
+      const values = this.facets.get(id) ?? new Map<string, number>();
+      values.set(value, (values.get(value) ?? 0) + count);
+      this.facets.set(id, values);
+    }
+  }
+  private snapshotStats(): [
+    Map<string, Map<string, number>>,
+    Map<string, Map<string, number>>,
+  ] {
+    const clone = (m: Map<string, Map<string, number>>) =>
+      new Map([...m].map(([k, v]) => [k, new Map(v)]));
+    return [clone(this.hourly), clone(this.facets)];
+  }
+  private createStats(enabled: boolean): IssueStatsRepo {
+    const unsupported = () => {
+      throw new UnsupportedQueryError("Statistics are not supported");
+    };
+    const ranked = (projectId: string, issueId: string, key: FacetKey) =>
+      [...(this.facets.get(this.key(projectId, issueId, key)) ?? [])]
+        .map(([value, count]) => ({ value, count }))
+        .sort((a, b) => b.count - a.count || compareUtf8(a.value, b.value));
+    return {
+      expiry: "explicit",
+      series: async (projectId, issueIds, range) => {
+        if (!enabled) unsupported();
+        assertStatsRange(issueIds, range);
+        const seen = new Set<string>();
+        const out = [];
+        for (const issueId of issueIds) {
+          if (seen.has(issueId)) continue;
+          seen.add(issueId);
+          const buckets = [
+            ...(this.hourly.get(this.key(projectId, issueId)) ?? []),
+          ]
+            .filter(([hour]) => hour >= range.from && hour < range.to)
+            .map(([hour, count]) => ({ hour: hour as never, count }))
+            .sort((a, b) => compareUtf8(a.hour, b.hour));
+          out.push({ issueId, buckets });
+        }
+        return out;
+      },
+      tagFacets: async (projectId, issueId, options) => {
+        if (!enabled) unsupported();
+        assertFacetLimit(options.limit);
+        const out = [];
+        for (const key of FACET_KEYS) {
+          const all = ranked(projectId, issueId, key);
+          if (!all.length) continue;
+          out.push({
+            key,
+            totalValues: all.length,
+            totalCount: all.reduce((sum, row) => sum + row.count, 0),
+            topValues: all.slice(0, options.limit),
+          });
+        }
+        return out;
+      },
+      tagValues: async (projectId, issueId, key, options) => {
+        if (!enabled) unsupported();
+        assertFacetKey(key);
+        return page(
+          ranked(projectId, issueId, key),
+          options?.cursor,
+          options?.limit,
+          (row) => [row.count, row.value],
+          JSON.stringify(["tag-values", projectId, issueId, key]),
+          (a, b) =>
+            -compareKeys([a[0] ?? 0], [b[0] ?? 0]) ||
+            compareKeys([a[1] ?? ""], [b[1] ?? ""]),
+        );
+      },
+      deleteBefore: async (projectId, cutoff, options) => {
+        if (!enabled) unsupported();
+        const limit = options?.limit ?? 500;
+        let deleted = 0;
+        let more = false;
+        for (const [id, hours] of this.hourly) {
+          if (JSON.parse(id)[0] !== projectId) continue;
+          for (const hour of [...hours.keys()].sort()) {
+            if (hour >= cutoff) break;
+            if (deleted >= limit) {
+              more = true;
+              break;
+            }
+            hours.delete(hour);
+            deleted++;
+          }
+        }
+        return { deleted, hasMore: more };
+      },
+    };
+  }
+  stats: IssueStatsRepo;
 
   recordEvent: ActiveStore["recordEvent"] = async (occurrence, event) =>
     this.recordOne(occurrence, event);
@@ -274,7 +403,8 @@ export class MemoryActiveStore implements ActiveStore {
       copy(event);
     }
     const oldIssues = new Map(this.issueRows),
-      oldEvents = new Map(this.eventRows);
+      oldEvents = new Map(this.eventRows),
+      oldStats = this.snapshotStats();
     try {
       const results = group.map(({ occurrence, event }) =>
         this.recordOne(occurrence, event),
@@ -292,6 +422,7 @@ export class MemoryActiveStore implements ActiveStore {
     } catch (error) {
       this.issueRows = oldIssues;
       this.eventRows = oldEvents;
+      [this.hourly, this.facets] = oldStats;
       throw error;
     }
   };

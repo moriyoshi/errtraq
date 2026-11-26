@@ -29,4 +29,5 @@ export * from "./record-handler.js";
 export * from "./recover-ingest.js";
 export * from "./retention.js";
 export * from "./stack.js";
+export * from "./stats.js";
 export * from "./symbolication.js";

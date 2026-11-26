@@ -431,9 +431,8 @@ export function addReleaseRoutes(
           textSearch: store.capabilities.textSearch,
           lastSeenRangeOnOtherSort: store.capabilities.lastSeenRangeOnOtherSort,
           archive: options.archiveConfigured === true,
-          // TODO(UI-d): bucketed counts and tag facets need new port behaviour.
-          issueStats: false,
-          tagFacets: false,
+          issueStats: !!store.stats && store.capabilities.issueStats === true,
+          tagFacets: !!store.stats && store.capabilities.tagFacets === true,
         },
       },
     });

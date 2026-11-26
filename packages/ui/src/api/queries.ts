@@ -17,6 +17,9 @@ import {
   issuesSchema,
   organizationsSchema,
   projectsSchema,
+  tagSchema,
+  tagsSchema,
+  tagValuesSchema,
   whoamiSchema,
 } from "./schemas";
 
@@ -26,11 +29,18 @@ export const keys = {
   whoami: ["whoami"] as const,
   orgs: ["organizations"] as const,
   projects: (org: string) => ["projects", org] as const,
-  issues: (org: string, project: string, filter: IssueFilter) =>
-    ["issues", org, project, filter] as const,
+  issues: (
+    org: string,
+    project: string,
+    filter: IssueFilter,
+    statsPeriod?: string,
+  ) => ["issues", org, project, filter, statsPeriod ?? ""] as const,
   issue: (id: string) => ["issue", id] as const,
   event: (issueId: string, which: string) => ["event", issueId, which] as const,
   events: (issueId: string) => ["events", issueId] as const,
+  tags: (issueId: string) => ["tags", issueId] as const,
+  tagValues: (issueId: string, key: string) =>
+    ["tag-values", issueId, key] as const,
 };
 
 export interface IssueFilter {
@@ -92,9 +102,11 @@ export function useIssues(
   org: Accessor<string>,
   project: Accessor<string>,
   filter: Accessor<IssueFilter>,
+  /** `"24h"` asks for hourly sparkline points; only for stores that report `issueStats`. */
+  statsPeriod: Accessor<"24h" | undefined> = () => undefined,
 ) {
   return useInfiniteQuery(() => ({
-    queryKey: keys.issues(org(), project(), filter()),
+    queryKey: keys.issues(org(), project(), filter(), statsPeriod()),
     initialPageParam: "",
     queryFn: ({ pageParam, signal }) => {
       const f = filter();
@@ -107,6 +119,7 @@ export function useIssues(
             sort: f.sort,
             limit: PAGE_SIZE,
             cursor: pageParam,
+            statsPeriod: statsPeriod(),
           },
           signal,
         },
@@ -121,6 +134,43 @@ export function useIssue(id: Accessor<string>) {
     queryKey: keys.issue(id()),
     queryFn: ({ signal }) =>
       api.get(`/api/0/issues/${enc(id())}/`, issueSchema, { signal }),
+  }));
+}
+
+/** Tag facets of one issue (top values per allow-listed key). */
+export function useTags(issueId: Accessor<string>, enabled: Accessor<boolean>) {
+  return useQuery(() => ({
+    queryKey: keys.tags(issueId()),
+    enabled: enabled(),
+    queryFn: ({ signal }) =>
+      api.get(`/api/0/issues/${enc(issueId())}/tags/`, tagsSchema, { signal }),
+  }));
+}
+
+export function useTag(issueId: Accessor<string>, key: Accessor<string>) {
+  return useQuery(() => ({
+    queryKey: [...keys.tags(issueId()), key()] as const,
+    queryFn: ({ signal }) =>
+      api.get(
+        `/api/0/issues/${enc(issueId())}/tags/${enc(key())}/`,
+        tagSchema,
+        { signal },
+      ),
+  }));
+}
+
+/** All values of one tag key, paged by cursor. */
+export function useTagValues(issueId: Accessor<string>, key: Accessor<string>) {
+  return useInfiniteQuery(() => ({
+    queryKey: keys.tagValues(issueId(), key()),
+    initialPageParam: "",
+    queryFn: ({ pageParam, signal }) =>
+      api.page(
+        `/api/0/issues/${enc(issueId())}/tags/${enc(key())}/values/`,
+        tagValuesSchema,
+        { query: { limit: PAGE_SIZE, cursor: pageParam }, signal },
+      ),
+    getNextPageParam: (last) => last.next,
   }));
 }
 

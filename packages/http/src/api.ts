@@ -10,6 +10,7 @@ import {
   type Cursor,
   type EventId,
   EventQueryService,
+  type FacetKey,
   hashApiToken,
   type IdGen,
   InvalidCursorError,
@@ -17,8 +18,10 @@ import {
   type Issue,
   type IssueId,
   type IssueStatus,
+  isFacetKey,
   type KV,
   type Logger,
+  MAX_FACET_TOP_VALUES,
   NotFoundError,
   type Project,
   type RateRejectionConfig,
@@ -42,6 +45,16 @@ import {
 } from "./api-mappers.js";
 import { logUnexpected } from "./errors.js";
 import { addReleaseRoutes } from "./release-routes.js";
+import {
+  facetJson,
+  LIST_STATS_PERIODS,
+  type PeriodWindow,
+  periodWindow,
+  type StatsPeriod,
+  storeRange,
+  tagValueJson,
+  zeroFill,
+} from "./stats.js";
 
 type Env = ApiEnv;
 const statuses = ["unresolved", "resolved", "ignored"] as const;
@@ -151,6 +164,47 @@ export function createApiApp(options: {
       previousEventID: previous?.eventId ?? null,
       nextEventID: next?.eventId ?? null,
     };
+  }
+  /** The statistics repo, or the 400 a store without the capability gives. */
+  function statsRepo(
+    capability: "issueStats" | "tagFacets",
+  ): NonNullable<ActiveStore["stats"]> {
+    if (!store.stats || !store.capabilities[capability])
+      throw new UnsupportedQueryError(
+        capability === "issueStats"
+          ? "Issue statistics are not supported by this store"
+          : "Tag facets are not supported by this store",
+      );
+    return store.stats;
+  }
+  /** `statsPeriod` on the issue list: absent or empty means none; 24h and 14d only. */
+  function listStatsPeriod(value: string | undefined): StatsPeriod | undefined {
+    if (value === undefined || value === "") return undefined;
+    if (!(LIST_STATS_PERIODS as readonly string[]).includes(value))
+      throw new UnsupportedQueryError(
+        `Unsupported statsPeriod: ${value} (use 24h or 14d)`,
+      );
+    statsRepo("issueStats");
+    return value as StatsPeriod;
+  }
+  async function issueSeries(
+    projectId: Issue["projectId"],
+    issueIds: IssueId[],
+    windows: PeriodWindow[],
+  ) {
+    const rows = await statsRepo("issueStats").series(
+      projectId,
+      issueIds,
+      storeRange(windows),
+    );
+    return new Map(
+      rows.map((row) => [
+        row.issueId,
+        Object.fromEntries(
+          windows.map((w) => [w.period, zeroFill(row.buckets, w)]),
+        ),
+      ]),
+    );
   }
   async function renderIssue(issue: Issue, origin: string) {
     const project = await store.projects.get(issue.projectId);
@@ -333,6 +387,7 @@ export function createApiApp(options: {
       throw new UnsupportedQueryError("Unsupported status");
     if (!["lastSeen", "firstSeen", "count"].includes(sort))
       throw new UnsupportedQueryError("Unsupported sort");
+    const statsPeriod = listStatsPeriod(c.req.query("statsPeriod"));
     const page = await store.issues.list({
       projectId: p.id,
       status: status as IssueStatus | undefined,
@@ -341,11 +396,20 @@ export function createApiApp(options: {
       limit: size(c.req.query("limit") ?? c.req.query("per_page")),
     });
     link(c, page.nextCursor);
+    // One batched statistics call for the whole page.
+    const stats = statsPeriod
+      ? await issueSeries(
+          p.id,
+          page.items.map((issue) => issue.id),
+          [periodWindow(statsPeriod, Date.parse(clock.now()))],
+        )
+      : undefined;
     return c.json(
       await Promise.all(
-        page.items.map((issue) =>
-          renderIssue(issue, new URL(c.req.url).origin),
-        ),
+        page.items.map(async (issue) => ({
+          ...(await renderIssue(issue, new URL(c.req.url).origin)),
+          ...(stats ? { stats: stats.get(issue.id) ?? {} } : {}),
+        })),
       ),
     );
   }
@@ -446,9 +510,63 @@ export function createApiApp(options: {
   });
   app.get("/api/0/issues/:id", async (c) => {
     const issue = await scopedIssue(c.req.param("id"), c.get("token"));
-    return issue
-      ? c.json(await renderIssue(issue, new URL(c.req.url).origin))
-      : c.json({ detail: "Not found" }, 404);
+    if (!issue) return c.json({ detail: "Not found" }, 404);
+    const rendered = await renderIssue(issue, new URL(c.req.url).origin);
+    if (!store.stats || !store.capabilities.issueStats) return c.json(rendered);
+    const now = Date.parse(clock.now());
+    const stats = await issueSeries(
+      issue.projectId,
+      [issue.id],
+      [periodWindow("24h", now), periodWindow("30d", now)],
+    );
+    return c.json({
+      ...rendered,
+      stats: stats.get(issue.id) ?? {},
+      timeBasis: "receivedAt" as const,
+    });
+  });
+  // Tag facets over a fixed allow-list of keys (never personal data); see IssueStatsRepo.
+  app.get("/api/0/issues/:id/tags", async (c) => {
+    allowed(c, []);
+    const issue = await scopedIssue(c.req.param("id"), c.get("token"));
+    if (!issue) return c.json({ detail: "Not found" }, 404);
+    const facets = await statsRepo("tagFacets").tagFacets(
+      issue.projectId,
+      issue.id,
+      { limit: MAX_FACET_TOP_VALUES },
+    );
+    return c.json(facets.map(facetJson));
+  });
+  app.get("/api/0/issues/:id/tags/:key", async (c) => {
+    allowed(c, []);
+    const key = c.req.param("key");
+    if (!isFacetKey(key)) return c.json({ detail: "Not found" }, 404);
+    const issue = await scopedIssue(c.req.param("id"), c.get("token"));
+    if (!issue) return c.json({ detail: "Not found" }, 404);
+    const facets = await statsRepo("tagFacets").tagFacets(
+      issue.projectId,
+      issue.id,
+      { limit: MAX_FACET_TOP_VALUES },
+    );
+    return c.json(facetJson(facets.find((f) => f.key === key) ?? { key }));
+  });
+  app.get("/api/0/issues/:id/tags/:key/values", async (c) => {
+    allowed(c, ["cursor", "limit", "per_page"]);
+    const key = c.req.param("key");
+    if (!isFacetKey(key)) return c.json({ detail: "Not found" }, 404);
+    const issue = await scopedIssue(c.req.param("id"), c.get("token"));
+    if (!issue) return c.json({ detail: "Not found" }, 404);
+    const page = await statsRepo("tagFacets").tagValues(
+      issue.projectId,
+      issue.id,
+      key as FacetKey,
+      {
+        cursor: (c.req.query("cursor") || undefined) as Cursor | undefined,
+        limit: size(c.req.query("limit") ?? c.req.query("per_page")),
+      },
+    );
+    link(c, page.nextCursor);
+    return c.json(page.items.map((v) => tagValueJson(key, v)));
   });
   /** The `{ status }` body shared by the single and bulk update; a Response is the 400. */
   async function statusBody(

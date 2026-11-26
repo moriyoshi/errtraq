@@ -1,6 +1,11 @@
 import { createRouter } from "@tanstack/solid-router";
 import { parseSearch, stringifySearch } from "./lib/search";
-import { issueEventRoute, issueEventsRoute, issueRoute } from "./routes/issue";
+import {
+  issueEventRoute,
+  issueEventsRoute,
+  issueRoute,
+  issueTagRoute,
+} from "./routes/issue";
 import { issuesRoute } from "./routes/issues";
 import { loginRoute } from "./routes/login";
 import { organizationsRoute, projectsRoute } from "./routes/organizations";
@@ -13,7 +18,7 @@ const routeTree = rootRoute.addChildren([
     organizationsRoute,
     projectsRoute,
     issuesRoute,
-    issueRoute.addChildren([issueEventRoute, issueEventsRoute]),
+    issueRoute.addChildren([issueEventRoute, issueEventsRoute, issueTagRoute]),
   ]),
 ]);
 

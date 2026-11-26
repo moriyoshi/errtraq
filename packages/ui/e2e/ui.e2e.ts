@@ -55,6 +55,64 @@ test("lists issues, filters by status and sorts via the URL", async ({
   await expect(page.getByText("No resolved issues.")).toBeVisible();
 });
 
+test("draws a sparkline per issue row from the 24h statistics", async ({
+  page,
+}) => {
+  await login(page);
+  const row = page.locator(".issue-row", { hasText: "checkout failed" });
+  const spark = row.getByTestId("sparkline");
+  await expect(spark).toBeVisible();
+  // The text alternative and the printed total carry the numbers, not colour.
+  await expect(spark.getByRole("img")).toHaveAttribute(
+    "aria-label",
+    /3 events in the last 24 hours/,
+  );
+  await expect(spark.locator(".spark-total")).toHaveText("3 / 24 hours");
+  await expect(spark.locator("polyline")).toHaveAttribute("points", /\d/);
+  await expect(
+    page
+      .locator(".issue-row", { hasText: "inventory out of range" })
+      .getByTestId("sparkline")
+      .locator(".spark-total"),
+  ).toHaveText("1 / 24 hours");
+});
+
+test("shows the histogram and the tags panel on the issue page", async ({
+  page,
+}) => {
+  await login(page);
+  await page.getByRole("link", { name: /checkout failed/ }).click();
+  const chart = page.getByTestId("bar-chart");
+  await expect(chart).toBeVisible();
+  await expect(chart.getByRole("img")).toHaveAttribute(
+    "aria-label",
+    /Last 24 hours: 3 events/,
+  );
+  await expect(chart.locator("rect.bar")).toHaveCount(24);
+  await page.getByRole("button", { name: "30d" }).click();
+  await expect(page.getByRole("button", { name: "30d" })).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+  await expect(chart.locator("rect.bar")).toHaveCount(30);
+  await expect(chart.getByRole("img")).toHaveAttribute(
+    "aria-label",
+    /Last 30 days: 3 events/,
+  );
+  const tags = page.getByTestId("tags-panel");
+  await expect(tags).toBeVisible();
+  await expect(tags).toContainText("Environment");
+  await expect(tags).toContainText("e2e");
+  await expect(tags).toContainText("ui-e2e@1.0.0");
+  await expect(tags).toContainText("Level");
+  // Never personal data: the seed sets no user tags and none may appear.
+  await expect(tags).not.toContainText(/user/i);
+  await tags.getByRole("link", { name: "Environment" }).click();
+  await expect(page).toHaveURL(/\/tags\/environment$/);
+  await expect(page.locator(".tag-values-table tbody tr")).toHaveCount(1);
+  await expect(page.locator(".tag-values-table tbody tr")).toContainText("e2e");
+});
+
 test("shows the stack trace and navigates between events", async ({ page }) => {
   await login(page);
   await page.getByRole("link", { name: /checkout failed/ }).click();

@@ -846,7 +846,7 @@ describe("releases API", () => {
     expect(await (await t.call("/api/0/")).json()).toMatchObject({
       auth: { scopes: ["event:read", "event:write"] },
       user: null,
-      errtraq: { capabilities: { issueStats: false, tagFacets: false } },
+      errtraq: { capabilities: { issueStats: true, tagFacets: true } },
     });
   });
 });

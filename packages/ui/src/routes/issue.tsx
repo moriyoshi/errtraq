@@ -17,10 +17,16 @@ import {
   useEvents,
   useIssue,
   usePermissions,
+  useTag,
+  useTags,
+  useTagValues,
 } from "../api/queries";
 import type { Issue, IssueStatus } from "../api/schemas";
+import { IssueHistogram } from "../components/Charts";
 import { ErrorNotice, Level, Loading, Time } from "../components/common";
 import { EventView } from "../components/EventView";
+import { TagsPanel } from "../components/TagsPanel";
+import { percentLabel } from "../lib/series";
 import { authedRoute } from "./root";
 
 const ACTIONS: Record<string, { label: string; to: IssueStatus }[]> = {
@@ -107,6 +113,39 @@ function IssueHeader(props: { issue: Issue; org: string; project: string }) {
   );
 }
 
+/** The histogram and tag facets, each shown only when the store serves them. */
+function IssueOverview(props: { issue: Issue; org: string; project: string }) {
+  const permissions = usePermissions();
+  const tags = useTags(
+    () => props.issue.id,
+    () => permissions.capabilities().tagFacets,
+  );
+  return (
+    <div class="issue-overview">
+      <Show when={props.issue.stats}>
+        {(stats) => <IssueHistogram stats={stats()} />}
+      </Show>
+      <Show when={permissions.capabilities().tagFacets}>
+        <Show when={tags.isError}>
+          <ErrorNotice error={tags.error} retry={() => tags.refetch()} />
+        </Show>
+        <Show when={tags.data}>
+          {(data) => (
+            <TagsPanel
+              tags={data()}
+              base={{
+                org: props.org,
+                project: props.project,
+                id: props.issue.id,
+              }}
+            />
+          )}
+        </Show>
+      </Show>
+    </div>
+  );
+}
+
 function IssueLayout() {
   const params = useParams({ from: "/authed/$org/$project/issues/$id" });
   const issue = useIssue(() => params().id);
@@ -122,6 +161,11 @@ function IssueLayout() {
         {(data) => (
           <>
             <IssueHeader
+              issue={data()}
+              org={params().org}
+              project={params().project}
+            />
+            <IssueOverview
               issue={data()}
               org={params().org}
               project={params().project}
@@ -335,4 +379,96 @@ export const issueEventsRoute = createRoute({
   getParentRoute: () => issueRoute,
   path: "/events",
   component: IssueEvents,
+});
+
+function TagValues() {
+  const params = useParams({
+    from: "/authed/$org/$project/issues/$id/tags/$key",
+  });
+  const tag = useTag(
+    () => params().id,
+    () => params().key,
+  );
+  const values = useTagValues(
+    () => params().id,
+    () => params().key,
+  );
+  const rows = () => flatten(values.data);
+  const sentinel = createSentinel(values);
+  return (
+    <>
+      <p>
+        <Link
+          to="/$org/$project/issues/$id"
+          params={{
+            org: params().org,
+            project: params().project,
+            id: params().id,
+          }}
+        >
+          Back to the issue
+        </Link>
+      </p>
+      <h2>{tag.data?.name ?? params().key} values</h2>
+      <Show when={values.isError}>
+        <ErrorNotice error={values.error} retry={() => values.refetch()} />
+      </Show>
+      <Show when={values.isPending}>
+        <Loading />
+      </Show>
+      <Show
+        when={
+          values.isSuccess &&
+          rows().length === 0 &&
+          !values.hasNextPage &&
+          !values.isFetching
+        }
+      >
+        <p class="muted empty">No values counted.</p>
+      </Show>
+      <div class="scroll-x">
+        <table class="table tag-values-table">
+          <thead>
+            <tr>
+              <th>Value</th>
+              <th class="num">Events</th>
+              <th class="num">Share</th>
+            </tr>
+          </thead>
+          <tbody>
+            <For each={rows()}>
+              {(row) => (
+                <tr>
+                  <td class="wrap mono">{row.value}</td>
+                  <td class="num">{row.count}</td>
+                  <td class="num">
+                    {percentLabel(row.count, tag.data?.totalValues ?? 0)}
+                  </td>
+                </tr>
+              )}
+            </For>
+          </tbody>
+        </table>
+      </div>
+      <div ref={sentinel} class="sentinel" aria-hidden="true" />
+      <Show when={values.isFetchingNextPage}>
+        <Loading label="Loading more…" />
+      </Show>
+      <Show when={values.hasNextPage && !values.isFetching}>
+        <button
+          type="button"
+          class="link"
+          onClick={() => values.fetchNextPage()}
+        >
+          Load more
+        </button>
+      </Show>
+    </>
+  );
+}
+
+export const issueTagRoute = createRoute({
+  getParentRoute: () => issueRoute,
+  path: "/tags/$key",
+  component: TagValues,
 });

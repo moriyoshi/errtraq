@@ -2,7 +2,7 @@ import { bootstrapDeployed, hashApiToken } from "@moriyoshi/errtraq-core";
 import { activeStoreContract, MemoryKV } from "@moriyoshi/errtraq-testing";
 import { Kysely, sql } from "kysely";
 import pg from "pg";
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, describe, expect, it } from "vitest";
 import { ensureIamUser } from "./postgres-admin.js";
 import {
   postgresDialect,
@@ -34,8 +34,13 @@ suite("Postgres", () => {
     databases.push(db);
     return { db, name };
   }
+  // Each contract case opens its own pool; close them as the case ends so the many cases
+  // together never exceed the server's connection limit.
+  afterEach(async () => {
+    for (const db of databases.splice(0)) await db.destroy();
+  });
   afterAll(async () => {
-    for (const db of databases) await db.destroy();
+    for (const db of databases.splice(0)) await db.destroy();
     for (const schema of schemas)
       await admin.query(`drop schema "${schema}" cascade`);
     await admin.end();

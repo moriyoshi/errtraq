@@ -18,6 +18,7 @@ import type {
 import { recoverStagedEnvelopes } from "./recover-ingest.js";
 import { deleteExpiredEvents } from "./retention.js";
 import { CRON_JOBS } from "./stack-model.js";
+import { deleteExpiredStats } from "./stats.js";
 
 /** Job registry: known jobs acknowledge after logging until implementations land. */
 export function createCronHandler(
@@ -36,7 +37,7 @@ export function createCronHandler(
    * archival worker, which deletes them after commit.
    */
   retention?: {
-    store: Pick<ActiveStore, "projects" | "events">;
+    store: Pick<ActiveStore, "projects" | "events" | "stats">;
     blobs: BlobStore;
     archived?: boolean;
     /** With `archived`: archive-side housekeeping (hard retention, orphan sweeps, lag alarm). */
@@ -75,6 +76,27 @@ export function createCronHandler(
       return;
     }
     if (name === "retention" && retention) {
+      // Hourly statistics buckets are not events: they expire on the same cron in both modes.
+      if (retention.store.stats?.expiry === "explicit") {
+        let statsCursor: Parameters<ProjectRepo["list"]>[0];
+        do {
+          const page = await retention.store.projects.list(statsCursor, 100);
+          for (const project of page.items) {
+            const swept = await deleteExpiredStats({
+              store: retention.store,
+              projectId: project.id,
+              now: firedAt,
+            });
+            if (swept.deleted)
+              logger.info("Statistics bucket sweep", {
+                projectId: project.id,
+                deleted: swept.deleted,
+                hasMore: swept.hasMore,
+              });
+          }
+          statsCursor = page.nextCursor ?? undefined;
+        } while (statsCursor);
+      }
       if (retention.archived) {
         if (retention.housekeeping)
           await runArchiveHousekeeping(
