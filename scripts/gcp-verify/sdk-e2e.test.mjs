@@ -105,7 +105,10 @@ function backend({ dedupe = true, regress = true } = {}) {
           send(`${error.name}: ${error.message}`.replace(/ \d+$/, "")),
         ),
       captureMessage: (text) => pending.push(send(text)),
-      flush: async () => (await Promise.all(pending), true),
+      flush: async () => {
+        await Promise.all(pending);
+        return true;
+      },
       close: async () => true,
     };
   };

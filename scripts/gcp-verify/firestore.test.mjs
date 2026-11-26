@@ -88,7 +88,10 @@ describe("firestore probe", () => {
         [
           "POST",
           /storage\.googleapis\.com\/upload.*uploadType=media/,
-          () => (uploads++, { body: {} }),
+          () => {
+            uploads++;
+            return { body: {} };
+          },
         ],
         [
           "POST",

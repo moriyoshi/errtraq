@@ -1,10 +1,4 @@
-import {
-  cpSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  writeFileSync,
-} from "node:fs";
+import { cpSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { deriveDeployment } from "../packages/core/dist/index.js";
@@ -16,33 +10,14 @@ import {
 /**
  * Generated Google roots for `pnpm infra:validate` and `pnpm infra:mutate`. The example stacks take
  * the project, region and instance from the environment (no defaults, GCP_PLAN D7), so placeholders
- * are set before they load. Node cannot resolve the stacks' `./gcp-env.js` import to a `.ts` file,
- * so a copy with `.ts` specifiers is loaded; the stack text itself stays the single source.
+ * are set before they load.
  */
 process.env.ERRTRAQ_GCP_PROJECT = "example-project";
 process.env.ERRTRAQ_GCP_REGION = "europe-west1";
 process.env.ERRTRAQ_GCP_SQL_INSTANCE = "example-sql";
 process.env.ERRTRAQ_GCP_OPERATOR_MEMBER = "user:operator@example.com";
-const scratch = resolve(".agents-workspace/tmp");
-mkdirSync(scratch, { recursive: true });
-const copy = mkdtempSync(resolve(scratch, "gcp-stacks-"));
-const stackFiles = [
-  "gcp-env.ts",
-  "gcp-firestore.ts",
-  "gcp-cloudsql.ts",
-  "gcp-firestore-bootstrap.ts",
-  "gcp-firestore-per-topic.ts",
-];
-for (const file of stackFiles)
-  writeFileSync(
-    resolve(copy, file),
-    readFileSync(resolve("stacks", file), "utf8").replace(
-      /from "(\.\/gcp-[a-z-]+)\.js"/g,
-      'from "$1.ts"',
-    ),
-  );
 const load = async (file) =>
-  (await import(pathToFileURL(resolve(copy, file)).href)).default;
+  (await import(pathToFileURL(resolve("stacks", file)).href)).default;
 export const gcpFixtures = {
   "gcp-firestore": await load("gcp-firestore.ts"),
   "gcp-cloudsql": await load("gcp-cloudsql.ts"),

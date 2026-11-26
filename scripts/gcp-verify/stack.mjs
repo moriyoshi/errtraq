@@ -73,19 +73,15 @@ export default defineStack({
 
 /**
  * Write the run stack to `<directory>/stack.ts`; `directory` must live inside the repository so
- * the workspace packages resolve. Node cannot resolve the example stacks' `./gcp-env.js` import
- * to a `.ts` file, so copies of the two example files with `.ts` specifiers sit beside it (the
- * example text stays the single source, as in scripts/infra-gcp-roots.mjs).
+ * the workspace packages resolve. Copies of the two example files it imports sit beside it (the
+ * example text stays the single source).
  */
 export async function writeRunStack(repo, directory, options = {}) {
   const target = resolve(directory);
   await mkdir(target, { recursive: true });
   for (const name of ["gcp-env.ts", "gcp-firestore.ts"]) {
     const text = await readFile(resolve(repo, "stacks", name), "utf8");
-    await writeFile(
-      resolve(target, name),
-      text.replace(/from "(\.\/gcp-[a-z-]+)\.js"/g, 'from "$1.ts"'),
-    );
+    await writeFile(resolve(target, name), text);
   }
   const file = resolve(target, "stack.ts");
   await writeFile(file, renderRunStack(options));

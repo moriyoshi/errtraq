@@ -4,7 +4,7 @@ import { firestoreKv } from "@moriyoshi/errtraq-kv-firestore/stack";
 import { cloudRun } from "@moriyoshi/errtraq-platform-cloud-run/stack";
 import { pubsubQueue } from "@moriyoshi/errtraq-queue-pubsub/stack";
 import { firestoreStore } from "@moriyoshi/errtraq-store-firestore/stack";
-import { IMAGE_VARIABLE, requiredEnv } from "./gcp-env.js";
+import { IMAGE_VARIABLE, requiredEnv } from "./gcp-env.ts";
 
 const projectId = requiredEnv("ERRTRAQ_GCP_PROJECT");
 const region = requiredEnv("ERRTRAQ_GCP_REGION");

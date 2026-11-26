@@ -68,7 +68,14 @@ describe("gcs probe", () => {
           return { body: { generation: String(generation) } };
         },
       ],
-      ["DELETE", /./, (url) => (deleted.push(url), { status: 204 })],
+      [
+        "DELETE",
+        /./,
+        (url) => {
+          deleted.push(url);
+          return { status: 204 };
+        },
+      ],
     ]);
     const { ctx, output } = await testContext({ fetch });
     await conditionalWrite(ctx);
