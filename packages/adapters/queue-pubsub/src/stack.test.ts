@@ -167,4 +167,55 @@ describe("create", () => {
       ),
     ).toBeInstanceOf(PubsubQueue);
   });
+  describe("pushAuth none (test switch)", () => {
+    const emulator = { PUBSUB_EMULATOR_HOST: "127.0.0.1:8085" };
+    it("works against a loopback emulator", () => {
+      expect(
+        create(context({ pushAuth: "none" }, {}, { environment: emulator })),
+      ).toBeInstanceOf(PubsubQueue);
+      expect(
+        create(
+          context(
+            { pushAuth: "none", endpoint: "http://127.0.0.1:8085" },
+            {},
+            { environment: {} },
+          ),
+        ),
+      ).toBeInstanceOf(PubsubQueue);
+    });
+    it("is refused without a loopback emulator", () => {
+      expect(() =>
+        create(context({ pushAuth: "none" }, { accessToken: async () => "t" })),
+      ).toThrow("loopback");
+      expect(() =>
+        create(
+          context(
+            { pushAuth: "none" },
+            {},
+            { environment: { PUBSUB_EMULATOR_HOST: "pubsub.example:8085" } },
+          ),
+        ),
+      ).toThrow("loopback");
+    });
+    it("is refused on Cloud Run even with an emulator host", () => {
+      expect(() =>
+        create(
+          context(
+            { pushAuth: "none" },
+            {},
+            { environment: { ...emulator, K_SERVICE: "ingest" } },
+          ),
+        ),
+      ).toThrow("not allowed on Cloud Run");
+    });
+    it("is rejected by the schema with a non-loopback endpoint", () => {
+      expect(
+        configSchema.safeParse({
+          ...valid,
+          pushAuth: "none",
+          endpoint: "https://pubsub.googleapis.com",
+        }).success,
+      ).toBe(false);
+    });
+  });
 });

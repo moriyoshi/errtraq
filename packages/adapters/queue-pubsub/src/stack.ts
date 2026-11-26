@@ -38,12 +38,25 @@ export const configSchema = z
      * `verifyPush` and rejects unauthenticated pushes. "platform" means the
      * hosting platform authenticates the request before it reaches the
      * adapter (Cloud Run run.invoker with OIDC). "none" accepts every request
-     * and exists for tests and emulators only.
+     * and exists for tests and emulators only: it needs a loopback endpoint (or
+     * `PUBSUB_EMULATOR_HOST`) and is refused at runtime on Cloud Run.
      */
     pushAuth: z.enum(["verifier", "platform", "none"]).default("verifier"),
     /** Endpoint override for the Pub/Sub emulator; never set in production. */
     endpoint: z.url().optional(),
   })
+  .refine(
+    (config) =>
+      config.pushAuth !== "none" ||
+      config.endpoint === undefined ||
+      ["127.0.0.1", "localhost", "[::1]"].includes(
+        new URL(config.endpoint).hostname,
+      ),
+    {
+      message: 'pushAuth "none" is for loopback emulators only',
+      path: ["pushAuth"],
+    },
+  )
   .refine((config) => config.minBackoffSec <= config.maxBackoffSec, {
     message: "minBackoffSec must not exceed maxBackoffSec",
     path: ["minBackoffSec"],

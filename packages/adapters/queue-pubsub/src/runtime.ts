@@ -473,6 +473,30 @@ export class PubsubQueue
   };
 }
 
+const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "[::1]"]);
+/**
+ * `pushAuth: "none"` is a test switch that must be impossible to enable in a deployment: it
+ * needs a loopback Pub/Sub endpoint (a deployed function cannot publish to one) and is refused
+ * outright when the host is Cloud Run (`K_SERVICE` is set by the platform and reserved).
+ */
+export function assertEmulatorOnlyPushAuth(
+  endpoint: string | undefined,
+  emulatorHost: string | undefined,
+  environment: Readonly<Record<string, string | undefined>>,
+): void {
+  if (environment.K_SERVICE || environment.K_REVISION)
+    throw new Error("pushAuth none is not allowed on Cloud Run");
+  const origin = endpoint ?? (emulatorHost ? `http://${emulatorHost}` : "");
+  let hostname = "";
+  try {
+    hostname = new URL(origin).hostname;
+  } catch {
+    /* rejected below */
+  }
+  if (!LOOPBACK_HOSTS.has(hostname))
+    throw new Error("pushAuth none requires a loopback Pub/Sub emulator");
+}
+
 export function create({
   config,
   bindings,
@@ -487,10 +511,12 @@ export function create({
   const accessToken = bindings.accessToken ?? dependencies?.accessToken;
   const verifyPush = bindings.verifyPush ?? dependencies?.verifyPush;
   const pushAuth = config.pushAuth ?? "verifier";
-  if (pushAuth === "none")
+  if (pushAuth === "none") {
+    assertEmulatorOnlyPushAuth(config.endpoint, emulator, environment);
     logger?.warn("Pub/Sub push authentication disabled", {
       reason: "pushAuth none is for tests and emulators only",
     });
+  }
   return new PubsubQueue({
     projectId: config.projectId,
     region: config.region,
@@ -502,8 +528,9 @@ export function create({
       typeof accessToken === "function"
         ? (accessToken as () => Promise<string>)
         : undefined,
+    // `platform` and `none` mean the push is not verified here, whatever the host injects.
     verifyPush:
-      typeof verifyPush === "function"
+      pushAuth === "verifier" && typeof verifyPush === "function"
         ? (verifyPush as PubsubOptions["verifyPush"])
         : undefined,
     allowUnauthenticatedPush: pushAuth === "none" || pushAuth === "platform",
