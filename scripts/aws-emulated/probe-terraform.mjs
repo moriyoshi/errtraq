@@ -4,10 +4,11 @@ import {
   mkdirSync,
   mkdtempSync,
   readdirSync,
+  readFileSync,
   writeFileSync,
 } from "node:fs";
 import { createServer } from "node:net";
-import { resolve } from "node:path";
+import { relative, resolve } from "node:path";
 import { client, element } from "./client.mjs";
 import { defaultBinary } from "./emulator-binary.mjs";
 import { providerOverride, terraformEnvironment } from "./terraform-config.mjs";
@@ -37,6 +38,18 @@ if (selectedVersion && !versions.includes(selectedVersion))
   throw new Error("Unknown provider version");
 if (selectedTarget && !targets.includes(selectedTarget))
   throw new Error("Unknown probe target");
+const moduleOf = (target) =>
+  target === "dynamodb-protected" ? "dynamodb" : target;
+// A module may raise its provider floor (lambda-app needs nodejs26.x), so each target only runs
+// with the versions its modules accept; the generated root composes lambda-app.
+const floor = (module) =>
+  readFileSync(
+    resolve(root, "infra/modules/aws", module, "versions.tf"),
+    "utf8",
+  ).match(/version = ">= (\d+\.\d+\.\d+), < 7\.0"/)?.[1] ?? versions[0];
+const accepts = (target, version) =>
+  version >=
+  floor(target === "generated-root" ? "lambda-app" : moduleOf(target));
 for (const version of versions.filter(
   (version) => !selectedVersion || version === selectedVersion,
 )) {
@@ -210,12 +223,20 @@ try {
     for (const target of targets.filter(
       (target) => !selectedTarget || target === selectedTarget,
     )) {
+      if (!accepts(target, version)) {
+        console.log(
+          `SKIP ${target} with AWS provider ${version}: below the module floor ${floor(target === "generated-root" ? "lambda-app" : moduleOf(target))}`,
+        );
+        continue;
+      }
       console.log(`Probing ${target} with AWS provider ${version}`);
       const stack = resolveStack({
         ...Object.fromEntries(Object.entries(originalStack)),
         name: `${originalStack.name}-${version.replaceAll(".", "-")}`,
       });
       const dir = resolve(temp, version, target);
+      // The protected table outlives its destroy, so it needs a name of its own.
+      const fixtureName = `${name}-${target === "dynamodb-protected" ? "protected-" : ""}${version.replaceAll(".", "-")}`;
       mkdirSync(dir, { recursive: true });
       writeJson(
         resolve(dir, "emulator_override.tf.json"),
@@ -250,18 +271,16 @@ try {
           provider: { aws: [{ region: "us-east-1" }] },
           module: {
             test: {
-              source: resolve(
-                root,
-                "infra/modules/aws",
-                target === "dynamodb-protected" ? "dynamodb" : target,
+              // Relative, so lambda-app's `../static-site` submodule stays in the package.
+              source: relative(
+                dir,
+                resolve(root, "infra/modules/aws", moduleOf(target)),
               ),
-              ...moduleFixture[
-                target === "dynamodb-protected" ? "dynamodb" : target
-              ],
+              ...moduleFixture[moduleOf(target)],
               ...(target === "dynamodb-protected"
                 ? { protection: "production" }
                 : {}),
-              name: `${name}-${version.replaceAll(".", "-")}`,
+              name: fixtureName,
             },
           },
         });
@@ -311,10 +330,9 @@ try {
         );
         console.log(`  Lambda second-plan exit: ${plan.status}`);
       }
-      const fixtureName = `${name}-${version.replaceAll(".", "-")}`;
       try {
         if (target === "dynamodb" && apply.status === 0) {
-          const table = `${fixtureName}-store`;
+          const table = `${fixtureName}-store-v2`;
           const observations = {};
           for (const action of [
             "DescribeTable",
