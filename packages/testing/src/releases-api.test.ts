@@ -842,9 +842,11 @@ describe("releases API", () => {
 
   it("answers the authentication probe", async () => {
     const t = await setup();
-    expect(await (await t.call("/api/0/")).json()).toEqual({
+    // sentry-cli reads only `auth` and `user`; `errtraq` is an additive extension.
+    expect(await (await t.call("/api/0/")).json()).toMatchObject({
       auth: { scopes: ["event:read", "event:write"] },
       user: null,
+      errtraq: { capabilities: { issueStats: false, tagFacets: false } },
     });
   });
 });

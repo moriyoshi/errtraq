@@ -50,6 +50,8 @@ export function addReleaseRoutes(
     ids: IdGen;
     blobs?: BlobStore;
     bundles?: ArtifactBundleService;
+    /** Whether a second event tier is wired; advertised on the root route. */
+    archiveConfigured?: boolean;
   },
 ): void {
   const { store, clock, ids, blobs, bundles } = options;
@@ -419,8 +421,22 @@ export function addReleaseRoutes(
   const proj = (h: (c: C, o: Org, p?: Project) => Promise<Response>) =>
     route("project", h);
 
+  // `auth` and `user` stay as sentry-cli reads them; `errtraq` tells the UI what the store can serve.
   const whoami = (c: C) =>
-    c.json({ auth: { scopes: c.get("token").scopes }, user: null });
+    c.json({
+      auth: { scopes: c.get("token").scopes },
+      user: null,
+      errtraq: {
+        capabilities: {
+          textSearch: store.capabilities.textSearch,
+          lastSeenRangeOnOtherSort: store.capabilities.lastSeenRangeOnOtherSort,
+          archive: options.archiveConfigured === true,
+          // TODO(UI-d): bucketed counts and tag facets need new port behaviour.
+          issueStats: false,
+          tagFacets: false,
+        },
+      },
+    });
   app.get("/api/0", whoami);
   app.get("/api/0/", whoami);
   app.post("/api/0/organizations/:org/releases", org(createRelease));

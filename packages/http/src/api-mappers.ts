@@ -1,6 +1,54 @@
-import type { Issue, Org, Project, StoredEvent } from "@moriyoshi/errtraq-core";
+import type {
+  Issue,
+  Org,
+  Project,
+  ProjectKey,
+  StoredEvent,
+} from "@moriyoshi/errtraq-core";
 
 type Payload = Record<string, unknown>;
+/** Sentry's organization summary. */
+export function orgJson(org: Org) {
+  return { id: org.id, slug: org.slug, name: org.name };
+}
+/** Sentry's project shape with errtraq's retention and rate limits under `errtraq`. */
+export function projectJson(project: Project, org: Org) {
+  return {
+    id: project.id,
+    slug: project.slug,
+    name: project.name,
+    organization: orgJson(org),
+    errtraq: {
+      retentionDays: project.retentionDays,
+      ...(project.rateLimits ? { rateLimits: project.rateLimits } : {}),
+    },
+  };
+}
+/**
+ * A DSN key without its secret. `ingestUrl` is the public ingest origin; without it no `dsn` is
+ * emitted because API and ingest can live on different hosts. The domain key has no name or
+ * creation time, so `dateCreated` is omitted.
+ */
+export function keyJson(key: ProjectKey, ingestUrl?: string) {
+  const dsn = ingestUrl && dsnOf(ingestUrl, key);
+  return {
+    id: key.id,
+    name: "Default",
+    public: key.publicKey,
+    isActive: !key.revokedAt,
+    ...(dsn ? { dsn: { public: dsn } } : {}),
+  };
+}
+function dsnOf(ingestUrl: string, key: ProjectKey): string {
+  const url = new URL(ingestUrl);
+  url.username = key.publicKey;
+  url.password = "";
+  url.search = "";
+  url.hash = "";
+  // A path prefix on the ingest URL stays in front of the project ID, as Sentry DSNs allow.
+  url.pathname = `${url.pathname.replace(/\/+$/, "")}/${key.projectId}`;
+  return url.toString();
+}
 /** Map stored fields to the subset of Sentry's issue representation available locally. */
 export function issueJson(
   issue: Issue,

@@ -213,6 +213,7 @@ export function create({
             rateRejection,
             logger,
             archive: bindings.archive,
+            ...(cfg.publicUrl ? { ingestUrl: cfg.publicUrl } : {}),
           }),
         );
       const server = serve({

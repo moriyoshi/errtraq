@@ -30,14 +30,34 @@ import {
   WebCryptoIdGen,
 } from "@moriyoshi/errtraq-core/runtime";
 import { Hono } from "hono";
+import { cors } from "hono/cors";
 import { HTTPException } from "hono/http-exception";
 import type { ApiEnv } from "./api-env.js";
-import { eventJson, issueJson } from "./api-mappers.js";
+import {
+  eventJson,
+  issueJson,
+  keyJson,
+  orgJson,
+  projectJson,
+} from "./api-mappers.js";
 import { logUnexpected } from "./errors.js";
 import { addReleaseRoutes } from "./release-routes.js";
 
 type Env = ApiEnv;
 const statuses = ["unresolved", "resolved", "ignored"] as const;
+const MAX_EMPTY_PAGES = 20;
+/** Exact origins only: no wildcard, no path. */
+function corsOrigin(value: string): string {
+  let origin: string | undefined;
+  try {
+    origin = new URL(value).origin;
+  } catch {
+    // fall through to the error
+  }
+  if (value === "*" || !origin || origin === "null" || origin !== value)
+    throw new Error(`Invalid CORS origin: ${value}`);
+  return origin;
+}
 /** Minimal Sentry-compatible project and issue API; every resource is scoped to the token organization. */
 export function createApiApp(options: {
   store: ActiveStore;
@@ -51,6 +71,13 @@ export function createApiApp(options: {
   chunkUpload?: Partial<ChunkUploadLimits>;
   /** Second event tier; absent means events are read from the active store only. */
   archive?: ArchiveStore;
+  /**
+   * Public ingest origin used to build DSNs in the key list. API and ingest can be served from
+   * different hosts, so without it the key list carries no `dsn` instead of guessing one.
+   */
+  ingestUrl?: string;
+  /** Cross-origin browser access for a UI hosted elsewhere; off by default. Exact origins only. */
+  cors?: { origins: string[]; maxAgeSec?: number };
 }): Hono<Env> {
   const app = new Hono<Env>({ strict: false });
   const { store, clock } = options;
@@ -79,6 +106,51 @@ export function createApiApp(options: {
   }
   async function renderEvent(event: StoredEvent, issue: Issue) {
     return eventJson(event, issue, await payloadOf(event));
+  }
+  /**
+   * The first event of an issue in `order`, strictly after `after` when given. A source page may
+   * be empty and still carry a continuation, so the walk follows it, at most MAX_EMPTY_PAGES
+   * times; running out of that budget reads as "no neighbour" rather than scanning on.
+   */
+  async function firstEvent(
+    issue: Issue,
+    order: "asc" | "desc",
+    after?: StoredEvent,
+  ): Promise<StoredEvent | null> {
+    let cursor: Cursor | undefined;
+    for (let page = 0; page < MAX_EMPTY_PAGES; page++) {
+      const result = await events.listByIssue({
+        projectId: issue.projectId,
+        issueId: issue.id,
+        order,
+        limit: 1,
+        // A continuation cursor replaces `after`; the two are exclusive.
+        ...(cursor
+          ? { cursor }
+          : after
+            ? {
+                after: { receivedAt: after.receivedAt, eventId: after.eventId },
+              }
+            : {}),
+      });
+      const [item] = result.items;
+      if (item) return item;
+      if (!result.nextCursor) return null;
+      cursor = result.nextCursor;
+    }
+    return null;
+  }
+  /** Single-event response with Sentry's neighbours; previous is older, next is newer. */
+  async function renderEventWithNeighbours(event: StoredEvent, issue: Issue) {
+    const [previous, next] = await Promise.all([
+      firstEvent(issue, "desc", event),
+      firstEvent(issue, "asc", event),
+    ]);
+    return {
+      ...(await renderEvent(event, issue)),
+      previousEventID: previous?.eventId ?? null,
+      nextEventID: next?.eventId ?? null,
+    };
   }
   async function renderIssue(issue: Issue, origin: string) {
     const project = await store.projects.get(issue.projectId);
@@ -140,6 +212,22 @@ export function createApiApp(options: {
     const requestId = logUnexpected(options.logger, error, c.req.raw);
     return c.json({ detail: "Internal server error", requestId }, 500);
   });
+  // TODO(UI-c): the stack config supplies these origins.
+  if (options.cors) {
+    const origins = options.cors.origins.map(corsOrigin);
+    if (origins.length === 0) throw new Error("CORS origins must not be empty");
+    // Registered before the auth middleware: a preflight carries no token.
+    app.use(
+      "/api/0/*",
+      cors({
+        origin: origins,
+        allowMethods: ["GET", "PUT", "POST", "OPTIONS"],
+        allowHeaders: ["Authorization", "Content-Type"],
+        exposeHeaders: ["Link"],
+        maxAge: options.cors.maxAgeSec ?? 86400,
+      }),
+    );
+  }
   app.use("/api/0/*", async (c, next) => {
     const auth = c.req.header("authorization")?.match(/^Bearer\s+(\S+)$/i);
     if (!auth?.[1]) return c.json({ detail: "Authentication required" }, 401);
@@ -260,6 +348,51 @@ export function createApiApp(options: {
       ),
     );
   }
+  app.get("/api/0/organizations", async (c) => {
+    const org = await store.projects.getOrg(c.get("token").orgId);
+    return org ? c.json([orgJson(org)]) : c.json({ detail: "Not found" }, 404);
+  });
+  app.get("/api/0/organizations/:org", async (c) => {
+    const org = await store.projects.getOrgBySlug(c.req.param("org"));
+    return org && org.id === c.get("token").orgId
+      ? c.json(orgJson(org))
+      : c.json({ detail: "Not found" }, 404);
+  });
+  app.get("/api/0/organizations/:org/projects", async (c) => {
+    allowed(c, ["cursor", "limit", "per_page"]);
+    const org = await store.projects.getOrgBySlug(c.req.param("org"));
+    if (!org || org.id !== c.get("token").orgId)
+      return c.json({ detail: "Not found" }, 404);
+    // A short or empty page may carry a cursor; it is passed through, not looped over.
+    const page = await store.projects.listByOrg(
+      org.id,
+      (c.req.query("cursor") || undefined) as Cursor | undefined,
+      size(c.req.query("limit") ?? c.req.query("per_page")),
+    );
+    link(c, page.nextCursor);
+    return c.json(page.items.map((p) => projectJson(p, org)));
+  });
+  app.get("/api/0/projects/:org/:project", async (c) => {
+    const p = await project(
+      c.req.param("org"),
+      c.req.param("project"),
+      c.get("token"),
+    );
+    const org = p && (await store.projects.getOrg(p.orgId));
+    return p && org
+      ? c.json(projectJson(p, org))
+      : c.json({ detail: "Not found" }, 404);
+  });
+  app.get("/api/0/projects/:org/:project/keys", async (c) => {
+    const p = await project(
+      c.req.param("org"),
+      c.req.param("project"),
+      c.get("token"),
+    );
+    if (!p) return c.json({ detail: "Not found" }, 404);
+    const keys = await store.projects.listKeys(p.id);
+    return c.json(keys.map((key) => keyJson(key, options.ingestUrl)));
+  });
   app.get("/api/0/projects/:org/:project/issues", async (c) => {
     const p = await project(
       c.req.param("org"),
@@ -281,15 +414,45 @@ export function createApiApp(options: {
     if (!p || p.orgId !== org.id) return c.json({ detail: "Not found" }, 404);
     return listIssues(c, p, true);
   });
+  // Bulk status update. Every id is validated before the first write, but the writes themselves
+  // are independent per-issue CAS updates: a failure part-way returns the error and the issues
+  // already written stay written. Sentry's "update everything matching the query" (no `id`) is
+  // not supported.
+  app.put("/api/0/projects/:org/:project/issues", async (c) => {
+    const p = await project(
+      c.req.param("org"),
+      c.req.param("project"),
+      c.get("token"),
+    );
+    if (!p) return c.json({ detail: "Not found" }, 404);
+    allowed(c, ["id"]);
+    const requested = c.req.queries("id") ?? [];
+    if (requested.length < 1 || requested.length > 100)
+      return c.json(
+        { detail: "Between 1 and 100 id parameters required" },
+        400,
+      );
+    const status = await statusBody(c);
+    if (status instanceof Response) return status;
+    const targets: Issue[] = [];
+    for (const id of new Set(requested)) {
+      const issue = await store.issues.get(p.id, id as IssueId);
+      if (!issue) return c.json({ detail: "Not found" }, 404);
+      targets.push(issue);
+    }
+    for (const issue of targets) await updateStatus(issue, status);
+    return c.json({ status, statusDetails: {} });
+  });
   app.get("/api/0/issues/:id", async (c) => {
     const issue = await scopedIssue(c.req.param("id"), c.get("token"));
     return issue
       ? c.json(await renderIssue(issue, new URL(c.req.url).origin))
       : c.json({ detail: "Not found" }, 404);
   });
-  app.put("/api/0/issues/:id", async (c) => {
-    const issue = await scopedIssue(c.req.param("id"), c.get("token"));
-    if (!issue) return c.json({ detail: "Not found" }, 404);
+  /** The `{ status }` body shared by the single and bulk update; a Response is the 400. */
+  async function statusBody(
+    c: import("hono").Context<Env>,
+  ): Promise<IssueStatus | Response> {
     let input: unknown;
     try {
       input = await c.req.json();
@@ -304,23 +467,40 @@ export function createApiApp(options: {
       !statuses.includes((input as { status: IssueStatus }).status)
     )
       return c.json({ detail: "Invalid status" }, 400);
-    const status = (input as { status: IssueStatus }).status;
+    return (input as { status: IssueStatus }).status;
+  }
+  app.put("/api/0/issues/:id", async (c) => {
+    const issue = await scopedIssue(c.req.param("id"), c.get("token"));
+    if (!issue) return c.json({ detail: "Not found" }, 404);
+    const status = await statusBody(c);
+    if (status instanceof Response) return status;
+    return c.json(
+      await renderIssue(
+        await updateStatus(issue, status),
+        new URL(c.req.url).origin,
+      ),
+    );
+  });
+  /** Bounded compare-and-set retry; `update` is version-checked inside the store. */
+  async function updateStatus(
+    issue: Issue,
+    status: IssueStatus,
+  ): Promise<Issue> {
     for (let attempt = 0; attempt < 3; attempt++) {
       try {
-        const updated = await store.issues.update(issue.projectId, issue.id, {
+        return await store.issues.update(issue.projectId, issue.id, {
           status,
           ...(status === "resolved"
             ? { resolvedAt: clock.now() }
             : { resolvedAt: undefined }),
         });
-        return c.json(await renderIssue(updated, new URL(c.req.url).origin));
       } catch (error) {
         if (!(error instanceof VersionConflictError) || attempt === 2)
           throw error;
       }
     }
     throw new VersionConflictError("Conflict");
-  });
+  }
   app.on(
     ["GET", "POST"],
     "/api/0/projects/:org/:project/erasure-requests",
@@ -359,7 +539,15 @@ export function createApiApp(options: {
       issue.lastEventReceivedAt,
     );
     return event
-      ? c.json(await renderEvent(event, issue))
+      ? c.json(await renderEventWithNeighbours(event, issue))
+      : c.json({ detail: "Not found" }, 404);
+  });
+  app.get("/api/0/issues/:id/events/oldest", async (c) => {
+    const issue = await scopedIssue(c.req.param("id"), c.get("token"));
+    if (!issue) return c.json({ detail: "Not found" }, 404);
+    const event = await firstEvent(issue, "asc");
+    return event
+      ? c.json(await renderEventWithNeighbours(event, issue))
       : c.json({ detail: "Not found" }, 404);
   });
   app.get("/api/0/issues/:id/events/:event", async (c) => {
@@ -370,7 +558,7 @@ export function createApiApp(options: {
       c.req.param("event") as EventId,
     );
     return event && event.issueId === issue.id
-      ? c.json(await renderEvent(event, issue))
+      ? c.json(await renderEventWithNeighbours(event, issue))
       : c.json({ detail: "Not found" }, 404);
   });
   app.get("/api/0/projects/:org/:project/events/:event", async (c) => {
@@ -384,7 +572,7 @@ export function createApiApp(options: {
     if (!event) return c.json({ detail: "Not found" }, 404);
     const issue = await store.issues.get(p.id, event.issueId);
     return issue
-      ? c.json(await renderEvent(event, issue))
+      ? c.json(await renderEventWithNeighbours(event, issue))
       : c.json({ detail: "Not found" }, 404);
   });
   const ids = options.ids ?? new WebCryptoIdGen();
@@ -393,6 +581,7 @@ export function createApiApp(options: {
     clock,
     ids,
     blobs: options.blobs,
+    archiveConfigured: options.archive !== undefined,
     bundles: options.blobs
       ? new ArtifactBundleService({
           releases: store.releases,
