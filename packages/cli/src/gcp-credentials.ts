@@ -166,6 +166,9 @@ export async function resolveOperatorGcpCredentials(
         fetch: fetcher,
       }),
     });
+  // A pre-minted ID token is all the bootstrap service call needs: an operator who impersonates
+  // a service account for it has no application default credentials to find.
+  if (idToken) return { tokens: withIdToken(unavailable(), idToken) };
   if (options.required === false) return { tokens: unavailable() };
   throw new Error(
     "No Google credentials found: run `gcloud auth application-default login` or set GOOGLE_APPLICATION_CREDENTIALS",

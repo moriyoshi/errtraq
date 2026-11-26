@@ -58,6 +58,18 @@ describe("operator GCP credentials", () => {
     );
     expect(await credentials.tokens.getIdToken("any")).toBe("id.token.sig");
   });
+  it("accepts a pre-minted ID token as the only credential", async () => {
+    const credentials = await resolveOperatorGcpCredentials(
+      { ERRTRAQ_GCP_ID_TOKEN: "id.token.sig" },
+      { homeDirectory: "/home/op", readFile: files({}) },
+    );
+    await expect(credentials.tokens.getIdToken("aud")).resolves.toBe(
+      "id.token.sig",
+    );
+    await expect(credentials.tokens.getAccessToken()).rejects.toThrow(
+      "No Google credentials",
+    );
+  });
   it("prefers the named file and fails clearly when it is missing, malformed or unsupported", async () => {
     const run = (path: string, map: Record<string, string>) =>
       resolveOperatorGcpCredentials(
