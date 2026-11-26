@@ -1,7 +1,6 @@
 import { EventEmitter } from "node:events";
-import { mkdtempSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { bootstrapCommand, runBootstrap } from "./bootstrap.mjs";
 import { PROJECT, REGION } from "./testing.mjs";
@@ -20,7 +19,8 @@ describe("bootstrap helper", () => {
     ).toThrow("bootstrap_url");
   });
   it("passes the token only through the child environment and scrubs the output", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "g8-"));
+    mkdirSync(resolve(".agents-workspace/tmp"), { recursive: true });
+    const dir = mkdtempSync(join(resolve(".agents-workspace/tmp"), "g8-"));
     const outputs = join(dir, "o.json");
     writeFileSync(
       outputs,

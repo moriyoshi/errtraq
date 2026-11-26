@@ -2205,3 +2205,31 @@ Implemented by Claude Sonnet on branch `g5` (offline only), review by Claude Opu
 
 - G7 (Sonnet in `wt-g7`, reviewed and merged by Claude Opus): checked that `pushAuth: "none"` cannot reach a deployment (schema rejects a non-loopback endpoint, runtime needs a loopback emulator and refuses `K_SERVICE` / `K_REVISION`), that the member table grants run as the migrating user that owns the tables (a Cloud SQL admin is not a superuser and cannot grant on them), and that `operatorMembers` refuses `allUsers` / `allAuthenticatedUsers`. Fixed in review: GCP_PLAN section 6 still recommended a default region for D7. On merged main: typecheck, lint, test (132 files, 1585 tests), `pnpm infra:validate` (4 Google roots at both versions) and `pnpm test:gcp-emulated` (70 contract tests, end to end 5 events into 3 issues, no containers left) all pass.
 - `pnpm infra:mutate` leak: Terraform sometimes exits before the provider plugin it started, mostly on failing mutations (about a dozen per AWS run, none in the Google-only run). All processes shared the invoking shell's process group, so nothing reaped them. Each Terraform call now runs under `/bin/sh` with `set -m` in its own process group, which is sent SIGTERM after Terraform exits; the exit status is preserved and status 127 is reported as "terraform could not be started". An AWS-only rerun detected all 126 module and 30 root mutations and left no provider behind.
+
+
+## 2026-11-26 — G8a pre-run build for the first real GCP run (Claude)
+
+Built offline, in the worktree branch `g8a`, no cloud access used. Run plan: `G8_RUN1_PLAN.md`. Tooling:
+`scripts/gcp-verify/` (run stack derivation, image helper, bootstrap helper, eight probes, `run.mjs`), 53 offline
+unit tests against a routing `fetch`.
+
+- **Run stack:** the example stacks cannot be loaded by the CLI (`./gcp-env.js` has no file); `stack.mjs` writes
+  `.ts` copies and a derived stack into the ignored workspace. It adds the `record` role with grouped recording
+  (so `orderingKey` and `deliveryAttempt` are exercised) and `protection: "disposable"` (the examples default to
+  production protection, which keeps Firestore and blocks a destroy).
+- **Product bug fixed:** `errtraq bootstrap --remote` on Cloud Run required application default credentials even
+  when `ERRTRAQ_GCP_ID_TOKEN` was set, although the call needs only the ID token; an operator who impersonates a
+  service account has no ADC file. The token alone now resolves (regression test in `gcp-credentials.test.ts`).
+- **Design finding:** a user account cannot mint an ID token for the custom audience `errtraq-push`, and the
+  bootstrap handler verifies that audience on top of Cloud Run's own check. The run uses an operator service
+  account through impersonation. Whether the route should accept the service URL audience is open (TODO).
+- **`deliveryAttempt` is observed behaviourally:** the consumer acknowledges a missing claim on attempt 5; with the
+  dead-letter limit at 5, such a message is acknowledged (not dead-lettered) only if the attempt count arrives in
+  the push body. The push body itself is invisible from outside the receiver; capturing it is a TODO.
+- **Direct calls to the consumer:** Cloud Run IAM answers before the handler, so rejections are 401, 403 or 404;
+  handler-level verification is only reachable by impersonating the push account (`--as-push-sa`).
+- **Probe staging bypasses the ingest rate limit** (60 events per minute per key) by writing the envelope to GCS and
+  publishing the claim to the shared topic, as the AWS run did; the SDK checks go through ingest.
+- Not run: the Docker build (dry run only; the base image tag exists on the registry), Terraform provider plans,
+  the emulated suite hook (not cheap enough to add).
+
