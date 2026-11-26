@@ -100,6 +100,8 @@ export async function createUiHandler(directory: string): Promise<UiHandler> {
       );
     }
     // A missing file is an SPA route only for a navigation, never for a script or stylesheet.
+    // The CloudFront Function of infra/modules/aws/static-site/spa-rewrite.js applies this same
+    // Accept rule (and a test pins it there); change both together.
     if ((c.req.header("accept") ?? "").toLowerCase().includes("text/html"))
       return index(c);
     return undefined;

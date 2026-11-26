@@ -597,7 +597,7 @@ it("builds DSNs from the operator-supplied ingest URL and adds no CORS headers i
   await store.projects.putToken({
     id: "token" as ApiTokenId,
     orgId: boot.org.id,
-    tokenHash: await hashApiToken("secret"),
+    tokenHash: await hashApiToken("errtraq_secret"),
     scopes: ["event:read"],
   });
   const request = (
@@ -636,7 +636,10 @@ it("builds DSNs from the operator-supplied ingest URL and adds no CORS headers i
       ...(ingestUrl ? { ingestUrl } : {}),
       adapters: { store, blob: new MemoryBlobStore() },
     });
-  const headers = { authorization: "Bearer secret", origin: "https://ui.test" };
+  const headers = {
+    authorization: "Bearer errtraq_secret",
+    origin: "https://ui.test",
+  };
   const withUrl = await request(make("https://ingest.example.test/"), headers);
   expect(withUrl.statusCode).toBe(200);
   expect(JSON.parse(withUrl.body)[0].dsn.public).toBe(

@@ -82,6 +82,14 @@ export function issueJson(
     userCount: 0,
   }; // TODO(M5): count distinct users.
 }
+/**
+ * Sentry returns `{ values: [...] }` as the data of the `exception` and `breadcrumbs` entries,
+ * while SDKs may send a bare array. Anything else (an object that already has `values`, or a
+ * malformed value) passes through unchanged.
+ */
+export function valuesData(value: unknown): unknown {
+  return Array.isArray(value) ? { values: value } : value;
+}
 /** Map stored payload interfaces into Sentry event entries. */
 export function eventJson(
   event: StoredEvent,
@@ -90,7 +98,7 @@ export function eventJson(
 ) {
   const entries: Array<{ type: string; data: unknown }> = [];
   if (payload.exception)
-    entries.push({ type: "exception", data: payload.exception });
+    entries.push({ type: "exception", data: valuesData(payload.exception) });
   if (payload.logentry || payload.message)
     entries.push({
       type: "message",
@@ -100,7 +108,10 @@ export function eventJson(
       },
     });
   if (payload.breadcrumbs)
-    entries.push({ type: "breadcrumbs", data: payload.breadcrumbs });
+    entries.push({
+      type: "breadcrumbs",
+      data: valuesData(payload.breadcrumbs),
+    });
   if (payload.request) entries.push({ type: "request", data: payload.request });
   const user = event.user
     ? {

@@ -3,6 +3,7 @@ export * from "./archive-housekeeping.js";
 export * from "./archive-planner.js";
 export * from "./archive-rows.js";
 export * from "./artifact-bundles.js";
+export * from "./auth-settings.js";
 export * from "./blob-key.js";
 export * from "./bootstrap.js";
 export * from "./bundle-cleanup.js";

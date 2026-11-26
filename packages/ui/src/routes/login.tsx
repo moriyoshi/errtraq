@@ -4,7 +4,10 @@ import { createSignal, Show } from "solid-js";
 import { isApiError } from "../api/errors";
 import { api } from "../api/instance";
 import { whoamiSchema } from "../api/schemas";
-import { peekToken, saveToken } from "../auth/session";
+import { browserOidcDeps } from "../auth/app";
+import { authMode, oidcConfig } from "../auth/config";
+import { beginSignIn } from "../auth/oidc";
+import { isSignedIn, saveToken } from "../auth/session";
 import { rootRoute } from "./root";
 
 function Login() {
@@ -13,6 +16,17 @@ function Login() {
   const [value, setValue] = createSignal("");
   const [error, setError] = createSignal<string | null>(null);
   const [busy, setBusy] = createSignal(false);
+  const sso = async () => {
+    if (!oidcConfig) return;
+    setBusy(true);
+    setError(null);
+    try {
+      location.assign(await beginSignIn(oidcConfig, browserOidcDeps()));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not start the sign-in.");
+      setBusy(false);
+    }
+  };
   const submit = async (event: SubmitEvent) => {
     event.preventDefault();
     const candidate = value().trim();
@@ -43,6 +57,12 @@ function Login() {
   return (
     <form class="card login" onSubmit={submit}>
       <h1>Sign in</h1>
+      <Show when={oidcConfig}>
+        <button type="button" class="primary" disabled={busy()} onClick={sso}>
+          Sign in with single sign-on
+        </button>
+        <p class="muted">Or use an API token.</p>
+      </Show>
       <p class="muted">
         Paste an API token. It stays in this tab's session storage and is sent
         as a Bearer token.
@@ -77,7 +97,8 @@ export const loginRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/login",
   beforeLoad: () => {
-    if (peekToken()) throw redirect({ to: "/organizations" });
+    if (authMode === "proxy" || isSignedIn())
+      throw redirect({ to: "/organizations" });
   },
   component: Login,
 });

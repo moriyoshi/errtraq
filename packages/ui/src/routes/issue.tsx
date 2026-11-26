@@ -3,6 +3,7 @@ import {
   createRoute,
   Link,
   Outlet,
+  useNavigate,
   useParams,
   useSearch,
 } from "@tanstack/solid-router";
@@ -27,6 +28,7 @@ import { ErrorNotice, Level, Loading, Time } from "../components/common";
 import { EventView } from "../components/EventView";
 import { TagsPanel } from "../components/TagsPanel";
 import { percentLabel } from "../lib/series";
+import { useShortcuts } from "../lib/use-shortcuts";
 import { authedRoute } from "./root";
 
 const ACTIONS: Record<string, { label: string; to: IssueStatus }[]> = {
@@ -61,6 +63,22 @@ function IssueHeader(props: { issue: Issue; org: string; project: string }) {
     },
     onSettled: () => invalidateIssues(qc, props.issue.id),
   }));
+  // r / i / u act on this issue, limited to the transitions its buttons offer.
+  useShortcuts((shortcut) => {
+    const to: IssueStatus | undefined =
+      shortcut === "resolve"
+        ? "resolved"
+        : shortcut === "ignore"
+          ? "ignored"
+          : shortcut === "unresolve"
+            ? "unresolved"
+            : undefined;
+    if (!to || !permissions.canWrite() || mutation.isPending) return false;
+    if (!(ACTIONS[props.issue.status] ?? []).some((a) => a.to === to))
+      return false;
+    mutation.mutate(to);
+    return true;
+  });
   return (
     <header class="issue-head">
       <nav class="crumbs">
@@ -258,6 +276,22 @@ function IssueEvent() {
     () => params().id,
     () => "latest",
   );
+  const navigate = useNavigate();
+  // [ and ] go to the older and newer event, as the Older / Newer buttons do.
+  useShortcuts((shortcut) => {
+    if (shortcut !== "previousEvent" && shortcut !== "nextEvent") return false;
+    const target =
+      shortcut === "previousEvent"
+        ? event.data?.previousEventID
+        : event.data?.nextEventID;
+    if (!target || target === event.data?.eventID) return false;
+    void navigate({
+      to: "/$org/$project/issues/$id",
+      params: params(),
+      search: { event: target },
+    });
+    return true;
+  });
   return (
     <>
       <Show when={event.isError}>

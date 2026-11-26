@@ -83,7 +83,13 @@ export const platformSchema = manifestSchema.extend({
   bindingKinds: z.array(z.enum(["env", "secret", "platform"])),
   configReferenceKinds: z.array(z.enum(["env", "variable"])).optional(),
   infrastructureConfigReferences: z
-    .record(refName, z.enum(["string", "number", "bool", "string[]", "json"]))
+    // Dotted paths name a field of a nested setting, e.g. `oidc.issuer`.
+    .record(
+      z
+        .string()
+        .regex(/^[A-Za-z_][A-Za-z0-9_-]*(?:\.[A-Za-z_][A-Za-z0-9_-]*)*$/),
+      z.enum(["string", "number", "bool", "string[]", "json"]),
+    )
     .optional(),
   reservedBindings: z.array(z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*\*?$/)),
   groupedRecordQueues: z.array(z.string().min(1)).optional(),

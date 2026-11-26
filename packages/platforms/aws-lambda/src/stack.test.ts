@@ -305,3 +305,95 @@ it("hosts the web UI from the API function's build output and rejects what Cloud
   for (const bad of [{ directory: "" }, { directory: "x", priceClass: "Mars" }])
     expect(() => awsLambda({ ui: bad as never })).toThrow();
 });
+const grant = {
+  claim: "groups",
+  value: "viewers",
+  org: "default",
+  scopes: ["event:read" as const],
+};
+it("delivers OIDC and signed proxy settings as one JSON-able module input and reserves the env name", () => {
+  const platform = awsLambda({
+    oidc: {
+      issuer: variable("OIDC_ISSUER"),
+      audience: "errtraq",
+      grants: [grant],
+    },
+    proxyAuth: {
+      kind: "signed",
+      preset: "google-iap",
+      audience: "/projects/1/global/backendServices/2",
+      grants: [grant],
+    },
+  });
+  const inputs = platform.infra.inputs(
+    platform.config,
+    direct(platform, {
+      OIDC_ISSUER: {
+        type: "string" as const,
+        sensitive: false,
+        default: "https://idp.example.test",
+      },
+    }),
+  );
+  expect(inputs.auth_config).toMatchObject({
+    oidc: { issuer: variable("OIDC_ISSUER"), audience: "errtraq" },
+    proxy: { kind: "signed", preset: "google-iap" },
+  });
+  expect(platform.manifest.reservedBindings).toContain("ERRTRAQ_AUTH_CONFIG");
+  const plain = awsLambda();
+  expect(plain.infra.inputs(plain.config, direct(plain))).not.toHaveProperty(
+    "auth_config",
+  );
+});
+it("rejects invalid sign-in settings at stack validation", () => {
+  const ok = {
+    issuer: "https://idp.example.test",
+    audience: "a",
+    grants: [grant],
+  };
+  expect(() => awsLambda({ oidc: ok })).not.toThrow();
+  for (const bad of [
+    { ...ok, issuer: "http://idp.example.test" },
+    { ...ok, issuer: "idp.example.test" },
+    { ...ok, grants: [] },
+    { ...ok, grants: [{ ...grant, value: "team-*" }] },
+    { ...ok, grants: [{ ...grant, scopes: ["org:read"] }] },
+    { ...ok, grants: [{ ...grant, scopes: [] }] },
+    { ...ok, algorithms: ["HS256"] },
+    { ...ok, extra: 1 },
+  ])
+    expect(() => awsLambda({ oidc: bad as never })).toThrow();
+  expect(() => awsLambda({ oidc: ok, http: ["ingest"] })).toThrow(
+    /api role exposed over HTTP/,
+  );
+});
+it("refuses unsigned identity headers on Lambda, whatever the function URL authorization", () => {
+  const unsigned = {
+    kind: "unsigned" as const,
+    trustUnsignedHeaders: true as const,
+    preset: "oauth2-proxy" as const,
+    secretHeader: "x-errtraq-proxy-secret",
+    secret: variable("PROXY_SECRET"),
+    grants: [grant],
+  };
+  expect(() => awsLambda({ proxyAuth: unsigned })).toThrow(
+    /not supported on AWS Lambda/,
+  );
+  expect(() =>
+    awsLambda({
+      proxyAuth: unsigned,
+      settings: { api: { urlAuth: "AWS_IAM" } },
+    }),
+  ).toThrow(/not supported on AWS Lambda/);
+});
+it("rejects an oversized sign-in config before Terraform sees it", () => {
+  const many = Array.from({ length: 40 }, (_, i) => ({
+    ...grant,
+    value: `group-with-a-rather-long-name-${i}-${"x".repeat(40)}`,
+  }));
+  expect(() =>
+    awsLambda({
+      oidc: { issuer: "https://idp.example.test", audience: "a", grants: many },
+    }),
+  ).toThrow(/3072 bytes/);
+});

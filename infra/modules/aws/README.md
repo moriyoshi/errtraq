@@ -142,7 +142,9 @@ the adapter uses.
 creates a private S3 bucket (block public access, owner-enforced, SSE-S3, TLS-only) behind a
 CloudFront distribution with origin access control; the bucket policy lets only that distribution
 read and list. The default behavior serves the bucket, rewrites client-side routes to `/index.html`
-in a viewer-request CloudFront Function (no custom error responses: they would also rewrite the
+in a viewer-request CloudFront Function (`static-site/spa-rewrite.js`, tested under Node; it rewrites
+only requests whose `Accept` includes `text/html`, the standalone server's rule, so a missing image
+or script is a 404; no custom error responses: they would also rewrite the
 API's own 403 / 404 JSON), and applies a response headers policy (HSTS, `nosniff`,
 `frame-ancestors 'none'`, `Referrer-Policy: no-referrer`). The `/api/0/*` behavior goes to the API
 function URL over HTTPS with the managed `CachingDisabled` and `AllViewerExceptHostHeader` policies
@@ -170,3 +172,18 @@ already carries the public ingest policy. The application adds no CORS headers o
 `ingest_public_url` is delivered to the functions that expose the API as
 `ERRTRAQ_PUBLIC_INGEST_URL` so the key list shows DSNs; it is operator-supplied because the ingest
 function URL output cannot feed the function's own environment.
+
+## Sign-in settings (lambda-app)
+
+`auth_config` (any object, optional) is the platform's `oidc` and `proxyAuth` settings. It is
+delivered as JSON in `ERRTRAQ_AUTH_CONFIG` to the functions that expose the API, so the API can
+verify OIDC Bearer JWTs and signed proxy assertions (see `ARCHITECTURE.md`, "Sign-in"). The
+platform rejects a configuration whose JSON exceeds 3072 bytes (and the module validates the same
+bound), because Lambda limits all environment variables of a function to 4 KB together. Only
+`variable` references can appear in it, for issuer, audience, signer and team.
+
+The API function needs outbound access to the identity provider (discovery and JWKS) unless the
+JWKS is given inline (`jwks`). In a VPC without a NAT gateway use inline `jwks`, accepting that a
+key rotation then needs a redeploy; otherwise keep the NAT route to the provider. An AWS ALB
+assertion needs egress to `public-keys.auth.elb.<region>.amazonaws.com`, Google IAP to
+`www.gstatic.com`.

@@ -37,7 +37,11 @@ export type Capabilities = z.infer<typeof capabilitiesSchema>;
 export const whoamiSchema = z.object({
   auth: z.object({ scopes: z.array(z.string()).optional() }).nullish(),
   errtraq: z
-    .object({ capabilities: capabilitiesSchema.partial().optional() })
+    .object({
+      capabilities: capabilitiesSchema.partial().optional(),
+      /** Which kind of credential the API accepted: token, oidc or proxy. */
+      principal: z.object({ kind: z.string() }).optional(),
+    })
     .optional(),
 });
 

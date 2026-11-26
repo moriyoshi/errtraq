@@ -76,8 +76,10 @@ reads the token's scopes from the `whoami` route to hide actions it cannot perfo
 **Phase 2, OIDC.** The SPA performs Authorization Code + PKCE against any OIDC provider
 (Cognito, Google, Entra ID, Auth0, Keycloak) and sends the access token as the Bearer token.
 The API distinguishes a JWT from an opaque API token and verifies it in `http` with
-Web-standard APIs only: JWKS fetched with `fetch` and cached in `KV`, signature checked with
-WebCrypto, `iss` / `aud` / `exp` / `nbf` validated.
+Web-standard APIs only: JWKS fetched with `fetch` and cached, signature checked with
+WebCrypto, `iss` / `aud` / `exp` / `nbf` validated. (Implemented in UI-e with the JWKS cached in
+per-instance memory rather than KV, so the API role needs no new KV grant; see ARCHITECTURE.md,
+"Sign-in (UI-e)".)
 
 Authorization maps claims to the existing token model, so there is no user table:
 
@@ -87,8 +89,8 @@ oidc: {
   issuer: "https://accounts.example.com",
   audience: "errtraq-ui",
   grants: [
-    { claim: "groups", value: "errtraq-acme-admins", org: "acme", scopes: ["org:read", "project:read", "project:write", "event:read", "event:write"] },
-    { claim: "groups", value: "errtraq-acme-viewers", org: "acme", scopes: ["org:read", "project:read", "event:read"] },
+    { claim: "groups", value: "errtraq-acme-admins", org: "acme", scopes: ["event:read", "event:write"] },
+    { claim: "groups", value: "errtraq-acme-viewers", org: "acme", scopes: ["event:read"] },
   ],
 }
 ```
@@ -204,8 +206,8 @@ infra/modules/aws/static-site/   S3 + CloudFront + OAC + /api/0 behavior
 | **UI-b** | `packages/ui` skeleton: router, query client, token login, issue list and detail on the existing API | Playwright tests against `errtraq dev --stack stacks/local.ts`, seeded by the real `@sentry/node` SDK as in `pnpm e2e`; opt-in (skip without a browser) |
 | **UI-c** (done) | Platform-owned hosting: `aws/static-site` module with same-origin routing, standalone server serves the build, `ingestUrl` and API CORS from the stack config | Infra-gen snapshot tests, `terraform validate` on the generated root |
 | **UI-d** (done, Firestore pending) | Statistics: contract suite first, then memory, SQL and DynamoDB; sparkline, histogram and tag facets in the UI. Firestore declares both capabilities false until its own slice (`TODO(G-ui)`) | Contract suites pass on every store adapter that declares the capabilities |
-| **UI-e** | OIDC: JWT verification and claim-to-scope mapping in `http`, PKCE in the SPA | Unit tests with a locally generated JWKS; no network in the default test path |
-| **UI-f** | Bulk actions, releases pages, settings, keyboard navigation, dark mode | UI tests |
+| **UI-e** (done) | OIDC: JWT verification and claim-to-scope mapping in `http`, PKCE in the SPA | Unit tests with a locally generated JWKS; no network in the default test path |
+| **UI-f** (done except public API URL and custom domain) | Bulk actions, keyboard navigation, releases pages, read-only settings, dark mode, raw event download; Sentry entry shapes, Accept-based SPA fallback on both hosts, project ID 0 rejected. Deferred behind UI-e: configured public API base URL, static-site custom domain (`TODO.md`, "UI-f follow-ups") | Unit tests, route tests, `pnpm e2e:ui`, CloudFront Function test, `pnpm infra:validate` |
 
 Cloudflare and GCP hosting modules follow the platforms (M6, G-series), not this list.
 

@@ -211,6 +211,15 @@ variable "ingest_public_url" {
     error_message = "ingest_public_url must be an HTTP(S) URL without credentials, query or fragment."
   }
 }
+variable "auth_config" {
+  type        = any
+  description = "Sign-in settings for the API function (OIDC Bearer JWT verification and identity-aware proxy assertions), delivered as JSON in ERRTRAQ_AUTH_CONFIG to functions that expose the API. The platform validates the shape; Lambda limits all environment values together to 4 KB, so the JSON is capped well below that."
+  default     = null
+  validation {
+    condition     = var.auth_config == null ? true : length(jsonencode(var.auth_config)) <= 3072
+    error_message = "auth_config must serialize to at most 3072 bytes (the Lambda environment is limited to 4 KB in total)."
+  }
+}
 variable "api_cors_origins" {
   type        = list(string)
   description = "Exact browser origins allowed to call the API function URL (CORS block on the URL; the application adds no headers). Requires the API to be exposed by a function that does not also expose ingest, whose URL already carries its own public policy."

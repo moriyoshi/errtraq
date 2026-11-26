@@ -123,12 +123,30 @@ describe("standalone UI hosting", () => {
     expect(route.status).toBe(200);
     expect(await route.text()).toBe(HTML);
     expect(route.headers.get("cache-control")).toBe("no-cache");
+    // The OIDC redirect URI is a client-side route, with the authorization response in the query.
+    const callback = await fetch(`${base}/auth/callback?code=c&state=s`, {
+      headers: html,
+    });
+    expect(callback.status).toBe(200);
+    expect(await callback.text()).toBe(HTML);
     // A missing script or stylesheet must stay a 404, not an HTML body.
     expect((await fetch(`${base}/assets/missing.js`)).status).toBe(404);
     expect(
       (await fetch(`${base}/assets/missing.js`, { headers: { accept: "*/*" } }))
         .status,
     ).toBe(404);
+    // The same Accept rule as the CloudFront Function: a missing icon is a 404, a navigation to
+    // the same path is the SPA, and dots in slugs do not make a path a file.
+    const icon = { accept: "image/avif,image/webp,*/*;q=0.8" };
+    expect((await fetch(`${base}/favicon.ico`, { headers: icon })).status).toBe(
+      404,
+    );
+    expect((await fetch(`${base}/favicon.ico`, { headers: html })).status).toBe(
+      200,
+    );
+    expect(
+      (await fetch(`${base}/acme/web.app/issues`, { headers: html })).status,
+    ).toBe(200);
     expect(
       (await fetch(`${base}/org/project`, { method: "POST" })).status,
     ).toBe(404);

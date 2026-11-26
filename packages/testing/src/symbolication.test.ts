@@ -193,7 +193,7 @@ async function setup(
     await store.projects.putToken({
       id: id as ApiTokenId,
       orgId: org,
-      tokenHash: await hashApiToken(secret),
+      tokenHash: await hashApiToken(`errtraq_${secret}`),
       scopes: ["event:read", "event:write"],
     });
   const logger: Logger = {
@@ -222,7 +222,7 @@ async function setup(
     const token = org === "org" ? "secret" : "other";
     const form = new FormData();
     form.append("file", new File([data as BlobPart], await sha1Hex(data)));
-    const headers = { authorization: `Bearer ${token}` };
+    const headers = { authorization: `Bearer errtraq_${token}` };
     await api.request(
       `http://errtraq.test/api/0/organizations/${org}/chunk-upload/`,
       { method: "POST", body: form, headers },
@@ -360,7 +360,7 @@ describe("JavaScript symbolication in the consumer", () => {
     // The API serves the rewritten frames.
     const served = await t.api.request(
       `http://errtraq.test/api/0/projects/org/project/events/${id}`,
-      { headers: { authorization: "Bearer secret" } },
+      { headers: { authorization: "Bearer errtraq_secret" } },
     );
     expect(served.status).toBe(200);
     expect(JSON.stringify(await served.json())).toContain(

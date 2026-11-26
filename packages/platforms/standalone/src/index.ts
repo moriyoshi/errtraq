@@ -4,6 +4,7 @@ import {
   ARCHIVE_PROJECT_TOPIC,
   type ArchiveStore,
   ArchiveWorker,
+  authSettingsOf,
   type BatchHandler,
   type BlobStore,
   bootstrapProject,
@@ -200,6 +201,7 @@ export function create({
         bindings.queue.producer,
         logger,
       );
+      const auth = authSettingsOf(cfg);
       const app = new Hono({ strict: false });
       app.get("/health", (c) => c.json({ status: "ok" }));
       if (cfg.http.includes("ingest"))
@@ -219,6 +221,7 @@ export function create({
             ...(cfg.apiCorsOrigins
               ? { cors: { origins: cfg.apiCorsOrigins } }
               : {}),
+            ...(auth ? { auth } : {}),
           }),
         );
       // The environment variable wins over the setting so a container image can point at the

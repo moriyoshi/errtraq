@@ -9,6 +9,11 @@ export interface ApiClientOptions {
   /** Called once for every 401 response, after the error is built. */
   onUnauthorized?: () => void;
   fetch?: typeof fetch;
+  /**
+   * An identity-aware proxy owns the session: no Authorization header, the proxy cookie goes
+   * along (same-origin only, so it never leaves this origin) and writes carry the CSRF header.
+   */
+  proxy?: boolean;
 }
 
 export interface RequestOptions {
@@ -80,9 +85,12 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
     for (const [key, value] of Object.entries(opts.query ?? {}))
       if (value !== undefined && value !== "")
         url.searchParams.set(key, String(value));
-    const token = opts.token ?? options.getToken();
+    const token = options.proxy ? null : (opts.token ?? options.getToken());
     const headers: Record<string, string> = { Accept: "application/json" };
     if (token) headers.Authorization = `Bearer ${token}`;
+    // A cross-site form cannot set a custom header without a CORS preflight the API refuses.
+    if (options.proxy && opts.method && opts.method !== "GET")
+      headers["X-Errtraq-Csrf"] = "1";
     if (opts.body !== undefined) headers["Content-Type"] = "application/json";
     let response: Response;
     try {
@@ -91,7 +99,8 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
         headers,
         body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
         signal: opts.signal,
-        credentials: "omit",
+        // Bearer tokens never need cookies; the proxy session cookie does.
+        credentials: options.proxy ? "same-origin" : "omit",
       });
     } catch (cause) {
       if (opts.signal?.aborted) throw cause;

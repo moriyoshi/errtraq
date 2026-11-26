@@ -3,7 +3,8 @@ locals {
   assets   = { for asset in local.manifest.assets : asset.path => asset }
   api_host = regex("^https://([^/]+)/?$", var.api_origin_url)[0]
   # Paths the SPA rewrite leaves alone: files at the root and everything under a top-level
-  # directory of the build (hashed assets). Any other path is a client-side route.
+  # directory of the build (hashed assets). Any other path is a client-side route when the
+  # viewer accepts text/html, and passes through (a 404) otherwise.
   root_files = sort([for path in keys(local.assets) : "/${path}" if length(split("/", path)) == 1])
   prefixes   = sort(distinct([for path in keys(local.assets) : "/${split("/", path)[0]}/" if length(split("/", path)) > 1]))
 }
@@ -99,25 +100,18 @@ resource "aws_s3_object" "asset" {
 
 # SPA fallback on the default behavior only. A distribution-wide custom error response for 403 and
 # 404 would also rewrite the API's own JSON errors into index.html, so the rewrite is a viewer
-# request function that the /api/0/* behavior never sees.
+# request function that the /api/0/* behavior never sees. It rewrites only requests that accept
+# text/html (the standalone server's rule), so a missing image or script is a 404, not index.html.
+# The handler is spa-rewrite.js, run under Node by the repository's tests.
 resource "aws_cloudfront_function" "spa" {
   name    = "${substr(var.name, 0, 40)}-ui-spa"
   runtime = "cloudfront-js-2.0"
-  comment = "Rewrites client-side routes to /index.html"
+  comment = "Rewrites navigations to client-side routes to /index.html"
   publish = true
   code    = <<-EOT
     var ROOT_FILES = ${jsonencode(local.root_files)};
     var PREFIXES = ${jsonencode(local.prefixes)};
-    function handler(event) {
-      var request = event.request;
-      var uri = request.uri;
-      if (ROOT_FILES.indexOf(uri) !== -1) return request;
-      for (var i = 0; i < PREFIXES.length; i++) {
-        if (uri.indexOf(PREFIXES[i]) === 0) return request;
-      }
-      request.uri = "/index.html";
-      return request;
-    }
+    ${file("${path.module}/spa-rewrite.js")}
   EOT
 }
 resource "aws_cloudfront_response_headers_policy" "site" {
@@ -173,8 +167,8 @@ resource "aws_cloudfront_distribution" "site" {
   # TODO(UI-f): the API builds Link and permalink URLs from the request URL, which behind this
   # distribution is the function URL host. The UI only reads the cursor from Link, so it works.
   # Ingest (/api/<projectId>/envelope/ ...) stays on its own function URL, the DSN host, and is
-  # not routed here. Minted project IDs start at 1 (the bootstrap counter increments from zero),
-  # so /api/0/* cannot collide with an ingest path.
+  # not routed here. Project ID 0 is rejected (isProjectId in core), so /api/0/* cannot collide with
+  # an ingest path.
   ordered_cache_behavior {
     path_pattern             = "/api/0/*"
     target_origin_id         = "api"

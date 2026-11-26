@@ -14,7 +14,7 @@ import { MemoryActiveStore } from "./memory-active.js";
 import { MemoryBlobStore, MemoryKV } from "./memory-other.js";
 import { DeterministicIdGen, FakeClock } from "./shared.js";
 
-const auth = { authorization: "Bearer secret" };
+const auth = { authorization: "Bearer errtraq_secret" };
 const now = "2024-03-10T12:30:00.000Z";
 const ts = (iso: string) => iso as Timestamp;
 
@@ -33,7 +33,7 @@ async function setup(statsOn = true) {
   await store.projects.putToken({
     id: "token" as ApiTokenId,
     orgId: boot.org.id,
-    tokenHash: await hashApiToken("secret"),
+    tokenHash: await hashApiToken("errtraq_secret"),
     scopes: ["event:read", "event:write"],
   });
   const projectId = boot.project.id as ProjectId;

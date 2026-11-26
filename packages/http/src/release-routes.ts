@@ -425,8 +425,15 @@ export function addReleaseRoutes(
   const whoami = (c: C) =>
     c.json({
       auth: { scopes: c.get("token").scopes },
-      user: null,
+      user:
+        c.get("token").kind === "token"
+          ? null
+          : {
+              id: c.get("token").subject ?? null,
+              ...(c.get("token").email ? { email: c.get("token").email } : {}),
+            },
       errtraq: {
+        principal: { kind: c.get("token").kind },
         capabilities: {
           textSearch: store.capabilities.textSearch,
           lastSeenRangeOnOtherSort: store.capabilities.lastSeenRangeOnOtherSort,
@@ -464,6 +471,52 @@ export function addReleaseRoutes(
   app.get(
     "/api/0/projects/:org/:project/releases/:version/deploys",
     proj(listDeploys),
+  );
+
+  // Active artifact bundles of one release, read-only, in the shape of Sentry's project
+  // `artifact-bundles` listing. `query` is required and names the release version: bundles are
+  // indexed per release, and listing every bundle of a project would be a scan. `fileCount` and
+  // the dates are null (the bundle record keeps neither); `errtraq.debugIdCount` is what it holds.
+  app.get(
+    "/api/0/projects/:org/:project/artifact-bundles",
+    proj(async (c, _org, project) => {
+      const version = c.req.query("query") ?? "";
+      if (!version) throw new Bad("query (a release version) is required");
+      const limitText = c.req.query("per_page") ?? c.req.query("limit");
+      const limit = limitText === undefined ? 25 : Number(limitText);
+      if (!Number.isInteger(limit) || limit < 1 || limit > 100)
+        throw new Bad("Invalid page limit");
+      const release = await store.releases.getReleaseByVersion(
+        (project as Project).id,
+        version,
+      );
+      if (!release) return bad(c, "Release not found", 404);
+      const page = await store.releases.listBundles(
+        release.projectId,
+        release.id,
+        (c.req.query("cursor") || undefined) as Cursor | undefined,
+        limit,
+      );
+      const url = new URL(c.req.url);
+      if (page.nextCursor) url.searchParams.set("cursor", page.nextCursor);
+      else url.searchParams.delete("cursor");
+      c.header(
+        "Link",
+        `<${url}>; rel="next"; results="${page.nextCursor ? "true" : "false"}"; cursor="${page.nextCursor ?? ""}"`,
+      );
+      return c.json(
+        page.items
+          .filter((b) => b.state === "active" && !b.cleanupStarted)
+          .map((b) => ({
+            bundleId: b.id,
+            associations: [{ release: release.version, dist: null }],
+            fileCount: null,
+            date: null,
+            dateModified: null,
+            errtraq: { debugIdCount: b.manifest.debugIdCount },
+          })),
+      );
+    }),
   );
 
   // Commit data is not tracked; sentry-cli treats 404 as "none".

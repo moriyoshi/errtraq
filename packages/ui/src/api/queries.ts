@@ -181,7 +181,9 @@ export function useEvent(issueId: Accessor<string>, which: Accessor<string>) {
     queryFn: ({ signal }) =>
       api.get(
         `/api/0/issues/${enc(issueId())}/events/${enc(which())}/`,
-        eventSchema,
+        // Loose: fields this UI does not know stay in the object, so the raw view and the JSON
+        // download show what the server sent (entry payloads are never stripped either way).
+        eventSchema.loose(),
         { signal },
       ),
   }));

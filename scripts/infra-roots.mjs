@@ -9,6 +9,7 @@ import {
   configReference,
   deriveDeployment,
   env,
+  isVariableRef,
   out,
   output,
   resolveStack,
@@ -119,6 +120,44 @@ export const fixtures = {
         type: "string[]",
         sensitive: false,
         default: ["https://ui.example.test", "http://localhost:5173"],
+      },
+    },
+  }),
+  // OIDC Bearer verification and a signed proxy assertion, delivered as one JSON environment value.
+  "sign-in": variant(shared, {
+    recordMode: "direct",
+    platform: awsLambda({
+      oidc: {
+        issuer: variable("OIDC_ISSUER"),
+        audience: "errtraq",
+        grants: [
+          {
+            claim: "groups",
+            value: "viewers",
+            org: "default",
+            scopes: ["event:read"],
+          },
+        ],
+      },
+      proxyAuth: {
+        kind: "signed",
+        preset: "google-iap",
+        audience: "/projects/1/global/backendServices/2",
+        grants: [
+          {
+            claim: "email",
+            value: "ops@example.test",
+            org: "default",
+            scopes: ["event:read", "event:write"],
+          },
+        ],
+      },
+    }),
+    variables: {
+      OIDC_ISSUER: {
+        type: "string",
+        sensitive: false,
+        default: "https://idp.example.test",
       },
     },
   }),
@@ -657,6 +696,20 @@ export function prepareRoot(parent, name, version) {
   const render = (value, owner) =>
     renderInfraValue(value, owner, stack, options);
   const bootstrapSecret = stack.platform.config.bootstrapSecretName;
+  const sortedJson = (value) =>
+    JSON.stringify(
+      (function sort(v) {
+        if (v && typeof v === "object" && !Array.isArray(v)) {
+          if (isVariableRef(v)) return stack.variables[v.name].default;
+          return Object.fromEntries(
+            Object.keys(v)
+              .sort()
+              .map((k) => [k, sort(v[k])]),
+          );
+        }
+        return Array.isArray(v) ? v.map(sort) : v;
+      })(value),
+    );
   const env = Object.fromEntries(
     view.functions.map((fn) => [
       fn.id,
@@ -674,6 +727,20 @@ export function prepareRoot(parent, name, version) {
                 stack.platform.config.publicIngestUrl,
                 "platform",
               ),
+            }
+          : {}),
+        // The module delivers the sign-in settings as JSON (keys sorted, as jsonencode does).
+        ...(fn.http.includes("api") &&
+        (stack.platform.config.oidc || stack.platform.config.proxyAuth)
+          ? {
+              ERRTRAQ_AUTH_CONFIG: sortedJson({
+                ...(stack.platform.config.oidc
+                  ? { oidc: stack.platform.config.oidc }
+                  : {}),
+                ...(stack.platform.config.proxyAuth
+                  ? { proxy: stack.platform.config.proxyAuth }
+                  : {}),
+              }),
             }
           : {}),
         // The module, not an adapter binding, delivers the name of the one secret.

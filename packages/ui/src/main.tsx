@@ -6,6 +6,8 @@ import {
 import { RouterProvider } from "@tanstack/solid-router";
 import { render } from "solid-js/web";
 import { isApiError } from "./api/errors";
+import { proxyUnauthorized } from "./auth/app";
+import { authMode } from "./auth/config";
 import { setUnauthorizedHandler } from "./auth/session";
 import { router } from "./router";
 import "./styles.css";
@@ -33,10 +35,12 @@ const queryClient = new QueryClient({
   },
 });
 
-// A 401 anywhere drops the token and every cached response, then returns to the login page.
+// A 401 anywhere drops the token and every cached response, then returns to the login page
+// (in proxy mode the page is reloaded instead, so the proxy can sign the user in again).
 setUnauthorizedHandler(() => {
   queryClient.clear();
-  void router.navigate({ to: "/login" });
+  if (authMode === "proxy") proxyUnauthorized();
+  else void router.navigate({ to: "/login" });
 });
 
 const root = document.getElementById("root");

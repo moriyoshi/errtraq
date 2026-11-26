@@ -27,7 +27,7 @@ type Requester = {
     request(path: string, init?: RequestInit): Response | Promise<Response>;
   };
 };
-const auth = { authorization: "Bearer secret" };
+const auth = { authorization: "Bearer errtraq_secret" };
 
 async function setup(
   options: {
@@ -50,7 +50,7 @@ async function setup(
   await store.projects.putToken({
     id: "token" as ApiTokenId,
     orgId: boot.org.id,
-    tokenHash: await hashApiToken("secret"),
+    tokenHash: await hashApiToken("errtraq_secret"),
     scopes: ["event:read", "event:write"],
   });
   const projectId = boot.project.id;

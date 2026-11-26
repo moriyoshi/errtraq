@@ -1,4 +1,6 @@
 import {
+  type AuthSettingsInput,
+  authSettingsProblem,
   configReference,
   type InfraDescriptor,
   type PlatformManifest,
@@ -40,6 +42,8 @@ export const corsOrigins = z
   )
   .min(1)
   .max(20);
+const isObject = (value: unknown) =>
+  !!value && typeof value === "object" && !Array.isArray(value);
 const baseConfigSchema = z.strictObject({
   host: z.string().min(1).default("127.0.0.1"),
   publicUrl: publicUrl.optional(),
@@ -55,6 +59,17 @@ const baseConfigSchema = z.strictObject({
    * paths resolve against the working directory, like `tokenDirectory`.
    */
   uiDirectory: z.string().min(1).optional(),
+  /**
+   * OIDC Bearer JWT sign-in (claims map to an organization and scopes through `grants`). Off
+   * unless set. See `OidcSettings` in `@moriyoshi/errtraq-http`.
+   */
+  oidc: z.custom<AuthSettingsInput["oidc"]>(isObject).optional(),
+  /**
+   * Identity asserted by a proxy in front of this server: a signed assertion header (preset for
+   * Google IAP, Cloudflare Access, AWS ALB, Pomerium) or, behind a verified shared secret,
+   * plain identity headers. Off unless set.
+   */
+  proxyAuth: z.custom<AuthSettingsInput["proxy"]>(isObject).optional(),
   rateLimit: z.number().int().positive().nullable().default(60),
   rateWindowSec: z.number().int().positive().default(60),
   roles: z
@@ -95,6 +110,10 @@ const portWithReference = configReference(
   z.number().int().min(0).max(65535),
 ).default(8787);
 export const configSchema = baseConfigSchema
+  .superRefine((config, ctx) => {
+    const problem = authSettingsProblem(config, { resolved: true });
+    if (problem) ctx.addIssue({ code: "custom", message: problem });
+  })
   .refine(
     (config) =>
       config.roles.length >= 4 &&
@@ -117,6 +136,10 @@ const stackConfigSchema = baseConfigSchema
     tokenDirectory: configReference(z.string().min(1)).default(".errtraq"),
     apiCorsOrigins: configReference(corsOrigins).optional(),
     uiDirectory: configReference(z.string().min(1)).optional(),
+  })
+  .superRefine((config, ctx) => {
+    const problem = authSettingsProblem(config);
+    if (problem) ctx.addIssue({ code: "custom", message: problem });
   })
   .refine(
     (config) =>

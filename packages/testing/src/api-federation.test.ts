@@ -31,7 +31,7 @@ async function setup(withArchive: boolean) {
   await store.projects.putToken({
     id: "token" as ApiTokenId,
     orgId: boot.org.id,
-    tokenHash: await hashApiToken("secret"),
+    tokenHash: await hashApiToken("errtraq_secret"),
     scopes: ["event:read"],
   });
   const projectId = boot.project.id;
@@ -75,7 +75,7 @@ async function setup(withArchive: boolean) {
   });
   return { store, archive, app, rows, projectId };
 }
-const headers = { authorization: "Bearer secret" };
+const headers = { authorization: "Bearer errtraq_secret" };
 const nextCursor = (response: Response) =>
   /rel="next"; results="true"; cursor="([^"]+)"/.exec(
     response.headers.get("link") ?? "",

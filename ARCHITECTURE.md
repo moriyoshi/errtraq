@@ -718,8 +718,8 @@ Further AWS verification and remaining M3 work are tracked in the agent document
 The web UI (`packages/ui`, a static Vite build) is hosted from the **platform** settings, not from
 a stack selection: HTTP exposure (`http`, function URLs) belongs to the platform, and the model has
 no port kind or build-input phase for a static site. Standalone serves a directory at `/` from the
-same HTTP server (`uiDirectory` or `ERRTRAQ_UI_DIR`): files as they are, SPA fallback for
-navigations outside `/api/`, immutable caching for hashed `assets/*`, no path traversal. On AWS the
+same HTTP server (`uiDirectory` or `ERRTRAQ_UI_DIR`): files as they are, SPA fallback only for
+requests that accept `text/html` outside `/api/` (the CloudFront Function applies the same rule), immutable caching for hashed `assets/*`, no path traversal. On AWS the
 platform setting `ui: { directory }` makes the `lambda-app` module instantiate `aws/static-site`: a
 private S3 bucket behind CloudFront with origin access control, the API function URL behind
 `/api/0/*` (managed `CachingDisabled` and `AllViewerExceptHostHeader` policies; the URL keeps
@@ -739,6 +739,42 @@ one policy and ingest's is public. The key list's `dsn` needs the public ingest 
 reuses `publicUrl`; Lambda takes the operator-supplied `publicIngestUrl` (a literal or a stack
 variable, such as a custom domain), delivered to the API function as `ERRTRAQ_PUBLIC_INGEST_URL`.
 It cannot be derived from the ingest function's own URL output (a Terraform cycle).
+
+### Sign-in (UI-e)
+
+No user table: the API turns a credential into a `Principal` (`{ kind: "token" | "oidc" | "proxy",
+orgId, scopes, subject?, email? }`), and routes read only `orgId` and `scopes`. The sources are
+tried in a fixed order: an `errtraq_` Bearer token (hash lookup; it never reaches the JWT
+verifier), then the configured proxy source, then a Bearer JWT (never looked up by hash). A proxy
+assertion that fails verification is a 401 and does not fall through to a Bearer JWT.
+
+Verification is WebCrypto only, in `packages/http` (`jwt.ts`): RS256, ES256 and PS256 (EdDSA is
+not implemented); `none`, `HS*`, `crit`, an unmatched `kid` or a key whose `kty` / `alg` / `use`
+does not fit the token's `alg` are refused. `iss` is matched exactly; the audience is `aud` or a
+named claim; `exp` is required, `nbf` / `iat` are honoured with 60 s skew, and the lifetime is
+bounded from `iat` (24 h by default). Keys come from an inline JWKS, a `jwksUri` or discovery (the
+document must name the same issuer), cached per instance for the `Cache-Control` max-age clamped
+to 5 min to 24 h; an unknown `kid` refetches at most once, and fetches are limited to one per
+60 s per instance (failures count), so forged tokens cannot amplify traffic. Fetch failures
+fail closed and log a class only. Plain HTTP is accepted for loopback hosts only. (The design
+originally cached the JWKS in KV; per-instance memory avoids a new KV grant on the API role.)
+
+Grants (`{ claim, value, org, scopes }`, `claim` a top-level claim, `value` equal or contained in
+an array, no wildcards; `email` also needs `email_verified`) are unioned within one organization;
+two organizations at once, no match, or an unknown slug is a 403. Scopes are limited to the ones
+the API checks (`event:read`, `event:write`); the route requirements are unchanged.
+
+Identity-aware proxies: signed assertion headers (presets for Google IAP, Cloudflare Access, AWS
+ALB with per-`kid` PEM keys, Pomerium, or generic) use the same verifier with their own issuer,
+audience / signer and keys. Unsigned identity headers (oauth2-proxy, Azure App Service, custom
+mapping) need `trustUnsignedHeaders: true` and a shared-secret header compared in constant time,
+with the secret a config reference; they are refused on AWS Lambda (a function URL with
+authorization NONE is reachable without the proxy), and on standalone the operator guarantees the
+proxy is the only path. A proxy principal rides a cookie, so its writes need `X-Errtraq-Csrf: 1`
+and a JSON content type; credentialed CORS is never enabled. Settings are the platform's `oidc`
+and `proxyAuth`; on Lambda they travel as a module input `auth_config` and the
+`ERRTRAQ_AUTH_CONFIG` environment value (at most 3072 bytes, the whole environment being limited to
+4 KB). The SPA side is in `packages/ui/README.md`.
 
 ### Deployed bootstrap
 

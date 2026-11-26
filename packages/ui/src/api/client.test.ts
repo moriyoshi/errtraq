@@ -109,3 +109,32 @@ describe("api client", () => {
     expect(calls[0]?.init.body).toBe('{"status":"resolved"}');
   });
 });
+
+describe("proxy mode", () => {
+  const seen: { headers: Headers; credentials?: RequestCredentials }[] = [];
+  const proxyClient = createApiClient({
+    base: "https://app.test",
+    getToken: () => "must-not-be-sent",
+    proxy: true,
+    fetch: (async (_url: URL | string, init: RequestInit = {}) => {
+      seen.push({
+        headers: new Headers(init.headers),
+        credentials: init.credentials,
+      });
+      return json({});
+    }) as typeof fetch,
+  });
+  it("sends no Authorization header, keeps same-origin credentials and adds the CSRF header to writes only", async () => {
+    await proxyClient.get("/api/0/", z.object({}));
+    await proxyClient.get("/api/0/x", z.object({}), {
+      method: "PUT",
+      body: {},
+    });
+    const [read, write] = seen;
+    expect(read?.headers.get("authorization")).toBeNull();
+    expect(read?.headers.get("x-errtraq-csrf")).toBeNull();
+    expect(read?.credentials).toBe("same-origin");
+    expect(write?.headers.get("x-errtraq-csrf")).toBe("1");
+    expect(write?.headers.get("content-type")).toBe("application/json");
+  });
+});

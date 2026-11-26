@@ -121,7 +121,7 @@ resource "aws_lambda_function" "function" {
       command = ["${each.key}/${var.handler}"]
     }
   }
-  environment { variables = merge(each.value.environment, each.value.secrets, contains(each.value.roles, "bootstrap") ? { ERRTRAQ_BOOTSTRAP_SECRET_NAME = var.bootstrap_secret_name } : {}, contains(each.value.http, "api") && var.ingest_public_url != null ? { ERRTRAQ_PUBLIC_INGEST_URL = var.ingest_public_url } : {}) }
+  environment { variables = merge(each.value.environment, each.value.secrets, contains(each.value.roles, "bootstrap") ? { ERRTRAQ_BOOTSTRAP_SECRET_NAME = var.bootstrap_secret_name } : {}, contains(each.value.http, "api") && var.ingest_public_url != null ? { ERRTRAQ_PUBLIC_INGEST_URL = var.ingest_public_url } : {}, contains(each.value.http, "api") && var.auth_config != null ? { ERRTRAQ_AUTH_CONFIG = jsonencode(var.auth_config) } : {}) }
   dynamic "vpc_config" {
     for_each = local.vpc_enabled ? [1] : []
     content {

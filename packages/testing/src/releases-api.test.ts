@@ -81,7 +81,7 @@ async function setup(
     await store.projects.putToken({
       id: id as ApiTokenId,
       orgId: org,
-      tokenHash: await hashApiToken(secret),
+      tokenHash: await hashApiToken(`errtraq_${secret}`),
       scopes: [...scopes],
     });
   const blobs = new MemoryBlobStore();
@@ -90,7 +90,7 @@ async function setup(
     app.request(`http://errtraq.test${path}`, {
       ...init,
       headers: {
-        authorization: `Bearer ${init.token ?? "secret"}`,
+        authorization: `Bearer errtraq_${init.token ?? "secret"}`,
         ...(init.body && typeof init.body === "string"
           ? { "content-type": "application/json" }
           : {}),
@@ -615,12 +615,12 @@ describe("chunk upload and artifact bundle assembly", () => {
     await store.projects.putToken({
       id: "t" as ApiTokenId,
       orgId: boot.org.id,
-      tokenHash: await hashApiToken("secret"),
+      tokenHash: await hashApiToken("errtraq_secret"),
       scopes: ["event:read", "event:write"],
     });
     const app = createApiApp({ store, clock });
     const res = await app.request("/api/0/organizations/org/chunk-upload/", {
-      headers: { authorization: "Bearer secret" },
+      headers: { authorization: "Bearer errtraq_secret" },
     });
     expect(res.status).toBe(501);
   });

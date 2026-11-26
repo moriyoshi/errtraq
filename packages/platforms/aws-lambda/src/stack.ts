@@ -1,13 +1,18 @@
 import {
   ARCHIVE_ROLE_DEFAULTS,
+  type AuthSettingsInput,
+  authSettingsProblem,
   CONSUMER_MAX_MISSING_ATTEMPTS,
   configReference,
   type DeploymentFunction,
   type InfraDescriptor,
   type InfraValue,
+  isEnvRef,
+  isVariableRef,
   type PlatformManifest,
   type PlatformSelection,
   stackValue,
+  withoutReferences,
 } from "@moriyoshi/errtraq-core";
 import { z } from "zod";
 import {
@@ -83,6 +88,24 @@ const ingestPublicUrl = z.string().refine((value) => {
 }, "Public ingest URL must be an HTTP(S) URL without credentials, query or fragment");
 /** Environment variable that carries the public ingest URL to the API function. */
 export const PUBLIC_INGEST_URL_ENV = "ERRTRAQ_PUBLIC_INGEST_URL";
+/** Environment variable that carries the sign-in settings (JSON) to the API function. */
+export const AUTH_CONFIG_ENV = "ERRTRAQ_AUTH_CONFIG";
+/** Serialized sign-in settings stay well under the 4 KB Lambda environment limit. */
+export const MAX_AUTH_CONFIG_BYTES = 3072;
+const LAMBDA_ENVIRONMENT_LIMIT_BYTES = 4096;
+const isObject = (value: unknown) =>
+  !!value && typeof value === "object" && !Array.isArray(value);
+/** JSON size of the sign-in settings, with each config reference counted as a placeholder. */
+function authConfigBytes(config: {
+  oidc?: unknown;
+  proxyAuth?: unknown;
+}): number {
+  const { value } = withoutReferences({
+    ...(config.oidc === undefined ? {} : { oidc: config.oidc }),
+    ...(config.proxyAuth === undefined ? {} : { proxy: config.proxyAuth }),
+  });
+  return new TextEncoder().encode(JSON.stringify(value)).length;
+}
 const settings = z.strictObject({
   memoryMb: z.number().int().min(128).max(10240).optional(),
   timeoutSec: z.number().int().min(1).max(900).optional(),
@@ -162,6 +185,19 @@ export const configSchema = z
           .default("PriceClass_100"),
       })
       .optional(),
+    /**
+     * OIDC Bearer JWT sign-in: claims map to an organization and scopes through `grants`. The API
+     * function needs egress to the IdP unless `jwks` is inline. Delivered as
+     * ERRTRAQ_AUTH_CONFIG (JSON); only `variable` references, and only for issuer, audience,
+     * signer and team.
+     */
+    oidc: z.custom<AuthSettingsInput["oidc"]>(isObject).optional(),
+    /**
+     * Identity asserted by a proxy in front of the API: signed assertion headers only (Google
+     * IAP, Cloudflare Access, AWS ALB, Pomerium, generic). Plain identity headers are refused:
+     * a function URL with authorization NONE is reachable without the proxy.
+     */
+    proxyAuth: z.custom<AuthSettingsInput["proxy"]>(isObject).optional(),
     cronDlqArn: z
       .string()
       .regex(/^arn:[^:]+:sqs:/)
@@ -185,6 +221,30 @@ export const configSchema = z
         "VPC subnet IDs and security group IDs must be provided together",
     },
   )
+  .superRefine((config, ctx) => {
+    const problem = authSettingsProblem(config);
+    if (problem) ctx.addIssue({ code: "custom", message: problem });
+    else if (
+      (config.oidc !== undefined || config.proxyAuth !== undefined) &&
+      !config.http.includes("api")
+    )
+      ctx.addIssue({
+        code: "custom",
+        message: "oidc and proxyAuth need the api role exposed over HTTP",
+      });
+    else if (authConfigBytes(config) > MAX_AUTH_CONFIG_BYTES)
+      ctx.addIssue({
+        code: "custom",
+        message: `oidc and proxyAuth serialize to more than ${MAX_AUTH_CONFIG_BYTES} bytes; Lambda limits all environment variables together to 4 KB, so use fewer or shorter grants`,
+      });
+    const proxy = config.proxyAuth as { kind?: unknown } | undefined;
+    if (proxy?.kind === "unsigned")
+      ctx.addIssue({
+        code: "custom",
+        message:
+          "Unsigned identity headers are not supported on AWS Lambda: a function URL with authorization NONE is reachable without the proxy, and the shared secret would sit in the function environment; use a signed assertion preset",
+      });
+  })
   .refine((config) => !config.ui || config.http.includes("api"), {
     message: "ui requires the api role to be exposed over HTTP",
   })
@@ -245,6 +305,12 @@ export const manifest: PlatformManifest = {
     artifactBucket: "string",
     imageUri: "string",
     publicIngestUrl: "string",
+    "oidc.issuer": "string",
+    "oidc.audience": "string",
+    "proxyAuth.issuer": "string",
+    "proxyAuth.audience": "string",
+    "proxyAuth.signer": "string",
+    "proxyAuth.team": "string",
     apiCorsOrigins: "string[]",
     vpcSubnetIds: "string[]",
     vpcSecurityGroupIds: "string[]",
@@ -253,6 +319,7 @@ export const manifest: PlatformManifest = {
     "ERRTRAQ_INGEST_RATE_LIMIT",
     BOOTSTRAP_SECRET_ENV,
     PUBLIC_INGEST_URL_ENV,
+    AUTH_CONFIG_ENV,
     "_HANDLER",
     "_X_AMZN_TRACE_ID",
     "AWS_DEFAULT_REGION",
@@ -267,6 +334,58 @@ export const manifest: PlatformManifest = {
     "LAMBDA_RUNTIME_DIR",
   ],
 };
+/** Only variable references can reach the module; an environment reference has no meaning there. */
+function assertVariableReferencesOnly(value: unknown, path: string): void {
+  if (isEnvRef(value))
+    throw new Error(
+      `${path}: only variable references are supported in oidc and proxyAuth on Lambda`,
+    );
+  if (Array.isArray(value))
+    value.forEach((item, i) => {
+      assertVariableReferencesOnly(item, `${path}.${i}`);
+    });
+  else if (isObject(value) && !isVariableRef(value))
+    for (const [key, item] of Object.entries(value as object))
+      assertVariableReferencesOnly(item, `${path}.${key}`);
+}
+/** The module input for the sign-in settings, after the checks that need the deployment. */
+function authConfigInput(
+  config: Config,
+  apiFunction: DeploymentFunction | undefined,
+): Record<string, InfraValue> | undefined {
+  if (config.oidc === undefined && config.proxyAuth === undefined)
+    return undefined;
+  if (!apiFunction)
+    throw new Error("oidc and proxyAuth need the api role exposed over HTTP");
+  assertVariableReferencesOnly(config.oidc, "oidc");
+  assertVariableReferencesOnly(config.proxyAuth, "proxyAuth");
+  // Every environment value of the function counts toward Lambda's 4 KB limit (names included).
+  const known = [
+    ...apiFunction.envBindings.map((item) => item.binding),
+    ...apiFunction.secretBindings.map((item) => item.binding),
+  ].reduce(
+    (sum, binding) =>
+      sum +
+      binding.name.length +
+      (typeof binding.value === "string" ? binding.value.length : 0),
+    0,
+  );
+  const total =
+    known +
+    AUTH_CONFIG_ENV.length +
+    authConfigBytes(config) +
+    (config.publicIngestUrl ? PUBLIC_INGEST_URL_ENV.length + 256 : 0);
+  if (total > LAMBDA_ENVIRONMENT_LIMIT_BYTES)
+    throw new Error(
+      `The ${apiFunction.id} function's environment would be about ${total} bytes with the sign-in settings; Lambda allows 4096 in total`,
+    );
+  return {
+    ...(config.oidc === undefined ? {} : { oidc: config.oidc as InfraValue }),
+    ...(config.proxyAuth === undefined
+      ? {}
+      : { proxy: config.proxyAuth as InfraValue }),
+  };
+}
 export const infra: InfraDescriptor<Config> = {
   module: {
     provider: "aws",
@@ -320,6 +439,7 @@ export const infra: InfraDescriptor<Config> = {
           `ui needs the API function URL without IAM authorization (urlAuth NONE); ${apiFunction.id} uses AWS_IAM`,
         );
     }
+    const authConfig = authConfigInput(config, apiFunction);
     return {
       name: stackValue("name"),
       tags: stackValue("tags"),
@@ -339,6 +459,7 @@ export const infra: InfraDescriptor<Config> = {
       ...(config.apiCorsOrigins
         ? { api_cors_origins: config.apiCorsOrigins }
         : {}),
+      ...(authConfig ? { auth_config: authConfig } : {}),
       ...(config.alarmTopicArn
         ? { alarm_topic_arn: config.alarmTopicArn }
         : {}),

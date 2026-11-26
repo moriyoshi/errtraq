@@ -110,6 +110,25 @@ function Breadcrumbs(props: { values: Breadcrumb[] }) {
   );
 }
 
+/**
+ * Save `text` as a file through a Blob URL. The URL is revoked right after the click (the
+ * download has started by then). A `blob:` navigation for a download is allowed by the build's
+ * CSP, which has no `navigate-to` or `form-action` for it and does not govern `<a download>`.
+ */
+function downloadJson(text: string, filename: string) {
+  const url = URL.createObjectURL(
+    new Blob([text], { type: "application/json" }),
+  );
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  // Revoke after the click has been handled; revoking synchronously can cancel the download.
+  setTimeout(() => URL.revokeObjectURL(url), 0);
+}
+
 function Raw(props: { event: ErrtraqEvent }) {
   const [open, setOpen] = createSignal(false);
   const json = createMemo(() =>
@@ -119,9 +138,23 @@ function Raw(props: { event: ErrtraqEvent }) {
     <Section
       title="Raw JSON"
       aside={
-        <button type="button" class="link" onClick={() => setOpen(!open())}>
-          {open() ? "Hide" : "Show"}
-        </button>
+        <span class="raw-actions">
+          <button
+            type="button"
+            class="link"
+            onClick={() =>
+              downloadJson(
+                JSON.stringify(props.event, null, 2),
+                `event-${props.event.eventID.replace(/[^A-Za-z0-9._-]/g, "_")}.json`,
+              )
+            }
+          >
+            Download JSON
+          </button>
+          <button type="button" class="link" onClick={() => setOpen(!open())}>
+            {open() ? "Hide" : "Show"}
+          </button>
+        </span>
       }
     >
       <Show when={open()} fallback={<p class="muted small">Hidden.</p>}>

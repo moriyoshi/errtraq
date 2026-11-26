@@ -250,7 +250,11 @@ export function parseTimestamp(value: string): Timestamp {
   if (!isTimestamp(value)) throw new RangeError("Invalid timestamp");
   return value;
 }
-/** Sentry project IDs contain decimal digits only. */
+/**
+ * Sentry project IDs contain decimal digits only. `"0"` is refused: `/api/0/*` is the management
+ * API, so a project 0 would make the DSN ingest path `/api/0/envelope/` ambiguous (and the
+ * CloudFront behaviors route `/api/0/*` to the API function, not ingest). Minted IDs start at 1.
+ */
 export function isProjectId(value: string): value is ProjectId {
-  return /^\d+$/.test(value);
+  return /^\d+$/.test(value) && value !== "0";
 }

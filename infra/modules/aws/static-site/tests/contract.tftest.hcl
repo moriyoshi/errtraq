@@ -93,8 +93,8 @@ run "spa_fallback_is_a_viewer_function_not_error_responses" {
     error_message = "The default behavior serves the bucket read-only with the SPA rewrite on viewer request."
   }
   assert {
-    condition     = strcontains(aws_cloudfront_function.spa.code, "[\"/favicon.svg\",\"/index.html\"]") && strcontains(aws_cloudfront_function.spa.code, "[\"/assets/\"]") && strcontains(aws_cloudfront_function.spa.code, "request.uri = \"/index.html\"") && aws_cloudfront_function.spa.runtime == "cloudfront-js-2.0" && aws_cloudfront_function.spa.publish
-    error_message = "The function must keep the build's root files and directories and rewrite everything else."
+    condition     = strcontains(aws_cloudfront_function.spa.code, "[\"/favicon.svg\",\"/index.html\"]") && strcontains(aws_cloudfront_function.spa.code, "[\"/assets/\"]") && strcontains(aws_cloudfront_function.spa.code, "request.uri = \"/index.html\"") && strcontains(aws_cloudfront_function.spa.code, "indexOf(\"text/html\")") && strcontains(aws_cloudfront_function.spa.code, "request.headers.accept") && aws_cloudfront_function.spa.runtime == "cloudfront-js-2.0" && aws_cloudfront_function.spa.publish
+    error_message = "The function must keep the build's root files and directories and rewrite only requests that accept text/html."
   }
 }
 run "security_headers_on_the_default_behavior" {

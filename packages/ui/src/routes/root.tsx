@@ -9,16 +9,29 @@ import {
 } from "@tanstack/solid-router";
 import { Show } from "solid-js";
 import { useWhoami } from "../api/queries";
-import { clearToken, peekToken, token } from "../auth/session";
+import { browserOidcDeps, proxyFailure } from "../auth/app";
+import { authMode, oidcConfig, proxyLogoutUrl } from "../auth/config";
+import { logoutUrl } from "../auth/oidc";
+import { clearToken, isSignedIn, token } from "../auth/session";
 import { ErrorNotice, Loading } from "../components/common";
+import { HeaderTools } from "../components/HeaderTools";
 
 function RootLayout() {
   const qc = useQueryClient();
   const navigate = useNavigate();
-  const logout = () => {
+  const logout = async () => {
     clearToken();
     qc.clear();
-    void navigate({ to: "/login" });
+    if (authMode === "proxy") {
+      if (proxyLogoutUrl) location.assign(proxyLogoutUrl);
+      return;
+    }
+    // The provider session ends too when it publishes an end-session endpoint.
+    const end = oidcConfig
+      ? await logoutUrl(oidcConfig, browserOidcDeps())
+      : null;
+    if (end) location.assign(end);
+    else void navigate({ to: "/login" });
   };
   return (
     <>
@@ -26,12 +39,18 @@ function RootLayout() {
         <Link to="/organizations" class="brand">
           errtraq
         </Link>
-        <Show when={token()}>
+        <HeaderTools />
+        <Show when={authMode === "proxy" ? !!proxyLogoutUrl : token()}>
           <button type="button" class="link" onClick={logout}>
             Log out
           </button>
         </Show>
       </header>
+      <Show when={proxyFailure()}>
+        <p class="notice error" role="alert">
+          {proxyFailure()}
+        </p>
+      </Show>
       <main class="page">
         <Outlet />
       </main>
@@ -52,7 +71,7 @@ export const indexRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/",
   beforeLoad: () => {
-    throw redirect({ to: peekToken() ? "/organizations" : "/login" });
+    throw redirect({ to: isSignedIn() ? "/organizations" : "/login" });
   },
 });
 
@@ -64,7 +83,7 @@ function Authed() {
       fallback={
         <Show
           when={whoami.isError}
-          fallback={<Loading label="Checking your token…" />}
+          fallback={<Loading label="Checking your sign-in…" />}
         >
           <ErrorNotice error={whoami.error} retry={() => whoami.refetch()} />
         </Show>
@@ -80,7 +99,7 @@ export const authedRoute = createRoute({
   getParentRoute: () => rootRoute,
   id: "authed",
   beforeLoad: () => {
-    if (!peekToken()) throw redirect({ to: "/login" });
+    if (!isSignedIn()) throw redirect({ to: "/login" });
   },
   component: Authed,
 });

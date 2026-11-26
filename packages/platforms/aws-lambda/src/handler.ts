@@ -12,6 +12,7 @@ import {
   ARCHIVE_PROJECT_TOPIC,
   type ArchiveStore,
   ArchiveWorker,
+  type AuthSettings,
   type BatchHandler,
   type BlobStore,
   type Clock,
@@ -24,6 +25,7 @@ import {
   IngestService,
   type KV,
   type Logger,
+  parseAuthSettings,
   projectReader,
   type Queue,
   type RateRejectionConfig,
@@ -45,6 +47,8 @@ export interface HandlerOptions {
    * adds no CORS headers: the function URL's CORS block carries the browser policy.
    */
   ingestUrl?: string;
+  /** OIDC Bearer and proxy-assertion settings (`ERRTRAQ_AUTH_CONFIG`); absent means API tokens only. */
+  auth?: AuthSettings;
   http: readonly FunctionRole[];
   adapters: {
     store?: ActiveStore;
@@ -80,6 +84,19 @@ export function lambdaRateLimit(
   if (!/^[1-9][0-9]*$/.test(value) || !Number.isSafeInteger(Number(value)))
     throw new Error("Invalid Lambda ingest rate limit");
   return Number(value);
+}
+/** Parse the platform-delivered sign-in settings JSON; missing or empty means none. */
+export function lambdaAuthSettings(
+  value: string | undefined,
+): AuthSettings | undefined {
+  if (value === undefined || value === "") return undefined;
+  let raw: unknown;
+  try {
+    raw = JSON.parse(value);
+  } catch {
+    throw new Error("Invalid sign-in settings JSON");
+  }
+  return parseAuthSettings(raw);
 }
 /** Parse the operator-supplied public ingest URL; missing or empty means the key list has no `dsn`. */
 export function lambdaIngestUrl(value: string | undefined): string | undefined {
@@ -149,6 +166,7 @@ export function createHandler(
         logger: log,
         archive: adapters.archive,
         ...(options.ingestUrl ? { ingestUrl: options.ingestUrl } : {}),
+        ...(options.auth ? { auth: options.auth } : {}),
       }),
     );
   }

@@ -33,19 +33,19 @@ async function setup(rateRejection?: RateRejectionConfig) {
   await store.projects.putToken({
     id: "token" as ApiTokenId,
     orgId: boot.org.id,
-    tokenHash: await hashApiToken("secret"),
+    tokenHash: await hashApiToken("errtraq_secret"),
     scopes: ["event:read", "event:write"],
   });
   await store.projects.putToken({
     id: "readonly" as ApiTokenId,
     orgId: boot.org.id,
-    tokenHash: await hashApiToken("read"),
+    tokenHash: await hashApiToken("errtraq_read"),
     scopes: ["event:read"],
   });
   const blobs = new MemoryBlobStore();
   const logger = { error: vi.fn() };
   const app = createApiApp({ store, clock, blobs, logger, kv, rateRejection });
-  const auth = { authorization: "Bearer secret" };
+  const auth = { authorization: "Bearer errtraq_secret" };
   async function seed(n: number) {
     const eventId = `event-${n}` as EventId;
     const issueId = `issue-${n}` as IssueId;
@@ -279,7 +279,7 @@ describe("minimal API", () => {
         await c.app.request("/api/0/issues/issue-1/", {
           method: "PUT",
           headers: {
-            authorization: "Bearer read",
+            authorization: "Bearer errtraq_read",
             "content-type": "application/json",
           },
           body: JSON.stringify({ status: "resolved" }),

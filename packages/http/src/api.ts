@@ -1,8 +1,8 @@
 import {
   type ActiveStore,
-  type ApiToken,
   type ArchiveStore,
   ArtifactBundleService,
+  type AuthSettings,
   type BlobStore,
   type ChunkUploadLimits,
   type Clock,
@@ -11,7 +11,6 @@ import {
   type EventId,
   EventQueryService,
   type FacetKey,
-  hashApiToken,
   type IdGen,
   InvalidCursorError,
   InvalidIdentifierError,
@@ -24,6 +23,7 @@ import {
   MAX_FACET_TOP_VALUES,
   NotFoundError,
   type Project,
+  parseAuthSettings,
   type RateRejectionConfig,
   rateRejectionEnabled,
   readDropped,
@@ -43,7 +43,9 @@ import {
   orgJson,
   projectJson,
 } from "./api-mappers.js";
+import { createAuthenticator, csrfAllowed, type Principal } from "./auth.js";
 import { logUnexpected } from "./errors.js";
+import type { FetchLike } from "./jwt.js";
 import { addReleaseRoutes } from "./release-routes.js";
 import {
   facetJson,
@@ -91,6 +93,10 @@ export function createApiApp(options: {
   ingestUrl?: string;
   /** Cross-origin browser access for a UI hosted elsewhere; off by default. Exact origins only. */
   cors?: { origins: string[]; maxAgeSec?: number };
+  /** OIDC Bearer JWTs and identity-aware proxy principals, next to API tokens; off when absent. */
+  auth?: AuthSettings;
+  /** Fetch used for JWKS and discovery; defaults to the global `fetch`. For tests. */
+  authFetch?: FetchLike;
 }): Hono<Env> {
   const app = new Hono<Env>({ strict: false });
   const { store, clock } = options;
@@ -283,26 +289,33 @@ export function createApiApp(options: {
       }),
     );
   }
+  const authenticate = createAuthenticator({
+    store,
+    now: () => Math.floor(Date.parse(clock.now()) / 1000),
+    ...(options.auth ? { settings: parseAuthSettings(options.auth) } : {}),
+    ...(options.authFetch ? { fetch: options.authFetch } : {}),
+    ...(options.logger ? { logger: options.logger } : {}),
+  });
   app.use("/api/0/*", async (c, next) => {
-    const auth = c.req.header("authorization")?.match(/^Bearer\s+(\S+)$/i);
-    if (!auth?.[1]) return c.json({ detail: "Authentication required" }, 401);
-    const token = await store.projects.getTokenByHash(
-      await hashApiToken(auth[1]),
-    );
-    if (!token || token.revokedAt)
-      return c.json({ detail: "Invalid token" }, 401);
-    const required = ["PUT", "POST", "PATCH", "DELETE"].includes(c.req.method)
-      ? "event:write"
-      : "event:read";
-    if (!token.scopes.includes(required))
+    const result = await authenticate(c.req.raw);
+    if (!result.ok) return c.json({ detail: result.detail }, result.status);
+    const principal = result.principal;
+    const write = ["PUT", "POST", "PATCH", "DELETE"].includes(c.req.method);
+    const required = write ? "event:write" : "event:read";
+    // TODO(UI-f): finer `org:read` / `project:read` requirements; existing API tokens carry only
+    // `event:*` scopes, so changing the requirements here would lock them out.
+    if (!principal.scopes.includes(required))
       return c.json({ detail: "Insufficient scope" }, 403);
-    c.set("token", token);
+    // A proxy principal rides a session cookie, so writes need the CSRF header.
+    if (principal.kind === "proxy" && !csrfAllowed(c.req.raw))
+      return c.json({ detail: "CSRF check failed" }, 403);
+    c.set("token", principal);
     await next();
   });
   async function project(
     orgSlug: string,
     slug: string,
-    token: ApiToken,
+    token: Principal,
   ): Promise<Project | null> {
     const org = await store.projects.getOrgBySlug(orgSlug);
     if (!org || org.id !== token.orgId) return null;
@@ -310,7 +323,7 @@ export function createApiApp(options: {
   }
   async function scopedIssue(
     id: string,
-    token: ApiToken,
+    token: Principal,
   ): Promise<Issue | null> {
     const issues = await store.issues.getById(id as IssueId);
     const visible: Issue[] = [];

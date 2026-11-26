@@ -1,8 +1,14 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import {
+  createServer as createHttpServer,
+  type Server as HttpServer,
+  request as httpRequest,
+} from "node:http";
 import { createServer } from "node:net";
 import { join, resolve } from "node:path";
-import { preview } from "vite";
+import { build, preview } from "vite";
+import { type FakeIdp, startFakeIdp } from "./fake-idp.ts";
 import { seed } from "./seed.mjs";
 
 const repo = resolve(import.meta.dirname, "../../..");
@@ -48,6 +54,7 @@ export default async function globalSetup(): Promise<() => Promise<void>> {
   const dataDir = await mkdtemp(join(tmp, "ui-e2e-"));
   let output = "";
   let errors = "";
+  const idp: FakeIdp = await startFakeIdp(await freePort());
   const server: ChildProcess = spawn(
     process.execPath,
     [
@@ -55,7 +62,7 @@ export default async function globalSetup(): Promise<() => Promise<void>> {
       "packages/cli/dist/bin.js",
       "dev",
       "--stack",
-      "stacks/local.ts",
+      "stacks/local-oidc.ts",
     ],
     {
       cwd: repo,
@@ -64,6 +71,7 @@ export default async function globalSetup(): Promise<() => Promise<void>> {
         ERRTRAQ_DATA_DIR: dataDir,
         ERRTRAQ_PORT: "0",
         ERRTRAQ_HOST: "127.0.0.1",
+        ERRTRAQ_OIDC_ISSUER: idp.issuer,
       },
       stdio: ["ignore", "pipe", "pipe"],
     },
@@ -75,8 +83,15 @@ export default async function globalSetup(): Promise<() => Promise<void>> {
     errors += c;
   });
   let previewServer: Awaited<ReturnType<typeof preview>> | undefined;
+  let ssoServer: Awaited<ReturnType<typeof preview>> | undefined;
+  let proxyUi: Awaited<ReturnType<typeof preview>> | undefined;
+  let signingProxy: HttpServer | undefined;
   const teardown = async () => {
     await previewServer?.close();
+    await ssoServer?.close();
+    await proxyUi?.close();
+    await new Promise((r) => (signingProxy ? signingProxy.close(r) : r(0)));
+    await idp.close();
     if (server.exitCode === null) {
       const exited = new Promise((r) => server.once("exit", r));
       server.kill("SIGTERM");
@@ -114,6 +129,96 @@ export default async function globalSetup(): Promise<() => Promise<void>> {
       logLevel: "error",
     });
     process.env.ERRTRAQ_UI_URL = `http://127.0.0.1:${port}`;
+    // A second build of the UI with single sign-on against the fake provider (the settings are
+    // build-time), served beside the plain one. The production CSP is in force there too.
+    const ssoDir = join(dataDir, "ui-sso");
+    Object.assign(process.env, {
+      VITE_ERRTRAQ_OIDC_ISSUER: idp.issuer,
+      VITE_ERRTRAQ_OIDC_CLIENT_ID: "errtraq-ui",
+    });
+    try {
+      await build({
+        root: uiRoot,
+        logLevel: "error",
+        build: { outDir: ssoDir, emptyOutDir: true },
+      });
+    } finally {
+      delete process.env.VITE_ERRTRAQ_OIDC_ISSUER;
+      delete process.env.VITE_ERRTRAQ_OIDC_CLIENT_ID;
+    }
+    const ssoPort = await freePort();
+    ssoServer = await preview({
+      root: uiRoot,
+      build: { outDir: ssoDir },
+      preview: { host: "127.0.0.1", port: ssoPort, strictPort: true },
+      logLevel: "error",
+    });
+    process.env.ERRTRAQ_SSO_UI_URL = `http://127.0.0.1:${ssoPort}`;
+    process.env.ERRTRAQ_IDP_ISSUER = idp.issuer;
+    // Proxy mode: a third build with no login page, behind a tiny signing proxy that plays the
+    // identity-aware proxy (it adds a signed assertion header and forwards everything else).
+    const proxyDir = join(dataDir, "ui-proxy");
+    process.env.VITE_ERRTRAQ_AUTH = "proxy";
+    try {
+      await build({
+        root: uiRoot,
+        logLevel: "error",
+        build: { outDir: proxyDir, emptyOutDir: true },
+      });
+    } finally {
+      delete process.env.VITE_ERRTRAQ_AUTH;
+    }
+    const proxyUiPort = await freePort();
+    proxyUi = await preview({
+      root: uiRoot,
+      build: { outDir: proxyDir },
+      preview: { host: "127.0.0.1", port: proxyUiPort, strictPort: true },
+      logLevel: "error",
+    });
+    const signing = { enabled: true };
+    signingProxy = createHttpServer((req, res) => {
+      const headers: Record<string, string | string[] | undefined> = {
+        ...req.headers,
+        host: `127.0.0.1:${proxyUiPort}`,
+      };
+      delete headers["x-e2e-assertion"];
+      if (signing.enabled) {
+        const now = Math.floor(Date.now() / 1000);
+        headers["x-e2e-assertion"] = idp.sign({
+          iss: idp.issuer,
+          aud: "errtraq-proxy",
+          sub: "proxy-user",
+          email: "proxy@example.test",
+          groups: ["errtraq-admins"],
+          iat: now,
+          exp: now + 300,
+        });
+      }
+      const upstream = httpRequest(
+        {
+          host: "127.0.0.1",
+          port: proxyUiPort,
+          path: req.url,
+          method: req.method,
+          headers,
+        },
+        (response) => {
+          res.writeHead(response.statusCode ?? 502, response.headers);
+          response.pipe(res);
+        },
+      );
+      upstream.on("error", () => {
+        res.writeHead(502);
+        res.end();
+      });
+      req.pipe(upstream);
+    });
+    const proxyPort = await freePort();
+    await new Promise<void>((resolve) =>
+      signingProxy?.listen(proxyPort, "127.0.0.1", resolve),
+    );
+    process.env.ERRTRAQ_PROXY_UI_URL = `http://127.0.0.1:${proxyPort}`;
+    process.env.ERRTRAQ_PROXY_DIRECT_URL = `http://127.0.0.1:${proxyUiPort}`;
     process.env.ERRTRAQ_TOKEN = token;
     return teardown;
   } catch (error) {

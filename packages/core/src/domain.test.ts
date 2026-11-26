@@ -21,9 +21,9 @@ describe("domain validation", () => {
       expect(() => parseTimestamp(invalid)).toThrow();
     }
   });
-  it("accepts decimal project IDs only", () => {
+  it("accepts decimal project IDs only, never 0 (reserved for /api/0)", () => {
     expect(isProjectId("123")).toBe(true);
-    for (const value of ["", "-1", "x1", "1.2"])
+    for (const value of ["", "-1", "x1", "1.2", "0"])
       expect(isProjectId(value)).toBe(false);
   });
 });

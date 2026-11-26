@@ -1,3 +1,4 @@
+import { authMode } from "../auth/config";
 import { handleUnauthorized, peekToken } from "../auth/session";
 import { createApiClient } from "./client";
 
@@ -10,5 +11,6 @@ export const apiBase: string = import.meta.env.VITE_ERRTRAQ_API_BASE ?? "";
 export const api = createApiClient({
   base: apiBase,
   getToken: peekToken,
+  proxy: authMode === "proxy",
   onUnauthorized: handleUnauthorized,
 });

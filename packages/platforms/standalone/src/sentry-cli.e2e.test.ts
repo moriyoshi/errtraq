@@ -50,7 +50,7 @@ describe.skipIf(!cli)("sentry-cli against the API app", () => {
     await store.projects.putToken({
       id: "t" as ApiTokenId,
       orgId: boot.org.id,
-      tokenHash: await hashApiToken("secret"),
+      tokenHash: await hashApiToken("errtraq_secret"),
       scopes: ["event:read", "event:write"],
     });
     const app = createApiApp({ store, clock, blobs });
@@ -62,7 +62,7 @@ describe.skipIf(!cli)("sentry-cli against the API app", () => {
       PATH: process.env.PATH ?? "",
       HOME: dir,
       SENTRY_URL: `http://127.0.0.1:${(server.address() as AddressInfo).port}`,
-      SENTRY_AUTH_TOKEN: "secret",
+      SENTRY_AUTH_TOKEN: "errtraq_secret",
       SENTRY_ORG: "org",
       SENTRY_PROJECT: "project",
       SENTRY_DISABLE_UPDATE_CHECK: "1",
@@ -184,7 +184,7 @@ describe.skipIf(!cli)("sentry-cli against the API app", () => {
     expect(result).toEqual([{ deliveryId: "e2e", action: "ack" }]);
     const response = await publicApi.request(
       `http://errtraq.test/api/0/projects/org/project/events/${eventId}`,
-      { headers: { authorization: "Bearer secret" } },
+      { headers: { authorization: "Bearer errtraq_secret" } },
     );
     expect(response.status).toBe(200);
     const body = JSON.stringify(await response.json());
