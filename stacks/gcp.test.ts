@@ -8,10 +8,13 @@ const env = {
   ERRTRAQ_GCP_PROJECT: "example-project",
   ERRTRAQ_GCP_REGION: "europe-west1",
   ERRTRAQ_GCP_SQL_INSTANCE: "example-sql",
+  ERRTRAQ_GCP_OPERATOR_MEMBER: "user:operator@example.com",
 };
 const stacks = {
   "gcp-firestore": () => import("./gcp-firestore.js"),
   "gcp-cloudsql": () => import("./gcp-cloudsql.js"),
+  "gcp-firestore-bootstrap": () => import("./gcp-firestore-bootstrap.js"),
+  "gcp-firestore-per-topic": () => import("./gcp-firestore-per-topic.js"),
 };
 /** A fresh module graph, so the stack file reads the environment this test set. */
 async function fresh(name: keyof typeof stacks) {
@@ -60,6 +63,57 @@ describe.each(["gcp-firestore", "gcp-cloudsql"] as const)("%s", (name) => {
         .sort(),
     ).toEqual(["bundle-cleanup", "staged-recovery"]);
   });
+});
+describe("gcp-firestore-bootstrap", () => {
+  it("adds a private bootstrap service that only the operator may invoke", async () => {
+    for (const [key, value] of Object.entries(env)) vi.stubEnv(key, value);
+    const { stack, deriveDeployment, generate } = await fresh(
+      "gcp-firestore-bootstrap",
+    );
+    expect(stack.recordMode).toBe("direct");
+    const view = deriveDeployment(stack);
+    const bootstrap = view.functions.find((fn) =>
+      fn.roles.includes("bootstrap"),
+    );
+    expect(bootstrap?.http).toEqual([]);
+    const result = generate(stack, options);
+    if (result.kind !== "terraform") throw new Error("expected terraform");
+    const main = JSON.parse(result.files["main.tf.json"] ?? "{}");
+    const platform = main.module.platform;
+    expect(platform.operator_members).toEqual(["user:operator@example.com"]);
+    expect(JSON.stringify(platform)).not.toContain("allUsers");
+    expect(JSON.stringify(Object.values(result.files))).toContain(
+      "module.platform.bootstrap_url",
+    );
+  });
+  it("refuses to run without an operator member", async () => {
+    for (const [key, value] of Object.entries(env)) vi.stubEnv(key, value);
+    vi.stubEnv("ERRTRAQ_GCP_OPERATOR_MEMBER", "");
+    await expect(fresh("gcp-firestore-bootstrap")).rejects.toThrow(
+      /no default/,
+    );
+  });
+});
+describe("gcp-firestore-per-topic", () => {
+  it("emits one push subscription per logical topic", async () => {
+    for (const [key, value] of Object.entries(env)) vi.stubEnv(key, value);
+    const { stack, deriveDeployment } = await fresh("gcp-firestore-per-topic");
+    const view = deriveDeployment(stack);
+    const physical = view.triggers
+      .flatMap((trigger) =>
+        trigger.kind === "queue" ? [trigger.physical] : [],
+      )
+      .sort();
+    expect(physical.length).toBeGreaterThan(1);
+    expect(physical).not.toContain("shared");
+    expect(
+      view.triggers.every(
+        (trigger) => trigger.kind !== "queue" || trigger.topics.length === 1,
+      ),
+    ).toBe(true);
+  });
+});
+describe.each(Object.keys(stacks) as (keyof typeof stacks)[])("%s", (name) => {
   it("generates Terraform for the google provider", async () => {
     for (const [key, value] of Object.entries(env)) vi.stubEnv(key, value);
     const { stack, generate } = await fresh(name);
@@ -83,6 +137,7 @@ describe.each(["gcp-firestore", "gcp-cloudsql"] as const)("%s", (name) => {
     vi.stubEnv("ERRTRAQ_GCP_PROJECT", "");
     vi.stubEnv("ERRTRAQ_GCP_REGION", "");
     vi.stubEnv("ERRTRAQ_GCP_SQL_INSTANCE", "x");
+    vi.stubEnv("ERRTRAQ_GCP_OPERATOR_MEMBER", "user:operator@example.com");
     await expect(fresh(name)).rejects.toThrow(/no default/);
   });
 });
