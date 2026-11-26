@@ -83,6 +83,61 @@ describe("cloud-run config", () => {
     ).toBe(120);
   });
 });
+describe("cloud-run operatorMembers", () => {
+  const withBootstrap = {
+    ...base,
+    roles: ["ingest", "bootstrap"] as ("ingest" | "bootstrap")[],
+    split: ["ingest", "bootstrap"] as ("ingest" | "bootstrap")[],
+    bootstrapSecretName: "errtraq-bootstrap",
+  };
+  it("accepts named principals and defaults to none", () => {
+    expect(configSchema.parse(base).operatorMembers).toEqual([]);
+    const members = [
+      "user:operator@example.com",
+      "group:ops@example.com",
+      "serviceAccount:ci@example-project.iam.gserviceaccount.com",
+      "domain:example.com",
+    ];
+    expect(
+      configSchema.parse({ ...withBootstrap, operatorMembers: members })
+        .operatorMembers,
+    ).toEqual(members);
+  });
+  it("rejects public and malformed members", () => {
+    for (const member of [
+      "allUsers",
+      "allAuthenticatedUsers",
+      "user:allUsers",
+      "operator@example.com",
+      "user:",
+      "user:a@b.co extra",
+      "projectOwner:example-project",
+      "",
+    ])
+      expect(() =>
+        configSchema.parse({ ...withBootstrap, operatorMembers: [member] }),
+      ).toThrow();
+  });
+  it("is only valid with the bootstrap role", () => {
+    expect(() =>
+      configSchema.parse({
+        ...base,
+        operatorMembers: ["user:operator@example.com"],
+      }),
+    ).toThrow(/bootstrap role/);
+  });
+  it("feeds the module's operator_members variable", () => {
+    const selection = cloudRun({
+      ...withBootstrap,
+      operatorMembers: ["group:ops@example.com"],
+    });
+    const inputs = selection.infra.inputs(selection.config, {
+      functions: [],
+      triggers: [],
+    } as never) as Record<string, unknown>;
+    expect(inputs.operator_members).toEqual(["group:ops@example.com"]);
+  });
+});
 describe("cloud-run manifest", () => {
   it("declares what core drives behaviour from", () => {
     expect(manifest).toMatchObject({
