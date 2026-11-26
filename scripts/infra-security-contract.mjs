@@ -16,7 +16,7 @@ export function dynamoMetadataProtection(directory) {
 
 /**
  * Source-level rules for the Google modules (GCP_PLAN 5.2): no primitive or administrative roles, no
- * wildcard permissions in custom roles, and `allUsers` only on the public Cloud Run invoker bindings.
+ * wildcard permissions in custom roles, no `allUsers` member, and `invoker_iam_disabled` only from the public flag.
  * Returns the violations found in the `.tf` files of one module directory (empty when clean).
  */
 export function googleRoleContract(directory) {
@@ -43,23 +43,15 @@ export function googleRoleContract(directory) {
         violations.push(`${file}: wildcard permission ${match[1]}`);
     if (/allAuthenticatedUsers/.test(text))
       violations.push(`${file}: allAuthenticatedUsers member`);
-    if (/"allUsers"/.test(text)) {
-      const resources = [
-        ...text.matchAll(/resource "(\w+)" "(\w+)" \{([\s\S]*?)\n\}/g),
-      ];
-      for (const [, type, name, body] of resources)
-        if (
-          /"allUsers"/.test(body) &&
-          !(
-            type === "google_cloud_run_v2_service_iam_member" &&
-            name === "public" &&
-            /roles\/run\.invoker/.test(body)
-          )
-        )
-          violations.push(
-            `${file}: allUsers outside the public invoker binding (${type}.${name})`,
-          );
-    }
+    if (/"allUsers"/.test(text))
+      violations.push(
+        `${file}: allUsers member (public services use invoker_iam_disabled)`,
+      );
+    for (const match of text.matchAll(/invoker_iam_disabled\s*=\s*([^\n]*)/g))
+      if (match[1].trim() !== "each.value.public")
+        violations.push(
+          `${file}: invoker_iam_disabled not tied to the public flag (${match[1].trim()})`,
+        );
   }
   return violations;
 }

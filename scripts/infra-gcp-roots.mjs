@@ -38,7 +38,7 @@ output "test_bindings" {
 }
 output "test_secret_reads" { value = { for id in keys(var.functions) : id => [for key, member in google_secret_manager_secret_iam_member.read : "projects/\${member.project}/secrets/\${member.secret_id}" if startswith(key, "\${id}|")] } }
 output "test_subscriptions" { value = { for key, subscription in google_pubsub_subscription.push : key => { name = subscription.name, topic = subscription.topic, path = trimprefix(subscription.push_config[0].push_endpoint, google_cloud_run_v2_service.function[var.queue_triggers[key].function_id].uri), ordered = subscription.enable_message_ordering, dlq = try(subscription.dead_letter_policy[0].dead_letter_topic, ""), function = var.queue_triggers[key].function_id, audience = subscription.push_config[0].oidc_token[0].audience } } }
-output "test_invokers" { value = { push = sort(keys(google_cloud_run_v2_service_iam_member.push)), scheduler = sort(keys(google_cloud_run_v2_service_iam_member.scheduler)), public = sort(keys(google_cloud_run_v2_service_iam_member.public)) } }
+output "test_invokers" { value = { push = sort(keys(google_cloud_run_v2_service_iam_member.push)), scheduler = sort(keys(google_cloud_run_v2_service_iam_member.scheduler)), public = sort([for id, service in google_cloud_run_v2_service.function : id if service.invoker_iam_disabled]) } }
 output "test_crons" { value = { for key, job in google_cloud_scheduler_job.cron : key => { schedule = job.schedule, time_zone = job.time_zone, function = var.cron_triggers[key].function_id, audience = job.http_target[0].oidc_token[0].audience, path = trimprefix(job.http_target[0].uri, google_cloud_run_v2_service.function[var.cron_triggers[key].function_id].uri) } } }
 output "test_service_audiences" { value = { for id, service in google_cloud_run_v2_service.function : id => sort(tolist(service.custom_audiences)) } }
 output "test_operators" { value = sort(keys(google_cloud_run_v2_service_iam_member.operator)) }
@@ -89,7 +89,7 @@ run "generated_root" {
   }
   assert {
     condition = toset(module.platform.test_invokers.push) == toset(output.expected_push_invokers) && toset(module.platform.test_invokers.scheduler) == toset(output.expected_scheduler_invokers) && toset(module.platform.test_invokers.public) == toset(output.expected_public)
-    error_message = "run.invoker bindings differ from the deployment view: allUsers only on HTTP ingest and API, the invoker identities only on the services they trigger."
+    error_message = "run.invoker bindings differ from the deployment view: only HTTP ingest and API skip the invoker check, the invoker identities only on the services they trigger."
   }
   assert {
     condition = alltrue([for id, audiences in module.platform.test_service_audiences : audiences == tolist([output.expected_audience])]) && alltrue([for key, job in module.platform.test_crons : job.audience == output.expected_audience])

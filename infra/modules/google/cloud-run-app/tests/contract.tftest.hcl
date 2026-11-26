@@ -246,8 +246,7 @@ run "functions_triggers_and_urls" {
   }
   assert {
     condition = alltrue([
-      toset(keys(google_cloud_run_v2_service_iam_member.public)) == toset(["ingest", "api"]),
-      alltrue([for member in values(google_cloud_run_v2_service_iam_member.public) : member.member == "allUsers" && member.role == "roles/run.invoker"]),
+      toset([for id, service in google_cloud_run_v2_service.function : id if service.invoker_iam_disabled]) == toset(["ingest", "api"]),
       toset(keys(google_cloud_run_v2_service_iam_member.push)) == toset(["consumer"]),
       toset(keys(google_cloud_run_v2_service_iam_member.scheduler)) == toset(["cron"]),
       toset(keys(google_cloud_run_v2_service_iam_member.operator)) == toset(["bootstrap|user:operator@example.test"]),
@@ -255,7 +254,7 @@ run "functions_triggers_and_urls" {
       google_cloud_run_v2_service_iam_member.push["consumer"].member == "serviceAccount:${google_service_account.push.email}",
       google_cloud_run_v2_service_iam_member.scheduler["cron"].member == "serviceAccount:${google_service_account.scheduler.email}",
     ])
-    error_message = "allUsers invokes only the HTTP ingest and API services; internal services admit only the push, scheduler and operator identities that trigger them."
+    error_message = "Only the HTTP ingest and API services skip the invoker check; internal services admit only the push, scheduler and operator identities that trigger them."
   }
   assert {
     condition = alltrue([

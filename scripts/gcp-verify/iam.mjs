@@ -6,7 +6,8 @@ import { main, ok } from "./lib.mjs";
 
 /**
  * IAM on a real project. Policy checks read the live IAM policies (no primitive roles on the
- * errtraq accounts, conditions as designed, `allUsers` only on ingest and API, nothing public on
+ * errtraq accounts, conditions as designed, the invoker check skipped (`invokerIamDisabled`) only on
+ * ingest and API and no `allUsers` invoker anywhere, nothing public on
  * the bucket or topics). Effective-permission checks impersonate each function service account
  * (the operator needs `roles/iam.serviceAccountTokenCreator` on them) and ask `testIamPermissions`
  * on its resources, comparing with the permissions the roles in the Terraform state grant it:
@@ -222,14 +223,23 @@ export async function policyChecks(ctx) {
     const invokers = (response.json?.bindings ?? [])
       .filter((binding) => binding.role === "roles/run.invoker")
       .flatMap((binding) => binding.members ?? []);
-    const expected =
-      fn === "ingest" || fn === "api"
-        ? ["allUsers"]
-        : fn === "consumer" || fn === "record"
-          ? [`serviceAccount:${names.pushServiceAccount}`]
-          : fn === "cron"
-            ? [`serviceAccount:${names.schedulerServiceAccount}`]
-            : [...operators];
+    const open = fn === "ingest" || fn === "api";
+    const service = await ctx.http(
+      "GET",
+      `https://run.googleapis.com/v2/${names.service(fn)}`,
+    );
+    report.check(
+      `service ${fn} ${open ? "skips" : "enforces"} the invoker check`,
+      ok(service) && Boolean(service.json?.invokerIamDisabled) === open,
+      `status ${service.status}`,
+    );
+    const expected = open
+      ? []
+      : fn === "consumer" || fn === "record"
+        ? [`serviceAccount:${names.pushServiceAccount}`]
+        : fn === "cron"
+          ? [`serviceAccount:${names.schedulerServiceAccount}`]
+          : [...operators];
     const exact =
       invokers.length === expected.length &&
       expected.every((member) => invokers.includes(member));

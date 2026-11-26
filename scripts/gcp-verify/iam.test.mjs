@@ -87,8 +87,8 @@ describe("iam probe", () => {
 
   function policyFetch({ publicConsumer = false, extraRole = false } = {}) {
     const invokers = {
-      ingest: ["allUsers"],
-      api: ["allUsers"],
+      ingest: [],
+      api: [],
       consumer: publicConsumer ? ["allUsers"] : [push],
       record: [push],
       cron: [scheduler],
@@ -124,6 +124,18 @@ describe("iam probe", () => {
           },
         }),
       ],
+      [
+        "GET",
+        /run\.googleapis\.com\/v2\/.*services\/gcp-g8-(\w+)$/,
+        (_u, _i, m) => ({
+          body: {
+            invokerIamDisabled:
+              m[1] === "ingest" ||
+              m[1] === "api" ||
+              (publicConsumer && m[1] === "consumer"),
+          },
+        }),
+      ],
       ["GET", /storage\/v1\/b\/.*\/iam$/, () => ({ body: { bindings: [] } })],
       ["POST", /pubsub.*:getIamPolicy$/, () => ({ body: {} })],
     ]);
@@ -141,6 +153,9 @@ describe("iam probe", () => {
     });
     await policyChecks(bad.ctx);
     expect(bad.output()).toContain("FAIL service consumer invokers");
+    expect(bad.output()).toContain(
+      "FAIL service consumer enforces the invoker check",
+    );
     expect(bad.output()).toContain(
       "FAIL no errtraq service account holds a primitive role",
     );

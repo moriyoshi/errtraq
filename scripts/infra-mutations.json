@@ -1592,12 +1592,12 @@
     "replace": "pkg.dev/"
   },
   {
-    "id": "run-public-all",
+    "id": "run-public-inverted",
     "provider": "google",
     "module": "cloud-run-app",
     "file": "main.tf",
-    "find": "for_each = { for id, fn in var.functions : id => fn if fn.public }",
-    "replace": "for_each = var.functions"
+    "find": "invoker_iam_disabled = each.value.public",
+    "replace": "invoker_iam_disabled = !each.value.public"
   },
   {
     "id": "run-push-public",
@@ -1640,12 +1640,12 @@
     "replace": "setproduct([for id, fn in var.functions : id], var.operator_members)"
   },
   {
-    "id": "run-invoker-role",
+    "id": "run-public-everywhere",
     "provider": "google",
     "module": "cloud-run-app",
     "file": "main.tf",
-    "find": "role     = \"roles/run.invoker\"\n  member   = \"allUsers\"",
-    "replace": "role     = \"roles/run.admin\"\n  member   = \"allUsers\""
+    "find": "invoker_iam_disabled = each.value.public",
+    "replace": "invoker_iam_disabled = true"
   },
   {
     "id": "run-audience-dropped",

@@ -47,7 +47,8 @@ each grant after its role.
   `.gserviceaccount.com`). SQL privileges for those users are the bootstrap role's job, not Terraform's.
 * `cloud-run-app`: a service account and a `google_cloud_run_v2_service` per function (the Cloud SQL
   socket volume only where bindings name an instance), `custom_audiences` set to the OIDC audience,
-  `allUsers` invoker on HTTP ingest and API only, the push and scheduler service accounts (created from their
+  `invoker_iam_disabled` on HTTP ingest and API only (no `allUsers` binding: organization policies that
+  restrict IAM members to a domain reject it), the push and scheduler service accounts (created from their
   ids) as invoker only on the services they trigger, push subscriptions (OIDC, ack deadline, retry policy,
   dead-letter policy, ordering) under the reserved names, the Pub/Sub service agent grants dead-lettering needs,
   Cloud Scheduler jobs, secret accessor per declared secret, and a custom role limited by name for the bootstrap

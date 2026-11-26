@@ -41,13 +41,16 @@ resource "google_service_account" "function" {
   display_name = "${var.name} ${each.key} (${join(", ", each.value.roles)})"
 }
 resource "google_cloud_run_v2_service" "function" {
-  for_each            = var.functions
-  project             = var.project_id
-  location            = var.region
-  name                = "${var.name}-${each.key}"
-  labels              = var.labels
-  ingress             = local.ingress[each.value.ingress]
-  deletion_protection = var.deletion_protection
+  for_each = var.functions
+  project  = var.project_id
+  location = var.region
+  name     = "${var.name}-${each.key}"
+  labels   = var.labels
+  ingress  = local.ingress[each.value.ingress]
+  # Public services skip the run.invoker check instead of granting it to allUsers: an organization
+  # policy restricting IAM members to its own domain rejects allUsers (found in the first real run).
+  invoker_iam_disabled = each.value.public
+  deletion_protection  = var.deletion_protection
   # Pub/Sub and Scheduler tokens carry this audience instead of the service URL, which would be a
   # module cycle (the subscription needs the URL, the function needs the name).
   custom_audiences = [var.oidc_audience]
@@ -116,16 +119,9 @@ resource "google_cloud_run_v2_service" "function" {
   }
 }
 
-# Invocation. HTTP ingest and API are public (the app authenticates DSN keys and tokens, the posture of a
-# Lambda URL with auth NONE); every other service accepts only the identities that trigger it.
-resource "google_cloud_run_v2_service_iam_member" "public" {
-  for_each = { for id, fn in var.functions : id => fn if fn.public }
-  project  = var.project_id
-  location = var.region
-  name     = google_cloud_run_v2_service.function[each.key].name
-  role     = "roles/run.invoker"
-  member   = "allUsers"
-}
+# Invocation. HTTP ingest and API are public through invoker_iam_disabled on the service (the app
+# authenticates DSN keys and tokens, the posture of a Lambda URL with auth NONE); every other service
+# accepts only the identities that trigger it.
 resource "google_cloud_run_v2_service_iam_member" "push" {
   for_each = { for id, fn in var.functions : id => fn if !fn.public && contains([for trigger in values(var.queue_triggers) : trigger.function_id], id) }
   project  = var.project_id

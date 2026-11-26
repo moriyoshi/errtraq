@@ -112,8 +112,8 @@ terraform show -json tfplan > ../plan.json
 
 Show the plan to the owner and check each of these (the commands read `plan.json` with `jq`):
 
-1. Public exposure: `google_cloud_run_v2_service_iam_member` with member `allUsers` exists for exactly two
-   services, `gcp-g8-ingest` and `gcp-g8-api`. Every other invoker is the push account (consumer, record),
+1. Public exposure: `invoker_iam_disabled = true` on exactly two services, `gcp-g8-ingest` and `gcp-g8-api`,
+   and no `allUsers` member anywhere (run 1 found the organization's domain restriction rejects it). Every other invoker is the push account (consumer, record),
    the scheduler account (cron) or the operator member (bootstrap). No `allAuthenticatedUsers` anywhere.
    `.resource_changes[] | select(.type|test("iam_member")) | {address, member: .change.after.member}`.
 2. No primitive roles: no `roles/owner`, `roles/editor`, `roles/viewer` in any binding. Project-level bindings
@@ -227,8 +227,9 @@ statuses include 404). Fail: events no longer arrive, which settles the question
 a. Is the `serviceAccountTokenCreator` grant of the Pub/Sub agent on the push account needed? Remove that one
    binding in the console, rerun `push --only delivers`; if events still arrive, record that and tighten the
    module; restore it with `terraform apply` (the plan shows it re-added).
-b. The `allUsers` invoker under an organization policy with domain restriction is only observable when the
-   project sits in such an organization: the apply itself fails with a clear policy error, recorded as such.
+b. Domain restriction: run 1's project sits in an organization that restricts IAM members, and the first
+   apply failed on the `allUsers` invoker. The module now uses `invoker_iam_disabled` instead; the public
+   checks of the sdk-e2e probe show it works under that policy.
 c. Observed-permission tightening of the custom roles needs Data Access audit logs, which are off by default;
    not part of run 1. The iam probe shows that the granted sets are neither missing nor wider than designed.
 
