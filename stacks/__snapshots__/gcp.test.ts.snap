@@ -668,6 +668,10 @@ exports[`gcp-firestore > generates Terraform for the google provider > main 1`] 
             {
               "field_path": "lastSeen",
               "order": "DESCENDING"
+            },
+            {
+              "field_path": "__name__",
+              "order": "ASCENDING"
             }
           ]
         },
@@ -677,6 +681,10 @@ exports[`gcp-firestore > generates Terraform for the google provider > main 1`] 
             {
               "field_path": "lastSeen",
               "order": "DESCENDING"
+            },
+            {
+              "field_path": "__name__",
+              "order": "ASCENDING"
             }
           ]
         },
@@ -690,6 +698,10 @@ exports[`gcp-firestore > generates Terraform for the google provider > main 1`] 
             {
               "field_path": "firstSeen",
               "order": "DESCENDING"
+            },
+            {
+              "field_path": "__name__",
+              "order": "ASCENDING"
             }
           ]
         },
@@ -699,6 +711,10 @@ exports[`gcp-firestore > generates Terraform for the google provider > main 1`] 
             {
               "field_path": "firstSeen",
               "order": "DESCENDING"
+            },
+            {
+              "field_path": "__name__",
+              "order": "ASCENDING"
             }
           ]
         },
@@ -712,6 +728,10 @@ exports[`gcp-firestore > generates Terraform for the google provider > main 1`] 
             {
               "field_path": "count",
               "order": "DESCENDING"
+            },
+            {
+              "field_path": "__name__",
+              "order": "ASCENDING"
             }
           ]
         },
@@ -721,6 +741,10 @@ exports[`gcp-firestore > generates Terraform for the google provider > main 1`] 
             {
               "field_path": "count",
               "order": "DESCENDING"
+            },
+            {
+              "field_path": "__name__",
+              "order": "ASCENDING"
             }
           ]
         },
@@ -1173,6 +1197,10 @@ exports[`gcp-firestore-bootstrap > generates Terraform for the google provider >
             {
               "field_path": "lastSeen",
               "order": "DESCENDING"
+            },
+            {
+              "field_path": "__name__",
+              "order": "ASCENDING"
             }
           ]
         },
@@ -1182,6 +1210,10 @@ exports[`gcp-firestore-bootstrap > generates Terraform for the google provider >
             {
               "field_path": "lastSeen",
               "order": "DESCENDING"
+            },
+            {
+              "field_path": "__name__",
+              "order": "ASCENDING"
             }
           ]
         },
@@ -1195,6 +1227,10 @@ exports[`gcp-firestore-bootstrap > generates Terraform for the google provider >
             {
               "field_path": "firstSeen",
               "order": "DESCENDING"
+            },
+            {
+              "field_path": "__name__",
+              "order": "ASCENDING"
             }
           ]
         },
@@ -1204,6 +1240,10 @@ exports[`gcp-firestore-bootstrap > generates Terraform for the google provider >
             {
               "field_path": "firstSeen",
               "order": "DESCENDING"
+            },
+            {
+              "field_path": "__name__",
+              "order": "ASCENDING"
             }
           ]
         },
@@ -1217,6 +1257,10 @@ exports[`gcp-firestore-bootstrap > generates Terraform for the google provider >
             {
               "field_path": "count",
               "order": "DESCENDING"
+            },
+            {
+              "field_path": "__name__",
+              "order": "ASCENDING"
             }
           ]
         },
@@ -1226,6 +1270,10 @@ exports[`gcp-firestore-bootstrap > generates Terraform for the google provider >
             {
               "field_path": "count",
               "order": "DESCENDING"
+            },
+            {
+              "field_path": "__name__",
+              "order": "ASCENDING"
             }
           ]
         },
@@ -1700,6 +1748,10 @@ exports[`gcp-firestore-per-topic > generates Terraform for the google provider >
             {
               "field_path": "lastSeen",
               "order": "DESCENDING"
+            },
+            {
+              "field_path": "__name__",
+              "order": "ASCENDING"
             }
           ]
         },
@@ -1709,6 +1761,10 @@ exports[`gcp-firestore-per-topic > generates Terraform for the google provider >
             {
               "field_path": "lastSeen",
               "order": "DESCENDING"
+            },
+            {
+              "field_path": "__name__",
+              "order": "ASCENDING"
             }
           ]
         },
@@ -1722,6 +1778,10 @@ exports[`gcp-firestore-per-topic > generates Terraform for the google provider >
             {
               "field_path": "firstSeen",
               "order": "DESCENDING"
+            },
+            {
+              "field_path": "__name__",
+              "order": "ASCENDING"
             }
           ]
         },
@@ -1731,6 +1791,10 @@ exports[`gcp-firestore-per-topic > generates Terraform for the google provider >
             {
               "field_path": "firstSeen",
               "order": "DESCENDING"
+            },
+            {
+              "field_path": "__name__",
+              "order": "ASCENDING"
             }
           ]
         },
@@ -1744,6 +1808,10 @@ exports[`gcp-firestore-per-topic > generates Terraform for the google provider >
             {
               "field_path": "count",
               "order": "DESCENDING"
+            },
+            {
+              "field_path": "__name__",
+              "order": "ASCENDING"
             }
           ]
         },
@@ -1753,6 +1821,10 @@ exports[`gcp-firestore-per-topic > generates Terraform for the google provider >
             {
               "field_path": "count",
               "order": "DESCENDING"
+            },
+            {
+              "field_path": "__name__",
+              "order": "ASCENDING"
             }
           ]
         },

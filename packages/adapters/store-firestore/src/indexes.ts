@@ -71,11 +71,17 @@ export const fieldExemptions: readonly { collection: string; field: string }[] =
 export function terraformIndexes() {
   const order = (d: "ASC" | "DESC") =>
     d === "ASC" ? "ASCENDING" : "DESCENDING";
-  return compositeIndexes.map((index) => ({
-    collection: index.collection,
-    fields: index.fields
-      // `__name__` is implicit in Terraform; the direction follows the last explicit field.
-      .filter((f) => f.field !== "__name__")
-      .map((f) => ({ field_path: f.field, order: order(f.direction) })),
-  }));
+  return compositeIndexes.map((index) => {
+    const explicit = index.fields.filter((f) => f.field !== "__name__");
+    const last = explicit.at(-1)?.direction;
+    return {
+      collection: index.collection,
+      fields: index.fields
+        // An omitted `__name__` takes the direction of the last explicit field, so it is
+        // kept only where the declared tie break runs the other way (Firestore then also sees
+        // a two-field index rather than an unnecessary single-field one).
+        .filter((f) => f.field !== "__name__" || f.direction !== last)
+        .map((f) => ({ field_path: f.field, order: order(f.direction) })),
+    };
+  });
 }

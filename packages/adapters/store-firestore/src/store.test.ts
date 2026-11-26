@@ -169,8 +169,30 @@ describe("Firestore store deployment configuration", () => {
   it("renders indexes in Terraform vocabulary", () => {
     const rendered = terraformIndexes();
     expect(rendered).toHaveLength(compositeIndexes.length);
-    expect(rendered[0]?.fields.every((f) => f.field_path !== "__name__")).toBe(
-      true,
-    );
+    // A Terraform index with one field is rejected by Firestore ("this index is not
+    // necessary"); a `__name__` tie break against the last field's direction must stay explicit.
+    expect(rendered.every((index) => index.fields.length > 1)).toBe(true);
+    compositeIndexes.forEach((index, i) => {
+      const explicit = index.fields.filter((f) => f.field !== "__name__");
+      const tie = index.fields.find((f) => f.field === "__name__");
+      const names = rendered[i]?.fields.filter(
+        (f) => f.field_path === "__name__",
+      );
+      expect(names).toHaveLength(
+        tie && tie.direction !== explicit.at(-1)?.direction ? 1 : 0,
+      );
+    });
+    expect(
+      rendered.find(
+        (index) =>
+          index.collection === "issues" &&
+          index.fields.length === 3 &&
+          index.fields[1]?.field_path === "lastSeen",
+      )?.fields,
+    ).toEqual([
+      { field_path: "status", order: "ASCENDING" },
+      { field_path: "lastSeen", order: "DESCENDING" },
+      { field_path: "__name__", order: "ASCENDING" },
+    ]);
   });
 });
